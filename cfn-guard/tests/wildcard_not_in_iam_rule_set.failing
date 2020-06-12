@@ -1,0 +1,3 @@
+let prohibited_principals = [lambda.amazonaws.com, ec2.amazonaws.com]
+
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* NOT_IN %prohibited_principals

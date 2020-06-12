@@ -1,0 +1,10 @@
+let valid_types = [t2.nano,t2.micro,t2.small,t3.nano,t3.micro,t3.small]
+let require_encryption = true
+let disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]
+
+AWS::EC2::Instance ImageId == LatestAmiId
+AWS::EC2::Instance InstanceType IN %valid_types
+AWS::EC2::SecurityGroup SecurityGroupIngress == [{"CidrIp":"SSHLocation","FromPort":33322,"IpProtocol":"tcp","ToPort":33322}]
+AWS::EC2::Volume AvailabilityZone IN %disallowed_azs
+AWS::EC2::Volume Encrypted != %require_encryption
+AWS::EC2::Volume Size == 128 |OR| AWS::EC2::Volume Size == 256

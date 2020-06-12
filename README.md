@@ -1,17 +1,163 @@
-## My Project
+# [PREVIEW] AWS CloudFormation Guard
 
-TODO: Fill this README out!
+This repo contains source code for the following tools:
 
-Be sure to:
+* `CloudFormation Guard` A CLI tool that checks AWS CloudFormation templates for policy compliance using a simple, policy-as-code, declarative syntax 
+* `CloudFormation Guard Lambda` is the AWS Lambda version of `CloudFormation Guard`
+* `CloudFormation Guard Rulegen` automatically generates CloudFormation Guard rules from existing CloudFormation templates
 
-* Change the title in this README
-* Edit your repository description on GitHub
+## How it works
 
-## Security
+### Checking Templates
+`CloudFormation Guard` uses a simple rule syntax to allow you to specify the characteristics you want (or don't want) in your CloudFormation Resources.
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+For example, given a CloudFormation template:
+
+```
+{
+    "Resources": {
+        "NewVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 101,
+                "Encrypted": false,
+                "AvailabilityZone" : "us-west-2b"
+            }
+        },
+        "NewVolume2" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 99,
+                "Encrypted": false,
+                "AvailabilityZone" : "us-west-2c"
+            }
+        }
+    }
+}
+```
+
+And a set of rules:
+
+```
+let encryption_flag = true
+let allowed_azs = [us-east-1a,us-east-1b,us-east-1c]
+
+AWS::EC2::Volume AvailabilityZone IN %allowed_azs
+AWS::EC2::Volume Encrypted == %encryption_flag
+AWS::EC2::Volume Size == 100
+```
+
+You can check the template to ensure that it adheres to the rules.
+
+```
+$> cfn-guard -t Examples/ebs_volume_template.json -r Examples/ebs_volume_template.ruleset
+   "[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]"
+   "[NewVolume2] failed because [Size] is [99] and the permitted value is [100]"
+   "[NewVolume2] failed because [us-west-2c] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
+   "[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]"
+   "[NewVolume] failed because [Size] is [101] and the permitted value is [100]"
+   "[NewVolume] failed because [us-west-2b] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
+   Number of failures: 6 
+```
+
+More details on how to write rules and how the tool can work with build systems can be found [here](cfn-guard/README.md).
+
+### Automatically Generating Rules
+You can also use the `CloudFormation Guard Rulegen` tool to automatically generate rules from known-good CloudFormation templates.
+
+Using the same template as above, `cfn-guard-rulegen` would produce:
+
+```
+$> cfn-guard-rulegen Examples/ebs_volume_template.json
+AWS::EC2::Volume Encrypted == false
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99
+AWS::EC2::Volume AvailabilityZone == us-west-2b |OR| AWS::EC2::Volume AvailabilityZone == us-west-2c 
+```
+
+From there, you can pipe them into a file and add, edit or remove rules as you need.
+
+### Checking templates using the Lambda
+
+Everything that can be checked from the command-line version of the tool can be checked using [the Lambda version](./cfn-guard-lambda/README.md).
+
+## Setting it up
+
+### Clone this repo:
+
+```
+git clone git@github.com:aws-cloudformation/cloudformation-guard.git
+```
+
+Or click the green "Clone or download" button and select "Download Zip". Unzip the contents to view and compile the source code.
+
+### Install Rust
+#### Mac/ Ubuntu
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+If you haven't already, run `source $HOME/.cargo/env` as recommended by the rust installer.
+
+Read [here](https://rustup.rs/) for more information
+
+If building on `Ubuntu`, it's recommended to run `sudo apt-get update; sudo apt install build-essential`
+
+#### Windows 10
+
+1. Create a Windows 10 workspace
+2. Install the version of Microsoft Visual C++ Build Tools 2019 which provides just the Visual C++ build
+     tools: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2019
+   1. Download the installer and run it.
+   2. Select the "Individual Components" tab and check "Windows 10 SDK"
+   3. Select the "Language Packs" tab and make sure that at least "English" is selected
+   4. Click "Install"
+   5. Let it download and reboot if asked
+3. Install [rust](https://forge.rust-lang.org/infra/other-installation-methods.html#other-ways-to-install-rustup)
+   1. Download [rust-init.exe](https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe)
+   2. Run it and accept the defaults
+ 
+
+### Read the individual tools' documentation
+
+Details on how to build the tools and use them are available in each tool's README.
+
+[CloudFormation Guard](cfn-guard/README.md)
+
+[CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
+
+[CloudFormation Guard Rulegen](cfn-guard-rulegen/README.md)
+
+## Using the Makefile
+
+The primary interface to the toolchain is the [Makefile](Makefile).  To build the binaries or deploy the lambda you want, simply run their make target (eg `make cfn-guard-rulegen`).  A copy of the resulting binary will be moved to the top-level `cfn-guard-toolchain/bin/` directory.  (Note that the files inside `bin/` aren't version-controlled, though.)
+
+`cfn-guard-lambda` is a little trickier since it's a lambda, not a binary, and therefore has different steps for `install` and `update`.  It also requires you to set up some things before you can deploy it from the Makefile.  (Please see [its documentation](cfn-guard-lambda/README.md) for more information.). Once it's set up, it can be deployed from the top-level Makefile with targets for `cfn-guard-lambda_install` and `cfn-guard-lambda_update`.
+
+## Grabbing a copy to distribute
+
+There are two make targets that package up the source without the git history, etc.
+
+`make release` will package the source into a file called `cloudformation-guard.tar.gz` without the git history.
+
+`make release_with_binaries` will first do a `cargo build --release` for both `cfn-guard-rulegen` and `cfn-guard` targeting whatever architecture the make command is run on (eg, your laptop's OS), placing the binaries in the `cloudformation-guard/bin/` directory.  From there, it tars them and the necessary source files into `cloudformation-guard.tar.gz`.  (NOTE: Mail messages with binaries in zip files may get blocked by spam filters.)
+
+## Frequently Asked Questions
+
+### Q: Why should you use Guard?
+
+A: Guard solves a number of use-cases:
+
+* It can be used to check repositories of CloudFormation templates for policy violations with automation.
+* It can be a deployment gate in a CI/CD pipeline. 
+* It allows you to define a single source-of-truth for what constitutes valid infrastructure definitions. Define rules once and have them run both locally and as lambdas in your AWS account for integration with other AWS services.
+* It allows for pre-deployment safety checks of your CloudFormation template resources. You can both require settings to be included and prohibit configurations that have caused issues previously.  
+* It's easy to get started.  You can extract rules you want from existing, known-good templates using the CloudFormation Guard Rulegen auto-generation tool.
+
+
+### Q: How does CloudFormation Guard relate to other services?
+A: Guard is a command-line tool with the ability to check local CloudFormation templates.  It can also deploy as an AWS Lambda Function and be linked to other AWS services that have Lambda integration.
+
 
 ## License
-
 This project is licensed under the Apache-2.0 License.
-
