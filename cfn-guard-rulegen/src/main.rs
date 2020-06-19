@@ -4,12 +4,12 @@ use std::process;
 #[macro_use]
 extern crate log;
 extern crate simple_logger;
-use clap::{App, Arg};
+use clap::{crate_version, App, Arg};
 use log::Level;
 
 fn main() {
     let matches = App::new("CloudFormation Guard RuleGen")
-        .version("0.5.0")
+        .version(crate_version!())
         .about("Generate cfn-guard rules from a CloudFormation template")
         .arg(Arg::with_name("TEMPLATE").index(1).required(true))
         .arg(

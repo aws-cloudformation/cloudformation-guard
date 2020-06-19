@@ -5,12 +5,12 @@ use std::process;
 extern crate log;
 extern crate lazy_static;
 extern crate simple_logger;
-use clap::{App, Arg};
+use clap::{crate_version, App, Arg};
 use log::Level;
 
 fn main() {
     let matches = App::new("CloudFormation Guard")
-        .version("0.5.0")
+        .version(crate_version!())
         .about("Check CloudFormation templates against rules")
         .arg(
             Arg::with_name("template")
