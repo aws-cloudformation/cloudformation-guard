@@ -1,4 +1,4 @@
-.PHONY: cfn-guard cfn-guard-rulegen
+.PHONY: cfn-guard cfn-guard-rulegen cargo_test_all
 
 cfn-guard:
 	cd cfn-guard; cargo build --release; cp target/release/cfn-guard ../bin
@@ -20,3 +20,8 @@ release_with_binaries: clean cfn-guard cfn-guard-rulegen
 
 release: clean
 	tar czvf cloudformation-guard.tar.gz -X Exclude.txt .
+
+cargo_test_all:
+	cd cfn-guard && cargo test -- --nocapture
+	cd cfn-guard-lambda && cargo test -- --nocapture
+	cd cfn-guard-rulegen && cargo test -- --nocapture
