@@ -1,6 +1,6 @@
 // © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 
 use log::{self, debug, trace};
@@ -126,7 +126,7 @@ fn process_and_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Compo
 
 fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> Vec<Rule> {
     trace!("Entered destructure_rule");
-    let mut rules: Vec<Rule> = vec![];
+    let mut rules_hash: HashSet<Rule> = HashSet::new();
     let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
         Some(c) => c,
         None => RULE_REG.captures(rule_text).unwrap(),
@@ -134,19 +134,16 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 
     trace!("Parsed rule's captures are: {:#?}", &caps);
     let mut props: Vec<String> = vec![];
-    if caps["resource_property"].contains("*") {
+    if caps["resource_property"].contains('*') {
         for (_name, value) in cfn_resources {
             if caps["resource_type"] == value["Type"] {
-                match expand_wildcard_props(
+                if let Some(p) = expand_wildcard_props(
                     &value["Properties"],
                     caps["resource_property"].to_string(),
                     String::from(""),
                 ) {
-                    Some(p) => {
-                        props.append(&mut p.clone());
-                        trace!("Expanded props are {:#?}", &props);
-                    }
-                    None => (),
+                    props.append(&mut p.clone());
+                    trace!("Expanded props are {:#?}", &props);
                 }
             }
         }
@@ -155,7 +152,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     };
 
     for p in props {
-        rules.push(Rule {
+        rules_hash.insert(Rule {
             resource_type: caps["resource_type"].to_string(),
             field: p.to_string(),
             operation: {
@@ -168,7 +165,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 }
             },
             rule_vtype: {
-                let rv = caps["rule_value"].chars().nth(0).unwrap();
+                let rv = caps["rule_value"].chars().next().unwrap();
                 match rv {
                     '[' => match &caps["operator"] {
                         "==" | "!=" => RValueType::Value,
@@ -181,7 +178,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 }
             },
             value: {
-                let rv = caps["rule_value"].chars().nth(0).unwrap();
+                let rv = caps["rule_value"].chars().next().unwrap();
                 match rv {
                     '/' => caps["rule_value"].trim_matches('/').to_string(),
                     _ => caps["rule_value"].to_string().trim().to_string(),
@@ -191,9 +188,10 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 Some(s) => Some(s.as_str().to_string()),
                 None => None,
             },
-        })
+        });
     }
 
+    let rules = rules_hash.into_iter().collect::<Vec<Rule>>();
     trace!("Destructured rules are: {:#?}", &rules);
     rules
 }

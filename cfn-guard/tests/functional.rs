@@ -970,8 +970,6 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![String::from("[EndpointCloudWatchRoleC3C64E0F] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted"),
-                  String::from("[EndpointCloudWatchRoleC3C64E0F] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted"),
-                  String::from("[HelloHandlerServiceRole11EF7C63] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted"),
                   String::from("[HelloHandlerServiceRole11EF7C63] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted")],
              2)
         );
