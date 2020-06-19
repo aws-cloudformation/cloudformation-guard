@@ -56,4 +56,3 @@ pub mod structs {
         pub(crate) rule_set: Vec<CompoundRule>,
     }
 }
-

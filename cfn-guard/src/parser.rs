@@ -15,21 +15,27 @@ use lazy_static::lazy_static;
 // This sets it up so the regexen only get compiled once
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
 lazy_static! {
-        static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
-        static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
-        static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
-        static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
-        static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
-            r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
-    }
+    static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
+    static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
+    static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
+    static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
+    static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
+        r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
+}
 
 pub(crate) fn parse_rules(
     rules_file_contents: &str,
     cfn_resources: &HashMap<String, Value>,
 ) -> ParsedRuleSet {
     debug!("Entered parse_rules");
-    trace!("Parse rules entered with rules_file_contents: {:#?}", &rules_file_contents);
-    trace!("Parse rules entered with cfn_resources: {:#?}", &cfn_resources);
+    trace!(
+        "Parse rules entered with rules_file_contents: {:#?}",
+        &rules_file_contents
+    );
+    trace!(
+        "Parse rules entered with cfn_resources: {:#?}",
+        &cfn_resources
+    );
 
     let mut rule_set: Vec<CompoundRule> = vec![];
     let mut variables = HashMap::new();
@@ -104,7 +110,7 @@ fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Compou
     let mut rules: Vec<Rule> = vec![];
     for b in branches {
         rules.append(destructure_rule(b.trim(), cfn_resources).as_mut());
-    };
+    }
     CompoundRule {
         compound_type: CompoundType::OR,
         rule_list: rules,
@@ -123,7 +129,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     let mut rules: Vec<Rule> = vec![];
     let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
         Some(c) => c,
-        None => RULE_REG.captures(rule_text).unwrap()
+        None => RULE_REG.captures(rule_text).unwrap(),
     };
 
     trace!("Parsed rule's captures are: {:#?}", &caps);
@@ -131,12 +137,16 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     if caps["resource_property"].contains("*") {
         for (_name, value) in cfn_resources {
             if caps["resource_type"] == value["Type"] {
-                match expand_wildcard_props( &value["Properties"],caps["resource_property"].to_string(), String::from("")) {
+                match expand_wildcard_props(
+                    &value["Properties"],
+                    caps["resource_property"].to_string(),
+                    String::from(""),
+                ) {
                     Some(p) => {
                         props.append(&mut p.clone());
                         trace!("Expanded props are {:#?}", &props);
-                    },
-                    None => ()
+                    }
+                    None => (),
                 }
             }
         }
@@ -145,45 +155,43 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     };
 
     for p in props {
-        rules.push(
-            Rule {
-                resource_type: caps["resource_type"].to_string(),
-                field: p.to_string(),
-                operation: {
-                    match &caps["operator"] {
-                        "==" => OpCode::Require,
-                        "!=" => OpCode::RequireNot,
-                        "IN" => OpCode::In,
-                        "NOT_IN" => OpCode::NotIn,
+        rules.push(Rule {
+            resource_type: caps["resource_type"].to_string(),
+            field: p.to_string(),
+            operation: {
+                match &caps["operator"] {
+                    "==" => OpCode::Require,
+                    "!=" => OpCode::RequireNot,
+                    "IN" => OpCode::In,
+                    "NOT_IN" => OpCode::NotIn,
+                    _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
+                }
+            },
+            rule_vtype: {
+                let rv = caps["rule_value"].chars().nth(0).unwrap();
+                match rv {
+                    '[' => match &caps["operator"] {
+                        "==" | "!=" => RValueType::Value,
+                        "IN" | "NOT_IN" => RValueType::List,
                         _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
-                    }
-                },
-                rule_vtype: {
-                    let rv = caps["rule_value"].chars().nth(0).unwrap();
-                    match rv {
-                        '[' => match &caps["operator"] {
-                            "==" | "!=" => RValueType::Value,
-                            "IN" | "NOT_IN" => RValueType::List,
-                            _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
-                        },
-                        '/' => RValueType::Regex,
-                        '%' => RValueType::Variable,
-                        _ => RValueType::Value,
-                    }
-                },
-                value: {
-                    let rv = caps["rule_value"].chars().nth(0).unwrap();
-                    match rv {
-                        '/' => caps["rule_value"].trim_matches('/').to_string(),
-                        _ => caps["rule_value"].to_string().trim().to_string(),
-                    }
-                },
-                custom_msg: match caps.name("custom_msg") {
-                    Some(s) => Some(s.as_str().to_string()),
-                    None => None
-                },
-            }
-        )
+                    },
+                    '/' => RValueType::Regex,
+                    '%' => RValueType::Variable,
+                    _ => RValueType::Value,
+                }
+            },
+            value: {
+                let rv = caps["rule_value"].chars().nth(0).unwrap();
+                match rv {
+                    '/' => caps["rule_value"].trim_matches('/').to_string(),
+                    _ => caps["rule_value"].to_string().trim().to_string(),
+                }
+            },
+            custom_msg: match caps.name("custom_msg") {
+                Some(s) => Some(s.as_str().to_string()),
+                None => None,
+            },
+        })
     }
 
     trace!("Destructured rules are: {:#?}", &rules);

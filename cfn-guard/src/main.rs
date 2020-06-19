@@ -44,7 +44,7 @@ fn main() {
             Arg::with_name("strict-checks")
                 .short("s")
                 .long("strict-checks")
-                .help("Fail resources if they're missing the property that a rule checks")
+                .help("Fail resources if they're missing the property that a rule checks"),
         )
         .get_matches();
 
@@ -67,7 +67,12 @@ fn main() {
         &template_file, &rule_set_file
     );
 
-    let (result, exit_code) = cfn_guard::run(template_file, rule_set_file, matches.is_present("strict-checks")).unwrap_or_else(|err| {
+    let (result, exit_code) = cfn_guard::run(
+        template_file,
+        rule_set_file,
+        matches.is_present("strict-checks"),
+    )
+    .unwrap_or_else(|err| {
         println!("Problem checking template: {}", err);
         process::exit(1);
     });

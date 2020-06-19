@@ -1,9 +1,9 @@
 // © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
 // Tests
+use cfn_guard;
 use std::env;
 use std::fs;
-use cfn_guard;
 
 mod tests {
     use super::*;
@@ -30,7 +30,8 @@ mod tests {
 
     #[test]
     fn test_lax_boolean_correction() {
-        let mut template_contents = String::from(r#"
+        let mut template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -50,7 +51,8 @@ mod tests {
                     }
                 }
             }
-        }"#);
+        }"#,
+        );
         let mut rules_file_contents = String::from("AWS::EC2::Volume Encrypted == true");
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
@@ -62,7 +64,8 @@ mod tests {
             (vec![], 0)
         );
 
-        template_contents = String::from(r#"
+        template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -82,8 +85,9 @@ mod tests {
                     }
                 }
             }
-        }"#);
-       rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
+        }"#,
+        );
+        rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![], 0)
@@ -95,7 +99,8 @@ mod tests {
             (vec![], 0)
         );
 
-        template_contents = String::from(r#"
+        template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -115,7 +120,8 @@ mod tests {
                     }
                 }
             }
-        }"#);
+        }"#,
+        );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
@@ -128,7 +134,8 @@ mod tests {
             (vec![], 0)
         );
 
-        template_contents = String::from(r#"
+        template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -146,7 +153,8 @@ mod tests {
                     }
                 }
             }
-        }"#);
+        }"#,
+        );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false),
@@ -162,53 +170,76 @@ mod tests {
 
     #[test]
     fn test_fail_on_regex_require_not_match() {
-        let template_contents =
-            fs::read_to_string("tests/ebs_volume_template.json")
-                .unwrap_or_else(|err| format!("{}", err));
+        let template_contents = fs::read_to_string("tests/ebs_volume_template.json")
+            .unwrap_or_else(|err| format!("{}", err));
         let rules_file_content = String::from(r#"AWS::EC2::Volume Encrypted != /true/"#);
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_content, true),
-            (vec![String::from(r#"[NewVolume2] failed because [Encrypted] is [true] and the pattern [true] is not permitted"#),
-                  String::from(r#"[NewVolume] failed because [Encrypted] is [true] and the pattern [true] is not permitted"#)],
-                  2)
+            (
+                vec![
+                    String::from(
+                        r#"[NewVolume2] failed because [Encrypted] is [true] and the pattern [true] is not permitted"#
+                    ),
+                    String::from(
+                        r#"[NewVolume] failed because [Encrypted] is [true] and the pattern [true] is not permitted"#
+                    )
+                ],
+                2
+            )
         );
     }
 
     #[test]
     fn test_fail_on_regex_require_not_match_custom_message() {
-        let template_contents =
-            fs::read_to_string("tests/ebs_volume_template.json")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_content = String::from(r#"AWS::EC2::Volume Encrypted != /true/ << lorem ipsum"#);
+        let template_contents = fs::read_to_string("tests/ebs_volume_template.json")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_content =
+            String::from(r#"AWS::EC2::Volume Encrypted != /true/ << lorem ipsum"#);
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_content, true),
-            (vec![String::from(r#"[NewVolume2] failed because [Encrypted] is [true] and lorem ipsum"#),
-                  String::from(r#"[NewVolume] failed because [Encrypted] is [true] and lorem ipsum"#)],
-             2)
+            (
+                vec![
+                    String::from(
+                        r#"[NewVolume2] failed because [Encrypted] is [true] and lorem ipsum"#
+                    ),
+                    String::from(
+                        r#"[NewVolume] failed because [Encrypted] is [true] and lorem ipsum"#
+                    )
+                ],
+                2
+            )
         );
     }
 
     #[test]
     fn test_fail_require_not_custom_message() {
-        let template_contents =
-            fs::read_to_string("tests/ebs_volume_template.json")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_content = String::from(r#"AWS::EC2::Volume Encrypted != true << lorem ipsum"#);
+        let template_contents = fs::read_to_string("tests/ebs_volume_template.json")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_content =
+            String::from(r#"AWS::EC2::Volume Encrypted != true << lorem ipsum"#);
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_content, true),
-            (vec![String::from(r#"[NewVolume2] failed because [Encrypted] is [true] and lorem ipsum"#),
-                  String::from(r#"[NewVolume] failed because [Encrypted] is [true] and lorem ipsum"#)],
-             2)
+            (
+                vec![
+                    String::from(
+                        r#"[NewVolume2] failed because [Encrypted] is [true] and lorem ipsum"#
+                    ),
+                    String::from(
+                        r#"[NewVolume] failed because [Encrypted] is [true] and lorem ipsum"#
+                    )
+                ],
+                2
+            )
         );
     }
 
     #[test]
     fn test_bad_template() {
-        let template_contents =
-            fs::read_to_string("tests/broken_template_file.json")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents = fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
+        let template_contents = fs::read_to_string("tests/broken_template_file.json")
             .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents =
+            fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
+                .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![String::from("ERROR:  Template file format was unreadable as json or yaml: invalid type: string \"THIS IS MEANT TO BE INVALID\", expected a map at line 1 column 1")], 1)
@@ -217,11 +248,11 @@ mod tests {
 
     #[test]
     fn test_custom_fail_message_pass() {
-        let template_contents =
-            fs::read_to_string("tests/ebs_volume_template.json")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents = fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
+        let template_contents = fs::read_to_string("tests/ebs_volume_template.json")
             .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents =
+            fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
+                .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![], 0)
@@ -237,11 +268,11 @@ mod tests {
         // Since an |OR| is a join of two discrete rules, you can see how the first half lacks a custom message.
         // I decided to leave that detail in the results to underscore the behavior so that it doesn't get
         // lost in the shuffle.
-        let template_contents =
-            fs::read_to_string("tests/ebs_volume_template.json")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents = fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.failing")
+        let template_contents = fs::read_to_string("tests/ebs_volume_template.json")
             .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents =
+            fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.failing")
+                .unwrap_or_else(|err| format!("{}", err));
         let mut outcome = vec![
             String::from("[NewVolume2] failed because [Encrypted] is [true] and enc lorem ipsum"),
             String::from("[NewVolume2] failed because [Size] is [99] and or lorem ipsum"),
@@ -263,7 +294,8 @@ mod tests {
 
     #[test]
     fn test_not_in_list_fail() {
-        let template_contents = String::from(r#"
+        let template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -283,7 +315,8 @@ mod tests {
                     }
                 }
             }
-        }"#);
+        }"#,
+        );
 
         let rules_file_contents = fs::read_to_string("tests/test_not_in_list_fail.ruleset")
             .unwrap_or_else(|err| format!("{}", err));
@@ -298,7 +331,8 @@ mod tests {
 
     #[test]
     fn test_in_list_fail_custom_message() {
-        let template_contents = String::from(r#"
+        let template_contents = String::from(
+            r#"
                 {
             "Resources": {
                 "NewVolume" : {
@@ -318,10 +352,12 @@ mod tests {
                     }
                 }
             }
-        }"#);
+        }"#,
+        );
 
-        let rules_file_contents = fs::read_to_string("tests/test_in_list_fail_custom_message.ruleset")
-            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents =
+            fs::read_to_string("tests/test_in_list_fail_custom_message.ruleset")
+                .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![
@@ -890,9 +926,8 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
 
     #[test]
     fn test_diff_wildcard_type_pass() {
-        let template_contents =
-            fs::read_to_string("tests/aws-waf-security-automations.template")
-                .unwrap_or_else(|err| format!("{}", err));
+        let template_contents = fs::read_to_string("tests/aws-waf-security-automations.template")
+            .unwrap_or_else(|err| format!("{}", err));
         let rules_file_contents = fs::read_to_string("tests/wildcard_iam_rule_set.passing")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
@@ -903,12 +938,10 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
 
     #[test]
     fn test_diff_wildcard_type_fail() {
-        let template_contents =
-            fs::read_to_string("tests/aws-waf-security-automations.template")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents =
-            fs::read_to_string("tests/wildcard_not_in_iam_rule_set.failing")
-                .unwrap_or_else(|err| format!("{}", err));
+        let template_contents = fs::read_to_string("tests/aws-waf-security-automations.template")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = fs::read_to_string("tests/wildcard_not_in_iam_rule_set.failing")
+            .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![String::from("[LambdaRoleHelper] failed because [lambda.amazonaws.com] is in [lambda.amazonaws.com, ec2.amazonaws.com] which is not permitted for [AssumeRolePolicyDocument.Statement.0.Principal.Service.0]"), ],
@@ -950,11 +983,14 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         // That shows up as an empty "error:  test failed"
         // Try running with "cargo test -- --nocapture"
         // If you see "Could not load value"... then it's the process exit
-        let template_contents =
-            fs::read_to_string("tests/test_do_not_fail_when_type_lacks_property_for_wildcard.template")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents = fs::read_to_string("tests/test_do_not_fail_when_type_lacks_property_for_wildcard.ruleset")
-            .unwrap_or_else(|err| format!("{}", err));
+        let template_contents = fs::read_to_string(
+            "tests/test_do_not_fail_when_type_lacks_property_for_wildcard.template",
+        )
+        .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = fs::read_to_string(
+            "tests/test_do_not_fail_when_type_lacks_property_for_wildcard.ruleset",
+        )
+        .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true),
             (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
@@ -971,11 +1007,14 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         // That shows up as an empty "error:  test failed"
         // Try running with "cargo test -- --nocapture"
         // If you see "Could not load value"... then it's the process exit
-        let template_contents =
-            fs::read_to_string("tests/test_do_not_fail_when_type_lacks_property_for_wildcard.template")
-                .unwrap_or_else(|err| format!("{}", err));
-        let rules_file_contents = fs::read_to_string("tests/test_do_not_fail_when_type_lacks_property_for_wildcard.ruleset")
-            .unwrap_or_else(|err| format!("{}", err));
+        let template_contents = fs::read_to_string(
+            "tests/test_do_not_fail_when_type_lacks_property_for_wildcard.template",
+        )
+        .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = fs::read_to_string(
+            "tests/test_do_not_fail_when_type_lacks_property_for_wildcard.ruleset",
+        )
+        .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false),
             (vec![String::from("[NewVolume] failed because [Tags.0.Key] is [uaid] and the permitted value is [uai]"),
