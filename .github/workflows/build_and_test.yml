@@ -1,1 +1,33 @@
-# TODO add stuff
+name: build_and_test
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the master branch
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+        
+jobs:
+  testbuild:
+    name: Testing on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        include:
+          - os: ubuntu-latest
+            testcmd: "make cargo_test_all"
+          - os: windows-latest
+            testcmd: "choco install make && make cargo_test_all"
+          - os: macOS-latest
+            testcmd: "make cargo_test_all"
+    steps:
+      - uses: actions/checkout@v1
+      - name: Running on {{ matrix.os }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - run: ${{ matrix.testcmd }}
