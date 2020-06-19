@@ -83,14 +83,14 @@ pub(crate) fn parse_rules(
 }
 
 fn find_line_type(line: &str) -> LineType {
+    if COMMENT_REG.is_match(line) {
+        return LineType::Comment;
+    };
     if ASSIGN_REG.is_match(line) {
         return LineType::Assignment;
     };
     if RULE_REG.is_match(line) {
         return LineType::Rule;
-    };
-    if COMMENT_REG.is_match(line) {
-        return LineType::Comment;
     };
     panic!("BAD RULE: {:?}", line)
 }
@@ -194,4 +194,18 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     let rules = rules_hash.into_iter().collect::<Vec<Rule>>();
     trace!("Destructured rules are: {:#?}", &rules);
     rules
+}
+
+mod tests {
+    use crate::parser::find_line_type;
+
+    #[test]
+    fn test_find_line_type() {
+        let comment = find_line_type("# This is a comment");
+        let assignment = find_line_type("let x = assignment");
+        let rule = find_line_type("AWS::EC2::Volume Encryption == true");
+        assert_eq!(comment, crate::enums::LineType::Comment);
+        assert_eq!(assignment, crate::enums::LineType::Assignment);
+        assert_eq!(rule, crate::enums::LineType::Rule);
+    }
 }

@@ -2,7 +2,7 @@
 // Structs, Enums and Impls
 
 pub mod enums {
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub enum LineType {
         Assignment,
         Comment,
