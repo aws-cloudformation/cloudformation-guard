@@ -44,7 +44,10 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     for (name, cfn_resource) in cfn_resources {
         trace!("{} is {:?}", name, &cfn_resource);
         let props: HashMap<String, Value> =
-            serde_json::from_value(cfn_resource["Properties"].clone()).unwrap();
+            match serde_json::from_value(cfn_resource["Properties"].clone()) {
+                Ok(s) => s,
+                Err(_) => continue
+            };
         for (prop_name, prop_val) in props {
             let stripped_val = match prop_val.as_str() {
                 Some(v) => String::from(v),
@@ -79,3 +82,4 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     }
     rule_set.into_iter().collect()
 }
+
