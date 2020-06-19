@@ -197,6 +197,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 }
 
 mod tests {
+    #[cfg(test)]
     use crate::parser::find_line_type;
 
     #[test]
