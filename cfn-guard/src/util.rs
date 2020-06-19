@@ -14,9 +14,7 @@ lazy_static! {
         Regex::new(r"[:=]\s*([fF]alse|[tT]rue)\s*([,}]+|$)").unwrap();
 }
 pub fn fix_stringified_bools(fstr: &str) -> String {
-    let after = STRINGIFIED_BOOLS.replace_all(fstr, |caps: &Captures| {
-        format!("{}", &caps[0].to_lowercase())
-    });
+    let after = STRINGIFIED_BOOLS.replace_all(fstr, |caps: &Captures| caps[0].to_lowercase());
     after.to_string()
 }
 
@@ -153,20 +151,19 @@ pub fn expand_wildcard_props(
         &address,
         &accumulator
     );
-    let mut segments = address.split("*").collect::<Vec<&str>>();
+    let mut segments = address.split('*').collect::<Vec<&str>>();
     trace!("Segments are {:#?}", &segments);
     let segment = segments.remove(0);
     trace!("Processing segment {:#?}", &segment);
     if segment != "" {
         let mut expanded_props: Vec<String> = vec![];
-        let s = segment.trim_end_matches(".").trim_start_matches(".");
-        let steps = s.split(".").collect::<Vec<&str>>();
+        let s = segment.trim_end_matches('.').trim_start_matches('.');
+        let steps = s.split('.').collect::<Vec<&str>>();
         match get_resource_prop_value(props, &steps) {
             Ok(v) => match v.as_array() {
                 Some(result_array) => {
                     trace!("Value is an array");
-                    let mut counter = 0;
-                    for r in result_array {
+                    for (counter, r) in result_array.iter().enumerate() {
                         trace!("Counter is {:#?}", counter);
                         let next_segment = segments.join("*");
                         trace!("next_segment is {:#?}", &next_segment);
@@ -176,7 +173,6 @@ pub fn expand_wildcard_props(
                             Some(result) => expanded_props.append(&mut result.clone()),
                             None => return None,
                         }
-                        counter += 1;
                     }
                 }
                 None => expanded_props.push(format!("{}{}", accumulator, segment)),
@@ -193,8 +189,6 @@ pub fn expand_wildcard_props(
 mod tests {
     #[cfg(test)]
     use crate::util::expand_wildcard_props;
-    #[cfg(test)]
-    use serde_yaml;
     #[cfg(test)]
     use std::collections::HashMap;
 

@@ -33,7 +33,7 @@ pub fn run(
     trace!(
         "Rules file is '{}' and its contents are: {}",
         rules_file,
-        format!("{}", rules_file_contents)
+        rules_file_contents.to_string()
     );
 
     let (outcome, exit_code) = run_check(&template_contents, &rules_file_contents, strict_checks);
@@ -140,16 +140,13 @@ fn check_resources(
             }
             enums::CompoundType::AND => {
                 for rule in &c_rule.rule_list {
-                    match apply_rule(
+                    if let Some(rule_result) = apply_rule(
                         &cfn_resources,
                         &rule,
                         &parsed_rule_set.variables,
                         strict_checks,
                     ) {
-                        Some(rule_result) => {
-                            result.extend(rule_result);
-                        }
-                        None => (),
+                        result.extend(rule_result);
                     }
                 }
             }
@@ -345,10 +342,7 @@ fn apply_rule_operation(
             let value_vec = util::convert_list_var_to_vec(rule_val);
             let val_as_string = match val.as_str() {
                 Some(s) => s.to_string(),
-                None => {
-                    let serde_string = serde_json::to_string(val).unwrap();
-                    serde_string
-                }
+                None => serde_json::to_string(val).unwrap(),
             };
             if !value_vec.contains(&util::strip_ws_nl(val_as_string)) {
                 info!("Result: FAIL");
@@ -377,10 +371,7 @@ fn apply_rule_operation(
             let value_vec = util::convert_list_var_to_vec(rule_val);
             let val_as_string = match val.as_str() {
                 Some(s) => s.to_string(),
-                None => {
-                    let serde_string = serde_json::to_string(val).unwrap();
-                    serde_string
-                }
+                None => serde_json::to_string(val).unwrap(),
             };
             if value_vec.contains(&util::strip_ws_nl(val_as_string)) {
                 info!("Result: FAIL");

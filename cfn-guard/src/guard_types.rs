@@ -9,10 +9,7 @@ pub mod enums {
         Rule,
     }
 
-    #[derive(Debug)]
-    #[derive(Hash)]
-    #[derive(PartialEq, Eq)]
-    #[derive(Clone)]
+    #[derive(Debug, Hash, PartialEq, Eq, Clone)]
     pub enum OpCode {
         Require,
         RequireNot,
@@ -20,18 +17,14 @@ pub mod enums {
         NotIn,
     }
 
-    #[derive(Debug)]
-    #[derive(Hash)]
-    #[derive(PartialEq, Eq)]
-    #[derive(Clone)]
+    #[derive(Debug, Hash, PartialEq, Eq, Clone)]
     pub enum RValueType {
         Value,
         List,
         Regex,
         Variable,
     }
-    #[derive(Debug)]
-    #[derive(Clone)]
+    #[derive(Debug, Clone)]
     pub enum CompoundType {
         OR,
         AND,
@@ -41,10 +34,7 @@ pub mod enums {
 pub mod structs {
     use std::collections::HashMap;
 
-    #[derive(Debug)]
-    #[derive(Hash)]
-    #[derive(Eq)]
-    #[derive(Clone)]
+    #[derive(Debug, Hash, Eq, PartialEq, Clone)]
     pub struct Rule {
         pub(crate) resource_type: String,
         pub(crate) field: String,
@@ -52,14 +42,6 @@ pub mod structs {
         pub(crate) value: String,
         pub(crate) rule_vtype: super::enums::RValueType,
         pub(crate) custom_msg: Option<String>,
-    }
-
-    impl PartialEq for Rule {
-        fn eq(&self, other: &Rule) -> bool {
-            let self_string: String = format!("{:#?}", self);
-            let other_string: String = format!("{:#?}", other);
-            self_string == other_string
-        }
     }
 
     #[derive(Debug)]

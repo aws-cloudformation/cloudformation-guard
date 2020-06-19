@@ -52,7 +52,7 @@ fn main() {
         0 => Level::Error,
         1 => Level::Info,
         2 => Level::Debug,
-        3 | _ => Level::Trace,
+        _ => Level::Trace,
     };
 
     simple_logger::init_with_level(log_level).unwrap();
