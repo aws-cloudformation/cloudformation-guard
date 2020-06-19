@@ -10,13 +10,18 @@ use serde_json::Value;
 use crate::guard_types::enums::{CompoundType, LineType, OpCode, RValueType};
 use crate::guard_types::structs::{CompoundRule, ParsedRuleSet, Rule};
 use crate::util::expand_wildcard_props;
+use lazy_static::lazy_static;
 
-// TODO:  Move consts to lazy_static
-// const assign_reg: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
-// const rule_reg: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
-// const rule_with_optional_message_reg: Regex = Regex::new(
-// r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
-// const comment_reg: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
+// This sets it up so the regexen only get compiled once
+// See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
+lazy_static! {
+        static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
+        static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
+        static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
+        static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
+        static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
+            r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
+    }
 
 pub(crate) fn parse_rules(
     rules_file_contents: &str,
@@ -25,6 +30,7 @@ pub(crate) fn parse_rules(
     debug!("Entered parse_rules");
     trace!("Parse rules entered with rules_file_contents: {:#?}", &rules_file_contents);
     trace!("Parse rules entered with cfn_resources: {:#?}", &cfn_resources);
+
     let mut rule_set: Vec<CompoundRule> = vec![];
     let mut variables = HashMap::new();
 
@@ -71,30 +77,24 @@ pub(crate) fn parse_rules(
 }
 
 fn find_line_type(line: &str) -> LineType {
-    let assign_reg: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
-    let rule_reg: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
-    let comment_reg: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
-
-    if assign_reg.is_match(line) {
+    if ASSIGN_REG.is_match(line) {
         return LineType::Assignment;
     };
-    if rule_reg.is_match(line) {
+    if RULE_REG.is_match(line) {
         return LineType::Rule;
     };
-    if comment_reg.is_match(line) {
+    if COMMENT_REG.is_match(line) {
         return LineType::Comment;
     };
     panic!("BAD RULE: {:?}", line)
 }
 
 fn process_assignment(line: &str) -> Captures {
-    let assign_reg: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
-    assign_reg.captures(line).unwrap()
+    ASSIGN_REG.captures(line).unwrap()
 }
 
 fn is_or_rule(line: &str) -> bool {
-    let wildcard_or_rule_reg: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
-    line.contains("|OR|") || wildcard_or_rule_reg.is_match(line)
+    line.contains("|OR|") || WILDCARD_OR_RULE_REG.is_match(line)
 }
 
 fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
@@ -120,13 +120,10 @@ fn process_and_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Compo
 
 fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> Vec<Rule> {
     trace!("Entered destructure_rule");
-    let rule_with_optional_message_reg: Regex = Regex::new(
-        r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
-    let rule_reg: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
     let mut rules: Vec<Rule> = vec![];
-    let caps = match rule_with_optional_message_reg.captures(rule_text) {
+    let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
         Some(c) => c,
-        None => rule_reg.captures(rule_text).unwrap()
+        None => RULE_REG.captures(rule_text).unwrap()
     };
 
     trace!("Parsed rule's captures are: {:#?}", &caps);

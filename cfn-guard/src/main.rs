@@ -3,6 +3,7 @@
 use std::process;
 #[macro_use]
 extern crate log;
+extern crate lazy_static;
 extern crate simple_logger;
 use clap::{App, Arg};
 use log::Level;
