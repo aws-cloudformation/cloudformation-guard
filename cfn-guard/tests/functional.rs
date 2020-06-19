@@ -804,12 +804,14 @@ AWS::EC2::Volume Encrypted != %require_encryption"#,
         );
         let rules_file_contents = String::from(
             r#"
-AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 |OR| AWS::EC2::Volume Size <= 99 |OR| AWS::EC2::Volume Size => 102"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
             (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
-                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"), ],
+                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),
+                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [<= 99]"),
+                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [=> 102]"), ],
              2)
         );
     }
