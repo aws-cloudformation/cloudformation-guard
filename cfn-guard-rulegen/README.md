@@ -2,6 +2,27 @@
 
 A CLI tool to automatically generate [CloudFormation Guard](https://github.com/aws-cloudformation/cloudformation-guard) rules from CloudFormation Templates.
 
+### Runtime Arguments
+
+Rulegen uses the Rust Clap library to parse arguments.  Its `--help` output will show you what options are available:
+
+```
+$> cfn-guard-rulegen --help
+
+CloudFormation Guard RuleGen
+Generate CloudFormation Guard rules from a CloudFormation template
+
+USAGE:
+    cfn-guard-rulegen [FLAGS] <TEMPLATE>
+
+FLAGS:
+    -h, --help       Prints help information
+    -v               Sets the level of verbosity - add v's to increase output
+    -V, --version    Prints version information
+
+ARGS:
+    <TEMPLATE> 
+```
 # Example
 
 If you supply the `cfn-guard-rulegen` tool with a CloudFormation template:
@@ -126,27 +147,6 @@ will compile the release binary and drop it in the `bin/` directory under the di
 1. Run `cargo build --release`.
 2. Run the binary with `target\release\cfn-guard-rulegen.exe`
 
-### Runtime Arguments
-
-Rulegen uses the Rust Clap library to parse arguments.  Its `--help` output will show you what options are available:
-
-```
-$> cfn-guard-rulegen --help
-
-CloudFormation Guard RuleGen 0.5.0
-Generate CloudFormation Guard rules from a CloudFormation template
-
-USAGE:
-    cfn-guard-rulegen [FLAGS] <TEMPLATE>
-
-FLAGS:
-    -h, --help       Prints help information
-    -v               Sets the level of verbosity - add v's to increase output
-    -V, --version    Prints version information
-
-ARGS:
-    <TEMPLATE> 
-```
 
 ### Logging
 
