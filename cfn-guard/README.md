@@ -109,6 +109,13 @@ The available operations are:
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
 
+## Comments
+
+Comments can be added to a rule set via the `#` operator:
+```
+# This is a comment
+```
+
 
 ## Rule Logic
 
