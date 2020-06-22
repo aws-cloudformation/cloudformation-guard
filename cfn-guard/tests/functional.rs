@@ -840,14 +840,51 @@ AWS::EC2::Volume Encrypted != %require_encryption"#,
         );
         let rules_file_contents = String::from(
             r#"
-AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 |OR| AWS::EC2::Volume Size <= 99 |OR| AWS::EC2::Volume Size => 102"#,
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
             (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
-                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),
-                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [<= 99]"),
-                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [=> 102]"), ],
+                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"), ],
+             2)
+        );
+    }
+
+    #[test]
+    fn test_or_should_pass_numeric() {
+        let template_file_contents = String::from(
+            r#"{
+            "Resources": {
+                "NewVolume" : {
+                    "Type" : "AWS::EC2::Volume",
+                    "Properties" : {
+                        "Size" : 100,
+                        "Encrypted" : true,
+                        "AvailabilityZone" : "us-east-1b",
+                        "DeletionPolicy" : "Snapshot"
+                    }
+                },
+                "NewVolume2" : {
+                    "Type" : "AWS::EC2::Volume",
+                    "Properties" : {
+                        "Size" : 101,
+                        "Encrypted" : true,
+                        "AvailabilityZone" : "us-east-1b",
+                        "DeletionPolicy" : "Snapshot"
+                    }
+                }
+            }
+        }"#,
+        );
+        let rules_file_contents = String::from(
+            r#"
+AWS::EC2::Volume Size < 101 |OR| AWS::EC2::Volume Size <= 100 |OR| AWS::EC2::Volume Size >= 102"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            (vec![String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [< 101]"),
+                String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [<= 100]"),
+                String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [>= 102]"), ],
              2)
         );
     }
