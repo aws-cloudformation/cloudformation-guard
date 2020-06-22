@@ -1,0 +1,59 @@
+let backup_retention = 7
+let allowed_ports = [80, 443]
+
+AWS::AmazonMQ::Broker AutoMinorVersionUpgrade == true << Version upgrades should be enabled to receive security updates
+AWS::AmazonMQ::Broker EncryptionOptions.UseAwsOwnedKey == false << CMKs should be used instead of AWS-provided KMS keys
+AWS::AmazonMQ::Broker EngineVersion == 5.15.10 << Broker engine version should be at least 5.15.10
+AWS::AmazonMQ::Broker Logs.Audit == true << Audit logging should be enabled
+AWS::AmazonMQ::Broker Logs.General == true << General logging should be enabled
+AWS::AmazonMQ::Broker PubliclyAccessible == false << Broker should not be publicly accessible
+
+AWS::AmazonMQ::Configuration EngineVersion == 5.15.10 << Broker engine version should be at least 5.15.10
+
+AWS::ApiGateway::DomainName SecurityPolicy == TLS_1_2 << API Gateway DomainName SecurityPolicy should use TLS 1.2
+
+AWS::CloudFront::Distribution ViewerCertificate.MinimumProtocolVersion == TLSv1.2_2018 << CloudFront TLS version should be 1.2
+
+AWS::CloudTrail::Trail EnableLogFileValidation == true << CloudTrail file validation should be enabled
+AWS::CloudTrail::Trail IncludeGlobalServiceEvents == true << CloudTrail should include global service events
+AWS::CloudTrail::Trail IsLogging == true << CloudTrail logging should be enabled
+AWS::CloudTrail::Trail IsMultiRegionTrail == true << CloudTrail trails should cover all regions
+
+AWS::CodeBuild::Project EncryptionKey == /.*/ << CodeBuild should use a CMK instead of AWS-provided KMS keys
+AWS::CodeBuild::Project VpcConfig.VpcId == /.*/ << CodeBuild projects should be built in a VPC
+
+AWS::CodeBuild::SourceCredential Token == /^\{\{resolve:secretsmanager.*$/ << CodeBuild credentials should use a reference instead of plaintext
+
+AWS::CodeStar::GitHubRepository IsPrivate == true << GitHub repository should be private
+
+AWS::DAX::Cluster SSESpecification.SSEEnabled == true << DAX cluster encryption should be enabled
+
+AWS::DMS::ReplicationInstance AllowMajorVersionUpgrade == true << DMS instance upgrades should be enabled
+AWS::DMS::ReplicationInstance AutoMinorVersionUpgrade == true << DMS instance upgrades should be enabled
+AWS::DMS::ReplicationInstance KmsKeyId == /.*/ << A KMS key should be provided for encryption
+AWS::DMS::ReplicationInstance MultiAZ == true << DMS instance should be deployed in multiple AZs
+AWS::DMS::ReplicationInstance PubliclyAccessible == false << DMS instance should not be publicly accessible
+
+AWS::DocDB::DBCluster BackupRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::DocDB::DBCluster StorageEncrypted == true << Storage should be encrypted
+
+AWS::DynamoDB::Table SSESpecification.SSEEnabled == true << DynamoDB tables should be encrypted with CMKs
+
+AWS::EC2::Instance SourceDestCheck != false << EC2 source destination check should be enabled unless the instance is performing NAT
+
+AWS::EC2::Volume Encrypted == true << EC2 volumes should be encrypted
+
+AWS::EFS::FileSystem Encrypted == true << EFS file system should be encrypted
+
+AWS::EKS::Cluster EncryptionConfig.Provider.KeyArn == /.*/ << EKS cluster encryption config should be set
+
+AWS::ElastiCache::CacheCluster AutoMinorVersionUpgrade == true << ElastiCache upgrades should be enabled
+AWS::ElastiCache::CacheCluster SnapshotRetentionLimit == %backup_retention << Backups should be retained for set retention period
+
+AWS::Elasticsearch::Domain EncryptionAtRestOptions.Enabled == true << Domain encryption should be enabled
+AWS::Elasticsearch::Domain NodeToNodeEncryptionOptions.Enabled == true << Node-to-node encryption should be enabled
+
+AWS::ElasticLoadBalancing::LoadBalancer AccessLoggingPolicy.Enabled == true << Load balancer logging should be enabled
+
+AWS::FSx::FileSystem KmsKeyId == /.*/ << CMKs should be used instead of AWS-provided KMS keys
+
