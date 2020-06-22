@@ -15,8 +15,10 @@ pub mod enums {
         RequireNot,
         In,
         NotIn,
-        SmallerAs,
-        GreaterAs,
+        LessThan,
+        LessThanOrEqualTo,
+        GreaterThan,
+        GreaterThanOrEqualTo,
     }
 
     #[derive(Debug)]
