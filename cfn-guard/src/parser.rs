@@ -52,7 +52,10 @@ pub(crate) fn parse_rules(
         debug!("line_type is {:#?}", line_type);
         match line_type {
             LineType::Assignment => {
-                let caps = process_assignment(l);
+                let caps = match process_assignment(l) {
+                    Some(a) => a,
+                    None => continue,
+                };
                 trace!("Parsed assignment's captures are: {:?}", &caps);
                 variables.insert(caps["var_name"].to_string(), caps["var_value"].to_string());
             }
@@ -95,8 +98,11 @@ fn find_line_type(line: &str) -> LineType {
     panic!("BAD RULE: {:?}", line)
 }
 
-fn process_assignment(line: &str) -> Captures {
-    ASSIGN_REG.captures(line).unwrap()
+fn process_assignment(line: &str) -> Option<Captures> {
+    match ASSIGN_REG.captures(line) {
+        Some(c) => Some(c),
+        None => None,
+    }
 }
 
 fn is_or_rule(line: &str) -> bool {
@@ -129,7 +135,13 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     let mut rules_hash: HashSet<Rule> = HashSet::new();
     let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
         Some(c) => c,
-        None => RULE_REG.captures(rule_text).unwrap(),
+        None => match RULE_REG.captures(rule_text) {
+            Some(c) => c,
+            None => {
+                trace!("No captures from rule regex");
+                return vec![];
+            }
+        },
     };
 
     trace!("Parsed rule's captures are: {:#?}", &caps);
