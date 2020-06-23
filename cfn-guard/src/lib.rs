@@ -81,8 +81,19 @@ pub fn run_check(
         };
     trace!("CFN Template is '{:#?}'", &cfn_template);
 
-    let cfn_resources: HashMap<String, Value> =
-        serde_json::from_value(cfn_template["Resources"].clone()).unwrap();
+    let cfn_resources: HashMap<String, Value> = match cfn_template.get("Resources") {
+        Some(r) => serde_json::from_value(r.clone()).unwrap(),
+        None => {
+            return (
+                vec![
+                    "ERROR:  Template file does not contain a [Resources] section to check"
+                        .to_string(),
+                ],
+                1,
+            );
+        }
+    };
+
     trace!("CFN resources are: {:?}", cfn_resources);
 
     info!("Parsing rule set");
