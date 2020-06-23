@@ -1056,4 +1056,21 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
              2)
         )
     }
+
+    #[test]
+    fn test_missing_resources_in_template() {
+        let template_contents = fs::read_to_string("tests/no_resources_template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = fs::read_to_string("tests/no_resources_template.ruleset")
+            .unwrap_or_else(|err| format!("{}", err));
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    "ERROR:  Template file does not contain a [Resources] section to check"
+                )],
+                1
+            )
+        )
+    }
 }
