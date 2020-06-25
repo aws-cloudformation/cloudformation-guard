@@ -1,4 +1,5 @@
 let allowed_azs = [us-west-2b,us-west-2c]
+# Test comment
 
 AWS::EC2::Volume AvailabilityZone NOT_IN %allowed_azs << lorem ipsum
 
