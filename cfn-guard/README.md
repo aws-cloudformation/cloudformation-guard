@@ -9,7 +9,24 @@ A command line tool for validating AWS CloudFormation resources against policy.
 * [Testing Code Changes](#to-test)
 
 # About
+```
+CloudFormation Guard
+Check CloudFormation templates against rules
 
+USAGE:
+    cfn-guard [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
+
+FLAGS:
+    -h, --help             Prints help information
+    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
+    -v                     Sets the level of verbosity - add v's to increase output
+    -V, --version          Prints version information
+    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
+
+OPTIONS:
+    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
+    -t, --template <TEMPLATE_FILE>    CloudFormation Template
+```
 `cfn-guard` is a tool for checking CloudFormation resources for properties using a light-weight, firewall-rule-like syntax.
 
 As an example of how to use it, given a CloudFormation template:
@@ -91,6 +108,13 @@ The available operations are:
 * `!=` - Not Equal
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
+
+## Comments
+
+Comments can be added to a rule set via the `#` operator:
+```
+# This is a comment
+```
 
 
 ## Rule Logic
@@ -373,29 +397,6 @@ will compile the release binary and drop it in the `bin/` directory under the di
 #### Windows
 1. Run `cargo build --release`.
 2. Run the binary with `target\release\cfn-guard.exe`
-
-### Runtime Arguments
-
-`cfn-guard` uses the Rust Clap library to parse arguments.  Its `--help` output will show you what options are available:
-
-```
-CloudFormation Guard 0.5.0
-Check CloudFormation templates against rules
-
-USAGE:
-    cfn-guard [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
-
-FLAGS:
-    -h, --help             Prints help information
-    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
-    -v                     Sets the level of verbosity - add v's to increase output
-    -V, --version          Prints version information
-    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
-
-OPTIONS:
-    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
-    -t, --template <TEMPLATE_FILE>    CloudFormation Template
-```
 
 ### Logging
 

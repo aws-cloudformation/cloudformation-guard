@@ -1,2 +1,3 @@
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* == lambda.amazonaws.com
+# Test comment
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* != ec2.amazonaws.com

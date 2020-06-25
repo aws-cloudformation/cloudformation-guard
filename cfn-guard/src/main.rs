@@ -1,15 +1,16 @@
-// © 2020 Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
 use std::process;
 #[macro_use]
 extern crate log;
+extern crate lazy_static;
 extern crate simple_logger;
-use clap::{App, Arg};
+use clap::{crate_version, App, Arg};
 use log::Level;
 
 fn main() {
     let matches = App::new("CloudFormation Guard")
-        .version("0.5.0")
+        .version(crate_version!())
         .about("Check CloudFormation templates against rules")
         .arg(
             Arg::with_name("template")
@@ -43,7 +44,7 @@ fn main() {
             Arg::with_name("strict-checks")
                 .short("s")
                 .long("strict-checks")
-                .help("Fail resources if they're missing the property that a rule checks")
+                .help("Fail resources if they're missing the property that a rule checks"),
         )
         .get_matches();
 
@@ -51,7 +52,7 @@ fn main() {
         0 => Level::Error,
         1 => Level::Info,
         2 => Level::Debug,
-        3 | _ => Level::Trace,
+        _ => Level::Trace,
     };
 
     simple_logger::init_with_level(log_level).unwrap();
@@ -66,7 +67,12 @@ fn main() {
         &template_file, &rule_set_file
     );
 
-    let (result, exit_code) = cfn_guard::run(template_file, rule_set_file, matches.is_present("strict-checks")).unwrap_or_else(|err| {
+    let (result, exit_code) = cfn_guard::run(
+        template_file,
+        rule_set_file,
+        matches.is_present("strict-checks"),
+    )
+    .unwrap_or_else(|err| {
         println!("Problem checking template: {}", err);
         process::exit(1);
     });

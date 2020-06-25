@@ -2,6 +2,7 @@ let encryption_flag = true
 let disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
 AWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs << lorem ipsum
+# Test comment
 AWS::EC2::Volume Encrypted == %encryption_flag << lorem ipsum
 AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 << lorem ipsum
 AWS::EC2::Volume AvailabilityZone != /us-east-.*/ << lorem ipsum

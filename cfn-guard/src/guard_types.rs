@@ -1,15 +1,15 @@
-// © 2020 Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 // Structs, Enums and Impls
 
 pub mod enums {
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub enum LineType {
         Assignment,
         Comment,
         Rule,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Hash, PartialEq, Eq, Clone)]
     pub enum OpCode {
         Require,
         RequireNot,
@@ -17,14 +17,14 @@ pub mod enums {
         NotIn,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Hash, PartialEq, Eq, Clone)]
     pub enum RValueType {
         Value,
         List,
         Regex,
         Variable,
     }
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum CompoundType {
         OR,
         AND,
@@ -34,7 +34,7 @@ pub mod enums {
 pub mod structs {
     use std::collections::HashMap;
 
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, Clone)]
     pub struct Rule {
         pub(crate) resource_type: String,
         pub(crate) field: String,
@@ -56,4 +56,3 @@ pub mod structs {
         pub(crate) rule_set: Vec<CompoundRule>,
     }
 }
-

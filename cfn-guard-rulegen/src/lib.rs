@@ -1,4 +1,4 @@
-// © 2020 Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
 use log::{self, debug, info, trace};
 use serde_json::Value;
@@ -44,7 +44,10 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     for (name, cfn_resource) in cfn_resources {
         trace!("{} is {:?}", name, &cfn_resource);
         let props: HashMap<String, Value> =
-            serde_json::from_value(cfn_resource["Properties"].clone()).unwrap();
+            match serde_json::from_value(cfn_resource["Properties"].clone()) {
+                Ok(s) => s,
+                Err(_) => continue
+            };
         for (prop_name, prop_val) in props {
             let stripped_val = match prop_val.as_str() {
                 Some(v) => String::from(v),
@@ -79,3 +82,4 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     }
     rule_set.into_iter().collect()
 }
+

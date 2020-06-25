@@ -119,12 +119,9 @@ endif
 
 test: build
 	aws lambda update-function-code --function-name $(project_name) --zip-file fileb://./lambda.zip
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) output.json
-	cat output.json | jq '.'
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) output.json
-	cat output.json | jq '.'
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
-	cat output.json | jq '.'
+	$(MAKE) fail
+	$(MAKE) pass
+	$(MAKE) err
 
 clean:
 	@sh -c "if test -f bootstrap; then rm bootstrap; fi"
@@ -159,22 +156,25 @@ build: clean
 	chmod +x bootstrap
 	zip lambda.zip bootstrap
 
-install: build
-	aws lambda create-function --function-name $(project_name) --handler doesnt.matter --zip-file fileb://./lambda.zip --runtime provided --role $(role_arn)  --environment Variables={RUST_BACKTRACE=1}
+fail:
 	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) output.json
 	cat output.json | jq '.'
+
+pass:
 	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) output.json
 	cat output.json | jq '.'
+
+err:
 	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
 	cat output.json | jq '.'
 
-invoke:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) output.json
-	cat output.json | jq '.'
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) output.json
-	cat output.json | jq '.'
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
-	cat output.json | jq '.'
+install: build
+	aws lambda create-function --function-name $(project_name) --handler doesnt.matter --zip-file fileb://./lambda.zip --runtime provided --role $(role_arn)  --environment Variables={RUST_BACKTRACE=1}
+	$(MAKE) fail
+	$(MAKE) pass
+	$(MAKE) err
+
+invoke: fail pass err
 
 uninstall:
 	aws lambda delete-function --function-name $(project_name)
