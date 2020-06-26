@@ -79,7 +79,7 @@ fn main() {
 
     if !result.is_empty() {
         for res in result.iter() {
-            println!("{:?}", res);
+            println!("{}", res);
         }
         println!("Number of failures: {}", result.len());
         if matches.is_present("warn-only") {
