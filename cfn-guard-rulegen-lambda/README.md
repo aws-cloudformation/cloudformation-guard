@@ -71,3 +71,18 @@ request_payload = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\"
  #}
  #======================================================================
 ```
+## FAQ
+
+* **Q: How do I troubleshoot a lambda call returning an opaque error message like:**
+	
+	```
+	{"errorType": "Runtime.ExitError", "errorMessage": "RequestId: 1c0c0620-0f83-40bc-8eca-3cf2cf24820f Error: Runtime exited with error: exit status 101"}
+	```
+
+* **A: Run the same template locally with `cfn-guard-rulegen` to get a better message:**
+
+	```
+	thread 'main' panicked at 'Bad Rule Operator: REQUIRE', src/rule_proc.rs:344:2
+	```
+	
+	We will be working to improve the quality of lambda messages, but as a general rule, `cfn-guard-rulegen-lambda` is just a wrapper for the `cfn-guard-rulegen` code and each can be used to test the other.
