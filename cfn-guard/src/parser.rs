@@ -178,8 +178,10 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                     "IN" => OpCode::In,
                     "NOT_IN" => OpCode::NotIn,
                     _ => {
-                        let msg_string =
-                            format!("Bad Rule Operator: {} in {}", &caps["operator"], rule_text);
+                        let msg_string = format!(
+                            "Bad Rule Operator: [{}] in '{}'",
+                            &caps["operator"], rule_text
+                        );
                         println!("{}", &msg_string);
                         error!("{}", &msg_string);
                         process::exit(1)
@@ -194,7 +196,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                         "IN" | "NOT_IN" => RValueType::List,
                         _ => {
                             let msg_string = format!(
-                                "Bad Rule Operator: {} in {}",
+                                "Bad Rule Operator: [{}] in '{}'",
                                 &caps["operator"], rule_text
                             );
                             println!("{}", &msg_string);
