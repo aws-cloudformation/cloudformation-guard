@@ -2,8 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::process;
 
-use log::{self, debug, trace};
+use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 
@@ -95,7 +96,10 @@ fn find_line_type(line: &str) -> LineType {
     if RULE_REG.is_match(line) {
         return LineType::Rule;
     };
-    panic!("BAD RULE: {:?}", line)
+    let msg_string = format!("BAD RULE: {:?}", line);
+    println!("{}", &msg_string);
+    error!("{}", &msg_string);
+    process::exit(1)
 }
 
 fn process_assignment(line: &str) -> Option<Captures> {
@@ -173,7 +177,13 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                     "!=" => OpCode::RequireNot,
                     "IN" => OpCode::In,
                     "NOT_IN" => OpCode::NotIn,
-                    _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
+                    _ => {
+                        let msg_string =
+                            format!("Bad Rule Operator: {} in {}", &caps["operator"], rule_text);
+                        println!("{}", &msg_string);
+                        error!("{}", &msg_string);
+                        process::exit(1)
+                    }
                 }
             },
             rule_vtype: {
@@ -182,7 +192,15 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                     '[' => match &caps["operator"] {
                         "==" | "!=" => RValueType::Value,
                         "IN" | "NOT_IN" => RValueType::List,
-                        _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
+                        _ => {
+                            let msg_string = format!(
+                                "Bad Rule Operator: {} in {}",
+                                &caps["operator"], rule_text
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
                     },
                     '/' => RValueType::Regex,
                     '%' => RValueType::Variable,
