@@ -85,7 +85,7 @@ Number of failures: 7
 
 We designed `cfn-guard` to be plugged into your build processes.  
 
-If CloudFormation Guard validates the CloudFormation templates successfully, it gives you no output and an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a count of the rule violations, an explanation for why the rules failed, and an exit status of `2`.
+If CloudFormation Guard validates the CloudFormation templates successfully, it gives you no output and an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a count of the rule violations, an explanation for why the rules failed, and an exit status of `2`.  If there's a runtime error with the rule set or processing, it will exit with a `1`. 
 
 If you want CloudFormation Guard to get the result of the rule check but still get an exit value of `0`, use the `-w` Warn flag.
 
