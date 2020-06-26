@@ -14,7 +14,7 @@ struct CustomEvent {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    simple_logger::init_with_level(log::Level::Debug)?;
+    simple_logger::init_with_level(log::Level::Info)?;
     lambda!(my_handler);
 
     Ok(())

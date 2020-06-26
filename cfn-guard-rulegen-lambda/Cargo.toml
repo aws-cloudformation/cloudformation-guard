@@ -1,7 +1,6 @@
 [package]
 name = "cfn-guard-rulegen-lambda"
-version = "0.1.0"
-authors = ["John Capps <jocapp@amazon.com>"]
+version = "0.5.2"
 edition = "2018"
 
 [dependencies]
