@@ -13,3 +13,9 @@ cloudformation-guard.tar.gz
 ./cfn-guard-lambda/lambda.zip
 ./cfn-guard-lambda/bootstrap
 ./cfn-guard-lambda/output.json
+./cfn-guard-rulegen-lambda/.git
+./cfn-guard-rulegen-lambda/.gitignore
+./cfn-guard-rulegen-lambda/target
+./cfn-guard-rulegen-lambda/lambda.zip
+./cfn-guard-rulegen-lambda/bootstrap
+./cfn-guard-rulegen-lambda/output.json
