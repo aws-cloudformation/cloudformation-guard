@@ -1,4 +1,4 @@
-# [BETA] CloudFormation Guard Rulegen as a Lambda
+# [PREVIEW] CloudFormation Guard Rulegen as a Lambda
 
 ## Dependencies
 * AWS CLI [configured](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) with permissions to deploy and invoke Lambdas
@@ -8,9 +8,9 @@
 
 ## To install CloudFormation Guard Rulegen Lambda the first time
 
-1. Clone this repo.
+1. Clone the cloudformation-guard repo.
 
-1. Clone [cfn-guard-rulegen](https://github.com/aws-cloudformation/cfn-guard-rulegen) at the same directory level (CloudFormation Guard Rulegen Lambda depends on the source in `cfn-guard-rulegen`)
+1. Ensure `cfn-guard-rulegen` directory is co-located with this folder as CloudFormation Guard Rulegen Lambda depends on the source in that folder.
 
 1.  If you're on a Mac, add the following to `~/.cargo/config`:
 
