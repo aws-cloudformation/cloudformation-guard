@@ -19,6 +19,7 @@ test:
 	cd cfn-guard; cargo test
 	cd cfn-guard-rulegen; cargo test
 	cd cfn-guard-lambda; make test
+	cd cfn-guard-rulegen-lambda; make test
 
 release_with_binaries: clean cfn-guard cfn-guard-rulegen
 	tar czvf cloudformation-guard.tar.gz -X Exclude.txt .
