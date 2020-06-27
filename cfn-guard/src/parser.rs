@@ -16,7 +16,7 @@ use lazy_static::lazy_static;
 // This sets it up so the regexen only get compiled once
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
 lazy_static! {
-    static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
+    static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) +(?P<operator>\S+) +(?P<var_value>.*)").unwrap();
     static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
     static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
     static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
@@ -57,8 +57,24 @@ pub(crate) fn parse_rules(
                     Some(a) => a,
                     None => continue,
                 };
-                trace!("Parsed assignment's captures are: {:?}", &caps);
-                variables.insert(caps["var_name"].to_string(), caps["var_value"].to_string());
+                trace!("Parsed assignment's captures are: {:#?}", &caps);
+                if caps["operator"] != *"=" {
+                    let msg_string = format!(
+                        "Bad Assignment Operator: [{}] in '{}'",
+                        &caps["operator"], l
+                    );
+                    println!("{}", &msg_string);
+                    error!("{}", &msg_string);
+                    process::exit(1)
+                }
+                let var_name = caps["var_name"].to_string();
+                let var_value = caps["var_value"].to_string();
+                trace!(
+                    "Inserting key: [{}], value: [{}] into variables",
+                    var_name,
+                    var_value
+                );
+                variables.insert(var_name, var_value);
             }
             LineType::Comment => (),
             LineType::Rule => {
@@ -230,7 +246,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 
 mod tests {
     #[cfg(test)]
-    use crate::parser::find_line_type;
+    use super::*;
 
     #[test]
     fn test_find_line_type() {
@@ -240,5 +256,16 @@ mod tests {
         assert_eq!(comment, crate::enums::LineType::Comment);
         assert_eq!(assignment, crate::enums::LineType::Assignment);
         assert_eq!(rule, crate::enums::LineType::Rule);
+    }
+
+    #[test]
+    fn test_parse_variable() {
+        let assignment = "let var = [128]";
+        let cfn_resources: HashMap<String, Value> = HashMap::new();
+        let mut var_map: HashMap<String, String> = HashMap::new();
+        var_map.insert("var".to_string(), "[128]".to_string());
+
+        let parsed_rules = parse_rules(assignment, &cfn_resources);
+        assert!(parsed_rules.variables["var"] == "[128]");
     }
 }
