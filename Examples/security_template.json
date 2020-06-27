@@ -155,6 +155,182 @@
             "Properties" : {
                 
             }
+        },
+        "GuardDutyDetector" : {
+            "Type" : "AWS::GuardDuty::Detector",
+            "Properties" : {
+                "Enabled": true
+            }
+        },
+        "ImageBuilderComponent" : {
+            "Type" : "AWS::ImageBuilder::Component",
+            "Properties" : {
+                
+            }
+        },
+        "ImageBuilderInfrastructureConfiguration": {
+            "Type": "AWS::ImageBuilder::InfrastructureConfiguration",
+            "Properties": {
+                "Logging": {
+                    
+                }
+            }
+        },
+        "KinesisStream" : {
+            "Type" : "AWS::Kinesis::Stream",
+            "Properties" : {
+                "StreamEncryption": {
+                    "EncryptionType": "invalid"
+                }
+            }
+        },
+        "KMSKey" : {
+            "Type" : "AWS::KMS::Key",
+            "Properties" : {
+                "EnableKeyRotation": false
+            }
+        },
+        "LambdaFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "Properties" : {
+                "VpcConfig": {
+
+                }
+            }
+        },
+        "MediaStoreContainer" : {
+            "Type" : "AWS::MediaStore::Container",
+            "Properties" : {
+                "AccessLoggingEnabled": false
+            }
+        },
+        "MSKCluster" : {
+            "Type" : "AWS::MSK::Cluster",
+            "Properties" : {
+                "ClientAuthentication": {
+                    
+                },
+                "EncryptionInfo": {
+                    "EncryptionAtRest": false,
+                    "EncryptionInTransit": false
+                },
+                "EnhancedMonitoring": "PER_BROKER"
+            }
+        },
+        "NeptuneCluster" : {
+            "Type" : "AWS::Neptune::DBCluster",
+            "Properties" : {
+                "BackupRetentionPeriod": 1,
+                "IamAuthEnabled": false,
+                "StorageEncrypted": false
+            }
+        },
+        "NeptuneInstance" : {
+            "Type" : "AWS::Neptune::DBInstance",
+            "Properties" : {
+                "AllowMajorVersionUpgrade": false,
+                "AutoMinorVersionUpgrade": false
+            }
+        },
+        "OpsWorksApp" : {
+            "Type" : "AWS::OpsWorks::App",
+            "Properties" : {
+                "EnableSslx": false
+            }
+        },
+        "OpsWorksCMServer" : {
+            "Type" : "AWS::OpsWorksCM::Server",
+            "Properties" : {
+                "AssociatePublicIpAddress": true,
+                "DisableAutomatedBackup": true
+            }
+        },
+        "RDSDBCluster" : {
+            "Type" : "AWS::RDS::DBCluster",
+            "Properties" : {
+                "BackupRetentionPeriod": 1,
+                "StorageEncrypted": false
+            }
+        },
+        "RDSDBInstance" : {
+            "Type" : "AWS::RDS::DBInstance",
+            "Properties" : {
+                "AllowMajorVersionUpgrade": false,
+                "AutoMinorVersionUpgrade": false,
+                "BackupRetentionPeriod": 1,
+                "PubliclyAccessible": true,
+                "StorageEncrypted": false
+            }
+        },
+        "RDSDBProxy" : {
+            "Type" : "AWS::RDS::DBProxy",
+            "Properties" : {
+                "DebugLogging": true,
+                "RequireTLS": false
+            }
+        },
+        "RedshiftCluster" : {
+            "Type" : "AWS::Redshift::Cluster",
+            "Properties" : {
+                "AllowVersionUpgrade": false,
+                "AutomatedSnapshotRetentionPeriod": 1,
+                "Encrypted": false,
+                "PubliclyAccessible": true
+            }
+        },
+        "S3AccessPoint" : {
+            "Type" : "AWS::S3::AccessPoint",
+            "Properties" : {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": false,
+                    "BlockPublicPolicy": false,
+                    "IgnorePublicAcls": false,
+                    "RestrictPublicBuckets": false
+                }
+            }
+        },
+        "S3Bucket" : {
+            "Type" : "AWS::S3::AccessPoint",
+            "Properties" : {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": false,
+                    "BlockPublicPolicy": false,
+                    "IgnorePublicAcls": false,
+                    "RestrictPublicBuckets": false
+                }
+            }
+        },
+        "SageMakerNotebook" : {
+            "Type" : "AWS::SageMaker::NotebookInstance",
+            "Properties" : {
+                "DirectInternetAccess": "Enabled",
+                "RootAccess": true
+            }
+        },
+        "SNSTopic" : {
+            "Type" : "AWS::SNS::Topic",
+            "Properties" : {
+                
+            }
+        },
+        "SQSQueue" : {
+            "Type" : "AWS::SQS::Queue",
+            "Properties" : {
+                
+            }
+        },
+        "StepFunctionsStateMachine" : {
+            "Type" : "AWS::StepFunctions::StateMachine",
+            "Properties" : {
+                
+            }
+        },
+        "WorkspacesWorkspace" : {
+            "Type" : "AWS::WorkSpaces::Workspace",
+            "Properties" : {
+                "RootVolumeEncryptionEnabled": false,
+                "UserVolumeEncryptionEnabled": false
+            }
         }
     }
 }
