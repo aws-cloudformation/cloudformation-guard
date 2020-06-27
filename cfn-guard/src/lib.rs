@@ -1,4 +1,4 @@
-// © 2020 Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
 use log::{self, debug, error, info, trace};
 use serde_json::Value;
@@ -16,7 +16,11 @@ pub mod util;
 pub use crate::guard_types::{enums, structs};
 use crate::util::fix_stringified_bools;
 
-pub fn run(template_file: &str, rules_file: &str, strict_checks: bool) -> Result<(Vec<String>, usize), Box<dyn Error>> {
+pub fn run(
+    template_file: &str,
+    rules_file: &str,
+    strict_checks: bool,
+) -> Result<(Vec<String>, usize), Box<dyn Error>> {
     debug!("Entered run");
     let template_contents = fs::read_to_string(template_file)?;
     let rules_file_contents = fs::read_to_string(rules_file)?;
@@ -29,7 +33,7 @@ pub fn run(template_file: &str, rules_file: &str, strict_checks: bool) -> Result
     trace!(
         "Rules file is '{}' and its contents are: {}",
         rules_file,
-        format!("{}", rules_file_contents)
+        rules_file_contents.to_string()
     );
 
     let (outcome, exit_code) = run_check(&template_contents, &rules_file_contents, strict_checks);
@@ -37,7 +41,11 @@ pub fn run(template_file: &str, rules_file: &str, strict_checks: bool) -> Result
     Ok((outcome, exit_code))
 }
 
-pub fn run_check(template_file_contents: &str, rules_file_contents: &str, strict_checks: bool) -> (Vec<String>, usize) {
+pub fn run_check(
+    template_file_contents: &str,
+    rules_file_contents: &str,
+    strict_checks: bool,
+) -> (Vec<String>, usize) {
     info!("Loading CloudFormation Template and Rule Set");
     debug!("Entered run_check");
 
@@ -48,26 +56,44 @@ pub fn run_check(template_file_contents: &str, rules_file_contents: &str, strict
         cleaned_template_file_contents
     );
 
-    let cleaned_rules_file_contents= fix_stringified_bools(rules_file_contents);
+    let cleaned_rules_file_contents = fix_stringified_bools(rules_file_contents);
     trace!(
         "Cleaned rules file contents are:\n'{}'",
         cleaned_rules_file_contents
     );
 
     debug!("Deserializing CloudFormation template");
-    let cfn_template: HashMap<String, Value> = match serde_json::from_str(&cleaned_template_file_contents) {
-        Ok(s) => s,
-        Err(_) => match serde_yaml::from_str(&cleaned_template_file_contents) {
-            Ok(y) => y,
-            Err(e) => {
-                return (vec![format!("ERROR:  Template file format was unreadable as json or yaml: {}", e)], 1);
-            }
-        },
-    };
+    let cfn_template: HashMap<String, Value> =
+        match serde_json::from_str(&cleaned_template_file_contents) {
+            Ok(s) => s,
+            Err(_) => match serde_yaml::from_str(&cleaned_template_file_contents) {
+                Ok(y) => y,
+                Err(e) => {
+                    return (
+                        vec![format!(
+                            "ERROR:  Template file format was unreadable as json or yaml: {}",
+                            e
+                        )],
+                        1,
+                    );
+                }
+            },
+        };
     trace!("CFN Template is '{:#?}'", &cfn_template);
 
-    let cfn_resources: HashMap<String, Value> =
-        serde_json::from_value(cfn_template["Resources"].clone()).unwrap();
+    let cfn_resources: HashMap<String, Value> = match cfn_template.get("Resources") {
+        Some(r) => serde_json::from_value(r.clone()).unwrap(),
+        None => {
+            return (
+                vec![
+                    "ERROR:  Template file does not contain a [Resources] section to check"
+                        .to_string(),
+                ],
+                1,
+            );
+        }
+    };
+
     trace!("CFN resources are: {:?}", cfn_resources);
 
     info!("Parsing rule set");
@@ -101,7 +127,12 @@ fn check_resources(
                     let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
                     cfn_resource_map.insert(name.clone(), cfn_resource.clone());
                     for rule in &c_rule.rule_list {
-                        match apply_rule(&cfn_resource_map, &rule, &parsed_rule_set.variables, strict_checks) {
+                        match apply_rule(
+                            &cfn_resource_map,
+                            &rule,
+                            &parsed_rule_set.variables,
+                            strict_checks,
+                        ) {
                             Some(rule_result) => {
                                 pass_fail.insert("fail");
                                 temp_results.extend(rule_result);
@@ -120,11 +151,13 @@ fn check_resources(
             }
             enums::CompoundType::AND => {
                 for rule in &c_rule.rule_list {
-                    match apply_rule(&cfn_resources, &rule, &parsed_rule_set.variables, strict_checks) {
-                        Some(rule_result) => {
-                            result.extend(rule_result);
-                        }
-                        None => ()
+                    if let Some(rule_result) = apply_rule(
+                        &cfn_resources,
+                        &rule,
+                        &parsed_rule_set.variables,
+                        strict_checks,
+                    ) {
+                        result.extend(rule_result);
                     }
                 }
             }
@@ -152,17 +185,17 @@ fn apply_rule(
             );
             let target_field: Vec<&str> = rule.field.split('.').collect();
             match util::get_resource_prop_value(&cfn_resource["Properties"], &target_field) {
-                Err(e) => if strict_checks {
-                    rule_result.push(match &rule.custom_msg {
-                        Some(c) => format!(
-                            "[{}] failed because {}",
-                            name,
-                            c),
-                        None => format!(
+                Err(e) => {
+                    if strict_checks {
+                        rule_result.push(match &rule.custom_msg {
+                            Some(c) => format!("[{}] failed because {}", name, c),
+                            None => format!(
                         "[{}] failed because it does not contain the required property of [{}]",
                         name, e
-                    )})
-                },
+                    ),
+                        })
+                    }
+                }
                 Ok(val) => {
                     debug!("Template val is {:?}", val);
                     match util::deref_rule_value(rule, variables) {
@@ -216,16 +249,16 @@ fn apply_rule_operation(
                                 res_name,
                                 &rule.field,
                                 util::format_value(&val),
-                                c),
+                                c
+                            ),
                             None => format!(
                                 "[{}] failed because [{}] is [{}] and the permitted value is [{}]",
                                 res_name,
                                 &rule.field,
                                 util::format_value(&val),
                                 rule_val.to_string()
-                            )
-                        }
-                        )
+                            ),
+                        })
                     } else {
                         info!("Result: PASS");
                         None
@@ -272,13 +305,14 @@ fn apply_rule_operation(
                                 res_name,
                                 &rule.field,
                                 util::format_value(&val),
-                                c),
+                                c
+                            ),
                             None => format!(
                                 "[{}] failed because [{}] is [{}] and that value is not permitted",
                                 res_name,
                                 &rule.field,
                                 util::format_value(&val)
-                            )
+                            ),
                         })
                     } else {
                         info!("Result: PASS");
@@ -319,10 +353,7 @@ fn apply_rule_operation(
             let value_vec = util::convert_list_var_to_vec(rule_val);
             let val_as_string = match val.as_str() {
                 Some(s) => s.to_string(),
-                None => {
-                    let serde_string = serde_json::to_string(val).unwrap();
-                    serde_string
-                }
+                None => serde_json::to_string(val).unwrap(),
             };
             if !value_vec.contains(&util::strip_ws_nl(val_as_string)) {
                 info!("Result: FAIL");
@@ -332,14 +363,15 @@ fn apply_rule_operation(
                         res_name,
                         &rule.field,
                         util::format_value(&val),
-                        c),
+                        c
+                    ),
                     None => format!(
                         "[{}] failed because [{}] is not in {} for [{}]",
                         res_name,
                         util::format_value(&val),
                         rule_val.to_string(),
                         &rule.field
-                    )
+                    ),
                 })
             } else {
                 info!("Result: PASS");
@@ -350,10 +382,7 @@ fn apply_rule_operation(
             let value_vec = util::convert_list_var_to_vec(rule_val);
             let val_as_string = match val.as_str() {
                 Some(s) => s.to_string(),
-                None => {
-                    let serde_string = serde_json::to_string(val).unwrap();
-                    serde_string
-                }
+                None => serde_json::to_string(val).unwrap(),
             };
             if value_vec.contains(&util::strip_ws_nl(val_as_string)) {
                 info!("Result: FAIL");
@@ -363,14 +392,15 @@ fn apply_rule_operation(
                         res_name,
                         &rule.field,
                         util::format_value(&val),
-                        c),
+                        c
+                    ),
                     None => format!(
                         "[{}] failed because [{}] is in {} which is not permitted for [{}]",
                         res_name,
                         util::format_value(&val),
                         rule_val.to_string(),
                         &rule.field
-                    )
+                    ),
                 })
             } else {
                 info!("Result: PASS");
@@ -379,8 +409,3 @@ fn apply_rule_operation(
         }
     }
 }
-
-
-
-
-

@@ -88,9 +88,10 @@ checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 
 [[package]]
 name = "cfn-guard"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "clap",
+ "lazy_static",
  "log",
  "regex",
  "serde",
@@ -101,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-lambda"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "cfn-guard",
  "lambda_runtime",

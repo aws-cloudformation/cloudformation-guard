@@ -1,0 +1,4 @@
+# This is a comment
+AWS::IAM::ManagedPolicy PolicyDocument.Statement.*.Action.* NOT_IN [ec2:CreateTransitGateway]
+
+# This is a comment

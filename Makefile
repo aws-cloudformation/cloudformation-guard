@@ -15,6 +15,11 @@ cfn-guard-lambda_update:
 clean:
 	if test -f cloudformation-guard.tar.gz; then rm cloudformation-guard.tar.gz; fi
 
+test:
+	cd cfn-guard; cargo test
+	cd cfn-guard-rulegen; cargo test
+	cd cfn-guard-lambda; make test
+
 release_with_binaries: clean cfn-guard cfn-guard-rulegen
 	tar czvf cloudformation-guard.tar.gz -X Exclude.txt .
 

@@ -1,3 +1,4 @@
+# Test comment
 AWS::EC2::Volume Encrypted == true
 AWS::EC2::Volume Tags.*.Key == %compliant_tag_name
 AWS::Lambda::Function Tracing IN %tracing_config

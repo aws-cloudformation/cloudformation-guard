@@ -1,17 +1,20 @@
-// © 2020 Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
+use crate::{enums, structs};
+use lazy_static::lazy_static;
 use log::{self, debug, error, trace};
-use crate::{structs, enums};
-use std::collections::HashMap;
+use regex::{Captures, Regex};
 use serde_json::Value;
-use regex::{Regex, Captures};
+use std::collections::HashMap;
 
+// This sets it up so the regex only gets compiled once
+// See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
+lazy_static! {
+    static ref STRINGIFIED_BOOLS: Regex =
+        Regex::new(r"[:=]\s*([fF]alse|[tT]rue)\s*([,}]+|$)").unwrap();
+}
 pub fn fix_stringified_bools(fstr: &str) -> String {
-    let regex_pattern = r"[:=]\s*([fF]alse|[tT]rue)\s*([,}]+|$)";
-    let re = Regex::new(regex_pattern).unwrap();
-    let after = re.replace_all(fstr, |caps: &Captures| {
-        format!("{}", &caps[0].to_lowercase())
-    });
+    let after = STRINGIFIED_BOOLS.replace_all(fstr, |caps: &Captures| caps[0].to_lowercase());
     after.to_string()
 }
 
@@ -137,42 +140,44 @@ pub fn deref_rule_value<'a>(
     }
 }
 
-pub fn expand_wildcard_props(props: &Value, address: String, accumulator: String) -> Option<Vec<String>> {
-    trace!("Entering expand_wildcard_props() with props: {:#?} , address: {:#?} , accumulator: {:#?}",
+pub fn expand_wildcard_props(
+    props: &Value,
+    address: String,
+    accumulator: String,
+) -> Option<Vec<String>> {
+    trace!(
+        "Entering expand_wildcard_props() with props: {:#?} , address: {:#?} , accumulator: {:#?}",
         &props,
         &address,
-        &accumulator);
-    let mut segments = address.split("*").collect::<Vec<&str>>();
+        &accumulator
+    );
+    let mut segments = address.split('*').collect::<Vec<&str>>();
     trace!("Segments are {:#?}", &segments);
     let segment = segments.remove(0);
     trace!("Processing segment {:#?}", &segment);
     if segment != "" {
         let mut expanded_props: Vec<String> = vec![];
-        let s = segment.trim_end_matches(".").trim_start_matches(".");
-        let steps = s.split(".").collect::<Vec<&str>>();
+        let s = segment.trim_end_matches('.').trim_start_matches('.');
+        let steps = s.split('.').collect::<Vec<&str>>();
         match get_resource_prop_value(props, &steps) {
-            Ok(v) => {
-                match v.as_array() {
-                    Some(result_array) => {
-                        trace!("Value is an array");
-                        let mut counter = 0;
-                        for r in result_array {
-                            trace!("Counter is {:#?}", counter);
-                            let next_segment = segments.join("*");
-                            trace!("next_segment is {:#?}", &next_segment);
-                            let temp_address = format!("{}{}{}",accumulator, segment, counter);
-                            trace!("temp_address is {:#?}", &temp_address);
-                            match expand_wildcard_props(&r, next_segment, temp_address) {
-                                Some(result) => expanded_props.append(&mut result.clone()),
-                                None => return None
-                            }
-                            counter += 1;
+            Ok(v) => match v.as_array() {
+                Some(result_array) => {
+                    trace!("Value is an array");
+                    for (counter, r) in result_array.iter().enumerate() {
+                        trace!("Counter is {:#?}", counter);
+                        let next_segment = segments.join("*");
+                        trace!("next_segment is {:#?}", &next_segment);
+                        let temp_address = format!("{}{}{}", accumulator, segment, counter);
+                        trace!("temp_address is {:#?}", &temp_address);
+                        match expand_wildcard_props(&r, next_segment, temp_address) {
+                            Some(result) => expanded_props.append(&mut result.clone()),
+                            None => return None,
                         }
-                    },
-                    None => expanded_props.push(format!("{}{}", accumulator, segment))
+                    }
                 }
+                None => expanded_props.push(format!("{}{}", accumulator, segment)),
             },
-            Err(_) => return None
+            Err(_) => return None,
         }
         Some(expanded_props)
     } else {
@@ -181,14 +186,11 @@ pub fn expand_wildcard_props(props: &Value, address: String, accumulator: String
     }
 }
 
-
 mod tests {
     #[cfg(test)]
-    use std::collections::HashMap;
-    #[cfg(test)]
-    use serde_yaml;
-    #[cfg(test)]
     use crate::util::expand_wildcard_props;
+    #[cfg(test)]
+    use std::collections::HashMap;
 
     #[test]
     fn test_wildcard_expansion() {
@@ -222,23 +224,29 @@ Resources:
             Action:
               - 'sts:AssumeRole'
 "#;
-        let cfn_template: HashMap<String, serde_json::Value> = serde_yaml::from_str(&iam_template).unwrap();
+        let cfn_template: HashMap<String, serde_json::Value> =
+            serde_yaml::from_str(&iam_template).unwrap();
         let mut wildcard = String::from("AssumeRolePolicyDocument.Statement.*.Effect");
         let root = &cfn_template["Resources"]["LambdaRoleHelper"]["Properties"];
-        let mut expanded_wildcards = expand_wildcard_props(&root, wildcard, String::from("")).unwrap();
-        assert_eq!(expanded_wildcards,
-                    vec![String::from("AssumeRolePolicyDocument.Statement.0.Effect"),
-                         String::from("AssumeRolePolicyDocument.Statement.1.Effect"),
-                         String::from("AssumeRolePolicyDocument.Statement.2.Effect"),
-                    ]
+        let mut expanded_wildcards =
+            expand_wildcard_props(&root, wildcard, String::from("")).unwrap();
+        assert_eq!(
+            expanded_wildcards,
+            vec![
+                String::from("AssumeRolePolicyDocument.Statement.0.Effect"),
+                String::from("AssumeRolePolicyDocument.Statement.1.Effect"),
+                String::from("AssumeRolePolicyDocument.Statement.2.Effect"),
+            ]
         );
         wildcard = String::from("AssumeRolePolicyDocument.Statement.*.Action.*");
         expanded_wildcards = expand_wildcard_props(&root, wildcard, String::from("")).unwrap();
-        assert_eq!(expanded_wildcards,
-                   vec![String::from("AssumeRolePolicyDocument.Statement.0.Action.0"),
-                        String::from("AssumeRolePolicyDocument.Statement.1.Action.0"),
-                        String::from("AssumeRolePolicyDocument.Statement.2.Action.0"),
-                   ]
+        assert_eq!(
+            expanded_wildcards,
+            vec![
+                String::from("AssumeRolePolicyDocument.Statement.0.Action.0"),
+                String::from("AssumeRolePolicyDocument.Statement.1.Action.0"),
+                String::from("AssumeRolePolicyDocument.Statement.2.Action.0"),
+            ]
         );
     }
 }
