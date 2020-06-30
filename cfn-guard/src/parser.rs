@@ -185,14 +185,18 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 
     for p in props {
         rules_hash.insert(Rule {
-            resource_type: caps["resource_type"].to_string(),
-            field: p.to_string(),
-            operation: {
-                match &caps["operator"] {
-                    "==" => OpCode::Require,
-                    "!=" => OpCode::RequireNot,
-                    "IN" => OpCode::In,
-                    "NOT_IN" => OpCode::NotIn,
+           resource_type: caps["resource_type"].to_string(),
+                field: p.to_string(),
+                operation: {
+                    match &caps["operator"] {
+                        "==" => OpCode::Require,
+                        "!=" => OpCode::RequireNot,
+                        "<" => OpCode::LessThan,
+                        ">" => OpCode::GreaterThan,
+                        "<=" => OpCode::LessThanOrEqualTo,
+                        ">=" => OpCode::GreaterThanOrEqualTo,
+                        "IN" => OpCode::In,
+                        "NOT_IN" => OpCode::NotIn, 
                     _ => {
                         let msg_string = format!(
                             "Bad Rule Operator: [{}] in '{}'",
@@ -208,7 +212,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 let rv = caps["rule_value"].chars().next().unwrap();
                 match rv {
                     '[' => match &caps["operator"] {
-                        "==" | "!=" => RValueType::Value,
+                        "==" | "!=" | "<=" | ">=" | "<" | ">" => RValueType::Value,
                         "IN" | "NOT_IN" => RValueType::List,
                         _ => {
                             let msg_string = format!(
