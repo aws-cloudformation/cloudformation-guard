@@ -191,6 +191,10 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 match &caps["operator"] {
                     "==" => OpCode::Require,
                     "!=" => OpCode::RequireNot,
+                    "<" => OpCode::LessThan,
+                    ">" => OpCode::GreaterThan,
+                    ">=" => OpCode::GreaterThanOrEqualTo,
+                    "<=" => OpCode::LessThanOrEqualTo,
                     "IN" => OpCode::In,
                     "NOT_IN" => OpCode::NotIn,
                     _ => {
@@ -208,7 +212,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 let rv = caps["rule_value"].chars().next().unwrap();
                 match rv {
                     '[' => match &caps["operator"] {
-                        "==" | "!=" => RValueType::Value,
+                        "==" | "!=" | "<=" | ">=" | "<" | ">" => RValueType::Value,
                         "IN" | "NOT_IN" => RValueType::List,
                         _ => {
                             let msg_string = format!(

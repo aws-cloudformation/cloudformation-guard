@@ -186,6 +186,10 @@ pub fn expand_wildcard_props(
     }
 }
 
+pub fn is_float(v:String) -> bool {
+    return v.parse::<f64>().is_ok();
+}
+
 mod tests {
     #[cfg(test)]
     use crate::util::expand_wildcard_props;
