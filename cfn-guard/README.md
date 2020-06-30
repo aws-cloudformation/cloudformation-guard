@@ -65,7 +65,7 @@ let disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
 AWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs
 AWS::EC2::Volume Encrypted != %encryption_flag
-AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 |OR| AWS::EC2::Volume Size >= 101
 AWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18
 AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 ```
@@ -80,6 +80,7 @@ You can check the compliance of that template with those rules:
 "[NewVolume] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
 "[NewVolume] failed because [Size] is [100] and the permitted value is [101]"
 "[NewVolume] failed because [Size] is [100] and the permitted value is [99]"
+"[NewVolume] failed because [Size] is [100] and the permitted value is [>= 101]"
 "[NewVolume] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
 Number of failures: 7
 ```
@@ -107,6 +108,10 @@ The available operations are:
 
 * `==` - Equal
 * `!=` - Not Equal
+* `<` - Less Than
+* `>` - Greater Than
+* `<=` - Less Than Or Equal To
+* `>=` - Greater Than Or Equal To
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
 

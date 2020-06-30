@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
+use std::process;
 
 mod guard_types;
 mod parser;
@@ -405,6 +406,230 @@ fn apply_rule_operation(
                         &rule.field
                     ),
                 })
+            }
+        }
+        enums::OpCode::LessThan => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val < rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [< {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::GreaterThan => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val > rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [> {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::LessThanOrEqualTo => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val <= rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [<= {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::GreaterThanOrEqualTo => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val >= rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [>= {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
             }
         }
     }
