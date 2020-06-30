@@ -6,7 +6,7 @@ use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 use std::collections::HashMap;
-// use std::process;
+use std::process;
 
 // This sets it up so the regex only gets compiled once
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
@@ -195,16 +195,28 @@ pub fn expand_wildcard_props(
 // }
 
 // TODO: Collapse the format_val.. fn's to a generic
-pub fn format_value_as_float(val: &Value) -> Result<f32, &str> {
+pub fn parse_value_as_float(val: &Value) -> f32 {
+    trace!("Formatting {} as float", val);
     match format_value(val).parse::<f32>() {
-        Ok(s) => Ok(s),
-        Err(_) => Err("Could not parse integer"),
+        Ok(s) => s,
+        Err(_) => {
+            let msg_string = format!("Value cannot be parsed as a float: {}", val);
+            println!("{}", &msg_string);
+            error!("{}", &msg_string);
+            process::exit(1)
+        }
     }
 }
-pub fn format_string_as_float<'a>(val: String) -> Result<f32, &'a str> {
-    match strip_ws_nl(val).parse::<f32>() {
-        Ok(s) => Ok(s),
-        Err(_) => Err("Could not parse integer"),
+pub fn parse_str_as_float(val: &str) -> f32 {
+    trace!("Formatting {} as float", val);
+    match strip_ws_nl(val.to_string()).parse::<f32>() {
+        Ok(s) => s,
+        Err(_) => {
+            let msg_string = format!("String cannot be parsed as a float: {}", val);
+            println!("{}", &msg_string);
+            error!("{}", &msg_string);
+            process::exit(1)
+        }
     }
 }
 mod tests {
