@@ -6,6 +6,7 @@ use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 use std::collections::HashMap;
+// use std::process;
 
 // This sets it up so the regex only gets compiled once
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
@@ -186,6 +187,26 @@ pub fn expand_wildcard_props(
     }
 }
 
+// TODO: Move all in-proc exits to clean_exit()
+// pub fn clean_exit(msg_string: String) {
+//     println!("{}", &msg_string);
+//     error!("{}", &msg_string);
+//     process::exit(1)
+// }
+
+// TODO: Collapse the format_val.. fn's to a generic
+pub fn format_value_as_float(val: &Value) -> Result<f32, &str> {
+    match format_value(val).parse::<f32>() {
+        Ok(s) => Ok(s),
+        Err(_) => Err("Could not parse integer"),
+    }
+}
+pub fn format_string_as_float<'a>(val: String) -> Result<f32, &'a str> {
+    match strip_ws_nl(val).parse::<f32>() {
+        Ok(s) => Ok(s),
+        Err(_) => Err("Could not parse integer"),
+    }
+}
 mod tests {
     #[cfg(test)]
     use crate::util::expand_wildcard_props;

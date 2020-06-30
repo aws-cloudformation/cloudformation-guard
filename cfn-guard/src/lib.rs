@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
+use std::process;
 
 mod guard_types;
 mod parser;
@@ -410,8 +411,34 @@ fn apply_rule_operation(
         enums::OpCode::LessThan => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val).parse::<f32>().unwrap() > util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() ||
-                    util::format_value(&val).parse::<f32>().unwrap() == util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val < rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
                         info!("Result: FAIL");
                         Some(match &rule.custom_msg {
                             Some(c) => format!(
@@ -429,9 +456,6 @@ fn apply_rule_operation(
                             )
                         }
                         )
-                    } else {
-                        info!("Result: PASS");
-                        None
                     }
                 }
                 _ => {
@@ -443,8 +467,34 @@ fn apply_rule_operation(
         enums::OpCode::GreaterThan => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val).parse::<f32>().unwrap() < util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() ||
-                       util::format_value(&val).parse::<f32>().unwrap() == util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val > rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
                         info!("Result: FAIL");
                         Some(match &rule.custom_msg {
                             Some(c) => format!(
@@ -462,9 +512,6 @@ fn apply_rule_operation(
                             )
                         }
                         )
-                    } else {
-                        info!("Result: PASS");
-                        None
                     }
                 }
                 _ => {
@@ -476,7 +523,34 @@ fn apply_rule_operation(
         enums::OpCode::LessThanOrEqualTo => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val).parse::<f32>().unwrap() > util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val <= rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
                         info!("Result: FAIL");
                         Some(match &rule.custom_msg {
                             Some(c) => format!(
@@ -494,9 +568,6 @@ fn apply_rule_operation(
                             )
                         }
                         )
-                    } else {
-                        info!("Result: PASS");
-                        None
                     }
                 }
                 _ => {
@@ -508,7 +579,34 @@ fn apply_rule_operation(
         enums::OpCode::GreaterThanOrEqualTo => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val).parse::<f32>().unwrap() < util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                    let template_val = match util::format_value_as_float(&val) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Template value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    let rule_val = match util::format_string_as_float(rule_val.to_string()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let msg_string = format!(
+                                "Rule value cannot be used for numeric comparison: [{}]",
+                                &val
+                            );
+                            println!("{}", &msg_string);
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
+                    };
+                    if template_val >= rule_val {
+                        info!("Result: PASS");
+                        None
+                    } else {
                         info!("Result: FAIL");
                         Some(match &rule.custom_msg {
                             Some(c) => format!(
@@ -526,9 +624,6 @@ fn apply_rule_operation(
                             )
                         }
                         )
-                    } else {
-                        info!("Result: PASS");
-                        None
                     }
                 }
                 _ => {
