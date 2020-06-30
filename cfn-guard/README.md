@@ -65,7 +65,7 @@ let disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
 AWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs
 AWS::EC2::Volume Encrypted != %encryption_flag
-AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 |OR| AWS::EC2::Volume Size >= 100
 AWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18
 AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 ```
@@ -75,6 +75,7 @@ You can check the compliance of that template with those rules:
 ```
 > cfn-guard -t ebs_volume_template.json -r ebs_volume_rule_set
 "[NewVolume2] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
+"[NewVolume2] failed because [Size] is [99] and the permitted value is [>= 100]"
 "[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"
 "[NewVolume2] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
 "[NewVolume] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
@@ -107,6 +108,10 @@ The available operations are:
 
 * `==` - Equal
 * `!=` - Not Equal
+* `<` - Less Than
+* `>` - Greater Than
+* `<=` - Less Than or Equal To
+* `>=` - Greater Than or Equal To
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
 
