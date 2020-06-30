@@ -851,7 +851,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
     }
 
     #[test]
-    fn test_less_than_comparisson() {
+    fn test_less_than_comparison() {
         let template_file_contents = String::from(
             r#"{
                 "Resources": {
@@ -888,7 +888,7 @@ AWS::EC2::Volume Size < 101"#,
     }
 
     #[test]
-    fn test_greater_than_comparisson() {
+    fn test_greater_than_comparison() {
         let template_file_contents = String::from(
             r#"{
                 "Resources": {
@@ -919,13 +919,17 @@ AWS::EC2::Volume Size > 100"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
-            (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [> 100]"), ],
-             2)
+            (
+                vec![String::from(
+                    "[NewVolume] failed because [Size] is [100] and the permitted value is [> 100]"
+                ),],
+                2
+            )
         );
     }
 
     #[test]
-    fn test_less_than_or_equal_to_comparisson() {
+    fn test_less_than_or_equal_to_comparison() {
         let template_file_contents = String::from(
             r#"{
                 "Resources": {
@@ -962,7 +966,7 @@ AWS::EC2::Volume Size <= 100"#,
     }
 
     #[test]
-    fn test_greater_than_or_equal_to_comparisson() {
+    fn test_greater_than_or_equal_to_comparison() {
         let template_file_contents = String::from(
             r#"{
                 "Resources": {
@@ -998,30 +1002,31 @@ AWS::EC2::Volume Size >= 101"#,
         );
     }
 
-    #[test]
-    #[should_panic]
-    fn test_non_numeric_value_comparisson_fail() {
-        let template_file_contents = String::from(
-            r#"{
-            "Resources": {
-                "NewVolume" : {
-                    "Type" : "AWS::EC2::Volume",
-                    "Properties" : {
-                        "Size" : 100,
-                        "Encrypted" : true,
-                        "AvailabilityZone" : "us-east-1b",
-                        "DeletionPolicy" : "Snapshot"
-                    }
-                }
-            }
-        }"#,
-        );
-        let rules_file_contents = String::from(
-            r#"
-AWS::EC2::Volume Size < a"#,
-        );
-        cfn_guard::run_check(&template_file_contents, &rules_file_contents, true);
-    }
+    // TODO: Create test for clean_exit() scenarios
+    //     #[test]
+    //     #[should_panic]
+    //     fn test_non_numeric_value_comparison_fail() {
+    //         let template_file_contents = String::from(
+    //             r#"{
+    //             "Resources": {
+    //                 "NewVolume" : {
+    //                     "Type" : "AWS::EC2::Volume",
+    //                     "Properties" : {
+    //                         "Size" : 100,
+    //                         "Encrypted" : true,
+    //                         "AvailabilityZone" : "us-east-1b",
+    //                         "DeletionPolicy" : "Snapshot"
+    //                     }
+    //                 }
+    //             }
+    //         }"#,
+    //         );
+    //         let rules_file_contents = String::from(
+    //             r#"
+    // AWS::EC2::Volume Size < a"#,
+    //         );
+    //         cfn_guard::run_check(&template_file_contents, &rules_file_contents, true);
+    //     }
 
     #[test]
     fn test_json_results() {
