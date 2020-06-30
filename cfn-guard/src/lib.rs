@@ -583,5 +583,135 @@ fn apply_rule_operation(
                 }
             }
         }
+        enums::OpCode::LessThan => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    if util::format_value(&val).parse::<f32>().unwrap() > util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() ||
+                    util::format_value(&val).parse::<f32>().unwrap() == util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [< {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    } else {
+                        info!("Result: PASS");
+                        None
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::GreaterThan => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    if util::format_value(&val).parse::<f32>().unwrap() < util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() ||
+                       util::format_value(&val).parse::<f32>().unwrap() == util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [> {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    } else {
+                        info!("Result: PASS");
+                        None
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::LessThanOrEqualTo => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    if util::format_value(&val).parse::<f32>().unwrap() > util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [<= {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    } else {
+                        info!("Result: PASS");
+                        None
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
+        enums::OpCode::GreaterThanOrEqualTo => {
+            match rule.rule_vtype {
+                enums::RValueType::Value | enums::RValueType::Variable => {
+                    if util::format_value(&val).parse::<f32>().unwrap() < util::strip_ws_nl(rule_val.to_string()).parse::<f32>().unwrap() {
+                        info!("Result: FAIL");
+                        Some(match &rule.custom_msg {
+                            Some(c) => format!(
+                                "[{}] failed because [{}] is [{}] and {}",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                c),
+                            None => format!(
+                                "[{}] failed because [{}] is [{}] and the permitted value is [>= {}]",
+                                res_name,
+                                &rule.field,
+                                util::format_value(&val),
+                                rule_val.to_string()
+                            )
+                        }
+                        )
+                    } else {
+                        info!("Result: PASS");
+                        None
+                    }
+                }
+                _ => {
+                    error!("REQUIRE rule type that doesn't match RValueType of Regex, Variable or Value");
+                    None
+                }
+            }
+        }
     }
 }

@@ -75,6 +75,7 @@ You can check the compliance of that template with those rules:
 ```
 > cfn-guard -t ebs_volume_template.json -r ebs_volume_rule_set
 "[NewVolume2] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
+"[NewVolume2] failed because [Size] is [99] and the permitted value is [>= 100]"
 "[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"
 "[NewVolume2] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
 "[NewVolume] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
