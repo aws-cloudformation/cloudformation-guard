@@ -1103,6 +1103,56 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
     }
 
     #[test]
+    fn test_wildcard_tail_pass() {
+        let template_contents = fs::read_to_string("tests/wildcard_rule_end_template_pass.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::SecurityGroup Tags.* == {"Key":"EnvironmentType","Value":"EnvironmentType"}
+                  AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+    }
+
+    #[test]
+    fn test_wildcard_tail_fail() {
+        let template_contents = fs::read_to_string("tests/wildcard_rule_end_template_fail.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::SecurityGroup Tags.* == {"Key":"EnvironmentType","Value":"EnvironmentType"}
+                  AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.0] is [{"Key":"Name","Value":"${EnvironmentType}-${ClusterName}-sg"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.0] is [{"Key":"Name","Value":"${EnvironmentType}-${ClusterName}-sg"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.1] is [{"Key":"ClusterName","Value":"ECSCluster"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.1] is [{"Key":"ClusterName","Value":"ECSCluster"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.2] is [{"Key":"Scope","Value":"ecs"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.2] is [{"Key":"Scope","Value":"ecs"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                ],
+                2
+            )
+        );
+    }
+
+    #[test]
     fn test_diff_wildcard_type_pass() {
         let template_contents = fs::read_to_string("tests/aws-waf-security-automations.template")
             .unwrap_or_else(|err| format!("{}", err));
