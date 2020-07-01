@@ -38,6 +38,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
     let mut value_vec: Vec<String> = vec![];
     match serde_json::from_str(rule_val) {
         Ok(v) => {
+            debug!("List {} is a json list", rule_val);
             let val: Value = v;
             match val.as_array() {
                 Some(vv) => {
@@ -49,6 +50,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
             }
         }
         Err(_) => {
+            debug!("List {} is not a json list", rule_val);
             let value_string: String = rule_val
                 .trim_start_matches('[')
                 .trim_end_matches(']')
