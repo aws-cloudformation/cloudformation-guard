@@ -35,16 +35,33 @@ pub fn strip_ws_nl(v: String) -> String {
 }
 
 pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
-    let value_string: String = rule_val
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .replace(" ", "");
-
     let mut value_vec: Vec<String> = vec![];
+    match serde_json::from_str(rule_val) {
+        Ok(v) => {
+            debug!("List {} is a json list", rule_val);
+            let val: Value = v;
+            match val.as_array() {
+                Some(vv) => {
+                    for vvv in vv {
+                        value_vec.push(vvv.to_string())
+                    }
+                }
+                None => value_vec.push(val.to_string()),
+            }
+        }
+        Err(_) => {
+            debug!("List {} is not a json list", rule_val);
+            let value_string: String = rule_val
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .replace(" ", "");
 
-    for vs in value_string.split(',') {
-        value_vec.push(String::from(vs));
-    }
+            for vs in value_string.split(',') {
+                value_vec.push(String::from(vs));
+            }
+        }
+    };
+
     debug!("Rule value_vec is {:?}", &value_vec);
     value_vec
 }

@@ -19,9 +19,10 @@ lazy_static! {
     static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) +(?P<operator>\S+) +(?P<var_value>.*)").unwrap();
     static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
     static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
-    static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S*) (==) (.+)").unwrap();
+    static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
+    static ref WHITE_SPACE_REG: Regex = Regex::new(r"\s+").unwrap();
 }
 
 pub(crate) fn parse_rules(
@@ -88,6 +89,10 @@ pub(crate) fn parse_rules(
                 debug!("Parsed rule is: {:#?}", &compound_rule);
                 rule_set.push(compound_rule);
             }
+            LineType::WhiteSpace => {
+                debug!("Line is white space");
+                continue;
+            }
         }
     }
     for (key, value) in env::vars() {
@@ -112,6 +117,9 @@ fn find_line_type(line: &str) -> LineType {
     if RULE_REG.is_match(line) {
         return LineType::Rule;
     };
+    if WHITE_SPACE_REG.is_match(line) {
+        return LineType::WhiteSpace;
+    }
     let msg_string = format!("BAD RULE: {:?}", line);
     println!("{}", &msg_string);
     error!("{}", &msg_string);
@@ -257,9 +265,11 @@ mod tests {
         let comment = find_line_type("# This is a comment");
         let assignment = find_line_type("let x = assignment");
         let rule = find_line_type("AWS::EC2::Volume Encryption == true");
+        let white_space = find_line_type("         ");
         assert_eq!(comment, crate::enums::LineType::Comment);
         assert_eq!(assignment, crate::enums::LineType::Assignment);
         assert_eq!(rule, crate::enums::LineType::Rule);
+        assert_eq!(white_space, crate::enums::LineType::WhiteSpace)
     }
 
     #[test]

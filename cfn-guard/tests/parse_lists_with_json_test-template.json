@@ -1,0 +1,31 @@
+{
+  "Resources": {
+    "ClusterSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "EnvironmentType",
+            "Value": {"Ref": "EnvironmentType"}
+          },
+          {
+            "Key": "OwnerContact",
+            "Value": {"Ref": "OwnerContact"}
+          },
+          {
+            "Key": "Name",
+            "Value": {"Sub": "${EnvironmentType}-${ClusterName}-sg"}
+          },
+          {
+            "Key": "ClusterName",
+            "Value": {"Ref": "ECSCluster"}
+          },
+          {
+            "Key": "Scope",
+            "Value": "ecs"
+          }
+        ]
+      }
+    }
+  }
+}

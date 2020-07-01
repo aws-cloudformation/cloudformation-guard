@@ -7,6 +7,7 @@ pub mod enums {
         Assignment,
         Comment,
         Rule,
+        WhiteSpace,
     }
 
     #[derive(Debug, Hash, PartialEq, Eq, Clone)]
