@@ -1301,4 +1301,63 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             )
         )
     }
+
+    #[test]
+    fn test_parse_lists_with_json() {
+        let mut template_contents =
+            fs::read_to_string("tests/parse_lists_with_json_test-template.yaml")
+                .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":"OwnerContact"}] is in [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                )],
+                2
+            )
+        );
+        rules_file_contents = String::from(
+            r#"
+                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+        template_contents = fs::read_to_string("tests/parse_lists_with_json_test-template.json")
+            .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] is in [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                )],
+                2
+            )
+        );
+        rules_file_contents = String::from(
+            r#"
+                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+    }
 }
