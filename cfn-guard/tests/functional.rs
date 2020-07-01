@@ -1309,7 +1309,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                 .unwrap_or_else(|err| format!("{}", err));
         let mut rules_file_contents = String::from(
             r#"
-                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
                 AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
             "#,
         );
@@ -1317,14 +1317,14 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             cfn_guard::run_check(&template_contents, &rules_file_contents, false),
             (
                 vec![String::from(
-                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":"OwnerContact"}] is in [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":"OwnerContact"}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
                 )],
                 2
             )
         );
         rules_file_contents = String::from(
             r#"
-                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
                 AWS::EC2::SecurityGroup Tags.* IN %tag_vals
             "#,
         );
@@ -1336,7 +1336,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             .unwrap_or_else(|err| format!("{}", err));
         let mut rules_file_contents = String::from(
             r#"
-                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
                 AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
             "#,
         );
@@ -1344,14 +1344,14 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             cfn_guard::run_check(&template_contents, &rules_file_contents, false),
             (
                 vec![String::from(
-                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] is in [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
                 )],
                 2
             )
         );
         rules_file_contents = String::from(
             r#"
-                let tag_vals = [{"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
                 AWS::EC2::SecurityGroup Tags.* IN %tag_vals
             "#,
         );
