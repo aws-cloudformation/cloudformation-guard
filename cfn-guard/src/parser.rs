@@ -22,6 +22,7 @@ lazy_static! {
     static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
+    static ref WHITE_SPACE_REG: Regex = Regex::new(r"\s+").unwrap();
 }
 
 pub(crate) fn parse_rules(
@@ -88,6 +89,10 @@ pub(crate) fn parse_rules(
                 debug!("Parsed rule is: {:#?}", &compound_rule);
                 rule_set.push(compound_rule);
             }
+            LineType::WhiteSpace => {
+                debug!("Line is white space");
+                continue;
+            }
         }
     }
     for (key, value) in env::vars() {
@@ -112,6 +117,9 @@ fn find_line_type(line: &str) -> LineType {
     if RULE_REG.is_match(line) {
         return LineType::Rule;
     };
+    if WHITE_SPACE_REG.is_match(line) {
+        return LineType::WhiteSpace;
+    }
     let msg_string = format!("BAD RULE: {:?}", line);
     println!("{}", &msg_string);
     error!("{}", &msg_string);
