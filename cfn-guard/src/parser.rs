@@ -265,9 +265,11 @@ mod tests {
         let comment = find_line_type("# This is a comment");
         let assignment = find_line_type("let x = assignment");
         let rule = find_line_type("AWS::EC2::Volume Encryption == true");
+        let white_space = find_line_type("         ");
         assert_eq!(comment, crate::enums::LineType::Comment);
         assert_eq!(assignment, crate::enums::LineType::Assignment);
         assert_eq!(rule, crate::enums::LineType::Rule);
+        assert_eq!(white_space, crate::enums::LineType::WhiteSpace)
     }
 
     #[test]
