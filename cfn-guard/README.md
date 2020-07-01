@@ -154,9 +154,10 @@ Resources:
               Service:
                 - lambda.amazonaws.com
 ```
-## Wildcard Syntax
+## Wildcards
+### Syntax
 
-You can also refer to list items as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
+You can also refer to template list items as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
 ``` 
@@ -184,8 +185,8 @@ CloudFormation Guard will walk the template and internally convert the wildcard 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Principal.Service.0 == lambda.amazonaws.com |OR| AWS::IAM::Role AssumeRolePolicyDocument.Statement.1.Principal.Service.0 == ec2.amazonaws.com
 ```
-
-Note carefully the different semantic meanings between equality (`==`) and inequality (`!=`) with wildcards:
+### Semantics
+Note carefully the different semantic meanings between the equality (`==`) or in-a-list (`IN`) operators and the inequality (`!=`) or not-in-a-list (`NOT_IN`) ones with wildcards:
 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* == lambda.amazonaws.com
@@ -214,7 +215,8 @@ AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 
 ## Variable Syntax
 
-You can also declare variables using a `let` syntax:
+### Assignment
+You can declare variables using a `let` syntax:
 
 ```
 let <VAR NAME> = <list or scalar>
@@ -224,7 +226,10 @@ For example:
 
 ```
 let size = 500
+# Regular list
 let azs = [us-east-1b, us-east-1b]
+# JSON list
+let tag_vals = ["tests", 1, ["a", "b"], {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
 ```
 
 And then refer to those variables in rules using `%`:
@@ -233,6 +238,57 @@ And then refer to those variables in rules using `%`:
 AWS::EBS::Volume Size == %size
 ```
 
+### JSON lists vs non-JSON lists
+
+#### JSON Lists
+Any valid JSON list literal is a valid JSON list. The list:
+``` 
+let tag_vals = ["tests", 1, ["a", "b"], {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+Will flatten out to a list of the following values:
+``` 
+"tests",
+1,
+["a, b"],
+{"Key":"A","Value":"a"},
+{"Key":"A","Value":{"Ref":"a"}}
+```
+That you can match properties of a template resource against using `IN` or `NOT_IN`.
+
+#### Non-JSON Lists
+Any list that's not a json literal is just a comma-separated list of values.
+
+#### Mixing list types
+**Lists containing a mix of JSON and non-JSON values are interpreted as non-JSON**
+
+So if
+``` 
+let tag_vals = ["tests", {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+Were written as
+
+``` 
+let tag_vals = [tests, {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+It would be evaluated as a list of the items:
+```
+tests,
+{"Key":"A",
+"Value":"a"},
+{"Key":"A",
+"Value":{"Ref":"a"}}
+```
+Which is almost certainly not what you'd want.  
+
+If you see strange behavior in a rule working with a json list, run with `-vv` and you'll see a line like:
+``` 
+2020-07-01 14:49:18,411 DEBUG [cfn_guard::util] List [tests, {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}] is not a json list
+```
+That will give you more information on how `cfn-guard` is processing it.
+
+(See [Troubleshooting](#troubleshooting) for more details on using the different logging levels to see how your template and rule set are being processed.)
+
+### Environment Varibles
 You can even reference **environment variables** using the Makefile-style notation: `%{Name}`
 
 So you could rewrite the IAM Role rule above as:
