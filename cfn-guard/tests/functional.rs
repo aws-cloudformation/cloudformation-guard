@@ -1103,6 +1103,20 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
     }
 
     #[test]
+    fn test_wildcard_tail_pass() {
+        let template_contents = fs::read_to_string("tests/wildcard_rule_end_template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::SecurityGroup Tags.* == {"Key":"EnvironmentType","Value":"EnvironmentType"}
+                  AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+    }
+
+    #[test]
     fn test_diff_wildcard_type_pass() {
         let template_contents = fs::read_to_string("tests/aws-waf-security-automations.template")
             .unwrap_or_else(|err| format!("{}", err));
