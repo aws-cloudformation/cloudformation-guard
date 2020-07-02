@@ -43,6 +43,9 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
             match val.as_array() {
                 Some(vv) => {
                     for vvv in vv {
+                        let val_string = vvv.to_string();
+                        let list_val = val_string.trim_start_matches('"').trim_end_matches('"');
+                        value_vec.push(String::from(list_val))
                     }
                 }
                 None => value_vec.push(val.to_string()),
