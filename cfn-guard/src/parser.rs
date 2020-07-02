@@ -8,8 +8,8 @@ use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 
-use crate::guard_types::enums::{CompoundType, LineType, OpCode, RValueType};
-use crate::guard_types::structs::{CompoundRule, ParsedRuleSet, Rule};
+use crate::guard_types::enums::{CompoundType, LineType, OpCode, RValueType, RuleType};
+use crate::guard_types::structs::{CompoundRule, ConditionalRule, ParsedRuleSet, Rule};
 use crate::util;
 use lazy_static::lazy_static;
 
@@ -23,6 +23,7 @@ lazy_static! {
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
     static ref WHITE_SPACE_REG: Regex = Regex::new(r"\s+").unwrap();
+    static ref CONDITIONAL_RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +if +(?P<condition>.+) +then +(?P<consequent>.*)").unwrap();
 }
 
 pub(crate) fn parse_rules(
@@ -39,7 +40,7 @@ pub(crate) fn parse_rules(
         &cfn_resources
     );
 
-    let mut rule_set: Vec<CompoundRule> = vec![];
+    let mut rule_set: Vec<RuleType> = vec![];
     let mut variables = HashMap::new();
 
     let lines = rules_file_contents.lines();
@@ -78,15 +79,14 @@ pub(crate) fn parse_rules(
             }
             LineType::Comment => (),
             LineType::Rule => {
-                let compound_rule: CompoundRule = if is_or_rule(l) {
-                    debug!("Line is an |OR| rule");
-                    process_or_rule(l, &cfn_resources)
-                } else {
-                    debug!("Line is an 'AND' rule");
-                    process_and_rule(l, &cfn_resources)
-                };
+                let compound_rule = parse_rule_line(l, &cfn_resources);
                 debug!("Parsed rule is: {:#?}", &compound_rule);
-                rule_set.push(compound_rule);
+                rule_set.push(RuleType::CompoundRule(compound_rule));
+            }
+            LineType::Conditional => {
+                let conditional_rule: ConditionalRule = process_conditional(l, &cfn_resources);
+                debug!("Parsed conditional is {:#?}", &conditional_rule);
+                rule_set.push(RuleType::ConditionalRule(conditional_rule));
             }
             LineType::WhiteSpace => {
                 debug!("Line is white space");
@@ -107,12 +107,39 @@ pub(crate) fn parse_rules(
     }
 }
 
+fn parse_rule_line(l: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
+    let compound_rule: CompoundRule = if is_or_rule(l) {
+        debug!("Line is an |OR| rule");
+        process_or_rule(l, &cfn_resources)
+    } else {
+        debug!("Line is an 'AND' rule");
+        process_and_rule(l, &cfn_resources)
+    };
+    compound_rule
+}
+
+fn process_conditional(line: &str, cfn_resources: &HashMap<String, Value>) -> ConditionalRule {
+    let caps = CONDITIONAL_RULE_REG.captures(line).unwrap();
+    trace!("ConditionalRule regex captures are {:#?}", &caps);
+    let conjd_caps_conditional = format!("{} {}", &caps["resource_type"], &caps["condition"]);
+    let conjd_caps_consequent = format!("{} {}", &caps["resource_type"], &caps["consequent"]);
+    let condition = parse_rule_line(&conjd_caps_conditional, cfn_resources);
+    let consequent = parse_rule_line(&conjd_caps_consequent, cfn_resources);
+    ConditionalRule {
+        condition: condition,
+        consequent: consequent,
+    }
+}
+
 fn find_line_type(line: &str) -> LineType {
     if COMMENT_REG.is_match(line) {
         return LineType::Comment;
     };
     if ASSIGN_REG.is_match(line) {
         return LineType::Assignment;
+    };
+    if CONDITIONAL_RULE_REG.is_match(line) {
+        return LineType::Conditional;
     };
     if RULE_REG.is_match(line) {
         return LineType::Rule;

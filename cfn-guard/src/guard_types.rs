@@ -6,6 +6,7 @@ pub mod enums {
     pub enum LineType {
         Assignment,
         Comment,
+        Conditional,
         Rule,
         WhiteSpace,
     }
@@ -34,6 +35,12 @@ pub mod enums {
         OR,
         AND,
     }
+
+    #[derive(Debug, Clone)]
+    pub enum RuleType {
+        CompoundRule(super::structs::CompoundRule),
+        ConditionalRule(super::structs::ConditionalRule),
+    }
 }
 
 pub mod structs {
@@ -49,15 +56,21 @@ pub mod structs {
         pub(crate) custom_msg: Option<String>,
     }
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct CompoundRule {
         pub(crate) compound_type: super::enums::CompoundType,
         pub(crate) rule_list: Vec<Rule>,
     }
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
+    pub struct ConditionalRule {
+        pub(crate) condition: CompoundRule,
+        pub(crate) consequent: CompoundRule,
+    }
+
+    #[derive(Debug)]
     pub struct ParsedRuleSet {
         pub(crate) variables: HashMap<String, String>,
-        pub(crate) rule_set: Vec<CompoundRule>,
+        pub(crate) rule_set: Vec<super::enums::RuleType>,
     }
 }

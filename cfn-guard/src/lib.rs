@@ -118,49 +118,52 @@ fn check_resources(
     let mut result: Vec<String> = vec![];
     for c_rule in parsed_rule_set.rule_set.iter() {
         info!("Applying rule '{:#?}'", &c_rule);
-        match c_rule.compound_type {
-            enums::CompoundType::OR => {
-                for (name, cfn_resource) in cfn_resources {
-                    trace!("OR'ing [{}] against {:?}", name, c_rule);
-                    let mut pass_fail = HashSet::new();
-                    let mut temp_results: Vec<String> = vec![];
-                    let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
-                    cfn_resource_map.insert(name.clone(), cfn_resource.clone());
-                    for rule in &c_rule.rule_list {
-                        match apply_rule(
-                            &cfn_resource_map,
+        match c_rule {
+            enums::RuleType::ConditionalRule(r) => {}
+            enums::RuleType::CompoundRule(r) => match r.compound_type {
+                enums::CompoundType::OR => {
+                    for (name, cfn_resource) in cfn_resources {
+                        trace!("OR'ing [{}] against {:?}", name, r);
+                        let mut pass_fail = HashSet::new();
+                        let mut temp_results: Vec<String> = vec![];
+                        let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
+                        cfn_resource_map.insert(name.clone(), cfn_resource.clone());
+                        for rule in &r.rule_list {
+                            match apply_rule(
+                                &cfn_resource_map,
+                                &rule,
+                                &parsed_rule_set.variables,
+                                strict_checks,
+                            ) {
+                                Some(rule_result) => {
+                                    pass_fail.insert("fail");
+                                    temp_results.extend(rule_result);
+                                }
+                                None => {
+                                    pass_fail.insert("pass");
+                                }
+                            }
+                        }
+                        trace! {"pass_fail set is {:?}", &pass_fail};
+                        trace! {"temp_results are {:?}", &temp_results};
+                        if !pass_fail.contains("pass") {
+                            result.extend(temp_results);
+                        }
+                    }
+                }
+                enums::CompoundType::AND => {
+                    for rule in &r.rule_list {
+                        if let Some(rule_result) = apply_rule(
+                            &cfn_resources,
                             &rule,
                             &parsed_rule_set.variables,
                             strict_checks,
                         ) {
-                            Some(rule_result) => {
-                                pass_fail.insert("fail");
-                                temp_results.extend(rule_result);
-                            }
-                            None => {
-                                pass_fail.insert("pass");
-                            }
+                            result.extend(rule_result);
                         }
                     }
-                    trace! {"pass_fail set is {:?}", &pass_fail};
-                    trace! {"temp_results are {:?}", &temp_results};
-                    if !pass_fail.contains("pass") {
-                        result.extend(temp_results);
-                    }
                 }
-            }
-            enums::CompoundType::AND => {
-                for rule in &c_rule.rule_list {
-                    if let Some(rule_result) = apply_rule(
-                        &cfn_resources,
-                        &rule,
-                        &parsed_rule_set.variables,
-                        strict_checks,
-                    ) {
-                        result.extend(rule_result);
-                    }
-                }
-            }
+            },
         }
     }
     result
