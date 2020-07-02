@@ -157,7 +157,7 @@ Resources:
 ## Wildcards
 ### Syntax
 
-You can also refer to template list items as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
+You can also refer to template items, lists and maps as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
 ``` 
