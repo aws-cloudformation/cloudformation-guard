@@ -157,7 +157,7 @@ Resources:
 ## Wildcards
 ### Syntax
 
-You can also refer to template list items as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
+You can also refer to template items, lists and maps as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
 ``` 
@@ -304,6 +304,8 @@ IAM_PRIN=lambda.amazonaws.com cfn-guard -t iam_template -r iam_rule_set
 ```
 
 Note:  All environment variables are available for use at runtime. They don't need to be explicitly set during the `cfn-guard` invocation.
+
+**Environment Variables are not logged to avoid persisting sensitive information.  You should use them to pass sensitive values in to `cfn-guard` instead of the `let` form.**
 
 ## Custom Failure Messages
 

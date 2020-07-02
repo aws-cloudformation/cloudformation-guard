@@ -2,7 +2,7 @@
 
 use crate::{enums, structs};
 use lazy_static::lazy_static;
-use log::{self, debug, error, trace};
+use log::{self, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,19 +38,21 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
     let mut value_vec: Vec<String> = vec![];
     match serde_json::from_str(rule_val) {
         Ok(v) => {
-            debug!("List {} is a json list", rule_val);
+            trace!("List {} is a json list", rule_val);
             let val: Value = v;
             match val.as_array() {
                 Some(vv) => {
                     for vvv in vv {
-                        value_vec.push(vvv.to_string())
+                        let val_string = vvv.to_string();
+                        let list_val = val_string.trim_start_matches('"').trim_end_matches('"');
+                        value_vec.push(String::from(list_val))
                     }
                 }
                 None => value_vec.push(val.to_string()),
             }
         }
         Err(_) => {
-            debug!("List {} is not a json list", rule_val);
+            trace!("List {} is not a json list", rule_val);
             let value_string: String = rule_val
                 .trim_start_matches('[')
                 .trim_end_matches(']')
@@ -62,7 +64,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
         }
     };
 
-    debug!("Rule value_vec is {:?}", &value_vec);
+    trace!("Rule value_vec is {:?}", &value_vec);
     value_vec
 }
 
@@ -77,8 +79,11 @@ fn match_props<'a>(props: &'a Value, n: &'a dyn serde_json::value::Index) -> Res
 pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, String> {
     trace!("Getting {:?} from {}", &field, &props);
     let mut field_list = field.to_owned();
-    trace!("field_list len is {}", field_list.len());
+    trace!("field_list is {:?}", field_list);
     let next_field = field_list.remove(0);
+    if next_field == "" {
+        return Ok(props.clone());
+    }
     match next_field.parse::<usize>() {
         Ok(n) => {
             trace!(
@@ -86,6 +91,7 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
                 &n,
                 &field_list
             );
+
             match match_props(props, &n) {
                 Ok(v) => {
                     if !field_list.is_empty() {
@@ -117,14 +123,27 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     }
 }
 
+pub fn filter_for_env_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut filtered_map: HashMap<String, String> = HashMap::new();
+    for (k, v) in vars.iter() {
+        if !k.starts_with("ENV") {
+            filtered_map.insert(k.to_string(), v.to_string());
+        } else {
+            filtered_map.insert(k.to_string(), format!("********"));
+        }
+    }
+    filtered_map
+}
+
 pub fn deref_rule_value<'a>(
     rule: &'a structs::Rule,
     vars: &'a HashMap<String, String>,
 ) -> Result<&'a str, String> {
+    let filtered_env_vars = filter_for_env_vars(vars);
     trace!(
         "Entered dereference_rule_value() with '{:#?}' and Variables '{:#?}'",
         rule,
-        &vars
+        filtered_env_vars
     );
     match rule.rule_vtype {
         enums::RValueType::Variable => {
@@ -141,16 +160,19 @@ pub fn deref_rule_value<'a>(
             trace!(
                 "Dereferencing variable {:?} in '{:#?}'",
                 final_target,
-                &vars
+                filtered_env_vars
             );
             match &vars.get(&final_target) {
                 Some(v) => Ok(v),
                 None => {
                     error!(
-                        "Undefined Variable:  [{}] does not exist in {:?}",
-                        final_target, &vars
+                        "Undefined Variable: [{}] does not exist in {:#?}",
+                        final_target, &filtered_env_vars
                     );
-                    Err(format!("[{}] does not exist in {:?}", rule.value, &vars))
+                    Err(format!(
+                        "[{}] does not exist in {:#?}",
+                        rule.value, &filtered_env_vars
+                    ))
                 }
             }
         }
@@ -173,7 +195,7 @@ pub fn expand_wildcard_props(
     trace!("Segments are {:#?}", &segments);
     let segment = segments.remove(0);
     trace!("Processing segment {:#?}", &segment);
-    if segment != "" {
+    if segments.len() > 0 {
         let mut expanded_props: Vec<String> = vec![];
         let s = segment.trim_end_matches('.').trim_start_matches('.');
         let steps = s.split('.').collect::<Vec<&str>>();
@@ -184,7 +206,7 @@ pub fn expand_wildcard_props(
                     for (counter, r) in result_array.iter().enumerate() {
                         trace!("Counter is {:#?}", counter);
                         let next_segment = segments.join("*");
-                        trace!("next_segment is {:#?}", &next_segment);
+                        trace!("next_segment is '{:#?}'", &next_segment);
                         let temp_address = format!("{}{}{}", accumulator, segment, counter);
                         trace!("temp_address is {:#?}", &temp_address);
                         match expand_wildcard_props(&r, next_segment, temp_address) {
@@ -193,14 +215,32 @@ pub fn expand_wildcard_props(
                         }
                     }
                 }
-                None => expanded_props.push(format!("{}{}", accumulator, segment)),
+                None => match v.as_object() {
+                    Some(result_object) => {
+                        trace!("Value is an object");
+                        for (k, v) in result_object.iter() {
+                            trace!("Key is '{}'", k);
+                            let next_segment = segments.join("*");
+                            trace!("next_segment is {:#?}", next_segment);
+                            let temp_address = format!("{}{}{}", accumulator, segment, k);
+                            trace!("temp_address is {:#?}", &temp_address);
+                            match expand_wildcard_props(&v, next_segment, temp_address) {
+                                Some(result) => expanded_props.append(&mut result.clone()),
+                                None => return None,
+                            }
+                        }
+                    }
+                    None => expanded_props.push(format!("{}{}", accumulator, segment)),
+                },
             },
             Err(_) => return None,
         }
         Some(expanded_props)
     } else {
-        trace!("Segment is empty");
-        Some(vec![accumulator])
+        trace!("Final segment");
+        let accumulated_address = format!("{}{}", accumulator, segment);
+        trace!("Accumulated address: {}", accumulated_address);
+        Some(vec![accumulated_address])
     }
 }
 

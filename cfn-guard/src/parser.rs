@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::guard_types::enums::{CompoundType, LineType, OpCode, RValueType};
 use crate::guard_types::structs::{CompoundRule, ParsedRuleSet, Rule};
-use crate::util::expand_wildcard_props;
+use crate::util;
 use lazy_static::lazy_static;
 
 // This sets it up so the regexen only get compiled once
@@ -99,7 +99,8 @@ pub(crate) fn parse_rules(
         let key_name = format!("ENV_{}", key);
         variables.insert(key_name, value);
     }
-    debug!("Variables dictionary is {:?}", &variables);
+    let filtered_env_vars = util::filter_for_env_vars(&variables);
+    debug!("Variables dictionary is {:?}", &filtered_env_vars);
     debug!("Rule Set is {:#?}", &rule_set);
     ParsedRuleSet {
         variables,
@@ -177,7 +178,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     if caps["resource_property"].contains('*') {
         for (_name, value) in cfn_resources {
             if caps["resource_type"] == value["Type"] {
-                if let Some(p) = expand_wildcard_props(
+                if let Some(p) = util::expand_wildcard_props(
                     &value["Properties"],
                     caps["resource_property"].to_string(),
                     String::from(""),
