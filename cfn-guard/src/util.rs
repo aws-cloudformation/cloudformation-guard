@@ -77,8 +77,11 @@ fn match_props<'a>(props: &'a Value, n: &'a dyn serde_json::value::Index) -> Res
 pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, String> {
     trace!("Getting {:?} from {}", &field, &props);
     let mut field_list = field.to_owned();
-    trace!("field_list len is {}", field_list.len());
+    trace!("field_list is {:?}", field_list);
     let next_field = field_list.remove(0);
+    if next_field == "" {
+        return Ok(props.clone())
+    }
     match next_field.parse::<usize>() {
         Ok(n) => {
             trace!(
@@ -86,6 +89,7 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
                 &n,
                 &field_list
             );
+
             match match_props(props, &n) {
                 Ok(v) => {
                     if !field_list.is_empty() {
@@ -173,7 +177,7 @@ pub fn expand_wildcard_props(
     trace!("Segments are {:#?}", &segments);
     let segment = segments.remove(0);
     trace!("Processing segment {:#?}", &segment);
-    if segment != "" {
+    if segments.len() > 0 {
         let mut expanded_props: Vec<String> = vec![];
         let s = segment.trim_end_matches('.').trim_start_matches('.');
         let steps = s.split('.').collect::<Vec<&str>>();
@@ -184,7 +188,7 @@ pub fn expand_wildcard_props(
                     for (counter, r) in result_array.iter().enumerate() {
                         trace!("Counter is {:#?}", counter);
                         let next_segment = segments.join("*");
-                        trace!("next_segment is {:#?}", &next_segment);
+                        trace!("next_segment is '{:#?}'", &next_segment);
                         let temp_address = format!("{}{}{}", accumulator, segment, counter);
                         trace!("temp_address is {:#?}", &temp_address);
                         match expand_wildcard_props(&r, next_segment, temp_address) {
@@ -193,14 +197,32 @@ pub fn expand_wildcard_props(
                         }
                     }
                 }
-                None => expanded_props.push(format!("{}{}", accumulator, segment)),
+                None => match v.as_object() {
+                    Some(result_object) => {
+                        trace!("Value is an object");
+                        for (k, v) in result_object.iter() {
+                            trace!("Key is '{}'", k);
+                            let next_segment = segments.join("*");
+                            trace!("next_segment is {:#?}", next_segment);
+                            let temp_address = format!("{}{}{}", accumulator, segment, k);
+                            trace!("temp_address is {:#?}", &temp_address);
+                            match expand_wildcard_props(&v, next_segment, temp_address) {
+                                Some(result) => expanded_props.append(&mut result.clone()),
+                                None => return None,
+                            }
+                        }
+                    }
+                    None => expanded_props.push(format!("{}{}", accumulator, segment)),
+                },
             },
             Err(_) => return None,
         }
         Some(expanded_props)
     } else {
-        trace!("Segment is empty");
-        Some(vec![accumulator])
+        trace!("Final segment");
+        let accumulated_address = format!("{}{}", accumulator, segment);
+        trace!("Accumulated address: {}", accumulated_address);
+        Some(vec![accumulated_address])
     }
 }
 
