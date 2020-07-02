@@ -2,7 +2,7 @@
 
 use crate::{enums, structs};
 use lazy_static::lazy_static;
-use log::{self, debug, error, trace};
+use log::{self, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,19 +38,18 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
     let mut value_vec: Vec<String> = vec![];
     match serde_json::from_str(rule_val) {
         Ok(v) => {
-            debug!("List {} is a json list", rule_val);
+            trace!("List {} is a json list", rule_val);
             let val: Value = v;
             match val.as_array() {
                 Some(vv) => {
                     for vvv in vv {
-                        value_vec.push(vvv.to_string())
                     }
                 }
                 None => value_vec.push(val.to_string()),
             }
         }
         Err(_) => {
-            debug!("List {} is not a json list", rule_val);
+            trace!("List {} is not a json list", rule_val);
             let value_string: String = rule_val
                 .trim_start_matches('[')
                 .trim_end_matches(']')
@@ -62,7 +61,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
         }
     };
 
-    debug!("Rule value_vec is {:?}", &value_vec);
+    trace!("Rule value_vec is {:?}", &value_vec);
     value_vec
 }
 
@@ -80,7 +79,7 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     trace!("field_list is {:?}", field_list);
     let next_field = field_list.remove(0);
     if next_field == "" {
-        return Ok(props.clone())
+        return Ok(props.clone());
     }
     match next_field.parse::<usize>() {
         Ok(n) => {
