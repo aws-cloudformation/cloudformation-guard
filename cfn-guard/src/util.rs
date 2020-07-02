@@ -123,14 +123,27 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     }
 }
 
+pub fn filter_for_env_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut filtered_map: HashMap<String, String> = HashMap::new();
+    for (k, v) in vars.iter() {
+        if !k.starts_with("ENV") {
+            filtered_map.insert(k.to_string(), v.to_string());
+        } else {
+            filtered_map.insert(k.to_string(), format!("********"));
+        }
+    }
+    filtered_map
+}
+
 pub fn deref_rule_value<'a>(
     rule: &'a structs::Rule,
     vars: &'a HashMap<String, String>,
 ) -> Result<&'a str, String> {
+    let filtered_env_vars = filter_for_env_vars(vars);
     trace!(
         "Entered dereference_rule_value() with '{:#?}' and Variables '{:#?}'",
         rule,
-        &vars
+        filtered_env_vars
     );
     match rule.rule_vtype {
         enums::RValueType::Variable => {
@@ -147,16 +160,19 @@ pub fn deref_rule_value<'a>(
             trace!(
                 "Dereferencing variable {:?} in '{:#?}'",
                 final_target,
-                &vars
+                filtered_env_vars
             );
             match &vars.get(&final_target) {
                 Some(v) => Ok(v),
                 None => {
                     error!(
-                        "Undefined Variable:  [{}] does not exist in {:?}",
-                        final_target, &vars
+                        "Undefined Variable: [{}] does not exist in {:#?}",
+                        final_target, &filtered_env_vars
                     );
-                    Err(format!("[{}] does not exist in {:?}", rule.value, &vars))
+                    Err(format!(
+                        "[{}] does not exist in {:#?}",
+                        rule.value, &filtered_env_vars
+                    ))
                 }
             }
         }

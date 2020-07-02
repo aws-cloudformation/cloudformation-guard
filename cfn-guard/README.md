@@ -305,6 +305,8 @@ IAM_PRIN=lambda.amazonaws.com cfn-guard -t iam_template -r iam_rule_set
 
 Note:  All environment variables are available for use at runtime. They don't need to be explicitly set during the `cfn-guard` invocation.
 
+**Environment Variables are not logged to avoid persisting sensitive information.  You should use them to pass sensitive values in to `cfn-guard` instead of the `let` form.**
+
 ## Custom Failure Messages
 
 There is an optional field in the rule syntax where you can provide your own custom messages by adding `<<` and the message text to the end of the rule:
