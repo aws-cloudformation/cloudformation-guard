@@ -1360,4 +1360,120 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             (vec![], 0)
         );
     }
+
+    #[test]
+    fn test_wildcard_descent() {
+        // Pass *.*.*
+        let template_contents = fs::read_to_string("tests/wildcard-descent-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+            let log_stuff = [Solution, Data, LogLevel]
+            AWS::Lambda::Function Environment.*.*.* IN %log_stuff"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail *.*.*
+        rules_file_contents = String::from(
+            r#"
+            let log_stuff = [Solution, Data, LogLevel]
+            AWS::Lambda::Function Environment.*.*.* NOT_IN %log_stuff"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [Data] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.1]"#
+                    ),
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [LogLevel] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.2]"#
+                    ),
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [Solution] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.0]"#
+                    )
+                ],
+                2
+            )
+        );
+
+        // Pass over-wildcarding (ie, wildcards in structures that don't extend that deeply
+        rules_file_contents = String::from(r#"AWS::Lambda::Function MemorySize.*.* IN [128]"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Pass for checks of a list inside of a list
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.* IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a list inside of a list
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.* NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
+
+        // Pass for checks of a wildcard in the middle of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a wildcard in the middle of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
+
+        // Pass for checks of a wildcard at the start of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function *.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a wildcard at the start of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function *.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
+    }
 }
