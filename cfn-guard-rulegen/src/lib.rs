@@ -1,6 +1,6 @@
 // © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
 
-use log::{self, debug, info, trace};
+use log::{self, debug, error, info, trace};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -28,12 +28,31 @@ pub fn run_gen(template_file_contents: &str) -> Vec<String> {
         Ok(s) => s,
         Err(_) => match serde_yaml::from_str(template_file_contents) {
             Ok(y) => y,
-            Err(e) => panic!("Template file format was unreadable as json or yaml: {}", e),
+            Err(e) => {
+                let msg_string = format!("Template file format was unreadable as json or yaml: {}", e);
+                error!("{}", &msg_string);
+                return vec![msg_string]
+            },
         },
     };
     trace!("CFN Template is {:#?}", &cfn_template);
+    let cfn_resources_clone = match cfn_template.get("Resources") {
+        Some(y) => y.clone(),
+        None => {
+            let msg_string = format!("Template lacks a Resources section");
+            error!("{}", &msg_string);
+            return vec![msg_string]
+        },
+    };
     let cfn_resources: HashMap<String, Value> =
-        serde_json::from_value(cfn_template["Resources"].clone()).unwrap();
+        match serde_json::from_value(cfn_resources_clone) {
+            Ok(y) => y,
+            Err(e) => {
+                let msg_string = format!("Template Resources section has an invalid structure: {}", e);
+                error!("{}", &msg_string);
+                return vec![msg_string]
+            },
+        };
     trace!("CFN resources are: {:?}", cfn_resources);
     gen_rules(cfn_resources)
 }
