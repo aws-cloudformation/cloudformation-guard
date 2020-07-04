@@ -246,7 +246,6 @@ pub fn expand_wildcard_props(
 
 // TODO: Move all in-proc exits to clean_exit()
 // pub fn clean_exit(msg_string: String) {
-//     println!("{}", &msg_string);
 //     error!("{}", &msg_string);
 //     process::exit(1)
 // }
@@ -258,7 +257,6 @@ pub fn parse_value_as_float(val: &Value) -> f32 {
         Ok(s) => s,
         Err(_) => {
             let msg_string = format!("Value cannot be parsed as a float: {}", val);
-            println!("{}", &msg_string);
             error!("{}", &msg_string);
             process::exit(1)
         }
@@ -270,7 +268,6 @@ pub fn parse_str_as_float(val: &str) -> f32 {
         Ok(s) => s,
         Err(_) => {
             let msg_string = format!("String cannot be parsed as a float: {}", val);
-            println!("{}", &msg_string);
             error!("{}", &msg_string);
             process::exit(1)
         }

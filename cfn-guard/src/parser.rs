@@ -64,7 +64,6 @@ pub(crate) fn parse_rules(
                         "Bad Assignment Operator: [{}] in '{}'",
                         &caps["operator"], l
                     );
-                    println!("{}", &msg_string);
                     error!("{}", &msg_string);
                     process::exit(1)
                 }
@@ -122,7 +121,6 @@ fn find_line_type(line: &str) -> LineType {
         return LineType::WhiteSpace;
     }
     let msg_string = format!("BAD RULE: {:?}", line);
-    println!("{}", &msg_string);
     error!("{}", &msg_string);
     process::exit(1)
 }
@@ -211,7 +209,6 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                             "Bad Rule Operator: [{}] in '{}'",
                             &caps["operator"], rule_text
                         );
-                        println!("{}", &msg_string);
                         error!("{}", &msg_string);
                         process::exit(1)
                     }
@@ -228,7 +225,6 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                                 "Bad Rule Operator: [{}] in '{}'",
                                 &caps["operator"], rule_text
                             );
-                            println!("{}", &msg_string);
                             error!("{}", &msg_string);
                             process::exit(1)
                         }
