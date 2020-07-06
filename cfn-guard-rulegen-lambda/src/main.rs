@@ -3,7 +3,7 @@
 use std::error::Error;
 use cfn_guard_rulegen;
 use lambda_runtime::{error::HandlerError, lambda, Context};
-use log::{self, debug};
+use log::{self, info};
 use serde_derive::{Deserialize, Serialize};
 use simple_logger;
 
@@ -28,7 +28,7 @@ struct CustomOutput {
 
 fn my_handler(e: CustomEvent, _c: Context) -> Result<CustomOutput, HandlerError> {
 
-    debug!("Template is [{}]", &e.template);
+    info!("Template is [{}]", &e.template);
     let result = cfn_guard_rulegen::run_gen(&e.template);
 
     Ok(CustomOutput {
