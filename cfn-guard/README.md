@@ -366,7 +366,7 @@ AWS::EC2::Volume AvailabilityZone == !GetAtt [EC2Instance, AvailabilityZone]
 ```
 Results in a failure:
 ``` 
-"[NewVolume] failed because [AvailabilityZone] is [[\"EC2Instance\",\"AvailabilityZone\"]] and the permitted value is [!GetAtt [EC2Instance, AvailabilityZone]]"
+"[NewVolume] failed because [AvailabilityZone] is [["EC2Instance","AvailabilityZone"]] and the permitted value is [!GetAtt [EC2Instance, AvailabilityZone]]"
 ```
 That effect, combined with the parser stripping out whitespace between values means that the rule would need to be written as:
 ``` 
@@ -374,7 +374,7 @@ AWS::EC2::Volume AvailabilityZone == ["EC2Instance","AvailabilityZone"]
 ```
 where the values are quoted and with no space behind the `,` in order to match.
 
-If you see something that should match but doesn't, the failure message (`[\"EC2Instance\",\"AvailabilityZone\"]`) will help you identify why. 
+If you see something that should match but doesn't, the failure message (`["EC2Instance","AvailabilityZone"]`) will help you identify why. 
 
 This last part about the stripped whitespace is also true for the JSON version of the `Fn::GetAtt` function:
 ``` 
@@ -400,7 +400,7 @@ This last part about the stripped whitespace is also true for the JSON version o
 ```
 Which would fail with a message like:
 ```
-"[NewVolume] failed because [AvailabilityZone] is [{\"Fn::GetAtt\":[\"EC2Instance\",\"AvailabilityZone\"]}] and the permitted value is [[\"EC2Instance\",\"AvailabilityZone\"]]"
+"[NewVolume] failed because [AvailabilityZone] is [{"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}] and the permitted value is [["EC2Instance","AvailabilityZone"]]"
 ```
 In order to handle both cases in both template formats, use an `|OR|` rule like the following (without escaping the quotes and without interstitial whitespace):
 ``` 
