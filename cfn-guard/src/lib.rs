@@ -114,12 +114,38 @@ fn check_resources(
     parsed_rule_set: &structs::ParsedRuleSet,
     strict_checks: bool,
 ) -> Vec<String> {
+    // TODO: Change this to a Result
     info!("Checking resources");
     let mut result: Vec<String> = vec![];
     for c_rule in parsed_rule_set.rule_set.iter() {
         info!("Applying rule '{:#?}'", &c_rule);
         match c_rule {
-            enums::RuleType::ConditionalRule(r) => {}
+            enums::RuleType::ConditionalRule(r) => {
+                trace!("Conditional rule is {:#?}", r);
+                for (name, cfn_resource) in cfn_resources {
+                    trace!("Checking condition: {:?}", r.condition);
+                    let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
+                    cfn_resource_map.insert(name.clone(), cfn_resource.clone());
+                    let condition_rule_set = structs::ParsedRuleSet {
+                        variables: parsed_rule_set.variables.clone(),
+                        rule_set: vec![enums::RuleType::CompoundRule(r.clone().condition)],
+                    };
+                    let condition = check_resources(&cfn_resource_map, &condition_rule_set, true);
+                    if condition.is_empty() {
+                        // TODO: Change this to a Result
+                        let consequent_rule_set = structs::ParsedRuleSet {
+                            variables: parsed_rule_set.variables.clone(),
+                            rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
+                        };
+                        let postscript = format!("when {:?}", r.condition.rule_list);
+                        let temp_result =
+                            check_resources(&cfn_resource_map, &consequent_rule_set, strict_checks)
+                                .into_iter()
+                                .map(|x| format!("{} {}", x, postscript));
+                        result.extend(temp_result);
+                    }
+                }
+            }
             enums::RuleType::CompoundRule(r) => match r.compound_type {
                 enums::CompoundType::OR => {
                     for (name, cfn_resource) in cfn_resources {
