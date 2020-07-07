@@ -70,6 +70,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
 
 fn match_props<'a>(props: &'a Value, n: &'a dyn serde_json::value::Index) -> Result<&'a Value, ()> {
     trace!("props are {:#?}", props);
+
     match props.get(n) {
         Some(v) => Ok(v),
         None => Err(()),
@@ -84,40 +85,44 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     if next_field == "" {
         return Ok(props.clone());
     }
-    match next_field.parse::<usize>() {
-        Ok(n) => {
-            trace!(
-                "next_field is {:?} and field_list is now {:?}",
-                &n,
-                &field_list
-            );
+    if next_field == "." {
+        get_resource_prop_value(&props, &field_list)
+    } else {
+        match next_field.parse::<usize>() {
+            Ok(n) => {
+                trace!(
+                    "next_field is {:?} and field_list is now {:?}",
+                    &n,
+                    &field_list
+                );
 
-            match match_props(props, &n) {
-                Ok(v) => {
-                    if !field_list.is_empty() {
-                        get_resource_prop_value(&v, &field_list)
-                    } else {
-                        Ok(v.clone())
+                match match_props(props, &n) {
+                    Ok(v) => {
+                        if !field_list.is_empty() {
+                            get_resource_prop_value(&v, &field_list)
+                        } else {
+                            Ok(v.clone())
+                        }
                     }
+                    Err(_) => Err(n.to_string()),
                 }
-                Err(_) => Err(n.to_string()),
             }
-        }
-        Err(_) => {
-            trace!(
-                "next_field is {:?} and field_list is now {:?}",
-                &next_field,
-                &field_list
-            );
-            match match_props(props, &next_field) {
-                Ok(v) => {
-                    if !field_list.is_empty() {
-                        get_resource_prop_value(&v, &field_list)
-                    } else {
-                        Ok(v.clone())
+            Err(_) => {
+                trace!(
+                    "next_field is {:?} and field_list is now {:?}",
+                    &next_field,
+                    &field_list
+                );
+                match match_props(props, &next_field) {
+                    Ok(v) => {
+                        if !field_list.is_empty() {
+                            get_resource_prop_value(&v, &field_list)
+                        } else {
+                            Ok(v.clone())
+                        }
                     }
+                    Err(_) => Err(next_field.to_string()),
                 }
-                Err(_) => Err(next_field.to_string()),
             }
         }
     }

@@ -183,8 +183,23 @@ fn apply_rule(
                 "Checking [{}] which is of type {}",
                 &name, &cfn_resource["Type"]
             );
-            let target_field: Vec<&str> = rule.field.split('.').collect();
-            match util::get_resource_prop_value(&cfn_resource["Properties"], &target_field) {
+            let mut target_field: Vec<&str> = rule.field.split('.').collect();
+            let (property_root, address) = match target_field.first() {
+                Some(x) => {
+                    if *x == "" {
+                        target_field.remove(0);
+                        target_field.insert(0, ".");
+                        (cfn_resource, target_field)
+                    } else {
+                        (&cfn_resource["Properties"], target_field)
+                    }
+                }
+                None => {
+                    error!("Invalid property address: {}", rule.field);
+                    return None;
+                }
+            };
+            match util::get_resource_prop_value(property_root, &address) {
                 Err(e) => {
                     if strict_checks {
                         rule_result.push(match &rule.custom_msg {
