@@ -163,9 +163,6 @@ fn check_resources(
             }
         }
     }
-    if result.is_empty() {
-        info!("All CloudFormation resources passed");
-    }
     result
 }
 

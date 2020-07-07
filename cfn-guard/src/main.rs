@@ -87,5 +87,7 @@ fn main() {
         } else {
             process::exit(exit_code as i32);
         }
+    } else {
+        info!("All CloudFormation resources passed");
     }
 }
