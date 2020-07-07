@@ -1,0 +1,22 @@
+Resources:
+  ClusterSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentType}-net-vpc-VpcId
+      GroupDescription: !Sub ${EnvironmentType}-sg-${ClusterName}
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol : "-1"
+          Description: "Allow all outgoing traffic"
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref AlbSg
+          IpProtocol : "-1"
+          Description: !Sub "Allow incoming traffic from ${ClusterName} ALB"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentType}-${ClusterName}-sg
+        - Key: ClusterName
+          Value: !Ref ECSCluster
+        - Key: Scope
+          Value: ecs

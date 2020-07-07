@@ -7,6 +7,7 @@ pub mod enums {
         Assignment,
         Comment,
         Rule,
+        WhiteSpace,
     }
 
     #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -15,6 +16,10 @@ pub mod enums {
         RequireNot,
         In,
         NotIn,
+        LessThan,
+        LessThanOrEqualTo,
+        GreaterThan,
+        GreaterThanOrEqualTo,
     }
 
     #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -24,7 +29,7 @@ pub mod enums {
         Regex,
         Variable,
     }
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     pub enum CompoundType {
         OR,
         AND,
@@ -44,13 +49,13 @@ pub mod structs {
         pub(crate) custom_msg: Option<String>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq)]
     pub struct CompoundRule {
         pub(crate) compound_type: super::enums::CompoundType,
         pub(crate) rule_list: Vec<Rule>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq)]
     pub struct ParsedRuleSet {
         pub(crate) variables: HashMap<String, String>,
         pub(crate) rule_set: Vec<CompoundRule>,

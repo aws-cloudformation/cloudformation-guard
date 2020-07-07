@@ -845,10 +845,188 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         assert_eq!(
             cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
             (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
-                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"), ],
+                  String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),],
              2)
         );
     }
+
+    #[test]
+    fn test_less_than_comparison() {
+        let template_file_contents = String::from(
+            r#"{
+                "Resources": {
+                    "NewVolume" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 100,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    },
+                    "NewVolume2" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 101,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    }
+                }
+            }"#,
+        );
+        let rules_file_contents = String::from(
+            r#"
+AWS::EC2::Volume Size < 101"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            (vec![String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [< 101]"), ],
+             2)
+        );
+    }
+
+    #[test]
+    fn test_greater_than_comparison() {
+        let template_file_contents = String::from(
+            r#"{
+                "Resources": {
+                    "NewVolume" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 100,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    },
+                    "NewVolume2" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 101,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    }
+                }
+            }"#,
+        );
+        let rules_file_contents = String::from(
+            r#"
+AWS::EC2::Volume Size > 100"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            (
+                vec![String::from(
+                    "[NewVolume] failed because [Size] is [100] and the permitted value is [> 100]"
+                ),],
+                2
+            )
+        );
+    }
+
+    #[test]
+    fn test_less_than_or_equal_to_comparison() {
+        let template_file_contents = String::from(
+            r#"{
+                "Resources": {
+                    "NewVolume" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 100,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    },
+                    "NewVolume2" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 101,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    }
+                }
+            }"#,
+        );
+        let rules_file_contents = String::from(
+            r#"
+AWS::EC2::Volume Size <= 100"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            (vec![String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [<= 100]"), ],
+             2)
+        );
+    }
+
+    #[test]
+    fn test_greater_than_or_equal_to_comparison() {
+        let template_file_contents = String::from(
+            r#"{
+                "Resources": {
+                    "NewVolume" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 100,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    },
+                    "NewVolume2" : {
+                        "Type" : "AWS::EC2::Volume",
+                        "Properties" : {
+                            "Size" : 101,
+                            "Encrypted" : true,
+                            "AvailabilityZone" : "us-east-1b",
+                            "DeletionPolicy" : "Snapshot"
+                        }
+                    }
+                }
+            }"#,
+        );
+        let rules_file_contents = String::from(
+            r#"
+AWS::EC2::Volume Size >= 101"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [>= 101]"), ],
+             2)
+        );
+    }
+
+    // TODO: Create test for clean_exit() scenarios
+    //     #[test]
+    //     #[should_panic]
+    //     fn test_non_numeric_value_comparison_fail() {
+    //         let template_file_contents = String::from(
+    //             r#"{
+    //             "Resources": {
+    //                 "NewVolume" : {
+    //                     "Type" : "AWS::EC2::Volume",
+    //                     "Properties" : {
+    //                         "Size" : 100,
+    //                         "Encrypted" : true,
+    //                         "AvailabilityZone" : "us-east-1b",
+    //                         "DeletionPolicy" : "Snapshot"
+    //                     }
+    //                 }
+    //             }
+    //         }"#,
+    //         );
+    //         let rules_file_contents = String::from(
+    //             r#"
+    // AWS::EC2::Volume Size < a"#,
+    //         );
+    //         cfn_guard::run_check(&template_file_contents, &rules_file_contents, true);
+    //     }
 
     #[test]
     fn test_json_results() {
@@ -921,6 +1099,56 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                 String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),
                 String::from("[NewVolume] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"), ],
              2)
+        );
+    }
+
+    #[test]
+    fn test_wildcard_tail_pass() {
+        let template_contents = fs::read_to_string("tests/wildcard_rule_end_template_pass.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::SecurityGroup Tags.* == {"Key":"EnvironmentType","Value":"EnvironmentType"}
+                  AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+    }
+
+    #[test]
+    fn test_wildcard_tail_fail() {
+        let template_contents = fs::read_to_string("tests/wildcard_rule_end_template_fail.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::SecurityGroup Tags.* == {"Key":"EnvironmentType","Value":"EnvironmentType"}
+                  AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.0] is [{"Key":"Name","Value":"${EnvironmentType}-${ClusterName}-sg"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.0] is [{"Key":"Name","Value":"${EnvironmentType}-${ClusterName}-sg"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.1] is [{"Key":"ClusterName","Value":"ECSCluster"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.1] is [{"Key":"ClusterName","Value":"ECSCluster"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.2] is [{"Key":"Scope","Value":"ecs"}] and the permitted value is [{"Key":"EnvironmentType","Value":"EnvironmentType"}]"#
+                    ),
+                    String::from(
+                        r#"[ClusterSg] failed because [Tags.2] is [{"Key":"Scope","Value":"ecs"}] and the permitted value is [{"Key":"OwnerContact","Value":"OwnerContact"}]"#
+                    ),
+                ],
+                2
+            )
         );
     }
 
@@ -1072,5 +1300,180 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                 1
             )
         )
+    }
+
+    #[test]
+    fn test_parse_lists_with_json() {
+        let mut template_contents =
+            fs::read_to_string("tests/parse_lists_with_json_test-template.yaml")
+                .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":"OwnerContact"}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                )],
+                2
+            )
+        );
+        rules_file_contents = String::from(
+            r#"
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+        template_contents = fs::read_to_string("tests/parse_lists_with_json_test-template.json")
+            .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* NOT_IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
+                )],
+                2
+            )
+        );
+        rules_file_contents = String::from(
+            r#"
+                let tag_vals = ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}]
+                AWS::EC2::SecurityGroup Tags.* IN %tag_vals
+            "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+    }
+
+    #[test]
+    fn test_wildcard_descent() {
+        // Pass *.*.*
+        let template_contents = fs::read_to_string("tests/wildcard-descent-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+        let mut rules_file_contents = String::from(
+            r#"
+            let log_stuff = [Solution, Data, LogLevel]
+            AWS::Lambda::Function Environment.*.*.* IN %log_stuff"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail *.*.*
+        rules_file_contents = String::from(
+            r#"
+            let log_stuff = [Solution, Data, LogLevel]
+            AWS::Lambda::Function Environment.*.*.* NOT_IN %log_stuff"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [Data] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.1]"#
+                    ),
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [LogLevel] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.2]"#
+                    ),
+                    String::from(
+                        r#"[LambdaWAFHelperFunction] failed because [Solution] is in [Solution, Data, LogLevel] which is not permitted for [Environment.Variables.LOG_LEVEL.0]"#
+                    )
+                ],
+                2
+            )
+        );
+
+        // Pass over-wildcarding (ie, wildcards in structures that don't extend that deeply
+        rules_file_contents = String::from(r#"AWS::Lambda::Function MemorySize.*.* IN [128]"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Pass for checks of a list inside of a list
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.* IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a list inside of a list
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.* NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
+
+        // Pass for checks of a wildcard in the middle of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a wildcard in the middle of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function Environment.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
+
+        // Pass for checks of a wildcard at the start of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function *.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+
+        // Fail for checks of a wildcard at the start of the properties
+        rules_file_contents = String::from(
+            r#"AWS::Lambda::Function *.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (
+                vec![String::from(
+                    r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
+                )],
+                2
+            )
+        );
     }
 }

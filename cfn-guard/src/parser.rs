@@ -2,25 +2,27 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::process;
 
-use log::{self, debug, trace};
+use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
 use serde_json::Value;
 
 use crate::guard_types::enums::{CompoundType, LineType, OpCode, RValueType};
 use crate::guard_types::structs::{CompoundRule, ParsedRuleSet, Rule};
-use crate::util::expand_wildcard_props;
+use crate::util;
 use lazy_static::lazy_static;
 
 // This sets it up so the regexen only get compiled once
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
 lazy_static! {
-    static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) *= *(?P<var_value>.*)").unwrap();
+    static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) +(?P<operator>\S+) +(?P<var_value>.*)").unwrap();
     static ref RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+)").unwrap();
     static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
-    static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S+) (==) (.+)").unwrap();
+    static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>\S+) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
+    static ref WHITE_SPACE_REG: Regex = Regex::new(r"\s+").unwrap();
 }
 
 pub(crate) fn parse_rules(
@@ -56,8 +58,23 @@ pub(crate) fn parse_rules(
                     Some(a) => a,
                     None => continue,
                 };
-                trace!("Parsed assignment's captures are: {:?}", &caps);
-                variables.insert(caps["var_name"].to_string(), caps["var_value"].to_string());
+                trace!("Parsed assignment's captures are: {:#?}", &caps);
+                if caps["operator"] != *"=" {
+                    let msg_string = format!(
+                        "Bad Assignment Operator: [{}] in '{}'",
+                        &caps["operator"], l
+                    );
+                    error!("{}", &msg_string);
+                    process::exit(1)
+                }
+                let var_name = caps["var_name"].to_string();
+                let var_value = caps["var_value"].to_string();
+                trace!(
+                    "Inserting key: [{}], value: [{}] into variables",
+                    var_name,
+                    var_value
+                );
+                variables.insert(var_name, var_value);
             }
             LineType::Comment => (),
             LineType::Rule => {
@@ -71,13 +88,18 @@ pub(crate) fn parse_rules(
                 debug!("Parsed rule is: {:#?}", &compound_rule);
                 rule_set.push(compound_rule);
             }
+            LineType::WhiteSpace => {
+                debug!("Line is white space");
+                continue;
+            }
         }
     }
     for (key, value) in env::vars() {
         let key_name = format!("ENV_{}", key);
         variables.insert(key_name, value);
     }
-    debug!("Variables dictionary is {:?}", &variables);
+    let filtered_env_vars = util::filter_for_env_vars(&variables);
+    debug!("Variables dictionary is {:?}", &filtered_env_vars);
     debug!("Rule Set is {:#?}", &rule_set);
     ParsedRuleSet {
         variables,
@@ -95,7 +117,12 @@ fn find_line_type(line: &str) -> LineType {
     if RULE_REG.is_match(line) {
         return LineType::Rule;
     };
-    panic!("BAD RULE: {:?}", line)
+    if WHITE_SPACE_REG.is_match(line) {
+        return LineType::WhiteSpace;
+    }
+    let msg_string = format!("BAD RULE: {:?}", line);
+    error!("{}", &msg_string);
+    process::exit(1)
 }
 
 fn process_assignment(line: &str) -> Option<Captures> {
@@ -149,7 +176,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
     if caps["resource_property"].contains('*') {
         for (_name, value) in cfn_resources {
             if caps["resource_type"] == value["Type"] {
-                if let Some(p) = expand_wildcard_props(
+                if let Some(p) = util::expand_wildcard_props(
                     &value["Properties"],
                     caps["resource_property"].to_string(),
                     String::from(""),
@@ -171,18 +198,36 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
                 match &caps["operator"] {
                     "==" => OpCode::Require,
                     "!=" => OpCode::RequireNot,
+                    "<" => OpCode::LessThan,
+                    ">" => OpCode::GreaterThan,
+                    "<=" => OpCode::LessThanOrEqualTo,
+                    ">=" => OpCode::GreaterThanOrEqualTo,
                     "IN" => OpCode::In,
                     "NOT_IN" => OpCode::NotIn,
-                    _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
+                    _ => {
+                        let msg_string = format!(
+                            "Bad Rule Operator: [{}] in '{}'",
+                            &caps["operator"], rule_text
+                        );
+                        error!("{}", &msg_string);
+                        process::exit(1)
+                    }
                 }
             },
             rule_vtype: {
                 let rv = caps["rule_value"].chars().next().unwrap();
                 match rv {
                     '[' => match &caps["operator"] {
-                        "==" | "!=" => RValueType::Value,
+                        "==" | "!=" | "<=" | ">=" | "<" | ">" => RValueType::Value,
                         "IN" | "NOT_IN" => RValueType::List,
-                        _ => panic!(format!("Bad Rule Operator: {}", &caps["operator"])),
+                        _ => {
+                            let msg_string = format!(
+                                "Bad Rule Operator: [{}] in '{}'",
+                                &caps["operator"], rule_text
+                            );
+                            error!("{}", &msg_string);
+                            process::exit(1)
+                        }
                     },
                     '/' => RValueType::Regex,
                     '%' => RValueType::Variable,
@@ -210,15 +255,28 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 
 mod tests {
     #[cfg(test)]
-    use crate::parser::find_line_type;
+    use super::*;
 
     #[test]
     fn test_find_line_type() {
         let comment = find_line_type("# This is a comment");
         let assignment = find_line_type("let x = assignment");
         let rule = find_line_type("AWS::EC2::Volume Encryption == true");
+        let white_space = find_line_type("         ");
         assert_eq!(comment, crate::enums::LineType::Comment);
         assert_eq!(assignment, crate::enums::LineType::Assignment);
         assert_eq!(rule, crate::enums::LineType::Rule);
+        assert_eq!(white_space, crate::enums::LineType::WhiteSpace)
+    }
+
+    #[test]
+    fn test_parse_variable() {
+        let assignment = "let var = [128]";
+        let cfn_resources: HashMap<String, Value> = HashMap::new();
+        let mut var_map: HashMap<String, String> = HashMap::new();
+        var_map.insert("var".to_string(), "[128]".to_string());
+
+        let parsed_rules = parse_rules(assignment, &cfn_resources);
+        assert!(parsed_rules.variables["var"] == "[128]");
     }
 }

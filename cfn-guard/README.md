@@ -5,6 +5,7 @@ A command line tool for validating AWS CloudFormation resources against policy.
 
 * [About](#about)
 * [Writing Rules](#writing-rules)
+* [Troubleshooting](#troubleshooting)
 * [Building And Running](#to-build-and-run)
 * [Testing Code Changes](#to-test)
 
@@ -64,7 +65,7 @@ let disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
 AWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs
 AWS::EC2::Volume Encrypted != %encryption_flag
-AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99
+AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99 |OR| AWS::EC2::Volume Size >= 101
 AWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18
 AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 ```
@@ -79,13 +80,14 @@ You can check the compliance of that template with those rules:
 "[NewVolume] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
 "[NewVolume] failed because [Size] is [100] and the permitted value is [101]"
 "[NewVolume] failed because [Size] is [100] and the permitted value is [99]"
+"[NewVolume] failed because [Size] is [100] and the permitted value is [>= 101]"
 "[NewVolume] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
 Number of failures: 7
 ```
 
 We designed `cfn-guard` to be plugged into your build processes.  
 
-If CloudFormation Guard validates the CloudFormation templates successfully, it gives you no output and an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a count of the rule violations, an explanation for why the rules failed, and an exit status of `2`.
+If CloudFormation Guard validates the CloudFormation templates successfully, it gives you no output and an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a count of the rule violations, an explanation for why the rules failed, and an exit status of `2`.  If there's a runtime error with the rule set or processing, it will exit with a `1`. 
 
 If you want CloudFormation Guard to get the result of the rule check but still get an exit value of `0`, use the `-w` Warn flag.
 
@@ -106,6 +108,10 @@ The available operations are:
 
 * `==` - Equal
 * `!=` - Not Equal
+* `<` - Less Than
+* `>` - Greater Than
+* `<=` - Less Than Or Equal To
+* `>=` - Greater Than Or Equal To
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
 
@@ -148,9 +154,10 @@ Resources:
               Service:
                 - lambda.amazonaws.com
 ```
-## Wildcard Syntax
+## Wildcards
+### Syntax
 
-You can also refer to list items as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
+You can also refer to template items, lists and maps as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
 ``` 
@@ -178,8 +185,8 @@ CloudFormation Guard will walk the template and internally convert the wildcard 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Principal.Service.0 == lambda.amazonaws.com |OR| AWS::IAM::Role AssumeRolePolicyDocument.Statement.1.Principal.Service.0 == ec2.amazonaws.com
 ```
-
-Note carefully the different semantic meanings between equality (`==`) and inequality (`!=`) with wildcards:
+### Semantics
+Note carefully the different semantic meanings between the equality (`==`) or in-a-list (`IN`) operators and the inequality (`!=`) or not-in-a-list (`NOT_IN`) ones with wildcards:
 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* == lambda.amazonaws.com
@@ -208,7 +215,8 @@ AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 
 ## Variable Syntax
 
-You can also declare variables using a `let` syntax:
+### Assignment
+You can declare variables using a `let` syntax:
 
 ```
 let <VAR NAME> = <list or scalar>
@@ -218,7 +226,10 @@ For example:
 
 ```
 let size = 500
+# Regular list
 let azs = [us-east-1b, us-east-1b]
+# JSON list
+let tag_vals = ["tests", 1, ["a", "b"], {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
 ```
 
 And then refer to those variables in rules using `%`:
@@ -227,6 +238,57 @@ And then refer to those variables in rules using `%`:
 AWS::EBS::Volume Size == %size
 ```
 
+### JSON lists vs non-JSON lists
+
+#### JSON Lists
+Any valid JSON list literal is a valid JSON list. The list:
+``` 
+let tag_vals = ["tests", 1, ["a", "b"], {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+Will flatten out to a list of the following values:
+``` 
+"tests",
+1,
+["a, b"],
+{"Key":"A","Value":"a"},
+{"Key":"A","Value":{"Ref":"a"}}
+```
+That you can match properties of a template resource against using `IN` or `NOT_IN`.
+
+#### Non-JSON Lists
+Any list that's not a json literal is just a comma-separated list of values.
+
+#### Mixing list types
+**Lists containing a mix of JSON and non-JSON values are interpreted as non-JSON**
+
+So if
+``` 
+let tag_vals = ["tests", {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+Were written as
+
+``` 
+let tag_vals = [tests, {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}]
+```
+It would be evaluated as a list of the items:
+```
+tests,
+{"Key":"A",
+"Value":"a"},
+{"Key":"A",
+"Value":{"Ref":"a"}}
+```
+Which is almost certainly not what you'd want.  
+
+If you see strange behavior in a rule working with a json list, run with `-vv` and you'll see a line like:
+``` 
+2020-07-01 14:49:18,411 DEBUG [cfn_guard::util] List [tests, {"Key":"A","Value":"a"},{"Key":"A","Value":{"Ref":"a"}}] is not a json list
+```
+That will give you more information on how `cfn-guard` is processing it.
+
+(See [Troubleshooting](#troubleshooting) for more details on using the different logging levels to see how your template and rule set are being processed.)
+
+### Environment Varibles
 You can even reference **environment variables** using the Makefile-style notation: `%{Name}`
 
 So you could rewrite the IAM Role rule above as:
@@ -242,6 +304,8 @@ IAM_PRIN=lambda.amazonaws.com cfn-guard -t iam_template -r iam_rule_set
 ```
 
 Note:  All environment variables are available for use at runtime. They don't need to be explicitly set during the `cfn-guard` invocation.
+
+**Environment Variables are not logged to avoid persisting sensitive information.  You should use them to pass sensitive values in to `cfn-guard` instead of the `let` form.**
 
 ## Custom Failure Messages
 
@@ -302,7 +366,7 @@ AWS::EC2::Volume AvailabilityZone == !GetAtt [EC2Instance, AvailabilityZone]
 ```
 Results in a failure:
 ``` 
-"[NewVolume] failed because [AvailabilityZone] is [[\"EC2Instance\",\"AvailabilityZone\"]] and the permitted value is [!GetAtt [EC2Instance, AvailabilityZone]]"
+"[NewVolume] failed because [AvailabilityZone] is [["EC2Instance","AvailabilityZone"]] and the permitted value is [!GetAtt [EC2Instance, AvailabilityZone]]"
 ```
 That effect, combined with the parser stripping out whitespace between values means that the rule would need to be written as:
 ``` 
@@ -310,7 +374,7 @@ AWS::EC2::Volume AvailabilityZone == ["EC2Instance","AvailabilityZone"]
 ```
 where the values are quoted and with no space behind the `,` in order to match.
 
-If you see something that should match but doesn't, the failure message (`[\"EC2Instance\",\"AvailabilityZone\"]`) will help you identify why. 
+If you see something that should match but doesn't, the failure message (`["EC2Instance","AvailabilityZone"]`) will help you identify why. 
 
 This last part about the stripped whitespace is also true for the JSON version of the `Fn::GetAtt` function:
 ``` 
@@ -336,7 +400,7 @@ This last part about the stripped whitespace is also true for the JSON version o
 ```
 Which would fail with a message like:
 ```
-"[NewVolume] failed because [AvailabilityZone] is [{\"Fn::GetAtt\":[\"EC2Instance\",\"AvailabilityZone\"]}] and the permitted value is [[\"EC2Instance\",\"AvailabilityZone\"]]"
+"[NewVolume] failed because [AvailabilityZone] is [{"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}] and the permitted value is [["EC2Instance","AvailabilityZone"]]"
 ```
 In order to handle both cases in both template formats, use an `|OR|` rule like the following (without escaping the quotes and without interstitial whitespace):
 ``` 
@@ -361,6 +425,114 @@ AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 99
 AWS::EC2::Volume Encrypted == true |OR| AWS::EC2::Volume Encrypted == false
 AWS::EC2::Volume AvailabilityZone == {"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}
 ```
+# Troubleshooting
+`cfn-guard` is meant to be used as part of a tool chain.  It does not, for instance, check to see if the CloudFormation template presented to it is valid CloudFormation.  The [cfn-lint](https://github.com/aws-cloudformation/cfn-python-lint) tool already does a deep and thorough inspection of template structure and provides copious feedback to help users write high-quality templates.  
+
+`cfn-guard` also does not put constraints on what types you're checking or the properties those types can be checked for.  That aspect can result in some confusion when you're hand-crafting rules and not getting the results you expected. 
+
+The best way to see how the rule sets are been processed is to take advantage of the different logging levels (eg `-vvv`).  When logging is enabled, you can trace the entire execution and see how `cfn-guard` is working internally.
+
+For instance, here's a simple template:
+
+```
+{
+    "Resources": {
+        "NewVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 101,
+                "Encrypted": false,
+                "AvailabilityZone" : "us-west-2b"
+            }
+        },
+        "NewVolume2" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 99,
+                "Encrypted": false,
+                "AvailabilityZone" : "us-west-2c"
+            }
+        }
+    }
+}
+```
+And a sample rule set:
+```
+let encryption_flag = true
+AWS::EC2::Volume Encrypted == %encryption_flag
+```
+With the `-vvv` trace logging enabled, you can see how the assignment was parsed:
+```
+2020-06-27 13:18:00,097 DEBUG [cfn_guard::parser] Parsing 'let encryption_flag = true'
+2020-06-27 13:18:00,112 DEBUG [cfn_guard::parser] line_type is Assignment
+2020-06-27 13:18:00,122 TRACE [cfn_guard::parser] Parsed assignment's captures are: Captures(
+    {
+        0: Some(
+            "let encryption_flag = true",
+        ),
+        "var_name": Some(
+            "encryption_flag",
+        ),
+        "operator": Some(
+            "=",
+        ),
+        "var_value": Some(
+            "true",
+        ),
+    },
+)
+2020-06-27 13:18:00,122 TRACE [cfn_guard::parser] Inserting key: [encryption_flag], value: [true] into variables
+```
+And the rule:
+```
+2020-06-27 13:18:00,122 DEBUG [cfn_guard::parser] Parsing 'AWS::EC2::Volume Encrypted == %encryption_flag'
+2020-06-27 13:18:00,134 DEBUG [cfn_guard::parser] line_type is Rule
+2020-06-27 13:18:00,135 DEBUG [cfn_guard::parser] Line is an 'AND' rule
+2020-06-27 13:18:00,135 TRACE [cfn_guard::parser] Entered destructure_rule
+2020-06-27 13:18:00,154 TRACE [cfn_guard::parser] Parsed rule's captures are: Captures(
+    {
+        0: Some(
+            "AWS::EC2::Volume Encrypted == %encryption_flag",
+        ),
+        "resource_type": Some(
+            "AWS::EC2::Volume",
+        ),
+        "resource_property": Some(
+            "Encrypted",
+        ),
+        "operator": Some(
+            "==",
+        ),
+        "rule_value": Some(
+            "%encryption_flag",
+        ),
+    },
+)
+2020-06-27 13:18:00,155 TRACE [cfn_guard::parser] Destructured rules are: [
+    Rule {
+        resource_type: "AWS::EC2::Volume",
+        field: "Encrypted",
+        operation: Require,
+        value: "%encryption_flag",
+        rule_vtype: Variable,
+        custom_msg: None,
+    },
+]
+2020-06-27 13:18:00,155 DEBUG [cfn_guard::parser] Parsed rule is: CompoundRule {
+    compound_type: AND,
+    rule_list: [
+        Rule {
+            resource_type: "AWS::EC2::Volume",
+            field: "Encrypted",
+            operation: Require,
+            value: "%encryption_flag",
+            rule_vtype: Variable,
+            custom_msg: None,
+        },
+    ],
+}
+```
+Whenever your rules aren't behaving as expected, this is great way to see why.
 
 
 # To Build and Run
