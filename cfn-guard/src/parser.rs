@@ -173,6 +173,7 @@ fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Compou
     }
     CompoundRule {
         compound_type: CompoundType::OR,
+        raw_rule: line.to_string(),
         rule_list: rules,
     }
 }
@@ -180,6 +181,7 @@ fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Compou
 fn process_and_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
     CompoundRule {
         compound_type: CompoundType::AND,
+        raw_rule: line.to_string(),
         rule_list: destructure_rule(line, cfn_resources),
     }
 }

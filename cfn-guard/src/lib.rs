@@ -137,7 +137,7 @@ fn check_resources(
                             variables: parsed_rule_set.variables.clone(),
                             rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
                         };
-                        let postscript = format!("when {:?}", r.condition.rule_list);
+                        let postscript = format!("when {}", r.condition.raw_rule);
                         let temp_result =
                             check_resources(&cfn_resource_map, &consequent_rule_set, strict_checks)
                                 .into_iter()

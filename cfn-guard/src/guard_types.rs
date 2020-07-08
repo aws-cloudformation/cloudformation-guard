@@ -59,6 +59,7 @@ pub mod structs {
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct CompoundRule {
         pub(crate) compound_type: super::enums::CompoundType,
+        pub(crate) raw_rule: String,
         pub(crate) rule_list: Vec<Rule>,
     }
 
