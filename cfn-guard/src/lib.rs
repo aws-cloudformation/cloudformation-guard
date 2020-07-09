@@ -99,7 +99,13 @@ pub fn run_check(
     info!("Parsing rule set");
     let parsed_rule_set = parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources);
 
-    let mut outcome = check_resources(&cfn_resources, &parsed_rule_set, strict_checks);
+    let mut outcome: Vec<String> = vec![];
+    match check_resources(&cfn_resources, &parsed_rule_set, strict_checks) {
+        Some(x) => {
+            outcome.extend(x);
+        }
+        None => (),
+    }
     outcome.sort();
 
     let exit_code = match outcome.len() {
@@ -113,8 +119,7 @@ fn check_resources(
     cfn_resources: &HashMap<String, Value>,
     parsed_rule_set: &structs::ParsedRuleSet,
     strict_checks: bool,
-) -> Vec<String> {
-    // TODO: Change this to a Result
+) -> Option<Vec<String>> {
     info!("Checking resources");
     let mut result: Vec<String> = vec![];
     for c_rule in parsed_rule_set.rule_set.iter() {
@@ -124,26 +129,44 @@ fn check_resources(
                 trace!("Conditional rule is {:#?}", r);
                 for (name, cfn_resource) in cfn_resources {
                     trace!("Checking condition: {:?}", r.condition);
+
                     let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
                     cfn_resource_map.insert(name.clone(), cfn_resource.clone());
+                    trace!("Temporary resource map is {:#?}", cfn_resource_map);
+
                     let condition_rule_set = structs::ParsedRuleSet {
                         variables: parsed_rule_set.variables.clone(),
                         rule_set: vec![enums::RuleType::CompoundRule(r.clone().condition)],
                     };
-                    let condition = check_resources(&cfn_resource_map, &condition_rule_set, true);
-                    if condition.is_empty() {
-                        // TODO: Change this to a Result
-                        let consequent_rule_set = structs::ParsedRuleSet {
-                            variables: parsed_rule_set.variables.clone(),
-                            rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
-                        };
-                        let postscript = format!("when {}", r.condition.raw_rule);
-                        let temp_result =
-                            check_resources(&cfn_resource_map, &consequent_rule_set, strict_checks)
-                                .into_iter()
-                                .map(|x| format!("{} {}", x, postscript));
-                        result.extend(temp_result);
-                    }
+                    trace!(
+                        "condition_rule_set is {{variables: {:#?}, rule_set: {:#?}}}",
+                        util::filter_for_env_vars(&condition_rule_set.variables),
+                        condition_rule_set.rule_set
+                    );
+
+                    // Use the existing rules logic to see if there's a hit on the Condition clause
+                    match check_resources(&cfn_resource_map, &condition_rule_set, true) {
+                        Some(_) => (), // A result from a condition check means that it *wasn't* met (by def)
+                        None => {
+                            let consequent_rule_set = structs::ParsedRuleSet {
+                                variables: parsed_rule_set.variables.clone(),
+                                rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
+                            };
+                            let postscript = format!("when {}", r.condition.raw_rule);
+                            match check_resources(
+                                &cfn_resource_map,
+                                &consequent_rule_set,
+                                strict_checks,
+                            ) {
+                                Some(x) => {
+                                    let temp_result =
+                                        x.into_iter().map(|x| format!("{} {}", x, postscript));
+                                    result.extend(temp_result);
+                                }
+                                None => (),
+                            };
+                        }
+                    };
                 }
             }
             enums::RuleType::CompoundRule(r) => match r.compound_type {
@@ -192,7 +215,11 @@ fn check_resources(
             },
         }
     }
-    result
+    if !result.is_empty() {
+        Some(result)
+    } else {
+        None
+    }
 }
 
 fn apply_rule(
