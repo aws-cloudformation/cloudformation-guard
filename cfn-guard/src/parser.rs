@@ -126,8 +126,8 @@ fn process_conditional(line: &str, cfn_resources: &HashMap<String, Value>) -> Co
     let condition = parse_rule_line(&conjd_caps_conditional, cfn_resources);
     let consequent = parse_rule_line(&conjd_caps_consequent, cfn_resources);
     ConditionalRule {
-        condition: condition,
-        consequent: consequent,
+        condition,
+        consequent,
     }
 }
 
