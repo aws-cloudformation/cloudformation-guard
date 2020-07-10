@@ -19,7 +19,7 @@ For example, given a CloudFormation template:
         "NewVolume" : {
             "Type" : "AWS::EC2::Volume",
             "Properties" : {
-                "Size" : 101,
+                "Size" : 500,
                 "Encrypted": false,
                 "AvailabilityZone" : "us-west-2b"
             }
@@ -27,7 +27,7 @@ For example, given a CloudFormation template:
         "NewVolume2" : {
             "Type" : "AWS::EC2::Volume",
             "Properties" : {
-                "Size" : 99,
+                "Size" : 50,
                 "Encrypted": false,
                 "AvailabilityZone" : "us-west-2c"
             }
@@ -40,24 +40,20 @@ And a set of rules:
 
 ```
 let encryption_flag = true
-let allowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
-AWS::EC2::Volume AvailabilityZone IN %allowed_azs
 AWS::EC2::Volume Encrypted == %encryption_flag
-AWS::EC2::Volume Size == 100
+AWS::EC2::Volume Size <= 100
 ```
 
 You can check the template to ensure that it adheres to the rules.
 
 ```
 $> cfn-guard -t Examples/ebs_volume_template.json -r Examples/ebs_volume_template.ruleset
-   "[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]"
-   "[NewVolume2] failed because [Size] is [99] and the permitted value is [100]"
-   "[NewVolume2] failed because [us-west-2c] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
-   "[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]"
-   "[NewVolume] failed because [Size] is [101] and the permitted value is [100]"
-   "[NewVolume] failed because [us-west-2b] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
-   Number of failures: 6 
+
+[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Size] is [500] and the permitted value is [<= 100]
+Number of failures: 3
 ```
 
 ### Evaluating Security Policies
