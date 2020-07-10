@@ -1476,4 +1476,23 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             )
         );
     }
+
+    #[test]
+    fn test_conditional_check() {
+        let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let mut rules_file_contents = String::from("AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain");
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from("AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain");
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            (vec![String::from("[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/")],
+             2)
+        )
+    }
 }
