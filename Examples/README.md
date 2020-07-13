@@ -17,6 +17,6 @@ Thank you so much for your contributions to cfn-guard. Please comply with the fo
     1. **Examples/<meaningful_name>.ruleset**
     
    Meaningful file names can include AWS resource types, types of checks being done (e.g. “check-lambda-function.ruleset”), etc.  
-1. Test your rules by running them against a template. Your pull request description must include a markdown-formatted code block showing the result of your test run (not the logs - just the basic output) and that the rule correctly failed and passed on the resource types it applies to.
+1. Test your rules by running them against a template. Your pull request description must include a markdown-formatted code block showing the result of your test run (not the logs - just the basic output) and that the rule correctly failed and passed on the resource types it applies to. The easiest way to do that is typically to include a resource that would pass and a resource that would fail in the same template you run your test against.
 1. Rule set names, rule descriptions, etc. should not make mention of the contributor’s identity. (The connection will already be established by merging the commits.)
 
