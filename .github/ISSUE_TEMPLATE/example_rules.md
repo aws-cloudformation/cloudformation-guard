@@ -1,10 +1,16 @@
-# CloudFormation Guard Examples
+---
+name: Example rules
+about: Submit example rules to help the community learn to use CloudFormation Guard
+title: "[RULES]"
+labels: rules
+assignees: ''
 
-The files in this directory are intended solely to provide a starting point for experimentation.
+---
 
-## Submitting example rules
+**Describe the example rules**
+A clear and concise description of what the rules are demonstrating.
 
-Thank you so much for your contributions to cfn-guard. Please comply with the following guidelines when submitting example rules to cfn-guard. Following these checks will help ensure a quick review of your pull request.
+**Ensure you meet our example rules submission policy**
 
 1. Do not mention any security or compliance regimes in custom messages, file names, rule comments, etc.  Example rules are purely for educational purposes and cannot be represented as providing any kind of certification for control regimes like CIS, GDPR, etc
 1. Rules should not be duplicates.  Please grep the Examples directory contents to ensure that the rules are not already present in another ruleset.
@@ -17,6 +23,10 @@ Thank you so much for your contributions to cfn-guard. Please comply with the fo
     1. **Examples/<meaningful_name>.ruleset**
     
    Meaningful file names can include AWS resource types, types of checks being done (e.g. “check-lambda-function.ruleset”), etc.  
-1. Test your rules by running them against a template. Your pull request description must include a markdown-formatted code block showing the result of your test run (not the logs - just the basic output) and that the rule correctly failed and passed on the resource types it applies to. The easiest way to do that is typically to include a resource that would pass and a resource that would fail in the same template you run your test against.
+1. Test your rules by running them against a template. Your pull request description must include a markdown-formatted code block showing the result of your test run (not the logs - just the basic output) and that the rule correctly failed and passed on the resource types it applies to.  The easiest way to do that is typically to include a resource that would pass and a resource that would fail in the same template you run your test against.
 1. Rule set names, rule descriptions, etc. should not make mention of the contributor’s identity. (The connection will already be established by merging the commits.)
 
+**NOTE: Please be sure that the templates, rule sets and logs you provide as part of your bug report do not contain any sensitive information.**
+
+**Additional context**
+Add any other context you think is relevant here.
