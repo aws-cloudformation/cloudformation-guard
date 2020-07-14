@@ -147,7 +147,8 @@ fn check_resources(
                     // Use the existing rules logic to see if there's a hit on the Condition clause
                     match check_resources(&cfn_resource_map, &condition_rule_set, true) {
                         Some(_) => (), // A result from a condition check means that it *wasn't* met (by def)
-                        None => {
+                    None => {
+                            trace!("Condition met for {}", r.condition.raw_rule);
                             let consequent_rule_set = structs::ParsedRuleSet {
                                 variables: parsed_rule_set.variables.clone(),
                                 rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
@@ -193,8 +194,8 @@ fn check_resources(
                                 }
                             }
                         }
-                        trace! {"pass_fail set is {:?}", &pass_fail};
                         trace! {"temp_results are {:?}", &temp_results};
+                        trace! {"pass_fail set is {:?}", &pass_fail};
                         if !pass_fail.contains("pass") {
                             result.extend(temp_results);
                         }
