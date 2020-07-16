@@ -1006,32 +1006,6 @@ AWS::EC2::Volume Size >= 101"#,
         );
     }
 
-    // TODO: Create test for clean_exit() scenarios
-    //     #[test]
-    //     #[should_panic]
-    //     fn test_non_numeric_value_comparison_fail() {
-    //         let template_file_contents = String::from(
-    //             r#"{
-    //             "Resources": {
-    //                 "NewVolume" : {
-    //                     "Type" : "AWS::EC2::Volume",
-    //                     "Properties" : {
-    //                         "Size" : 100,
-    //                         "Encrypted" : true,
-    //                         "AvailabilityZone" : "us-east-1b",
-    //                         "DeletionPolicy" : "Snapshot"
-    //                     }
-    //                 }
-    //             }
-    //         }"#,
-    //         );
-    //         let rules_file_contents = String::from(
-    //             r#"
-    // AWS::EC2::Volume Size < a"#,
-    //         );
-    //         cfn_guard::run_check(&template_file_contents, &rules_file_contents, true);
-    //     }
-
     #[test]
     fn test_json_results() {
         let template_file_contents = String::from(
