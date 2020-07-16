@@ -36,16 +36,20 @@ pub fn run(
         rules_file_contents.to_string()
     );
 
-    let (outcome, exit_code) = run_check(&template_contents, &rules_file_contents, strict_checks);
-    debug!("Outcome was: '{:#?}'", &outcome);
-    Ok((outcome, exit_code))
+    match run_check(&template_contents, &rules_file_contents, strict_checks) {
+        Ok(res) => {
+            debug!("Outcome was: '{:#?}'", &res.0);
+            Ok(res)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub fn run_check(
     template_file_contents: &str,
     rules_file_contents: &str,
     strict_checks: bool,
-) -> (Vec<String>, usize) {
+) -> Result<(Vec<String>, usize), String> {
     info!("Loading CloudFormation Template and Rule Set");
     debug!("Entered run_check");
 
@@ -69,13 +73,10 @@ pub fn run_check(
             Err(_) => match serde_yaml::from_str(&cleaned_template_file_contents) {
                 Ok(y) => y,
                 Err(e) => {
-                    return (
-                        vec![format!(
-                            "ERROR:  Template file format was unreadable as json or yaml: {}",
-                            e
-                        )],
-                        1,
-                    );
+                    return Err(format!(
+                        "Template file format was unreadable as json or yaml: {}",
+                        e
+                    ));
                 }
             },
         };
@@ -84,12 +85,8 @@ pub fn run_check(
     let cfn_resources: HashMap<String, Value> = match cfn_template.get("Resources") {
         Some(r) => serde_json::from_value(r.clone()).unwrap(),
         None => {
-            return (
-                vec![
-                    "ERROR:  Template file does not contain a [Resources] section to check"
-                        .to_string(),
-                ],
-                1,
+            return Err(
+                "Template file does not contain a [Resources] section to check".to_string(),
             );
         }
     };
@@ -97,22 +94,25 @@ pub fn run_check(
     trace!("CFN resources are: {:?}", cfn_resources);
 
     info!("Parsing rule set");
-    let parsed_rule_set = parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources);
+    match parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources) {
+        Ok(pr) => {
+            let mut outcome: Vec<String> = vec![];
+            match check_resources(&cfn_resources, &pr, strict_checks) {
+                Some(x) => {
+                    outcome.extend(x);
+                }
+                None => (),
+            }
+            outcome.sort();
 
-    let mut outcome: Vec<String> = vec![];
-    match check_resources(&cfn_resources, &parsed_rule_set, strict_checks) {
-        Some(x) => {
-            outcome.extend(x);
+            let exit_code = match outcome.len() {
+                0 => 0,
+                _ => 2,
+            };
+            return Ok((outcome, exit_code));
         }
-        None => (),
+        Err(e) => Err(e),
     }
-    outcome.sort();
-
-    let exit_code = match outcome.len() {
-        0 => 0,
-        _ => 2,
-    };
-    (outcome, exit_code)
 }
 
 fn check_resources(
@@ -147,7 +147,7 @@ fn check_resources(
                     // Use the existing rules logic to see if there's a hit on the Condition clause
                     match check_resources(&cfn_resource_map, &condition_rule_set, true) {
                         Some(_) => (), // A result from a condition check means that it *wasn't* met (by def)
-                    None => {
+                        None => {
                             trace!("Condition met for {}", r.condition.raw_rule);
                             let consequent_rule_set = structs::ParsedRuleSet {
                                 variables: parsed_rule_set.variables.clone(),

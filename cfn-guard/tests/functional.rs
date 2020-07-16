@@ -55,12 +55,12 @@ mod tests {
         );
         let mut rules_file_contents = String::from("AWS::EC2::Volume Encrypted == true");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == True");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -89,13 +89,13 @@ mod tests {
         );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == False");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -124,13 +124,13 @@ mod tests {
         );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == False");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -157,13 +157,13 @@ mod tests {
         );
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == false");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
 
         rules_file_contents = String::from("AWS::EC2::Volume Encrypted == False");
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
     }
@@ -174,7 +174,7 @@ mod tests {
             .unwrap_or_else(|err| format!("{}", err));
         let rules_file_content = String::from(r#"AWS::EC2::Volume Encrypted != /true/"#);
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_content, true),
+            cfn_guard::run_check(&template_contents, &rules_file_content, true).unwrap(),
             (
                 vec![
                     String::from(
@@ -196,7 +196,7 @@ mod tests {
         let rules_file_content =
             String::from(r#"AWS::EC2::Volume Encrypted != /true/ << lorem ipsum"#);
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_content, true),
+            cfn_guard::run_check(&template_contents, &rules_file_content, true).unwrap(),
             (
                 vec![
                     String::from(
@@ -218,7 +218,7 @@ mod tests {
         let rules_file_content =
             String::from(r#"AWS::EC2::Volume Encrypted != true << lorem ipsum"#);
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_content, true),
+            cfn_guard::run_check(&template_contents, &rules_file_content, true).unwrap(),
             (
                 vec![
                     String::from(
@@ -240,9 +240,13 @@ mod tests {
         let rules_file_contents =
             fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
                 .unwrap_or_else(|err| format!("{}", err));
+        let error = match cfn_guard::run_check(&template_contents, &rules_file_contents, true) {
+            Ok(_) => "".to_string(),
+            Err(e) => e,
+        };
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
-            (vec![String::from("ERROR:  Template file format was unreadable as json or yaml: invalid type: string \"THIS IS MEANT TO BE INVALID\", expected a map at line 1 column 1")], 1)
+            error,
+            String::from("Template file format was unreadable as json or yaml: invalid type: string \"THIS IS MEANT TO BE INVALID\", expected a map at line 1 column 1")
         );
     }
 
@@ -254,7 +258,7 @@ mod tests {
             fs::read_to_string("tests/ebs_volume_rule_set_custom_msg.passing")
                 .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
     }
@@ -287,7 +291,7 @@ mod tests {
             ];
         outcome.sort();
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (outcome, 2)
         );
     }
@@ -321,7 +325,7 @@ mod tests {
         let rules_file_contents = fs::read_to_string("tests/test_not_in_list_fail.ruleset")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![
                 String::from("[NewVolume2] failed because [us-west-2c] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"),
                 String::from("[NewVolume] failed because [us-west-2b] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"),
@@ -359,7 +363,7 @@ mod tests {
             fs::read_to_string("tests/test_in_list_fail_custom_message.ruleset")
                 .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![
                 String::from("[NewVolume2] failed because [AvailabilityZone] is [us-west-2c] and lorem ipsum"),
                 String::from("[NewVolume] failed because [AvailabilityZone] is [us-west-2b] and lorem ipsum"),
@@ -421,7 +425,7 @@ mod tests {
         env::set_var("MOTP", "ec2.amazonaws.com"); // Env vars need to be unique to each test because they're global when `cargo test` runs
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (empty_vec, 0)
         );
     }
@@ -463,7 +467,7 @@ mod tests {
         );
         env::set_var("MOTF", "motf"); // Env vars need to be unique to each test because they're global when `cargo test` runs
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.0] is [ec2.amazonaws.com] and the permitted value is [motf]"),
                   String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Version] is [2012-10-17] and the permitted pattern is [(\\d{5})-(\\d{2})-(\\d{2})]"), ],
              2)
@@ -507,7 +511,7 @@ mod tests {
             AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* != ec2.amazonaws.com"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![
                 String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.0] is [ec2.amazonaws.com] and that value is not permitted"),
                 String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.1] is [lambda.amazonaws.com] and that value is not permitted"),
@@ -556,7 +560,7 @@ mod tests {
         );
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (empty_vec, 0)
         );
     }
@@ -598,7 +602,7 @@ mod tests {
         );
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (empty_vec, 0)
         );
     }
@@ -639,7 +643,7 @@ mod tests {
             r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* == wcf"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.0] is [ec2.amazonaws.com] and the permitted value is [wcf]"),
                   String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.1] is [lambda.amazonaws.com] and the permitted value is [wcf]"),
                   String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.1.Principal.Service.0] is [lambda.amazonaws.com] and the permitted value is [wcf]"),
@@ -674,7 +678,7 @@ mod tests {
         env::set_var("SERV_PRIN_EVP", "lambda.amazonaws.com"); // Env vars need to be unique to each test because they're global when `cargo test` runs
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (empty_vec, 0)
         );
     }
@@ -701,7 +705,7 @@ mod tests {
         );
         env::set_var("SERV_PRIN_EVF", "evf.amazonaws.com"); // Env vars need to be unique to each test because they're global when `cargo test` runs
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Principal.Service.0] is [lambda.amazonaws.com] and the permitted value is [evf.amazonaws.com]")], 2)
         );
     }
@@ -728,7 +732,7 @@ mod tests {
         );
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (empty_vec, 0)
         );
     }
@@ -754,7 +758,7 @@ mod tests {
             r#"AWS::IAM::Role AssumeRolePolicyDocument.Version == /(\d{5})-(\d{2})-(\d{2})/"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Version] is [2012-10-17] and the permitted pattern is [(\\d{5})-(\\d{2})-(\\d{2})]")], 2)
         );
     }
@@ -780,7 +784,7 @@ mod tests {
 AWS::EC2::Volume Encrypted != %require_encryption"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume] failed because it does not contain the required property of [Encrypted]")], 2)
         );
     }
@@ -807,7 +811,7 @@ AWS::EC2::Volume Encrypted != %require_encryption"#,
 AWS::EC2::Volume Encrypted != %require_encryption"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume] failed because there is no value defined for [%require_encryption] to check [Encrypted] against")], 2)
         );
     }
@@ -843,7 +847,7 @@ AWS::EC2::Volume Encrypted != %require_encryption"#,
 AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
                   String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),],
              2)
@@ -881,7 +885,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
 AWS::EC2::Volume Size < 101"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [< 101]"), ],
              2)
         );
@@ -918,7 +922,7 @@ AWS::EC2::Volume Size < 101"#,
 AWS::EC2::Volume Size > 100"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (
                 vec![String::from(
                     "[NewVolume] failed because [Size] is [100] and the permitted value is [> 100]"
@@ -959,7 +963,7 @@ AWS::EC2::Volume Size > 100"#,
 AWS::EC2::Volume Size <= 100"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume2] failed because [Size] is [101] and the permitted value is [<= 100]"), ],
              2)
         );
@@ -996,7 +1000,7 @@ AWS::EC2::Volume Size <= 100"#,
 AWS::EC2::Volume Size >= 101"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [>= 101]"), ],
              2)
         );
@@ -1058,7 +1062,7 @@ AWS::EC2::Volume Encrypted != %require_encryption
 AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume] failed because [Encrypted] is [true] and that value is not permitted"),
                   String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
                   String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [99]"),
@@ -1092,7 +1096,7 @@ AWS::EC2::Volume Encrypted != %require_encryption
 AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_file_contents, &rules_file_contents, true).unwrap(),
             (vec![
                 String::from("[NewVolume] failed because [Encrypted] is [true] and that value is not permitted"),
                 String::from("[NewVolume] failed because [Size] is [100] and the permitted value is [101]"),
@@ -1111,7 +1115,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                   AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
     }
@@ -1125,7 +1129,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                   AWS::EC2::SecurityGroup Tags.* == {"Key":"OwnerContact","Value":"OwnerContact"}"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (
                 vec![
                     String::from(
@@ -1159,7 +1163,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/wildcard_iam_rule_set.passing")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
     }
@@ -1171,7 +1175,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/wildcard_not_in_iam_rule_set.failing")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[LambdaRoleHelper] failed because [lambda.amazonaws.com] is in [lambda.amazonaws.com, ec2.amazonaws.com] which is not permitted for [AssumeRolePolicyDocument.Statement.0.Principal.Service.0]"), ],
              2)
         );
@@ -1184,7 +1188,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/wildcard_action.pass")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
     }
@@ -1196,7 +1200,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/wildcard_action.fail")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[EndpointCloudWatchRoleC3C64E0F] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted"),
                   String::from("[HelloHandlerServiceRole11EF7C63] failed because [AssumeRolePolicyDocument.Statement.0.Action] is [sts:AssumeRole] and that value is not permitted")],
              2)
@@ -1218,7 +1222,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         )
         .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
                   String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
                   String::from("[NewVolume] failed because [Tags.0.Key] is [uaid] and the permitted value is [uai]"),
@@ -1242,7 +1246,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         )
         .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[NewVolume] failed because [Tags.0.Key] is [uaid] and the permitted value is [uai]"),
                   String::from("[NewVolume] failed because [Tags.1.Key] is [tag2] and the permitted value is [uai]")],
              2)
@@ -1256,7 +1260,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/getatt_template.ruleset")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[EC2Instance] failed because [t3.medium] is not in [t2.nano,t2.micro,t2.small,t3.nano,t3.micro,t3.small] for [InstanceType]"),
                   String::from("[InstanceSecurityGroup] failed because [SecurityGroupIngress] is [[{\"CidrIp\":\"SSHLocation\",\"FromPort\":22,\"IpProtocol\":\"tcp\",\"ToPort\":22}]] and the permitted value is [[{\"CidrIp\":\"SSHLocation\",\"FromPort\":33322,\"IpProtocol\":\"tcp\",\"ToPort\":33322}]]"),
                   String::from("[NewVolume] failed because [Size] is [512] and the permitted value is [128]"),
@@ -1273,7 +1277,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let rules_file_contents = fs::read_to_string("tests/getatt_template.ruleset")
             .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"),
                   String::from("[NewVolume2] failed because [Size] is [99] and the permitted value is [128]"),
                   String::from("[NewVolume2] failed because [Size] is [99] and the permitted value is [256]"),
@@ -1291,14 +1295,13 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             .unwrap_or_else(|err| format!("{}", err));
         let rules_file_contents = fs::read_to_string("tests/no_resources_template.ruleset")
             .unwrap_or_else(|err| format!("{}", err));
+        let error = match cfn_guard::run_check(&template_contents, &rules_file_contents, true) {
+            Ok(_) => "".to_string(),
+            Err(e) => e,
+        };
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
-            (
-                vec![String::from(
-                    "ERROR:  Template file does not contain a [Resources] section to check"
-                )],
-                1
-            )
+            error,
+            String::from("Template file does not contain a [Resources] section to check")
         )
     }
 
@@ -1314,7 +1317,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             "#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (
                 vec![String::from(
                     r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":"OwnerContact"}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
@@ -1329,7 +1332,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             "#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
         template_contents = fs::read_to_string("tests/parse_lists_with_json_test-template.json")
@@ -1341,7 +1344,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             "#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (
                 vec![String::from(
                     r#"[ClusterSg] failed because [{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] is in ["test", 1, ["a", "b"], {"Key":"OwnerContact","Value":"OwnerContact"},{"Key":"OwnerContact","Value":{"Ref":"OwnerContact"}}] which is not permitted for [Tags.1]"#
@@ -1356,7 +1359,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             "#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
     }
@@ -1372,7 +1375,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             AWS::Lambda::Function Environment.*.*.* IN %log_stuff"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -1383,7 +1386,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             AWS::Lambda::Function Environment.*.*.* NOT_IN %log_stuff"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (
                 vec![
                     String::from(
@@ -1403,7 +1406,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         // Pass over-wildcarding (ie, wildcards in structures that don't extend that deeply
         rules_file_contents = String::from(r#"AWS::Lambda::Function MemorySize.*.* IN [128]"#);
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -1412,7 +1415,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function Environment.*.* IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -1421,7 +1424,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function Environment.*.* NOT_IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (
                 vec![String::from(
                     r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
@@ -1435,7 +1438,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function Environment.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         );
 
@@ -1444,7 +1447,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function Environment.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (
                 vec![String::from(
                     r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
@@ -1458,7 +1461,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function *.*.LOG_LEVEL IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
 
@@ -1467,7 +1470,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             r#"AWS::Lambda::Function *.*.LOG_LEVEL NOT_IN [["Solution", "Data", "LogLevel"]]"#,
         );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (
                 vec![String::from(
                     r#"[LambdaWAFHelperFunction] failed because [["Solution","Data","LogLevel"]] is in [["Solution", "Data", "LogLevel"]] which is not permitted for [Environment.Variables.LOG_LEVEL]"#
@@ -1482,15 +1485,19 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
             .unwrap_or_else(|err| format!("{}", err));
 
-        let mut rules_file_contents = String::from("AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain");
+        let mut rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain",
+        );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
         );
 
-        rules_file_contents = String::from("AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain");
+        rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain",
+        );
         assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/")],
              2)
         )

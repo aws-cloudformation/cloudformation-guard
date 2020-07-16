@@ -29,7 +29,7 @@ lazy_static! {
 pub(crate) fn parse_rules(
     rules_file_contents: &str,
     cfn_resources: &HashMap<String, Value>,
-) -> ParsedRuleSet {
+) -> Result<ParsedRuleSet, String> {
     debug!("Entered parse_rules");
     trace!(
         "Parse rules entered with rules_file_contents: {:#?}",
@@ -56,8 +56,8 @@ pub(crate) fn parse_rules(
         match line_type {
             LineType::Assignment => {
                 let caps = match process_assignment(l) {
-                    Some(a) => a,
-                    None => continue,
+                    Ok(a) => a,
+                    Err(e) => return Err(e),
                 };
                 trace!("Parsed assignment's captures are: {:#?}", &caps);
                 if caps["operator"] != *"=" {
@@ -78,16 +78,20 @@ pub(crate) fn parse_rules(
                 variables.insert(var_name, var_value);
             }
             LineType::Comment => (),
-            LineType::Rule => {
-                let compound_rule = parse_rule_line(l, &cfn_resources);
-                debug!("Parsed rule is: {:#?}", &compound_rule);
-                rule_set.push(RuleType::CompoundRule(compound_rule));
-            }
-            LineType::Conditional => {
-                let conditional_rule: ConditionalRule = process_conditional(l, &cfn_resources);
-                debug!("Parsed conditional is {:#?}", &conditional_rule);
-                rule_set.push(RuleType::ConditionalRule(conditional_rule));
-            }
+            LineType::Rule => match parse_rule_line(l, &cfn_resources) {
+                Ok(prl) => {
+                    debug!("Parsed rule is: {:#?}", &prl);
+                    rule_set.push(RuleType::CompoundRule(prl))
+                }
+                Err(e) => return Err(e),
+            },
+            LineType::Conditional => match process_conditional(l, &cfn_resources) {
+                Ok(c) => {
+                    debug!("Parsed conditional is {:#?}", &c);
+                    rule_set.push(RuleType::ConditionalRule(c));
+                }
+                Err(e) => return Err(e),
+            },
             LineType::WhiteSpace => {
                 debug!("Line is white space");
                 continue;
@@ -101,34 +105,70 @@ pub(crate) fn parse_rules(
     let filtered_env_vars = util::filter_for_env_vars(&variables);
     debug!("Variables dictionary is {:?}", &filtered_env_vars);
     debug!("Rule Set is {:#?}", &rule_set);
-    ParsedRuleSet {
+    Ok(ParsedRuleSet {
         variables,
         rule_set,
+    })
+}
+
+fn parse_rule_line(
+    l: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<CompoundRule, String> {
+    match is_or_rule(l) {
+        true => {
+            debug!("Line is an |OR| rule");
+            match process_or_rule(l, &cfn_resources) {
+                Ok(r) => Ok(r),
+                Err(e) => Err(e),
+            }
+        }
+        false => {
+            debug!("Line is an 'AND' rule");
+            match process_and_rule(l, &cfn_resources) {
+                Ok(r) => Ok(r),
+                Err(e) => return Err(e),
+            }
+        }
     }
 }
 
-fn parse_rule_line(l: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
-    let compound_rule: CompoundRule = if is_or_rule(l) {
-        debug!("Line is an |OR| rule");
-        process_or_rule(l, &cfn_resources)
-    } else {
-        debug!("Line is an 'AND' rule");
-        process_and_rule(l, &cfn_resources)
-    };
-    compound_rule
-}
-
-fn process_conditional(line: &str, cfn_resources: &HashMap<String, Value>) -> ConditionalRule {
+fn process_conditional(
+    line: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<ConditionalRule, String> {
     let caps = CONDITIONAL_RULE_REG.captures(line).unwrap();
     trace!("ConditionalRule regex captures are {:#?}", &caps);
+
     let conjd_caps_conditional = format!("{} {}", &caps["resource_type"], &caps["condition"]);
-    let conjd_caps_consequent = format!("{} {}", &caps["resource_type"], &caps["consequent"]);
-    let condition = parse_rule_line(&conjd_caps_conditional, cfn_resources);
-    let consequent = parse_rule_line(&conjd_caps_consequent, cfn_resources);
-    ConditionalRule {
-        condition,
-        consequent,
+    trace!("conjd_caps_conditional is {:#?}", conjd_caps_conditional);
+    match parse_rule_line(&conjd_caps_conditional, cfn_resources) {
+        Ok(condition) => {
+            let conjd_caps_consequent =
+                format!("{} {}", &caps["resource_type"], &caps["consequent"]);
+            trace!("conjd_caps_consequent is {:#?}", conjd_caps_consequent);
+            match parse_rule_line(&conjd_caps_consequent, cfn_resources) {
+                Ok(consequent) => Ok(ConditionalRule {
+                    condition,
+                    consequent,
+                }),
+                Err(e) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
     }
+    // if let condition = parse_rule_line(&conjd_caps_conditional, cfn_resources)
+    //     .unwrap_or_else(|err| return Err(err));
+    //
+    // let conjd_caps_consequent = format!("{} {}", &caps["resource_type"], &caps["consequent"]);
+    // trace!("conjd_caps_consequent is {:#?}", conjd_caps_consequent);
+    // if let consequent = parse_rule_line(&conjd_caps_consequent, cfn_resources)
+    //     .unwrap_or_else(|err| return Err(err));
+    //
+    // ok(conditionalrule {
+    //     condition,
+    //     consequent,
+    // })
 }
 
 fn find_line_type(line: &str) -> LineType {
@@ -152,10 +192,10 @@ fn find_line_type(line: &str) -> LineType {
     process::exit(1)
 }
 
-fn process_assignment(line: &str) -> Option<Captures> {
+fn process_assignment(line: &str) -> Result<Captures, String> {
     match ASSIGN_REG.captures(line) {
-        Some(c) => Some(c),
-        None => None,
+        Some(c) => Ok(c),
+        None => Err(format!("Invalid assignment statement: '{}", line)),
     }
 }
 
@@ -163,30 +203,45 @@ fn is_or_rule(line: &str) -> bool {
     line.contains("|OR|") || WILDCARD_OR_RULE_REG.is_match(line)
 }
 
-fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
+fn process_or_rule(
+    line: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<CompoundRule, String> {
     trace!("Entered process_or_rule");
     let branches = line.split("|OR|");
     debug!("Rule branches are: {:#?}", &branches);
     let mut rules: Vec<Rule> = vec![];
     for b in branches {
-        rules.append(destructure_rule(b.trim(), cfn_resources).as_mut());
+        match destructure_rule(b.trim(), cfn_resources) {
+            Ok(r) => rules.append(&mut r.clone()),
+            Err(e) => return Err(e),
+        }
     }
-    CompoundRule {
+    Ok(CompoundRule {
         compound_type: CompoundType::OR,
         raw_rule: line.to_string(),
         rule_list: rules,
+    })
+}
+
+fn process_and_rule(
+    line: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<CompoundRule, String> {
+    match destructure_rule(line, cfn_resources) {
+        Ok(r) => Ok(CompoundRule {
+            compound_type: CompoundType::AND,
+            raw_rule: line.to_string(),
+            rule_list: r,
+        }),
+        Err(e) => Err(e),
     }
 }
 
-fn process_and_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> CompoundRule {
-    CompoundRule {
-        compound_type: CompoundType::AND,
-        raw_rule: line.to_string(),
-        rule_list: destructure_rule(line, cfn_resources),
-    }
-}
-
-fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> Vec<Rule> {
+fn destructure_rule(
+    rule_text: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<Vec<Rule>, String> {
     trace!("Entered destructure_rule");
     let mut rules_hash: HashSet<Rule> = HashSet::new();
     let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
@@ -194,8 +249,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
         None => match RULE_REG.captures(rule_text) {
             Some(c) => c,
             None => {
-                trace!("No captures from rule regex");
-                return vec![];
+                return Err(format!("Invalid rule: {}", rule_text));
             }
         },
     };
@@ -279,7 +333,7 @@ fn destructure_rule(rule_text: &str, cfn_resources: &HashMap<String, Value>) -> 
 
     let rules = rules_hash.into_iter().collect::<Vec<Rule>>();
     trace!("Destructured rules are: {:#?}", &rules);
-    rules
+    Ok(rules)
 }
 
 mod tests {
@@ -305,7 +359,7 @@ mod tests {
         let mut var_map: HashMap<String, String> = HashMap::new();
         var_map.insert("var".to_string(), "[128]".to_string());
 
-        let parsed_rules = parse_rules(assignment, &cfn_resources);
+        let parsed_rules = parse_rules(assignment, &cfn_resources).unwrap();
         assert!(parsed_rules.variables["var"] == "[128]");
     }
 }
