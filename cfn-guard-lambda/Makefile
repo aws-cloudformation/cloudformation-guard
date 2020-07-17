@@ -178,3 +178,9 @@ invoke: fail pass err
 
 uninstall:
 	aws lambda delete-function --function-name $(project_name)
+
+install-cdk: build
+	cd cdk; npm install; npm run build; cdk bootstrap; cdk deploy -c function-name=$(project_name) CfnGuardStack --require-approval=never
+	
+uninstall-cdk:
+	cd cdk; cdk destroy CfnGuardStack
