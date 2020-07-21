@@ -34,7 +34,11 @@ fn my_handler(e: CustomEvent, _c: Context) -> Result<CustomOutput, HandlerError>
     //dbg!(&e);
     info!("Template is [{}]", &e.template);
     info!("Rule Set is [{}]", &e.rule_set);
-    let (result, exit_code) = cfn_guard::run_check(&e.template, &e.rule_set, e.strict_checks);
+    let (result, exit_code) = match cfn_guard::run_check(&e.template, &e.rule_set, e.strict_checks)
+    {
+        Ok(t) => t,
+        Err(e) => (vec![e], 1),
+    };
 
     let exit_status = match exit_code {
         0 => "PASS",
