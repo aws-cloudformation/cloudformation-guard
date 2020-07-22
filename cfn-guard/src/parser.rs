@@ -81,14 +81,14 @@ pub(crate) fn parse_rules(
             LineType::Rule => match parse_rule_line(l, &cfn_resources) {
                 Ok(prl) => {
                     debug!("Parsed rule is: {:#?}", &prl);
-                    rule_set.push(RuleType::CompoundRule(prl))
+                    rule_set.push(prl)
                 }
                 Err(e) => return Err(e),
             },
-            LineType::Conditional => match process_conditional(l, &cfn_resources) {
+            LineType::Conditional => match parse_rule_line(l, &cfn_resources) {
                 Ok(c) => {
                     debug!("Parsed conditional is {:#?}", &c);
-                    rule_set.push(RuleType::ConditionalRule(c));
+                    rule_set.push(c);
                 }
                 Err(e) => return Err(e),
             },
@@ -111,10 +111,7 @@ pub(crate) fn parse_rules(
     })
 }
 
-fn parse_rule_line(
-    l: &str,
-    cfn_resources: &HashMap<String, Value>,
-) -> Result<CompoundRule, String> {
+fn parse_rule_line(l: &str, cfn_resources: &HashMap<String, Value>) -> Result<RuleType, String> {
     match is_or_rule(l) {
         true => {
             debug!("Line is an |OR| rule");
@@ -143,32 +140,30 @@ fn process_conditional(
     let conjd_caps_conditional = format!("{} {}", &caps["resource_type"], &caps["condition"]);
     trace!("conjd_caps_conditional is {:#?}", conjd_caps_conditional);
     match parse_rule_line(&conjd_caps_conditional, cfn_resources) {
-        Ok(condition) => {
+        Ok(cond) => {
+            let condition = match cond {
+                RuleType::CompoundRule(s) => s,
+                _ => return Err(format!("Bad destructure of conditional rule: {}", line)),
+            };
             let conjd_caps_consequent =
                 format!("{} {}", &caps["resource_type"], &caps["consequent"]);
             trace!("conjd_caps_consequent is {:#?}", conjd_caps_consequent);
             match parse_rule_line(&conjd_caps_consequent, cfn_resources) {
-                Ok(consequent) => Ok(ConditionalRule {
-                    condition,
-                    consequent,
-                }),
+                Ok(cons) => {
+                    let consequent = match cons {
+                        RuleType::CompoundRule(s) => s,
+                        _ => return Err(format!("Bad destructure of conditional rule: {}", line)),
+                    };
+                    Ok(ConditionalRule {
+                        condition,
+                        consequent,
+                    })
+                }
                 Err(e) => Err(e),
             }
         }
         Err(e) => Err(e),
     }
-    // if let condition = parse_rule_line(&conjd_caps_conditional, cfn_resources)
-    //     .unwrap_or_else(|err| return Err(err));
-    //
-    // let conjd_caps_consequent = format!("{} {}", &caps["resource_type"], &caps["consequent"]);
-    // trace!("conjd_caps_consequent is {:#?}", conjd_caps_consequent);
-    // if let consequent = parse_rule_line(&conjd_caps_consequent, cfn_resources)
-    //     .unwrap_or_else(|err| return Err(err));
-    //
-    // ok(conditionalrule {
-    //     condition,
-    //     consequent,
-    // })
 }
 
 fn find_line_type(line: &str) -> LineType {
@@ -203,106 +198,111 @@ fn is_or_rule(line: &str) -> bool {
     line.contains("|OR|") || WILDCARD_OR_RULE_REG.is_match(line)
 }
 
-fn process_or_rule(
-    line: &str,
-    cfn_resources: &HashMap<String, Value>,
-) -> Result<CompoundRule, String> {
+fn process_or_rule(line: &str, cfn_resources: &HashMap<String, Value>) -> Result<RuleType, String> {
     trace!("Entered process_or_rule");
     let branches = line.split("|OR|");
+    // debug!("Rule branches are: {:#?}", &branches);
+    let mut rules: Vec<RuleType> = vec![];
+    for b in branches {
+        debug!("Rule |OR| branch is '{}'", b);
+        match destructure_rule(b.trim(), cfn_resources) {
+            Ok(r) => rules.append(&mut r.clone()),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(RuleType::CompoundRule(CompoundRule {
+        compound_type: CompoundType::OR,
+        raw_rule: line.to_string(),
+        rule_list: rules,
+    }))
+}
+
+fn process_and_rule(
+    line: &str,
+    cfn_resources: &HashMap<String, Value>,
+) -> Result<RuleType, String> {
+    trace!("Entered process_and_rule");
+    let branches = line.split("|AND|");
     debug!("Rule branches are: {:#?}", &branches);
-    let mut rules: Vec<Rule> = vec![];
+    let mut rules: Vec<RuleType> = vec![];
     for b in branches {
         match destructure_rule(b.trim(), cfn_resources) {
             Ok(r) => rules.append(&mut r.clone()),
             Err(e) => return Err(e),
         }
     }
-    Ok(CompoundRule {
-        compound_type: CompoundType::OR,
+    Ok(RuleType::CompoundRule(CompoundRule {
+        compound_type: CompoundType::AND,
         raw_rule: line.to_string(),
         rule_list: rules,
-    })
-}
-
-fn process_and_rule(
-    line: &str,
-    cfn_resources: &HashMap<String, Value>,
-) -> Result<CompoundRule, String> {
-    match destructure_rule(line, cfn_resources) {
-        Ok(r) => Ok(CompoundRule {
-            compound_type: CompoundType::AND,
-            raw_rule: line.to_string(),
-            rule_list: r,
-        }),
-        Err(e) => Err(e),
-    }
+    }))
+    // match destructure_rule(line, cfn_resources) {
+    //     Ok(r) => Ok(CompoundRule {
+    //         compound_type: CompoundType::AND,
+    //         raw_rule: line.to_string(),
+    //         rule_list: r,
+    //     }),
+    //     Err(e) => Err(e),
+    // }
 }
 
 fn destructure_rule(
     rule_text: &str,
     cfn_resources: &HashMap<String, Value>,
-) -> Result<Vec<Rule>, String> {
+) -> Result<Vec<RuleType>, String> {
     trace!("Entered destructure_rule");
-    let mut rules_hash: HashSet<Rule> = HashSet::new();
-    let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
-        Some(c) => c,
-        None => match RULE_REG.captures(rule_text) {
-            Some(c) => c,
-            None => {
-                return Err(format!("Invalid rule: {}", rule_text));
+    let mut rules_hash: HashSet<RuleType> = HashSet::new();
+    if CONDITIONAL_RULE_REG.is_match(rule_text) {
+        match process_conditional(rule_text, cfn_resources) {
+            Ok(r) => {
+                rules_hash.insert(RuleType::ConditionalRule(r));
             }
-        },
-    };
-
-    trace!("Parsed rule's captures are: {:#?}", &caps);
-    let mut props: Vec<String> = vec![];
-    if caps["resource_property"].contains('*') {
-        for (_name, value) in cfn_resources {
-            if caps["resource_type"] == value["Type"] {
-                if let Some(p) = util::expand_wildcard_props(
-                    &value["Properties"],
-                    caps["resource_property"].to_string(),
-                    String::from(""),
-                ) {
-                    props.append(&mut p.clone());
-                    trace!("Expanded props are {:#?}", &props);
-                }
-            }
+            Err(e) => return Err(e),
         }
     } else {
-        props.push(caps["resource_property"].to_string());
-    };
-
-    for p in props {
-        rules_hash.insert(Rule {
-            resource_type: caps["resource_type"].to_string(),
-            field: p.to_string(),
-            operation: {
-                match &caps["operator"] {
-                    "==" => OpCode::Require,
-                    "!=" => OpCode::RequireNot,
-                    "<" => OpCode::LessThan,
-                    ">" => OpCode::GreaterThan,
-                    "<=" => OpCode::LessThanOrEqualTo,
-                    ">=" => OpCode::GreaterThanOrEqualTo,
-                    "IN" => OpCode::In,
-                    "NOT_IN" => OpCode::NotIn,
-                    _ => {
-                        let msg_string = format!(
-                            "Bad Rule Operator: [{}] in '{}'",
-                            &caps["operator"], rule_text
-                        );
-                        error!("{}", &msg_string);
-                        process::exit(1)
-                    }
+        let caps = match RULE_WITH_OPTIONAL_MESSAGE_REG.captures(rule_text) {
+            Some(c) => c,
+            None => match RULE_REG.captures(rule_text) {
+                Some(c) => c,
+                None => {
+                    return Err(format!("Invalid rule: {}", rule_text));
                 }
             },
-            rule_vtype: {
-                let rv = caps["rule_value"].chars().next().unwrap();
-                match rv {
-                    '[' => match &caps["operator"] {
-                        "==" | "!=" | "<=" | ">=" | "<" | ">" => RValueType::Value,
-                        "IN" | "NOT_IN" => RValueType::List,
+        };
+
+        trace!("Parsed rule's captures are: {:#?}", &caps);
+        let mut props: Vec<String> = vec![];
+        if caps["resource_property"].contains('*') {
+            for (_name, value) in cfn_resources {
+                if caps["resource_type"] == value["Type"] {
+                    if let Some(p) = util::expand_wildcard_props(
+                        &value["Properties"],
+                        caps["resource_property"].to_string(),
+                        String::from(""),
+                    ) {
+                        props.append(&mut p.clone());
+                        trace!("Expanded props are {:#?}", &props);
+                    }
+                }
+            }
+        } else {
+            props.push(caps["resource_property"].to_string());
+        };
+
+        for p in props {
+            let rule = Rule {
+                resource_type: caps["resource_type"].to_string(),
+                field: p.to_string(),
+                operation: {
+                    match &caps["operator"] {
+                        "==" => OpCode::Require,
+                        "!=" => OpCode::RequireNot,
+                        "<" => OpCode::LessThan,
+                        ">" => OpCode::GreaterThan,
+                        "<=" => OpCode::LessThanOrEqualTo,
+                        ">=" => OpCode::GreaterThanOrEqualTo,
+                        "IN" => OpCode::In,
+                        "NOT_IN" => OpCode::NotIn,
                         _ => {
                             let msg_string = format!(
                                 "Bad Rule Operator: [{}] in '{}'",
@@ -311,27 +311,45 @@ fn destructure_rule(
                             error!("{}", &msg_string);
                             process::exit(1)
                         }
-                    },
-                    '/' => RValueType::Regex,
-                    '%' => RValueType::Variable,
-                    _ => RValueType::Value,
-                }
-            },
-            value: {
-                let rv = caps["rule_value"].chars().next().unwrap();
-                match rv {
-                    '/' => caps["rule_value"].trim_matches('/').to_string(),
-                    _ => caps["rule_value"].to_string().trim().to_string(),
-                }
-            },
-            custom_msg: match caps.name("custom_msg") {
-                Some(s) => Some(s.as_str().to_string()),
-                None => None,
-            },
-        });
+                    }
+                },
+                rule_vtype: {
+                    let rv = caps["rule_value"].chars().next().unwrap();
+                    match rv {
+                        '[' => match &caps["operator"] {
+                            "==" | "!=" | "<=" | ">=" | "<" | ">" => RValueType::Value,
+                            "IN" | "NOT_IN" => RValueType::List,
+                            _ => {
+                                let msg_string = format!(
+                                    "Bad Rule Operator: [{}] in '{}'",
+                                    &caps["operator"], rule_text
+                                );
+                                error!("{}", &msg_string);
+                                process::exit(1)
+                            }
+                        },
+                        '/' => RValueType::Regex,
+                        '%' => RValueType::Variable,
+                        _ => RValueType::Value,
+                    }
+                },
+                value: {
+                    let rv = caps["rule_value"].chars().next().unwrap();
+                    match rv {
+                        '/' => caps["rule_value"].trim_matches('/').to_string(),
+                        _ => caps["rule_value"].to_string().trim().to_string(),
+                    }
+                },
+                custom_msg: match caps.name("custom_msg") {
+                    Some(s) => Some(s.as_str().to_string()),
+                    None => None,
+                },
+            };
+            rules_hash.insert(RuleType::SimpleRule(rule));
+        }
     }
 
-    let rules = rules_hash.into_iter().collect::<Vec<Rule>>();
+    let rules = rules_hash.into_iter().collect::<Vec<RuleType>>();
     trace!("Destructured rules are: {:#?}", &rules);
     Ok(rules)
 }

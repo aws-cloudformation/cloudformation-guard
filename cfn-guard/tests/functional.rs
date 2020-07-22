@@ -1468,12 +1468,62 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy == Retain",
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
             "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/")],
              2)
+        );
+        rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy != Retain",
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (vec![String::from("[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags != /.*DEV.*/")], 2)
         )
+    }
+    #[test]
+    fn test_compound_conditional_check() {
+        let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let mut rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain |OR|AWS::DynamoDB::Table if Tags.* == /.*DEV.*/ then .UpdateReplacePolicy == Retain",
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy == Retain |OR| AWS::DynamoDB::Table Tags.* != PROD",
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain\
+                AWS::DynamoDB::Table Tags.* != {"Key":"ENV","Value":"PROD"}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (
+                vec![String::from(
+                    r#"[DDBTable] failed because [Tags.0] is [{"Key":"ENV","Value":"PROD"}] and that value is not permitted"#
+                )],
+                2
+            )
+        );
     }
 }

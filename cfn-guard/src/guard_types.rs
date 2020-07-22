@@ -30,16 +30,17 @@ pub mod enums {
         Regex,
         Variable,
     }
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub enum CompoundType {
         OR,
         AND,
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub enum RuleType {
         CompoundRule(super::structs::CompoundRule),
         ConditionalRule(super::structs::ConditionalRule),
+        SimpleRule(super::structs::Rule),
     }
 }
 
@@ -56,14 +57,14 @@ pub mod structs {
         pub(crate) custom_msg: Option<String>,
     }
 
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct CompoundRule {
         pub(crate) compound_type: super::enums::CompoundType,
         pub(crate) raw_rule: String,
-        pub(crate) rule_list: Vec<Rule>,
+        pub(crate) rule_list: Vec<super::enums::RuleType>,
     }
 
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct ConditionalRule {
         pub(crate) condition: CompoundRule,
         pub(crate) consequent: CompoundRule,

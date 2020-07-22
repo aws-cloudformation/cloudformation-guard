@@ -125,6 +125,14 @@ fn check_resources(
     for c_rule in parsed_rule_set.rule_set.iter() {
         info!("Applying rule '{:#?}'", &c_rule);
         match c_rule {
+            enums::RuleType::SimpleRule(r) => {
+                trace!("Simple rule is {:#?}", r);
+                if let Some(rule_result) =
+                    apply_rule(&cfn_resources, r, &parsed_rule_set.variables, strict_checks)
+                {
+                    result.extend(rule_result);
+                }
+            }
             enums::RuleType::ConditionalRule(r) => {
                 trace!("Conditional rule is {:#?}", r);
                 for (name, cfn_resource) in cfn_resources {
@@ -160,8 +168,13 @@ fn check_resources(
                                 strict_checks,
                             ) {
                                 Some(x) => {
-                                    let temp_result =
-                                        x.into_iter().map(|x| format!("{} {}", x, postscript));
+                                    let temp_result = x.into_iter().map(|x| {
+                                        if !x.contains("when") {
+                                            format!("{} {}", x, postscript)
+                                        } else {
+                                            x
+                                        }
+                                    });
                                     result.extend(temp_result);
                                 }
                                 None => (),
@@ -178,19 +191,71 @@ fn check_resources(
                         let mut temp_results: Vec<String> = vec![];
                         let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
                         cfn_resource_map.insert(name.clone(), cfn_resource.clone());
-                        for rule in &r.rule_list {
-                            match apply_rule(
-                                &cfn_resource_map,
-                                &rule,
-                                &parsed_rule_set.variables,
-                                strict_checks,
-                            ) {
-                                Some(rule_result) => {
-                                    pass_fail.insert("fail");
-                                    temp_results.extend(rule_result);
+                        for typed_rule in &r.rule_list {
+                            match typed_rule {
+                                enums::RuleType::SimpleRule(r) => {
+                                    match apply_rule(
+                                        &cfn_resource_map,
+                                        r,
+                                        &parsed_rule_set.variables,
+                                        strict_checks,
+                                    ) {
+                                        Some(rule_result) => {
+                                            pass_fail.insert("fail");
+                                            temp_results.extend(rule_result);
+                                        }
+                                        None => {
+                                            pass_fail.insert("pass");
+                                        }
+                                    }
                                 }
-                                None => {
-                                    pass_fail.insert("pass");
+                                enums::RuleType::CompoundRule(r) => {
+                                    let rule_set = structs::ParsedRuleSet {
+                                        variables: parsed_rule_set.variables.clone(),
+                                        rule_set: vec![enums::RuleType::CompoundRule(r.clone())],
+                                    };
+                                    let postscript = format!("when {}", r.raw_rule);
+                                    match check_resources(
+                                        &cfn_resource_map,
+                                        &rule_set,
+                                        strict_checks,
+                                    ) {
+                                        Some(x) => {
+                                            let temp_result = x.into_iter().map(|x| {
+                                                if !x.contains("when") {
+                                                    format!("{} {}", x, postscript)
+                                                } else {
+                                                    x
+                                                }
+                                            });
+                                            result.extend(temp_result);
+                                        }
+                                        None => (),
+                                    };
+                                }
+                                enums::RuleType::ConditionalRule(r) => {
+                                    let rule_set = structs::ParsedRuleSet {
+                                        variables: parsed_rule_set.variables.clone(),
+                                        rule_set: vec![enums::RuleType::ConditionalRule(r.clone())],
+                                    };
+                                    let postscript = format!("when {}", r.condition.raw_rule);
+                                    match check_resources(
+                                        &cfn_resource_map,
+                                        &rule_set,
+                                        strict_checks,
+                                    ) {
+                                        Some(x) => {
+                                            let temp_result = x.into_iter().map(|x| {
+                                                if !x.contains("when") {
+                                                    format!("{} {}", x, postscript)
+                                                } else {
+                                                    x
+                                                }
+                                            });
+                                            result.extend(temp_result);
+                                        }
+                                        None => (),
+                                    };
                                 }
                             }
                         }
@@ -202,14 +267,58 @@ fn check_resources(
                     }
                 }
                 enums::CompoundType::AND => {
-                    for rule in &r.rule_list {
-                        if let Some(rule_result) = apply_rule(
-                            &cfn_resources,
-                            &rule,
-                            &parsed_rule_set.variables,
-                            strict_checks,
-                        ) {
-                            result.extend(rule_result);
+                    for typed_rule in &r.rule_list {
+                        match typed_rule {
+                            enums::RuleType::SimpleRule(r) => {
+                                if let Some(rule_result) = apply_rule(
+                                    &cfn_resources,
+                                    r,
+                                    &parsed_rule_set.variables,
+                                    strict_checks,
+                                ) {
+                                    result.extend(rule_result);
+                                }
+                            }
+                            enums::RuleType::CompoundRule(r) => {
+                                let rule_set = structs::ParsedRuleSet {
+                                    variables: parsed_rule_set.variables.clone(),
+                                    rule_set: vec![enums::RuleType::CompoundRule(r.clone())],
+                                };
+                                let postscript = format!("when {}", r.raw_rule);
+                                match check_resources(cfn_resources, &rule_set, strict_checks) {
+                                    Some(x) => {
+                                        let temp_result = x.into_iter().map(|x| {
+                                            if !x.contains("when") {
+                                                format!("{} {}", x, postscript)
+                                            } else {
+                                                x
+                                            }
+                                        });
+                                        result.extend(temp_result);
+                                    }
+                                    None => (),
+                                };
+                            }
+                            enums::RuleType::ConditionalRule(r) => {
+                                let rule_set = structs::ParsedRuleSet {
+                                    variables: parsed_rule_set.variables.clone(),
+                                    rule_set: vec![enums::RuleType::ConditionalRule(r.clone())],
+                                };
+                                let postscript = format!("when {}", r.condition.raw_rule);
+                                match check_resources(cfn_resources, &rule_set, strict_checks) {
+                                    Some(x) => {
+                                        let temp_result = x.into_iter().map(|x| {
+                                            if !x.contains("when") {
+                                                format!("{} {}", x, postscript)
+                                            } else {
+                                                x
+                                            }
+                                        });
+                                        result.extend(temp_result);
+                                    }
+                                    None => (),
+                                };
+                            }
                         }
                     }
                 }
