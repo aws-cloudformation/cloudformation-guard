@@ -35,12 +35,13 @@ fn main() {
 
     info!("Generating rules from {}", &template_file);
 
-    let result = cfn_guard_rulegen::run(template_file).unwrap_or_else(|err| {
+    let mut result = cfn_guard_rulegen::run(template_file).unwrap_or_else(|err| {
         println!("Problem generating rules: {}", err);
         process::exit(1);
     });
 
     if !result.is_empty() {
+	result.sort();
         for res in result.iter() {
             println!("{}", res);
         }
