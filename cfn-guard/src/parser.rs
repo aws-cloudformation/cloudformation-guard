@@ -138,6 +138,14 @@ fn process_conditional(
     let caps = CONDITIONAL_RULE_REG.captures(line).unwrap();
     trace!("ConditionalRule regex captures are {:#?}", &caps);
 
+    if RULE_REG.is_match(&caps["condition"])
+        || RULE_WITH_OPTIONAL_MESSAGE_REG.is_match(&caps["condition"])
+    {
+        return Err(format!(
+            "Invalid condition: '{}' in '{}'",
+            &caps["condition"], line
+        ));
+    }
     let conjd_caps_conditional = format!("{} {}", &caps["resource_type"], &caps["condition"]);
     trace!("conjd_caps_conditional is {:#?}", conjd_caps_conditional);
     match parse_rule_line(&conjd_caps_conditional, cfn_resources) {
@@ -146,6 +154,14 @@ fn process_conditional(
                 RuleType::CompoundRule(s) => s,
                 _ => return Err(format!("Bad destructure of conditional rule: {}", line)),
             };
+            if RULE_REG.is_match(&caps["consequent"])
+                || RULE_WITH_OPTIONAL_MESSAGE_REG.is_match(&caps["consequent"])
+            {
+                return Err(format!(
+                    "Invalid consequent: '{}' in '{}'",
+                    &caps["consequent"], line
+                ));
+            }
             let conjd_caps_consequent =
                 format!("{} {}", &caps["resource_type"], &caps["consequent"]);
             trace!("conjd_caps_consequent is {:#?}", conjd_caps_consequent);
