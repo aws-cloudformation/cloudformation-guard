@@ -48,14 +48,15 @@ pub(crate) fn parse_rules(
 
     for l in lines {
         debug!("Parsing '{}'", &l);
-        if l.is_empty() {
+        let trimmed_line = l.trim();
+        if trimmed_line.is_empty() {
             continue;
         };
-        let line_type = find_line_type(l);
+        let line_type = find_line_type(trimmed_line);
         debug!("line_type is {:#?}", line_type);
         match line_type {
             LineType::Assignment => {
-                let caps = match process_assignment(l) {
+                let caps = match process_assignment(trimmed_line) {
                     Ok(a) => a,
                     Err(e) => return Err(e),
                 };
@@ -63,7 +64,7 @@ pub(crate) fn parse_rules(
                 if caps["operator"] != *"=" {
                     let msg_string = format!(
                         "Bad Assignment Operator: [{}] in '{}'",
-                        &caps["operator"], l
+                        &caps["operator"], trimmed_line
                     );
                     error!("{}", &msg_string);
                     process::exit(1)
@@ -78,14 +79,14 @@ pub(crate) fn parse_rules(
                 variables.insert(var_name, var_value);
             }
             LineType::Comment => (),
-            LineType::Rule => match parse_rule_line(l, &cfn_resources) {
+            LineType::Rule => match parse_rule_line(trimmed_line, &cfn_resources) {
                 Ok(prl) => {
                     debug!("Parsed rule is: {:#?}", &prl);
                     rule_set.push(prl)
                 }
                 Err(e) => return Err(e),
             },
-            LineType::Conditional => match parse_rule_line(l, &cfn_resources) {
+            LineType::Conditional => match parse_rule_line(trimmed_line, &cfn_resources) {
                 Ok(c) => {
                     debug!("Parsed conditional is {:#?}", &c);
                     rule_set.push(c);
