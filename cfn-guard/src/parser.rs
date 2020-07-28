@@ -224,9 +224,9 @@ fn process_and_rule(
 ) -> Result<RuleType, String> {
     trace!("Entered process_and_rule");
     let branches = line.split("|AND|");
-    debug!("Rule branches are: {:#?}", &branches);
     let mut rules: Vec<RuleType> = vec![];
     for b in branches {
+        debug!("AND rule branch is: {:#?}", &b);
         match destructure_rule(b.trim(), cfn_resources) {
             Ok(r) => rules.append(&mut r.clone()),
             Err(e) => return Err(e),
