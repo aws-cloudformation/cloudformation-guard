@@ -60,6 +60,18 @@ $> cfn-guard -t Examples/ebs_volume_template.json -r Examples/ebs_volume_templat
    Number of failures: 6 
 ```
 
+### Evaluating Security Policies
+
+CloudFormation Guard can be used to evaluate security best practices for infrastructure deployed via CloudFormation. A number of example rules are included:
+
+```
+$> cfn-guard -t Examples/security_template.json -r Examples/security_rules.ruleset
+   "[AmazonMQBroker] failed because [AutoMinorVersionUpgrade] is [false] and Version upgrades should be enabled to receive security updates"
+   "[AmazonMQBroker] failed because [EncryptionOptions.UseAwsOwnedKey] is [true] and CMKs should be used instead of AWS-provided KMS keys"
+   "[AmazonMQBroker] failed because [EngineVersion] is [5.15.9] and Broker engine version should be at least 5.15.10"
+   ...
+```
+
 More details on how to write rules and how the tool can work with build systems can be found [here](cfn-guard/README.md).
 
 ### Automatically Generating Rules
