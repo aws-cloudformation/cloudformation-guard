@@ -1513,17 +1513,41 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            r#"AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain\
+            r#"AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain
                 AWS::DynamoDB::Table Tags.* != {"Key":"ENV","Value":"PROD"}"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (
-                vec![String::from(
-                    r#"[DDBTable] failed because [Tags.0] is [{"Key":"ENV","Value":"PROD"}] and that value is not permitted"#
-                )],
+                vec![
+                    String::from(
+                        r#"[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/"#
+                    ),
+                    String::from(
+                        r#"[DDBTable] failed because [Tags.0] is [{"Key":"ENV","Value":"PROD"}] and that value is not permitted"#
+                    )
+                ],
                 2
             )
         );
+    }
+
+    #[test]
+    fn test_conditional_corner_cases() {
+        // This test ensures that missing properties _aren't_ checked and an alternative approach to expressing conditional forms across different types
+        let template_contents =
+            fs::read_to_string("tests/test-multiple-resources-conditional-template.yaml")
+                .unwrap_or_else(|err| format!("{}", err));
+
+        let rules_file_contents = String::from(
+            r#"AWS::Lambda::Function if madeupproperty == somevalue << test of cond message then ProvisioningArtifactName == apig_2.0 << test of cons message
+            AWS::Lambda::Function Runtime != /.*/ |OR| AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn
+            AWS::Lambda::Function Runtime != Java |OR| AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn
+            AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (vec![], 0)
+        )
     }
 }
