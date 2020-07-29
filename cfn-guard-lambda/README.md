@@ -18,7 +18,7 @@ The primary interface for building and deploying the tool is the [Makefile](Make
 * [Rust](https://rustup.rs/) (See the installation instructions in the [top-level README](../README.md#install-rust))
 * If building on a Mac, you'll need [Homebrew](https://brew.sh/).  
 * If building on Ubuntu, you'll need to run `sudo apt-get update; sudo apt install build-essential` if you haven't already
-* If building on CentOS/RHEL you'll need to install `jq`, `gcc` and add the `musl-devel` package to your yum config (see https://copr.fedorainfracloud.org/coprs/ngompa/musl-libc/)
+* If building on CentOS/RHEL you'll need to add the `musl-libc` package repository to your yum config (see https://copr.fedorainfracloud.org/coprs/ngompa/musl-libc/)
 
 ### Mac/Ubuntu
 1. Install and configure the [dependencies](#dependencies).
