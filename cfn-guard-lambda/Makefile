@@ -1,4 +1,5 @@
 UNAME_S := $(shell uname -s)
+SYSTEM_RELEASE := $(shell cat /etc/system-release 2>/dev/null || echo 'Unknown')
 project_name = cfn-guard-lambda
 role_arn := ${CFN_GUARD_LAMBDA_ROLE_ARN}
 request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
@@ -131,15 +132,19 @@ pre-reqs:
 	rustup target add x86_64-unknown-linux-musl
     ifeq ($(UNAME_S),Linux)
 		@echo This is a $(UNAME_S) machine...
-        ifeq "$(shell lsb_release -si)" "Ubuntu"
+        ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'Amazon Linux')" ""
+			@echo Distro is Amazon Linux.
+			sudo yum install -y jq gcc zip
+        else ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'CentOS Linux')" ""
+			@echo Distro is CentOS.
+			sudo yum install -y jq gcc zip musl-devel
+        else ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'Red Hat Enterprise Linux')" ""
+			@echo Distro is RHEL.
+			sudo yum install -y jq gcc zip musl-devel
+        else ifeq "$(shell lsb_release -si)" "Ubuntu"
 			@echo Distro is Ubuntu
 			sudo apt install jq musl-dev musl-tools zip awscli build-essential
 			sudo ln -s /usr/bin/musl-gcc /usr/local/bin/x86_64-linux-musl-gcc
-        else
-			@echo Distro is CentOS. Support coming soon.
-			# sudo yum install jq
-			# sudo yum install equivalent of musl-dev musl-tools
-			# sudo ln -s /usr/bin/musl-gcc /usr/local/bin/x86_64-linux-musl-gcc
         endif
     endif
     ifeq ($(UNAME_S),Darwin)
