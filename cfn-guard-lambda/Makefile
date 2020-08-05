@@ -1,5 +1,6 @@
 UNAME_S := $(shell uname -s)
 SYSTEM_RELEASE := $(shell cat /etc/system-release 2>/dev/null || echo 'Unknown')
+AWS_CLI_VERSION := $(shell aws --version 2>/dev/null | sed 's/aws-cli\/\(.\).*/\1/')
 project_name = cfn-guard-lambda
 role_arn := ${CFN_GUARD_LAMBDA_ROLE_ARN}
 request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
@@ -118,6 +119,12 @@ ifeq (${CFN_GUARD_LAMBDA_ROLE_ARN},)
     $(error You need to set the CFN_GUARD_LAMBDA_ROLE_ARN environment variable)
 endif
 
+ifeq ($(AWS_CLI_VERSION),)
+    $(error You need to install and configure AWS CLI)
+else ifneq ($(AWS_CLI_VERSION),1)
+	aws_cli_parameters = --cli-binary-format raw-in-base64-out
+endif
+
 test: build
 	aws lambda update-function-code --function-name $(project_name) --zip-file fileb://./lambda.zip
 	$(MAKE) fail
@@ -162,15 +169,15 @@ build: clean
 	zip lambda.zip bootstrap
 
 fail:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 pass:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 err:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 install: build
