@@ -256,14 +256,6 @@ fn process_and_rule(
         raw_rule: line.to_string(),
         rule_list: rules,
     }))
-    // match destructure_rule(line, cfn_resources) {
-    //     Ok(r) => Ok(CompoundRule {
-    //         compound_type: CompoundType::AND,
-    //         raw_rule: line.to_string(),
-    //         rule_list: r,
-    //     }),
-    //     Err(e) => Err(e),
-    // }
 }
 
 fn destructure_rule(
