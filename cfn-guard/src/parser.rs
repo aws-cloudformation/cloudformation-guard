@@ -321,7 +321,7 @@ fn destructure_rule(
                                 &caps["operator"], rule_text
                             );
                             error!("{}", &msg_string);
-                            process::exit(1)
+                            return Err(msg_string);
                         }
                     }
                 },
@@ -337,7 +337,7 @@ fn destructure_rule(
                                     &caps["operator"], rule_text
                                 );
                                 error!("{}", &msg_string);
-                                process::exit(1)
+                                return Err(msg_string);
                             }
                         },
                         '/' => RValueType::Regex,
