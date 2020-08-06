@@ -44,7 +44,10 @@ pub(crate) fn parse_rules(
     let mut variables = HashMap::new();
 
     let lines = rules_file_contents.lines();
-    trace!("Rules file lines: {:#?}", &lines);
+    trace!(
+        "Rules file lines: {:#?}",
+        lines.clone().into_iter().collect::<Vec<&str>>()
+    );
 
     for l in lines {
         debug!("Parsing '{}'", &l);
