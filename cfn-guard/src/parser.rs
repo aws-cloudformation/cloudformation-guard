@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::process;
 
 use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
@@ -70,7 +69,7 @@ pub(crate) fn parse_rules(
                         &caps["operator"], trimmed_line
                     );
                     error!("{}", &msg_string);
-                    process::exit(1)
+                    return Err(msg_string);
                 }
                 let var_name = caps["var_name"].to_string();
                 let var_value = caps["var_value"].to_string();
