@@ -1455,12 +1455,28 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
     }
 
     #[test]
+    fn test_bad_rule() {
+        let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let rules_file_contents = String::from(
+            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain",
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            Err(String::from(
+                r#"BAD RULE: "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain""#
+            ))
+        );
+    }
+
+    #[test]
     fn test_conditional_check() {
         let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
             .unwrap_or_else(|err| format!("{}", err));
 
         let mut rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain",
+            "AWS::DynamoDB::Table when Tags == /.*PROD.*/ check .DeletionPolicy == Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
@@ -1468,7 +1484,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy == Retain",
+            "AWS::DynamoDB::Table when Tags != /.*DEV.*/ check .DeletionPolicy == Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
@@ -1476,7 +1492,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain",
+            "AWS::DynamoDB::Table WHEN Tags == /.*PROD.*/ check .DeletionPolicy != Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
@@ -1484,20 +1500,21 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
              2)
         );
         rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy != Retain",
+            "AWS::DynamoDB::Table when Tags != /.*DEV.*/ CHECK .DeletionPolicy != Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![String::from("[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags != /.*DEV.*/")], 2)
         )
     }
+
     #[test]
     fn test_compound_conditional_check() {
         let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
             .unwrap_or_else(|err| format!("{}", err));
 
         let mut rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain |OR|AWS::DynamoDB::Table if Tags.* == /.*DEV.*/ then .UpdateReplacePolicy == Retain",
+            "AWS::DynamoDB::Table when Tags == /.*PROD.*/ check .DeletionPolicy == Retain |OR|AWS::DynamoDB::Table WHEN Tags.* == /.*DEV.*/ CHECK .UpdateReplacePolicy == Retain",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
@@ -1505,7 +1522,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            "AWS::DynamoDB::Table if Tags != /.*DEV.*/ then .DeletionPolicy == Retain |OR| AWS::DynamoDB::Table Tags.* != PROD",
+            "AWS::DynamoDB::Table when Tags != /.*DEV.*/ CHECK .DeletionPolicy == Retain |OR| AWS::DynamoDB::Table Tags.* != PROD",
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
@@ -1513,20 +1530,33 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            r#"AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain
-                AWS::DynamoDB::Table Tags.* != {"Key":"ENV","Value":"PROD"}"#,
+            r#"AWS::DynamoDB::Table WHEN Tags == /.*PROD.*/ check .DeletionPolicy != Retain"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (
-                vec![
-                    String::from(
-                        r#"[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/"#
-                    ),
-                    String::from(
-                        r#"[DDBTable] failed because [Tags.0] is [{"Key":"ENV","Value":"PROD"}] and that value is not permitted"#
-                    )
-                ],
+                vec![String::from(
+                    r#"[DDBTable] failed because [.DeletionPolicy] is [Retain] and that value is not permitted when AWS::DynamoDB::Table Tags == /.*PROD.*/"#
+                )],
+                2
+            )
+        );
+    }
+
+    #[test]
+    fn test_conditional_checks_with_custom_messages() {
+        let template_contents = fs::read_to_string("tests/conditional-ddb-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let rules_file_contents = String::from(
+            r#"AWS::DynamoDB::Table WHEN Tags == /.*PROD.*/ << custom conditional message check .DeletionPolicy != Retain << custom consequent message"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
+            (
+                vec![String::from(
+                    r#"[DDBTable] failed because [.DeletionPolicy] is [Retain] and custom consequent message when AWS::DynamoDB::Table Tags == /.*PROD.*/ << custom conditional message"#
+                )],
                 2
             )
         );
@@ -1540,7 +1570,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
                 .unwrap_or_else(|err| format!("{}", err));
 
         let rules_file_contents = String::from(
-            r#"AWS::Lambda::Function if madeupproperty == somevalue << test of cond message then ProvisioningArtifactName == apig_2.0 << test of cons message
+            r#"AWS::Lambda::Function WHEN madeupproperty == somevalue << test of cond message CHECK ProvisioningArtifactName == apig_2.0 << test of cons message
             AWS::Lambda::Function Runtime != /.*/ |OR| AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn
             AWS::Lambda::Function Runtime != Java |OR| AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn
             AWS::ServiceCatalog::CloudFormationProvisionedProduct ProvisioningParameters.*.Value == lambdaFunction.Arn"#,
@@ -1548,6 +1578,40 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, false).unwrap(),
             (vec![], 0)
+        )
+    }
+
+    #[test]
+    fn test_conditional_bad_consequent() {
+        // This test ensures that missing properties _aren't_ checked and an alternative approach to expressing conditional forms across different types
+        let template_contents =
+            fs::read_to_string("tests/test-multiple-resources-conditional-template.yaml")
+                .unwrap_or_else(|err| format!("{}", err));
+
+        let rules_file_contents = String::from(
+            r#"AWS::Lambda::Function WHEN madeupproperty == somevalue << test of cond message CHECK AWS::EC2::Volume ProvisioningArtifactName == apig_2.0 << test of cons message"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            Err(String::from(
+                r#"Invalid consequent: 'AWS::EC2::Volume ProvisioningArtifactName == apig_2.0 << test of cons message' in 'AWS::Lambda::Function WHEN madeupproperty == somevalue << test of cond message CHECK AWS::EC2::Volume ProvisioningArtifactName == apig_2.0 << test of cons message'. Consequents cannot contain resource types."#
+            ))
+        )
+    }
+
+    #[test]
+    fn test_bad_assignment() {
+        let template_contents =
+            fs::read_to_string("tests/test-multiple-resources-conditional-template.yaml")
+                .unwrap_or_else(|err| format!("{}", err));
+
+        let rules_file_contents = String::from(r#"let x == y"#);
+
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, false),
+            Err(String::from(
+                r#"Bad Assignment Operator: [==] in 'let x == y'"#
+            ))
         )
     }
 }
