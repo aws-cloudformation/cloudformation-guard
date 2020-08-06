@@ -54,7 +54,10 @@ pub(crate) fn parse_rules(
         if trimmed_line.is_empty() {
             continue;
         };
-        let line_type = find_line_type(trimmed_line);
+        let line_type = match find_line_type(trimmed_line) {
+            Ok(lt) => lt,
+            Err(e) => return Err(e),
+        };
         debug!("line_type is {:#?}", line_type);
         match line_type {
             LineType::Assignment => {
@@ -185,25 +188,25 @@ fn process_conditional(
     }
 }
 
-fn find_line_type(line: &str) -> LineType {
+fn find_line_type(line: &str) -> Result<LineType, String> {
     if COMMENT_REG.is_match(line) {
-        return LineType::Comment;
+        return Ok(LineType::Comment);
     };
     if ASSIGN_REG.is_match(line) {
-        return LineType::Assignment;
+        return Ok(LineType::Assignment);
     };
     if CONDITIONAL_RULE_REG.is_match(line) {
-        return LineType::Conditional;
+        return Ok(LineType::Conditional);
     };
     if RULE_REG.is_match(line) {
-        return LineType::Rule;
+        return Ok(LineType::Rule);
     };
     if WHITE_SPACE_REG.is_match(line) {
-        return LineType::WhiteSpace;
+        return Ok(LineType::WhiteSpace);
     }
     let msg_string = format!("BAD RULE: {:?}", line);
     error!("{}", &msg_string);
-    process::exit(1)
+    Err(msg_string)
 }
 
 fn process_assignment(line: &str) -> Result<Captures, String> {
@@ -375,10 +378,10 @@ mod tests {
         let assignment = find_line_type("let x = assignment");
         let rule = find_line_type("AWS::EC2::Volume Encryption == true");
         let white_space = find_line_type("         ");
-        assert_eq!(comment, crate::enums::LineType::Comment);
-        assert_eq!(assignment, crate::enums::LineType::Assignment);
-        assert_eq!(rule, crate::enums::LineType::Rule);
-        assert_eq!(white_space, crate::enums::LineType::WhiteSpace)
+        assert_eq!(comment, Ok(crate::enums::LineType::Comment));
+        assert_eq!(assignment, Ok(crate::enums::LineType::Assignment));
+        assert_eq!(rule, Ok(crate::enums::LineType::Rule));
+        assert_eq!(white_space, Ok(crate::enums::LineType::WhiteSpace))
     }
 
     #[test]
