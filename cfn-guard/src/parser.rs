@@ -21,8 +21,8 @@ lazy_static! {
     static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S+\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
-    static ref CONDITIONAL_RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +if +(?P<condition>.+) +then +(?P<consequent>.*)").unwrap();
     static ref WHITE_SPACE_REG: Regex = Regex::new(r"^\s+$").unwrap();
+    static ref CONDITIONAL_RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(when|WHEN) +(?P<condition>.+) +(check|CHECK) +(?P<consequent>.*)").unwrap();
 }
 
 pub(crate) fn parse_rules(
