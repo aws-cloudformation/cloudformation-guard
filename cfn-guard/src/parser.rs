@@ -160,7 +160,7 @@ fn process_conditional(
                 || RULE_WITH_OPTIONAL_MESSAGE_REG.is_match(&caps["consequent"])
             {
                 return Err(format!(
-                    "Invalid consequent: '{}' in '{}'",
+                    "Invalid consequent: '{}' in '{}'. Consequents cannot contain resource types.",
                     &caps["consequent"], line
                 ));
             }
