@@ -101,10 +101,10 @@ We modeled `cfn-guard` rules on firewall rules.  They're easy to write and have 
 The most basic CloudFormation Guard rule has the form:
 
 ```
-<CloudFormation Resource Type> <Property> == <Value>
+<CloudFormation Resource Type> <Property> <Operator> <Value>
 ```
 
-The available operations are:
+The available operators are:
 
 * `==` - Equal
 * `!=` - Not Equal
@@ -114,6 +114,45 @@ The available operations are:
 * `>=` - Greater Than Or Equal To
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
+
+## Checking Resource Properties and Attributes
+
+Properties in a rule can take two forms.  The basic form exists to make writing simple rules very straightforward:
+
+```
+AWS::EC2::Volume Encryption == true
+```
+
+This simple form makes the assumption that the property you're checking is in the resource's `Properties` section:
+
+```
+    "NewVolume" : {
+           "Type" : "AWS::EC2::Volume",
+           "Properties" : {
+               "Size" : 101,
+               "Encrypted": true,
+               "AvailabilityZone" : "us-west-2b"
+           }
+       }
+```
+
+However, you may also want to write a rule that checks the resource's [Attributes](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-product-attribute-reference.html):
+
+``` 
+    "NewVolume" : {
+       "Type" : "AWS::EC2::Volume",
+       "Properties" : {
+          "Size" : "100",
+          "Encrypted" : "true",
+       },
+       "DeletionPolicy" : "Snapshot"
+    }
+```
+In this case, let's say we want to check the `DeletionPolicy` for deployment safety reasons.  We could write a rule that checks attributes at the level above `Properties` by preceding the symbol in the property position with a `.` to indicate that you want to examine a value at the root of the resource:
+
+``` 
+AWS::EC2::Volume .DeletionPolicy == Snapshot
+```
 
 ## Comments
 
@@ -125,15 +164,41 @@ Comments can be added to a rule set via the `#` operator:
 
 ## Rule Logic
 
+### ANDs and ORs
 Each rule in a given rule set is implicitly `AND`'d to every other rule.
 
-You can `OR` rules to provide alternate acceptable values of arbitrary types using `|OR|`:
+You can `OR` rules on a single line to provide alternate acceptable values of arbitrary types using `|OR|`:
 
 ``` 
 AWS::EBS::Volume Size == 500 |OR| AWS::EBS::Volume AvailabiltyZone == us-east-1b
 ```
 
+### WHEN checks
+At times, you may not want to check every resource of a particular type in a template for the same values.  You can write conditional checks using the `WHEN-CHECK` syntax:
+
+``` 
+<CloudFormation Resource Type> WHEN <Property> <Operator> <Value> CHECK <Property> <Operator> <Value>```
+```
+As an example:
+``` 
+AWS::DynamoDB::Table WHEN Tags.* == /.*PROD.*/ CHECK .DeletionPolicy == Retain
+```
+The first section (`WHEN Tags.* == /.*PROD.*/`) is the `condition` you want to filter on.  It uses the same property and value syntax and semantics as a basic rule.  
+
+The second section (`CHECK .DeletionPolicy == Retain`) is the `consequent` that the resource must pass for the rule to pass.
+
+If the `condition` matches, the `consequent` is evaluated and the result of that evaluation is added to the overall ruleset results.
+
+Note that `WHEN` checks **can only operate on a single resource type at a time**.  They can also be aggregated using `OR`'s like a regular rule:
+
+``` 
+AWS::DynamoDB::Table when Tags == /.*PROD.*/ check .DeletionPolicy == Retain |OR| AWS::DynamoDB::Table WHEN Tags.* == /.*DEV.*/ CHECK .DeletionPolicy == Delete
+```
+
+To see a practical example of a conditional rule, look at the `conditional-ddb-template` files in the [Examples](../Examples) directory.
+
 ## Checking nested fields
+### Using explicit paths
 Fields that are nested inside CloudFormation [resource properties](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) can be addressed using a dotted notation:
 
 ```
@@ -154,9 +219,7 @@ Resources:
               Service:
                 - lambda.amazonaws.com
 ```
-## Wildcards
-### Syntax
-
+### Using Wildcards
 You can also refer to template items, lists and maps as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
@@ -185,7 +248,7 @@ CloudFormation Guard will walk the template and internally convert the wildcard 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Principal.Service.0 == lambda.amazonaws.com |OR| AWS::IAM::Role AssumeRolePolicyDocument.Statement.1.Principal.Service.0 == ec2.amazonaws.com
 ```
-### Semantics
+#### Wildcard Semantics
 Note carefully the different semantic meanings between the equality (`==`) or in-a-list (`IN`) operators and the inequality (`!=`) or not-in-a-list (`NOT_IN`) ones with wildcards:
 
 ```
@@ -288,7 +351,7 @@ That will give you more information on how `cfn-guard` is processing it.
 
 (See [Troubleshooting](#troubleshooting) for more details on using the different logging levels to see how your template and rule set are being processed.)
 
-### Environment Varibles
+### Environment Variables
 You can even reference **environment variables** using the Makefile-style notation: `%{Name}`
 
 So you could rewrite the IAM Role rule above as:
@@ -351,6 +414,20 @@ The result looks like an erroneous repeat:
  "[NewVolume2] failed because [AvailabilityZone] is [us-west-2c] and lorem ipsum"
  "[NewVolume2] failed because [AvailabilityZone] is [us-west-2c] and lorem ipsum"
 ```
+
+Custom messages are syntactically valid on both sides of a [WHEN check](README.md#when-checks):
+
+``` 
+AWS::DynamoDB::Table WHEN Tags == /.*PROD.*/ << custom conditional message CHECK .DeletionPolicy != Retain << custom consequent message
+```
+
+But the `condition`'s custom message is only exposed inline as part of the raw rule included in the error message:
+
+```
+[DDBTable] failed because [.DeletionPolicy] is [Retain] and custom consequent message when AWS::DynamoDB::Table Tags == /.*PROD.*/ << custom conditional message
+```
+
+
 ## Working with CloudFormation Intrinsic Functions
 Because of the way YAML is parsed by serde_yaml, functions like `!GetAtt` are treated as comments and ignored. For example:
 ``` 
