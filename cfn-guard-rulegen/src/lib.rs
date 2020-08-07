@@ -29,10 +29,11 @@ pub fn run_gen(template_file_contents: &str) -> Vec<String> {
         Err(_) => match serde_yaml::from_str(template_file_contents) {
             Ok(y) => y,
             Err(e) => {
-                let msg_string = format!("Template file format was unreadable as json or yaml: {}", e);
+                let msg_string =
+                    format!("Template file format was unreadable as json or yaml: {}", e);
                 error!("{}", &msg_string);
-                return vec![msg_string]
-            },
+                return vec![msg_string];
+            }
         },
     };
     trace!("CFN Template is {:#?}", &cfn_template);
@@ -41,18 +42,17 @@ pub fn run_gen(template_file_contents: &str) -> Vec<String> {
         None => {
             let msg_string = format!("Template lacks a Resources section");
             error!("{}", &msg_string);
-            return vec![msg_string]
-        },
+            return vec![msg_string];
+        }
     };
-    let cfn_resources: HashMap<String, Value> =
-        match serde_json::from_value(cfn_resources_clone) {
-            Ok(y) => y,
-            Err(e) => {
-                let msg_string = format!("Template Resources section has an invalid structure: {}", e);
-                error!("{}", &msg_string);
-                return vec![msg_string]
-            },
-        };
+    let cfn_resources: HashMap<String, Value> = match serde_json::from_value(cfn_resources_clone) {
+        Ok(y) => y,
+        Err(e) => {
+            let msg_string = format!("Template Resources section has an invalid structure: {}", e);
+            error!("{}", &msg_string);
+            return vec![msg_string];
+        }
+    };
     trace!("CFN resources are: {:?}", cfn_resources);
     gen_rules(cfn_resources)
 }
@@ -65,7 +65,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
         let props: HashMap<String, Value> =
             match serde_json::from_value(cfn_resource["Properties"].clone()) {
                 Ok(s) => s,
-                Err(_) => continue
+                Err(_) => continue,
             };
         for (prop_name, prop_val) in props {
             let stripped_val = match prop_val.as_str() {
@@ -76,7 +76,8 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
             let key_name = format!("{} {}", &cfn_resource["Type"].as_str().unwrap(), prop_name);
             // If the key doesn't exist, create it and set its value to a new HashSet with the rule value in it
             if !rule_map.contains_key(&key_name) {
-                let value_set: HashSet<String> = vec![no_newline_stripped_val].into_iter().collect();
+                let value_set: HashSet<String> =
+                    vec![no_newline_stripped_val].into_iter().collect();
                 rule_map.insert(key_name, value_set);
             } else {
                 // If the key does exist, add the item to the HashSet
@@ -88,7 +89,9 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     for (key, val_set) in rule_map {
         let mut rule_string: String = String::from("");
         let mut count = 0;
-        for r in val_set {
+        let mut sorted_val_set: Vec<String> = val_set.into_iter().collect::<Vec<String>>();
+        sorted_val_set.sort();
+        for r in sorted_val_set {
             let temp_rule_string = format!("{} == {}", key, r);
             if count > 0 {
                 rule_string = format!("{} |OR| {}", rule_string, temp_rule_string);
@@ -101,4 +104,3 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> Vec<String> {
     }
     rule_set.into_iter().collect()
 }
-
