@@ -40,7 +40,8 @@ pub mod enums {
     pub enum RuleType {
         CompoundRule(super::structs::CompoundRule),
         ConditionalRule(super::structs::ConditionalRule),
-        SimpleRule(super::structs::Rule),
+        SimpleRule(super::structs::Rule), // SimpleRule is a rule that cannot be reduced/transformed any further
+                                          // It's the base case for recursing into rule processing
     }
 }
 
