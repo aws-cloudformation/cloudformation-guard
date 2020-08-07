@@ -502,6 +502,164 @@ AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 99
 AWS::EC2::Volume Encrypted == true |OR| AWS::EC2::Volume Encrypted == false
 AWS::EC2::Volume AvailabilityZone == {"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}
 ```
+# Strict Checks
+The `--strict-check` flag will cause a resource to fail a check if it does not contain the property the rule is checking.  This is useful to enforce the presence of optional properties like `Encryption == true`.
+
+Strict checks and wildcards need to be carefully thought out before being used together, however.  Wildcards create rules at runtime that map to all of the values that *each* resource of that type has at the position of the wildcard.  That means means that overly broad wildcards will give overly broad failures.
+
+As an example, let's look at the following wildcard scenario:
+
+Here's a template snippet:
+``` 
+{
+    "Resources": {
+        "NewVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "AutoEnableIO": true,
+                "Size" : 101,
+                "Encrypted": true,
+                "AvailabilityZone" : "us-west-2b"
+            }
+        },
+        "NewVolume2" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 99,
+                "Encrypted": true,
+                "AvailabilityZone" : "us-west-2c"
+            }
+        }
+    }
+}
+```
+It's perfectly valid semantically (although of dubious practical value) to use a wildcard to ensure that at least one property has a value equal to true:
+```
+AWS::EC2::Volume * == true
+```
+As discussed above in the section about wildcards, this translates at runtime to a rule for each property being created and joined by an `|OR|`:
+```
+> cfn-guard -t ~/scratch-template.yaml -r ~/scratch.ruleset -vvv
+...
+2020-08-07 17:25:59,000 INFO  [cfn_guard] Applying rule 'CompoundRule(
+    CompoundRule {
+        compound_type: OR,
+        raw_rule: "AWS::EC2::Volume * == true",
+        rule_list: [
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AvailabilityZone",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Size",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Encrypted",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AutoEnableIO",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+        ],
+    },
+)'
+
+```
+And the check will pass.
+
+However, if you change your wildcard rule to be a `!=`:
+``` 
+AWS::EC2::Volume * != false
+```
+
+The `OR` rule becomes an `AND` rule:
+```
+2020-08-07 17:33:20,637 INFO  [cfn_guard] Applying rule 'CompoundRule(
+    CompoundRule {
+        compound_type: AND,
+        raw_rule: "AWS::EC2::Volume * != false",
+        rule_list: [
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AvailabilityZone",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AutoEnableIO",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Size",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Encrypted",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+        ],
+    },
+)'
+```
+
+And if you run it with `--strict-checks` it'll fail because `NewVolume2` does not contain the `AutoEnableIO` property:
+
+``` 
+> cfn-guard -t ~/scratch-template.yaml -r ~/scratch.ruleset --strict-checks
+[NewVolume2] failed because it does not contain the required property of [AutoEnableIO]
+Number of failures: 1
+```
+Admittedly, this is a very contrived example, but it's an important to behavior understand.
+
+
 # Troubleshooting
 `cfn-guard` is meant to be used as part of a tool chain.  It does not, for instance, check to see if the CloudFormation template presented to it is valid CloudFormation.  The [cfn-lint](https://github.com/aws-cloudformation/cfn-python-lint) tool already does a deep and thorough inspection of template structure and provides copious feedback to help users write high-quality templates.  
 
