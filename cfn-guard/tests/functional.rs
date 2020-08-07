@@ -1614,4 +1614,38 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             ))
         )
     }
+    #[test]
+    fn test_root_wildcard() {
+        let template_contents = fs::read_to_string("tests/root-wildcard-template.json")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let mut rules_file_contents = String::from(r#"AWS::EC2::Volume * != true"#);
+
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (
+                vec![
+                    String::from(
+                        r#"[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"#
+                    ),
+                    String::from(
+                        r#"[NewVolume2] failed because it does not contain the required property of [AutoEnableIO]"#
+                    ),
+                    String::from(
+                        r#"[NewVolume] failed because [AutoEnableIO] is [true] and that value is not permitted"#
+                    ),
+                    String::from(
+                        r#"[NewVolume] failed because [Encrypted] is [true] and that value is not permitted"#
+                    )
+                ],
+                2
+            )
+        );
+
+        rules_file_contents = String::from(r#"AWS::EC2::Volume * == true"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        )
+    }
 }
