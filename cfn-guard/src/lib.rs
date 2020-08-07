@@ -350,11 +350,12 @@ fn apply_rule(
             let (property_root, address) = match target_field.first() {
                 Some(x) => {
                     if *x == "" {
+                        // If the first address segment is a '.'
                         target_field.remove(0);
-                        target_field.insert(0, ".");
-                        (cfn_resource, target_field)
+                        target_field.insert(0, "."); // Replace the empty first element with a "."
+                        (cfn_resource, target_field) // Return the root of the Value for lookup
                     } else {
-                        (&cfn_resource["Properties"], target_field)
+                        (&cfn_resource["Properties"], target_field) // Otherwise, treat it as a normal property lookup
                     }
                 }
                 None => {

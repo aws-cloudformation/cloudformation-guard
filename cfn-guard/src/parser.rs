@@ -289,9 +289,27 @@ fn destructure_rule(
         if caps["resource_property"].contains('*') {
             for (_name, value) in cfn_resources {
                 if caps["resource_type"] == value["Type"] {
+                    let target_field: Vec<&str> = caps["resource_property"].split('.').collect();
+                    let (property_root, address) = match target_field.first() {
+                        Some(x) => {
+                            if *x == "" {
+                                // If the first address segment is a '.'
+                                (value, target_field) // Return the root of the Value for lookup
+                            } else {
+                                // Otherwise, treat it as a normal property lookup
+                                (&value["Properties"], target_field)
+                            }
+                        }
+                        None => {
+                            let msg_string =
+                                format!("Invalid property address: {:#?}", target_field);
+                            error!("{}", msg_string);
+                            return Err(msg_string);
+                        }
+                    };
                     if let Some(p) = util::expand_wildcard_props(
-                        &value["Properties"],
-                        caps["resource_property"].to_string(),
+                        property_root,
+                        address.join("."),
                         String::from(""),
                     ) {
                         props.append(&mut p.clone());
