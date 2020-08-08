@@ -177,7 +177,7 @@ AWS::EBS::Volume Size == 500 |OR| AWS::EBS::Volume AvailabiltyZone == us-east-1b
 At times, you may not want to check every resource of a particular type in a template for the same values.  You can write conditional checks using the `WHEN-CHECK` syntax:
 
 ``` 
-<CloudFormation Resource Type> WHEN <Property> <Operator> <Value> CHECK <Property> <Operator> <Value>```
+<CloudFormation Resource Type> WHEN <Property> <Operator> <Value> CHECK <Property> <Operator> <Value>
 ```
 As an example:
 ``` 
