@@ -14,6 +14,7 @@ struct CustomEvent {
     template: String,
     #[serde(rename = "ruleSet")]
     rule_set: String,
+    #[serde(rename = "strictChecks")]
     strict_checks: bool,
 }
 
