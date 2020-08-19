@@ -90,6 +90,7 @@ checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 name = "cfn-guard"
 version = "0.7.0"
 dependencies = [
+ "cfn-guard-rulegen",
  "clap",
  "lazy_static",
  "log",
@@ -102,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-lambda"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cfn-guard",
  "lambda_runtime",
@@ -110,6 +111,18 @@ dependencies = [
  "serde",
  "serde_derive",
  "simple-error",
+ "simple_logger",
+]
+
+[[package]]
+name = "cfn-guard-rulegen"
+version = "0.7.0"
+dependencies = [
+ "clap",
+ "log",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "simple_logger",
 ]
 

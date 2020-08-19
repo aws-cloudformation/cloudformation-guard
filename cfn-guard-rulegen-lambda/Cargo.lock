@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-rulegen-lambda"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cfn-guard-rulegen 0.7.0",
  "lambda_runtime 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
