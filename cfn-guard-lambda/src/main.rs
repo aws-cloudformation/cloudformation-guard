@@ -21,6 +21,7 @@ struct CustomEvent {
 #[derive(Serialize)]
 struct CustomOutput {
     message: Vec<String>,
+    #[serde(rename = "exitStatus")]
     exit_status: String,
 }
 
