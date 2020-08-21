@@ -67,18 +67,17 @@ fn main() {
         )
         .get_matches();
 
-    let log_level = match matches.occurrences_of("v") {
-        0 => Level::Error,
-        1 => Level::Info,
-        2 => Level::Debug,
-        _ => Level::Trace,
-    };
-
-    simple_logger::init_with_level(log_level).unwrap();
-
-    debug!("Parameters are {:#?}", matches);
-
     if let Some(matches) = matches.subcommand_matches("rulegen") {
+        let log_level = match matches.occurrences_of("v") {
+            0 => Level::Error,
+            1 => Level::Info,
+            2 => Level::Debug,
+            _ => Level::Trace,
+        };
+
+        simple_logger::init_with_level(log_level).unwrap();
+
+        debug!("Parameters are {:#?}", matches);
         let template_file = matches.value_of("TEMPLATE").unwrap();
         let mut result = cfn_guard_rulegen::run(template_file).unwrap_or_else(|err| {
             println!("Problem generating rules: {}", err);
@@ -94,6 +93,16 @@ fn main() {
         process::exit(0);
     } else {
         if let Some(matches) = matches.subcommand_matches("check") {
+            let log_level = match matches.occurrences_of("v") {
+                0 => Level::Error,
+                1 => Level::Info,
+                2 => Level::Debug,
+                _ => Level::Trace,
+            };
+
+            simple_logger::init_with_level(log_level).unwrap();
+
+            debug!("Parameters are {:#?}", matches);
             let template_file = matches.value_of("template").unwrap();
             let rule_set_file = matches.value_of("rule_set").unwrap();
 
