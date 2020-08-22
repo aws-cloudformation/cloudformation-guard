@@ -32,7 +32,7 @@ pub fn format_value(v: &Value) -> String {
 
 pub fn strip_ws_nl(v: String) -> String {
     trace!("Removing spaces and newline characters from '{}'", &v);
-    v.trim().replace("\n", "")
+    v.replace("\n", "").replace(" ", "")
 }
 
 pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
