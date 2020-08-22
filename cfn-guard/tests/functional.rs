@@ -1649,4 +1649,50 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             (vec![], 0)
         )
     }
+    #[test]
+    fn test_pipe_operator() {
+        let template_contents = fs::read_to_string("tests/pipe-operator-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let mut rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0 == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+        );
+
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.* == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0 == {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0.Effect == Allow"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.*.Effect == Allow"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        )
+    }
 }

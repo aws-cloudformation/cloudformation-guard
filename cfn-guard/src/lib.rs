@@ -421,7 +421,11 @@ fn apply_rule_operation(
         enums::OpCode::Require => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val) == util::strip_ws_nl(rule_val.to_string()) {
+                    let f_template_val = util::format_value(&val);
+                    trace!("f_template_val is {}", f_template_val);
+                    let f_rule_val = util::strip_ws_nl(rule_val.to_string());
+                    trace!("f_rule_val is {}", f_rule_val);
+                    if f_template_val == f_rule_val {
                         info!("Result: PASS");
                         None
                     } else {

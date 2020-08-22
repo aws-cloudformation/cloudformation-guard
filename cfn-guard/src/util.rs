@@ -82,14 +82,22 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     trace!("Getting {:?} from {}", &field, &props);
     let mut field_list = field.to_owned();
     trace!("field_list is {:?}", field_list);
-    let next_field = field_list.remove(0);
-    if next_field == "" {
+    if field_list.is_empty() {
         return Ok(props.clone());
     }
-    if next_field == "." {
-        get_resource_prop_value(&props, &field_list)
-    } else {
-        match next_field.parse::<usize>() {
+    let next_field = field_list.remove(0); //<= Exit here on empty element
+    match next_field {
+        "" => return Ok(props.clone()),
+        "." => get_resource_prop_value(&props, &field_list),
+        "|" => {
+            let sub_structure: HashMap<String, Value> =
+                serde_json::from_str(&props.as_str().unwrap()).unwrap();
+            trace!("sub_structure is {:#?}", sub_structure);
+            let next_field = field_list.remove(0);
+            trace!("next_field is {}", next_field);
+            get_resource_prop_value(&sub_structure[next_field], &field_list)
+        }
+        _ => match next_field.parse::<usize>() {
             Ok(n) => {
                 trace!(
                     "next_field is {:?} and field_list is now {:?}",
@@ -125,7 +133,7 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
                     Err(_) => Err(next_field.to_string()),
                 }
             }
-        }
+        },
     }
 }
 
