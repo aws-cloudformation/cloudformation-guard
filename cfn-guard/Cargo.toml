@@ -3,6 +3,10 @@ name = "cfn-guard"
 version = "0.6.0"
 edition = "2018"
 
+[lib]
+#name = "cfn_guard"
+crate-type = ["rlib", "dylib"]
+
 [dependencies]
 serde = { version = "1.0.92", features = ["derive"] }
 serde_json = "1.0"
@@ -12,3 +16,4 @@ log = "0.4.6"
 clap = "2.33.0"
 simple_logger = "1.3.0"
 regex = "1.1.9"
+jni = "0.14"
