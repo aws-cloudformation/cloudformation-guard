@@ -1720,4 +1720,20 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             )
         )
     }
+    #[test]
+    fn test_correct_whitespace() {
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents =
+            String::from(r#"AWS::EC2::Volume Description == This is NOT a description"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+    }
 }
