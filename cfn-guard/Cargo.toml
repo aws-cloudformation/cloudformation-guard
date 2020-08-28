@@ -4,7 +4,6 @@ version = "0.6.0"
 edition = "2018"
 
 [lib]
-#name = "cfn_guard"
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
