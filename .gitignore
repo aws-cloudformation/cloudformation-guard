@@ -11,3 +11,4 @@ cloudformation-guard.tar.gz
 cmake-build-debug
 *gcno
 *gcda
+**/._*
