@@ -769,6 +769,12 @@ And the rule:
 ```
 Whenever your rules aren't behaving as expected, this is great way to see why.
 
+## Troubleshooting FAQ
+
+**Q: I keep trying to force a failure with a bad rule value and I'm not getting any results**
+
+A: This is almost always due to fact that there's a typo in the property name you're trying to check for in your rule.  Turn on `--strict-checks` and you'll get an error if the names don't match.  This is an easy way to spot typos.
+
 
 # To Build and Run
 
