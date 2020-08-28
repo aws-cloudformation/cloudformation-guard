@@ -50,7 +50,7 @@ pub fn run(
     }
 }
 
-pub extern fn run_check(
+pub extern "C" fn run_check(
     template_file_contents: &str,
     rules_file_contents: &str,
     strict_checks: bool,
@@ -777,26 +777,33 @@ pub extern "system" fn Java_com_amazonaws_cfnguard_javawrapper_CfnGuardWrapper_r
     rules_contents: JString,
     strict_checks: JString,
 ) -> jstring {
-    let template_string: String =
-        env.get_string(template_contents).expect("Couldn't get java string for template_contents").into();
-    let rules_string: String =
-        env.get_string(rules_contents).expect("Couldn't get java string for rules_contents").into();
+    let template_string: String = env
+        .get_string(template_contents)
+        .expect("Couldn't get java string for template_contents")
+        .into();
+    let rules_string: String = env
+        .get_string(rules_contents)
+        .expect("Couldn't get java string for rules_contents")
+        .into();
 
     // Anything but "true" is treated as false.
-    let strict_checks_string: String =
-        env.get_string(strict_checks).expect("Couldn't get java string for strict_checks").into();
-    let strict_checks_bool = 
-        match strict_checks_string.parse() {
-            Ok(res) => res,
-            Err(_e) => false,
-        };
+    let strict_checks_string: String = env
+        .get_string(strict_checks)
+        .expect("Couldn't get java string for strict_checks")
+        .into();
+    let strict_checks_bool = match strict_checks_string.parse() {
+        Ok(res) => res,
+        Err(_e) => false,
+    };
 
-    let outcome_string: String = 
+    let outcome_string: String =
         match run_check(&template_string, &rules_string, strict_checks_bool) {
             Ok(res) => res.0.join("\n"),
             Err(e) => e.to_string(),
         };
 
-    let result_jni_string = env.new_string(outcome_string).expect("Couldn't cast check outcome to JNI JString");
+    let result_jni_string = env
+        .new_string(outcome_string)
+        .expect("Couldn't cast check outcome to JNI JString");
     return result_jni_string.into_inner();
 }
