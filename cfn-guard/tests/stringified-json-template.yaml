@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "My API Gateway and Lambda function"
+
+Parameters:
+  lambdaFunctionName:
+    Type: "String"
+    Default: "governance-lambda"
+Resources:
+  LambdaRoleHelper:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "notlambda.amazonaws.com"
+                ]
+              }
+            }
+          ]
+        }

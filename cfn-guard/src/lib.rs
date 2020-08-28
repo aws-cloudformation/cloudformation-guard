@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use log::{self, debug, error, info, trace};
 use serde_json::Value;
@@ -49,7 +50,7 @@ pub fn run(
     }
 }
 
-pub extern fn run_check(
+pub extern "C" fn run_check(
     template_file_contents: &str,
     rules_file_contents: &str,
     strict_checks: bool,
@@ -368,13 +369,13 @@ fn apply_rule(
                 }
             };
             match util::get_resource_prop_value(property_root, &address) {
-                Err(e) => {
+                Err(_) => {
                     if strict_checks {
                         rule_result.push(match &rule.custom_msg {
                             Some(c) => format!("[{}] failed because {}", name, c),
                             None => format!(
                         "[{}] failed because it does not contain the required property of [{}]",
-                        name, e
+                        name, &rule.field
                     ),
                         })
                     }
@@ -424,7 +425,12 @@ fn apply_rule_operation(
         enums::OpCode::Require => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val) == util::strip_ws_nl(rule_val.to_string()) {
+                    // Rule and template values are stripped of whitespace here for comparison
+                    let f_template_val = util::format_value(&val);
+                    trace!("f_template_val is {}", f_template_val);
+                    let f_rule_val = util::strip_ws_nl(rule_val.to_string());
+                    trace!("f_rule_val is {}", f_rule_val);
+                    if f_template_val == f_rule_val {
                         info!("Result: PASS");
                         None
                     } else {
@@ -434,16 +440,32 @@ fn apply_rule_operation(
                                 "[{}] failed because [{}] is [{}] and {}",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {
+                                    if val.is_string() {
+                                        //This is necessary to remove extraneous quotes when converting a string
+                                        String::from(val.as_str().unwrap())
+                                    } else {
+                                        //Quotes not added for non-String SerDe values
+                                        val.to_string()
+                                    }
+                                },
                                 c
                             ),
-                            None => format!(
+                            None => {
+                                format!(
                                 "[{}] failed because [{}] is [{}] and the permitted value is [{}]",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {if val.is_string() {
+                                    //This is necessary to remove extraneous quotes when converting a string
+                                    String::from(val.as_str().unwrap())
+                                } else {
+                                    //Quotes not added for non-String SerDe values
+                                    val.to_string()
+                                }},
                                 rule_val.to_string()
-                            ),
+                            )
+                            }
                         })
                     }
                 }
@@ -755,26 +777,33 @@ pub extern "system" fn Java_com_amazonaws_cfnguard_javawrapper_CfnGuardWrapper_r
     rules_contents: JString,
     strict_checks: JString,
 ) -> jstring {
-    let template_string: String =
-        env.get_string(template_contents).expect("Couldn't get java string for template_contents").into();
-    let rules_string: String =
-        env.get_string(rules_contents).expect("Couldn't get java string for rules_contents").into();
+    let template_string: String = env
+        .get_string(template_contents)
+        .expect("Couldn't get java string for template_contents")
+        .into();
+    let rules_string: String = env
+        .get_string(rules_contents)
+        .expect("Couldn't get java string for rules_contents")
+        .into();
 
     // Anything but "true" is treated as false.
-    let strict_checks_string: String =
-        env.get_string(strict_checks).expect("Couldn't get java string for strict_checks").into();
-    let strict_checks_bool = 
-        match strict_checks_string.parse() {
-            Ok(res) => res,
-            Err(_e) => false,
-        };
+    let strict_checks_string: String = env
+        .get_string(strict_checks)
+        .expect("Couldn't get java string for strict_checks")
+        .into();
+    let strict_checks_bool = match strict_checks_string.parse() {
+        Ok(res) => res,
+        Err(_e) => false,
+    };
 
-    let outcome_string: String = 
+    let outcome_string: String =
         match run_check(&template_string, &rules_string, strict_checks_bool) {
             Ok(res) => res.0.join("\n"),
             Err(e) => e.to_string(),
         };
 
-    let result_jni_string = env.new_string(outcome_string).expect("Couldn't cast check outcome to JNI JString");
+    let result_jni_string = env
+        .new_string(outcome_string)
+        .expect("Couldn't cast check outcome to JNI JString");
     return result_jni_string.into_inner();
 }

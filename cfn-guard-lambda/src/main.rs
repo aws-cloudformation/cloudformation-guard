@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use std::error::Error;
 
@@ -14,12 +15,14 @@ struct CustomEvent {
     template: String,
     #[serde(rename = "ruleSet")]
     rule_set: String,
+    #[serde(rename = "strictChecks")]
     strict_checks: bool,
 }
 
 #[derive(Serialize)]
 struct CustomOutput {
     message: Vec<String>,
+    #[serde(rename = "exitStatus")]
     exit_status: String,
 }
 

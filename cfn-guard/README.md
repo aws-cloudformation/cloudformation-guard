@@ -10,24 +10,6 @@ A command line tool for validating AWS CloudFormation resources against policy.
 * [Testing Code Changes](#to-test)
 
 # About
-```
-CloudFormation Guard
-Check CloudFormation templates against rules
-
-USAGE:
-    cfn-guard [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
-
-FLAGS:
-    -h, --help             Prints help information
-    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
-    -v                     Sets the level of verbosity - add v's to increase output
-    -V, --version          Prints version information
-    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
-
-OPTIONS:
-    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
-    -t, --template <TEMPLATE_FILE>    CloudFormation Template
-```
 `cfn-guard` is a tool for checking CloudFormation resources for properties using a light-weight, firewall-rule-like syntax.
 
 As an example of how to use it, given a CloudFormation template:
@@ -73,7 +55,7 @@ AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 You can check the compliance of that template with those rules:
 
 ```
-> cfn-guard -t ebs_volume_template.json -r ebs_volume_rule_set
+> cfn-guard check -t ebs_volume_template.json -r ebs_volume_rule_set
 "[NewVolume2] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
 "[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"
 "[NewVolume2] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
@@ -90,6 +72,64 @@ We designed `cfn-guard` to be plugged into your build processes.
 If CloudFormation Guard validates the CloudFormation templates successfully, it gives you no output and an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a count of the rule violations, an explanation for why the rules failed, and an exit status of `2`.  If there's a runtime error with the rule set or processing, it will exit with a `1`. 
 
 If you want CloudFormation Guard to get the result of the rule check but still get an exit value of `0`, use the `-w` Warn flag.
+
+## Check vs Rulegen
+
+`cfn-guard` has two modes:  
+
+### Check
+`check` (like the example above) checks templates against rulesets.
+```
+cfn-guard-check
+Check CloudFormation templates against rules
+
+USAGE:
+    cfn-guard check [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
+
+FLAGS:
+    -h, --help             Prints help information
+    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
+    -v                     Sets the level of verbosity - add v's to increase output
+    -V, --version          Prints version information
+    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
+
+OPTIONS:
+    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
+    -t, --template <TEMPLATE_FILE>    CloudFormation Template
+```
+
+### Rulegen
+`rulegen` takes a CloudFormation template and autogenerates a set of `cfn-guard` rules that match the properties of its resources.  This is a useful way to get started rule-writing or just create ready-to-use rulesets from known-good templates.
+
+``` 
+cfn-guard-rulegen
+Autogenerate rules from an existing CloudFormation template
+
+USAGE:
+    cfn-guard rulegen [FLAGS] <TEMPLATE>
+
+FLAGS:
+    -h, --help       Prints help information
+    -v               Sets the level of verbosity - add v's to increase output
+    -V, --version    Prints version information
+
+ARGS:
+    <TEMPLATE>
+```
+For example:
+
+``` 
+> cfn-guard rulegen Examples/ebs-volume-template.json
+AWS::EC2::Volume AvailabilityZone == us-west-2b |OR| AWS::EC2::Volume AvailabilityZone == us-west-2c
+AWS::EC2::Volume Encrypted == false
+AWS::EC2::Volume Size == 50 |OR| AWS::EC2::Volume Size == 500
+```
+
+Given the potential for hundreds or even thousands of rules to emerge, we recommend piping the output through `sort` and into a file for editing:
+
+```
+cfn-guard rulegen Examples/aws-waf-security-automations.template | sort > ~/waf_rules
+```
 
 
 # Writing Rules
@@ -768,6 +808,12 @@ And the rule:
 }
 ```
 Whenever your rules aren't behaving as expected, this is great way to see why.
+
+## Troubleshooting FAQ
+
+**Q: I keep trying to force a failure with a bad rule value and I'm not getting any results**
+
+A: This is almost always due to fact that there's a typo in the property name you're trying to check for in your rule.  Turn on `--strict-checks` and you'll get an error if the names don't match.  This is an easy way to spot typos.
 
 
 # To Build and Run

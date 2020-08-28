@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -16,8 +17,8 @@ use lazy_static::lazy_static;
 // See: https://docs.rs/regex/1.3.9/regex/#example-avoid-compiling-the-same-regex-in-a-loop
 lazy_static! {
     static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) +(?P<operator>\S+) +(?P<var_value>.+)").unwrap();
-    static ref RULE_REG: Regex = Regex::new(r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+)").unwrap();
-    static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
+    static ref RULE_REG: Regex = Regex::new(r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\|\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+)").unwrap();
+    static ref COMMENT_REG: Regex = Regex::new(r#"^#(?P<comment>.*)"#).unwrap();
     static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S*\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();

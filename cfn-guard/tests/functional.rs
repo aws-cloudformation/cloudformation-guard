@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 // Tests
 use cfn_guard;
@@ -1197,8 +1198,8 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
-            (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
-                  String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
+            (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags.0.Key]"),
+                  String::from("[NewVolume2] failed because it does not contain the required property of [Tags.1.Key]"),
                   String::from("[NewVolume] failed because [Tags.0.Key] is [uaid] and the permitted value is [uai]"),
                   String::from("[NewVolume] failed because [Tags.1.Key] is [tag2] and the permitted value is [uai]")],
              2)
@@ -1647,5 +1648,125 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)
         )
+    }
+    #[test]
+    fn test_stringifed_json_descent() {
+        let template_contents = fs::read_to_string("tests/stringified-json-template.yaml")
+            .unwrap_or_else(|err| format!("{}", err));
+
+        let mut rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+        );
+
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.* == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 == {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents =
+            String::from(r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Effect == Allow"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents =
+            String::from(r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Effect == Allow"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument == {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument != {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement != [{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 != {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Effect != Allow"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (
+                vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Effect] is [Allow] and that value is not permitted"),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0] is [{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}] and that value is not permitted"#),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement] is [[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]] and that value is not permitted"#),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument] is [{"Statement":[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}] and that value is not permitted"#)],
+                2
+            )
+        )
+    }
+    #[test]
+    fn test_correct_whitespace() {
+        // Value comparisons during rule eval remove whitespace but the result message should not to avoid confusing the user
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents =
+            String::from(r#"AWS::EC2::Volume Description == This is  a  description"#); // inserted a space on either side of 'a'
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+    }
+
+    #[test]
+    fn test_for_inline_comment() {
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::Volume Description == This is  a  description # this comment shouldn't be here"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![String::from("[NewVolume] failed because [Description] is [This is a description] and the permitted value is [This is  a  description # this comment shouldn't be here]")], 2)
+        );
+    }
+
+    #[test]
+    fn test_for_comments_with_whitespace() {
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents = String::from(r#"                         # Comment!! :-o"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
     }
 }
