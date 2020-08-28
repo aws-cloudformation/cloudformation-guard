@@ -18,7 +18,7 @@ use lazy_static::lazy_static;
 lazy_static! {
     static ref ASSIGN_REG: Regex = Regex::new(r"let (?P<var_name>\w+) +(?P<operator>\S+) +(?P<var_value>.+)").unwrap();
     static ref RULE_REG: Regex = Regex::new(r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\|\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+)").unwrap();
-    static ref COMMENT_REG: Regex = Regex::new(r#"#(?P<comment>.*)"#).unwrap();
+    static ref COMMENT_REG: Regex = Regex::new(r#"^#(?P<comment>.*)"#).unwrap();
     static ref WILDCARD_OR_RULE_REG: Regex = Regex::new(r"(\S+) (\S*\*\S*) (==|IN) (.+)").unwrap();
     static ref RULE_WITH_OPTIONAL_MESSAGE_REG: Regex = Regex::new(
         r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();

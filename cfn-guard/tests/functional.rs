@@ -1737,4 +1737,38 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
             (vec![], 0)
         );
     }
+
+    #[test]
+    fn test_for_inline_comment() {
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents = String::from(
+            r#"AWS::EC2::Volume Description == This is  a  description # this comment shouldn't be here"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![String::from("[NewVolume] failed because [Description] is [This is a description] and the permitted value is [This is  a  description # this comment shouldn't be here]")], 2)
+        );
+    }
+
+    #[test]
+    fn test_for_comments_with_whitespace() {
+        let template_contents = String::from(
+            r#"Resources:
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties :
+        Description: This is a description"#,
+        );
+        let rules_file_contents = String::from(r#"                         # Comment!! :-o"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+    }
 }
