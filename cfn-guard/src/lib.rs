@@ -369,13 +369,13 @@ fn apply_rule(
                 }
             };
             match util::get_resource_prop_value(property_root, &address) {
-                Err(e) => {
+                Err(_) => {
                     if strict_checks {
                         rule_result.push(match &rule.custom_msg {
                             Some(c) => format!("[{}] failed because {}", name, c),
                             None => format!(
                         "[{}] failed because it does not contain the required property of [{}]",
-                        name, e
+                        name, &rule.field
                     ),
                         })
                     }

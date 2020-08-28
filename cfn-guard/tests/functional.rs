@@ -1198,8 +1198,8 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         .unwrap_or_else(|err| format!("{}", err));
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
-            (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
-                  String::from("[NewVolume2] failed because it does not contain the required property of [Tags]"),
+            (vec![String::from("[NewVolume2] failed because it does not contain the required property of [Tags.0.Key]"),
+                  String::from("[NewVolume2] failed because it does not contain the required property of [Tags.1.Key]"),
                   String::from("[NewVolume] failed because [Tags.0.Key] is [uaid] and the permitted value is [uai]"),
                   String::from("[NewVolume] failed because [Tags.1.Key] is [tag2] and the permitted value is [uai]")],
              2)
@@ -1650,12 +1650,12 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         )
     }
     #[test]
-    fn test_pipe_operator() {
-        let template_contents = fs::read_to_string("tests/pipe-operator-template.yaml")
+    fn test_stringifed_json_descent() {
+        let template_contents = fs::read_to_string("tests/stringified-json-template.yaml")
             .unwrap_or_else(|err| format!("{}", err));
 
         let mut rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0 == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
         );
 
         assert_eq!(
@@ -1664,7 +1664,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.* == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.* == {      "Effect": "Allow",      "Principal": {        "Service": [          "notlambda.amazonaws.com"        ]      }    } "#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
@@ -1672,7 +1672,29 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0 == {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}"#,
+            r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 == {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}"#,
+        );
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents =
+            String::from(r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Effect == Allow"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents =
+            String::from(r#"AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Effect == Allow"#);
+        assert_eq!(
+            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
+            (vec![], 0)
+        );
+
+        rules_file_contents = String::from(
+            r#"AWS::IAM::Role AssumeRolePolicyDocument == {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
@@ -1680,42 +1702,18 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         );
 
         rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0.Effect == Allow"#,
-        );
-        assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
-            (vec![], 0)
-        );
-
-        rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.*.Effect == Allow"#,
-        );
-        assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
-            (vec![], 0)
-        );
-
-        rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.| == {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}"#,
-        );
-        assert_eq!(
-            cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
-            (vec![], 0)
-        );
-
-        rules_file_contents = String::from(
-            r#"AWS::IAM::Role AssumeRolePolicyDocument.| != {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}
-                  AWS::IAM::Role AssumeRolePolicyDocument.|.Statement != [{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]
-                  AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.0 != {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}
-                  AWS::IAM::Role AssumeRolePolicyDocument.|.Statement.*.Effect != Allow"#,
+            r#"AWS::IAM::Role AssumeRolePolicyDocument != {"Statement":[{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement != [{"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement.0 != {"Effect": "Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}
+                  AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Effect != Allow"#,
         );
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (
-                vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.|.Statement.0.Effect] is [Allow] and that value is not permitted"),
-            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.|.Statement.0] is [{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}] and that value is not permitted"#),
-            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.|.Statement] is [[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]] and that value is not permitted"#),
-            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.|] is [{"Statement":[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}] and that value is not permitted"#)],
+                vec![String::from("[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0.Effect] is [Allow] and that value is not permitted"),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement.0] is [{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}] and that value is not permitted"#),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument.Statement] is [[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]] and that value is not permitted"#),
+            String::from(r#"[LambdaRoleHelper] failed because [AssumeRolePolicyDocument] is [{"Statement":[{"Effect":"Allow","Principal":{"Service":["notlambda.amazonaws.com"]}}]}] and that value is not permitted"#)],
                 2
             )
         )
