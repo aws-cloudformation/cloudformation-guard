@@ -1722,6 +1722,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
     }
     #[test]
     fn test_correct_whitespace() {
+        // Value comparisons during rule eval remove whitespace but the result message should not to avoid confusing the user
         let template_contents = String::from(
             r#"Resources:
   NewVolume:
@@ -1730,7 +1731,7 @@ AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99"#,
         Description: This is a description"#,
         );
         let rules_file_contents =
-            String::from(r#"AWS::EC2::Volume Description == This is NOT a description"#);
+            String::from(r#"AWS::EC2::Volume Description == This is  a  description"#); // inserted a space on either side of 'a'
         assert_eq!(
             cfn_guard::run_check(&template_contents, &rules_file_contents, true).unwrap(),
             (vec![], 0)

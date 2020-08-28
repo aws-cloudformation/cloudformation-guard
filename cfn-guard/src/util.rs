@@ -22,8 +22,10 @@ pub fn fix_stringified_bools(fstr: &str) -> String {
 
 pub fn format_value(v: &Value) -> String {
     let formatted_value = if v.is_string() {
+        //This is necessary to remove extraneous quotes when converting a string
         strip_ws_nl(String::from(v.as_str().unwrap()))
     } else {
+        //Quotes not added for non-String SerDe values
         strip_ws_nl(v.to_string())
     };
     trace!("formatted_value is '{}'", formatted_value);

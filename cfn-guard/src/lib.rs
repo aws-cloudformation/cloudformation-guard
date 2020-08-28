@@ -421,6 +421,7 @@ fn apply_rule_operation(
         enums::OpCode::Require => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
+                    // Rule and template values are stripped of whitespace here for comparison
                     let f_template_val = util::format_value(&val);
                     trace!("f_template_val is {}", f_template_val);
                     let f_rule_val = util::strip_ws_nl(rule_val.to_string());
@@ -435,16 +436,32 @@ fn apply_rule_operation(
                                 "[{}] failed because [{}] is [{}] and {}",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {
+                                    if val.is_string() {
+                                        //This is necessary to remove extraneous quotes when converting a string
+                                        String::from(val.as_str().unwrap())
+                                    } else {
+                                        //Quotes not added for non-String SerDe values
+                                        val.to_string()
+                                    }
+                                },
                                 c
                             ),
-                            None => format!(
+                            None => {
+                                format!(
                                 "[{}] failed because [{}] is [{}] and the permitted value is [{}]",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {if val.is_string() {
+                                    //This is necessary to remove extraneous quotes when converting a string
+                                    String::from(val.as_str().unwrap())
+                                } else {
+                                    //Quotes not added for non-String SerDe values
+                                    val.to_string()
+                                }},
                                 rule_val.to_string()
-                            ),
+                            )
+                            }
                         })
                     }
                 }
