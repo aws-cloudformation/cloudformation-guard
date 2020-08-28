@@ -1,7 +1,7 @@
 language: rust
 
 script:
-  - cd cfn-guard && cargo build --verbose --all && cargo test --verbose --all
-  - cd cfn-guard-lambda && cargo build --verbose --all && cargo test --verbose --all
-  - cd cfn-guard-rulegen && cargo build --verbose --all && cargo test --verbose --all
-  - cd cfn-guard-rulegen-lambda && cargo build --verbose --all && cargo test --verbose --all
+  cd cfn-guard && cargo build --verbose --all && cargo test --verbose --all
+  cd cfn-guard-lambda && cargo build --verbose --all && cargo test --verbose --all
+  cd cfn-guard-rulegen && cargo build --verbose --all && cargo test --verbose --all
+  cd cfn-guard-rulegen-lambda && cargo build --verbose --all && cargo test --verbose --all
