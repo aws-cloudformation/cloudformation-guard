@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Structs, Enums and Impls
 
 pub mod enums {
@@ -6,6 +7,7 @@ pub mod enums {
     pub enum LineType {
         Assignment,
         Comment,
+        Conditional,
         Rule,
         WhiteSpace,
     }
@@ -29,10 +31,18 @@ pub mod enums {
         Regex,
         Variable,
     }
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub enum CompoundType {
         OR,
         AND,
+    }
+
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+    pub enum RuleType {
+        CompoundRule(super::structs::CompoundRule),
+        ConditionalRule(super::structs::ConditionalRule),
+        SimpleRule(super::structs::Rule), // SimpleRule is a rule that cannot be reduced/transformed any further
+                                          // It's the base case for recursing into rule processing
     }
 }
 
@@ -49,15 +59,22 @@ pub mod structs {
         pub(crate) custom_msg: Option<String>,
     }
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct CompoundRule {
         pub(crate) compound_type: super::enums::CompoundType,
-        pub(crate) rule_list: Vec<Rule>,
+        pub(crate) raw_rule: String,
+        pub(crate) rule_list: Vec<super::enums::RuleType>,
     }
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+    pub struct ConditionalRule {
+        pub(crate) condition: CompoundRule,
+        pub(crate) consequent: CompoundRule,
+    }
+
+    #[derive(Debug)]
     pub struct ParsedRuleSet {
         pub(crate) variables: HashMap<String, String>,
-        pub(crate) rule_set: Vec<CompoundRule>,
+        pub(crate) rule_set: Vec<super::enums::RuleType>,
     }
 }

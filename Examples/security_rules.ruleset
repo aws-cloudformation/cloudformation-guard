@@ -1,0 +1,135 @@
+let backup_retention = 7
+let allowed_ports = [80, 443]
+
+AWS::AmazonMQ::Broker AutoMinorVersionUpgrade == true << Version upgrades should be enabled to receive security updates
+AWS::AmazonMQ::Broker EncryptionOptions.UseAwsOwnedKey == false << CMKs should be used instead of AWS-provided KMS keys
+AWS::AmazonMQ::Broker EngineVersion == 5.15.10 << Broker engine version should be at least 5.15.10
+AWS::AmazonMQ::Broker Logs.Audit == true << Audit logging should be enabled
+AWS::AmazonMQ::Broker Logs.General == true << General logging should be enabled
+AWS::AmazonMQ::Broker PubliclyAccessible == false << Broker should not be publicly accessible
+
+AWS::AmazonMQ::Configuration EngineVersion == 5.15.10 << Broker engine version should be at least 5.15.10
+
+AWS::ApiGateway::DomainName SecurityPolicy == TLS_1_2 << API Gateway DomainName SecurityPolicy should use TLS 1.2
+
+AWS::CloudFront::Distribution ViewerCertificate.MinimumProtocolVersion == TLSv1.2_2018 << CloudFront TLS version should be 1.2
+
+AWS::CloudTrail::Trail EnableLogFileValidation == true << CloudTrail file validation should be enabled
+AWS::CloudTrail::Trail IncludeGlobalServiceEvents == true << CloudTrail should include global service events
+AWS::CloudTrail::Trail IsLogging == true << CloudTrail logging should be enabled
+AWS::CloudTrail::Trail IsMultiRegionTrail == true << CloudTrail trails should cover all regions
+
+AWS::CodeBuild::Project EncryptionKey == /.*/ << CodeBuild should use a CMK instead of AWS-provided KMS keys
+AWS::CodeBuild::Project VpcConfig.VpcId == /.*/ << CodeBuild projects should be built in a VPC
+
+AWS::CodeBuild::SourceCredential Token == /^\{\{resolve:secretsmanager.*$/ << CodeBuild credentials should use a reference instead of plaintext
+
+AWS::CodeStar::GitHubRepository IsPrivate == true << GitHub repository should be private
+
+AWS::DAX::Cluster SSESpecification.SSEEnabled == true << DAX cluster encryption should be enabled
+
+AWS::DMS::ReplicationInstance AllowMajorVersionUpgrade == true << DMS instance upgrades should be enabled
+AWS::DMS::ReplicationInstance AutoMinorVersionUpgrade == true << DMS instance upgrades should be enabled
+AWS::DMS::ReplicationInstance KmsKeyId == /.*/ << A KMS key should be provided for encryption
+AWS::DMS::ReplicationInstance MultiAZ == true << DMS instance should be deployed in multiple AZs
+AWS::DMS::ReplicationInstance PubliclyAccessible == false << DMS instance should not be publicly accessible
+
+AWS::DocDB::DBCluster BackupRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::DocDB::DBCluster StorageEncrypted == true << Storage should be encrypted
+
+AWS::DynamoDB::Table SSESpecification.SSEEnabled == true << DynamoDB tables should be encrypted with CMKs
+
+AWS::EC2::Instance SourceDestCheck != false << EC2 source destination check should be enabled unless the instance is performing NAT
+
+AWS::EC2::Volume Encrypted == true << EC2 volumes should be encrypted
+
+AWS::EFS::FileSystem Encrypted == true << EFS file system should be encrypted
+
+AWS::EKS::Cluster EncryptionConfig.Provider.KeyArn == /.*/ << EKS cluster encryption config should be set
+
+AWS::ElastiCache::CacheCluster AutoMinorVersionUpgrade == true << ElastiCache upgrades should be enabled
+AWS::ElastiCache::CacheCluster SnapshotRetentionLimit == %backup_retention << Backups should be retained for set retention period
+
+AWS::Elasticsearch::Domain EncryptionAtRestOptions.Enabled == true << Domain encryption should be enabled
+AWS::Elasticsearch::Domain NodeToNodeEncryptionOptions.Enabled == true << Node-to-node encryption should be enabled
+
+AWS::ElasticLoadBalancing::LoadBalancer AccessLoggingPolicy.Enabled == true << Load balancer logging should be enabled
+
+AWS::FSx::FileSystem KmsKeyId == /.*/ << CMKs should be used instead of AWS-provided KMS keys
+
+AWS::GuardDuty::Detector Enable == true << Detector should be enabled
+
+AWS::ImageBuilder::Component KmsKeyId == /.*/ << A KMS key should be provided for encryption
+
+AWS::ImageBuilder::InfrastructureConfiguration Logging.S3Logs == /.*/ << Logging should be enabled
+
+AWS::Kinesis::Stream StreamEncryption.EncryptionType == KMS << Stream encryption should be enabled
+
+AWS::KMS::Key EnableKeyRotation == true << Key rotation should be enabled
+
+AWS::Lambda::Function KmsKeyArn == /.*/ << KMS key should be set for encryption
+AWS::Lambda::Function VpcConfig == /.*/ << Function should be launched in a VPC
+
+AWS::MediaStore::Container AccessLoggingEnabled == true << Logging should be enabled
+
+AWS::MSK::Cluster ClientAuthentication.Tls.CertificateAuthorityArnList == /.*/ << Clusters should authenticate clients with TLS
+AWS::MSK::Cluster EncryptionInfo.EncryptionAtRest == true << Encryption at rest should be enabled
+AWS::MSK::Cluster EncryptionInfo.EncryptionInTransit == true << Encryption in transit should be enabled
+AWS::MSK::Cluster EnhancedMonitoring == PER_TOPIC_PER_BROKER << Enhanced monitoring should be enabled
+
+AWS::Neptune::DBCluster BackupRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::Neptune::DBCluster EnableCloudwatchLogsExports == /.*/ << CloudWatch log exports should be enabled
+AWS::Neptune::DBCluster IamAuthEnabled == true << Cluster should use IAM authentication
+AWS::Neptune::DBCluster StorageEncrypted == true << Storage encryption should be enabled
+
+AWS::Neptune::DBInstance AllowMajorVersionUpgrade == true << Major version upgrades should be enabled to receive security updates
+AWS::Neptune::DBInstance AutoMinorVersionUpgrade == true << Minor version upgrades should be enabled to receive security updates
+
+AWS::OpsWorks::App EnableSsl == true << TLS should be enabled
+
+AWS::OpsWorksCM::Server AssociatePublicIpAddress == false << Public IPs should not be assigned by default
+AWS::OpsWorksCM::Server DisableAutomatedBackup == false << Backups should not be enabled
+
+AWS::RDS::DBCluster BackupRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::RDS::DBCluster EnableCloudwatchLogsExports == /.*/ << CloudWatch log exports should be enabled
+AWS::RDS::DBCluster StorageEncrypted == true << Storage encryption should be enabled
+
+AWS::RDS::DBInstance AllowMajorVersionUpgrade == true << Major version upgrades should be enabled to receive security updates
+AWS::RDS::DBInstance AutoMinorVersionUpgrade == true << Minor version upgrades should be enabled to receive security updates
+AWS::RDS::DBInstance BackupRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::RDS::DBInstance EnableCloudwatchLogsExports == /.*/ << CloudWatch log exports should be enabled
+AWS::RDS::DBInstance PubliclyAccessible == false << Databasae should not be publicly accessible
+AWS::RDS::DBInstance StorageEncrypted == true << Storage encryption should be enabled
+
+AWS::RDS::DBProxy DebugLogging == false << Debug logging should not be enabled to avoid exposing SQL queries
+AWS::RDS::DBProxy RequireTLS == true << TLS should be required for proxy connections
+
+AWS::Redshift::Cluster AllowVersionUpgrade == true << Minor version upgrades should be enabled to receive security updates
+AWS::Redshift::Cluster AutomatedSnapshotRetentionPeriod == %backup_retention << Backups should be retained for set retention period
+AWS::Redshift::Cluster Encrypted == true << Storage encryption should be enabled
+AWS::Redshift::Cluster PubliclyAccessible == false << Databasae should not be publicly accessible
+
+AWS::S3::AccessPoint PublicAccessBlockConfiguration.BlockPublicAcls == true << S3 should be set to block public ACLs
+AWS::S3::AccessPoint PublicAccessBlockConfiguration.BlockPublicPolicy == true << S3 should be set to block public policies
+AWS::S3::AccessPoint PublicAccessBlockConfiguration.IgnorePublicAcls == true << S3 should be set to ignore public ACLs
+AWS::S3::AccessPoint PublicAccessBlockConfiguration.RestrictPublicBuckets == true << S3 should be set to restrict public buckets
+
+AWS::S3::Bucket BucketEncryption.ServerSideEncryptionConfiguration == /.*/ << S3 bucket encryption should be enabled
+AWS::S3::Bucket LoggingConfiguration.DestinationBucketName == /.*/ << S3 bucket logging should be enabled
+AWS::S3::Bucket PublicAccessBlockConfiguration.BlockPublicAcls == true << S3 should be set to block public ACLs
+AWS::S3::Bucket PublicAccessBlockConfiguration.BlockPublicPolicy == true << S3 should be set to block public policies
+AWS::S3::Bucket PublicAccessBlockConfiguration.IgnorePublicAcls == true << S3 should be set to ignore public ACLs
+AWS::S3::Bucket PublicAccessBlockConfiguration.RestrictPublicBuckets == true << S3 should be set to restrict public buckets
+
+AWS::SageMaker::NotebookInstance DirectInternetAccess == Disabled << Notebooks should not have direct internet access
+AWS::SageMaker::NotebookInstance KmsKeyId == /.*/ << KMS encryption should be enabled
+AWS::SageMaker::NotebookInstance RootAccess == Disabled << Root access for users should be disabled
+
+AWS::SNS::Topic KmsMasterKeyId == /.*/ << KMS encryption should be enabled
+
+AWS::SQS::Queue KmsMasterKeyId == /.*/ << KMS encryption should be enabled
+
+AWS::StepFunctions::StateMachine LoggingConfiguration == /.*/ << Logging should be enabled
+
+AWS::WorkSpaces::Workspace RootVolumeEncryptionEnabled == true << Encryption should be enabled
+AWS::WorkSpaces::Workspace UserVolumeEncryptionEnabled == true << Encryption should be enabled

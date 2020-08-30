@@ -2,9 +2,11 @@
 
 This repo contains source code for the following tools:
 
-* `CloudFormation Guard` A CLI tool that checks AWS CloudFormation templates for policy compliance using a simple, policy-as-code, declarative syntax 
-* `CloudFormation Guard Lambda` is the AWS Lambda version of `CloudFormation Guard`
-* `CloudFormation Guard Rulegen` automatically generates CloudFormation Guard rules from existing CloudFormation templates
+* `CloudFormation Guard` A CLI tool that 
+	* Checks AWS CloudFormation templates for policy compliance using a simple, policy-as-code, declarative syntax
+	* Can autogenerate rules from existing CloudFormation templates
+* `CloudFormation Guard Lambda` is the AWS Lambda version of CloudFormation Guard's `check` functionality 
+* `CloudFormation Guard Rulegen Lambda` is the AWS Lambda version of CloudFormation Guard's `rulegen` functionality
 
 ## How it works
 
@@ -19,7 +21,7 @@ For example, given a CloudFormation template:
         "NewVolume" : {
             "Type" : "AWS::EC2::Volume",
             "Properties" : {
-                "Size" : 101,
+                "Size" : 500,
                 "Encrypted": false,
                 "AvailabilityZone" : "us-west-2b"
             }
@@ -27,7 +29,7 @@ For example, given a CloudFormation template:
         "NewVolume2" : {
             "Type" : "AWS::EC2::Volume",
             "Properties" : {
-                "Size" : 99,
+                "Size" : 50,
                 "Encrypted": false,
                 "AvailabilityZone" : "us-west-2c"
             }
@@ -40,35 +42,43 @@ And a set of rules:
 
 ```
 let encryption_flag = true
-let allowed_azs = [us-east-1a,us-east-1b,us-east-1c]
 
-AWS::EC2::Volume AvailabilityZone IN %allowed_azs
 AWS::EC2::Volume Encrypted == %encryption_flag
-AWS::EC2::Volume Size == 100
+AWS::EC2::Volume Size <= 100
 ```
 
 You can check the template to ensure that it adheres to the rules.
 
 ```
-$> cfn-guard -t Examples/ebs_volume_template.json -r Examples/ebs_volume_template.ruleset
-   "[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]"
-   "[NewVolume2] failed because [Size] is [99] and the permitted value is [100]"
-   "[NewVolume2] failed because [us-west-2c] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
-   "[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]"
-   "[NewVolume] failed because [Size] is [101] and the permitted value is [100]"
-   "[NewVolume] failed because [us-west-2b] is not in [us-east-1a,us-east-1b,us-east-1c] for [AvailabilityZone]"
-   Number of failures: 6 
+$> cfn-guard check -t Examples/ebs_volume_template.json -r Examples/ebs_volume_template.ruleset
+
+[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Size] is [500] and the permitted value is [<= 100]
+Number of failures: 3
+```
+
+### Evaluating Security Policies
+
+CloudFormation Guard can be used to evaluate security best practices for infrastructure deployed via CloudFormation. A number of example rules are included:
+
+```
+$> cfn-guard check -t Examples/security_template.json -r Examples/security_rules.ruleset
+   "[AmazonMQBroker] failed because [AutoMinorVersionUpgrade] is [false] and Version upgrades should be enabled to receive security updates"
+   "[AmazonMQBroker] failed because [EncryptionOptions.UseAwsOwnedKey] is [true] and CMKs should be used instead of AWS-provided KMS keys"
+   "[AmazonMQBroker] failed because [EngineVersion] is [5.15.9] and Broker engine version should be at least 5.15.10"
+   ...
 ```
 
 More details on how to write rules and how the tool can work with build systems can be found [here](cfn-guard/README.md).
 
 ### Automatically Generating Rules
-You can also use the `CloudFormation Guard Rulegen` tool to automatically generate rules from known-good CloudFormation templates.
+You can also use the `CloudFormation Guard` tool to automatically generate rules from known-good CloudFormation templates.
 
-Using the same template as above, `cfn-guard-rulegen` would produce:
+Using the same template as above, `cfn-guard rulegen` would produce:
 
 ```
-$> cfn-guard-rulegen Examples/ebs_volume_template.json
+$> cfn-guard rulegen Examples/ebs_volume_template.json
 AWS::EC2::Volume Encrypted == false
 AWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99
 AWS::EC2::Volume AvailabilityZone == us-west-2b |OR| AWS::EC2::Volume AvailabilityZone == us-west-2c 
@@ -76,9 +86,9 @@ AWS::EC2::Volume AvailabilityZone == us-west-2b |OR| AWS::EC2::Volume Availabili
 
 From there, you can pipe them into a file and add, edit or remove rules as you need.
 
-### Checking templates using the Lambda
+### Using the tool as an AWS Lambda
 
-Everything that can be checked from the command-line version of the tool can be checked using [the Lambda version](./cfn-guard-lambda/README.md).
+Everything that can be checked from the command-line version of the tool can be checked using [the Lambda version](./cfn-guard-lambda/README.md).  The same is true for the [rulegen functionality](./cfn-guard-rulegen-lambda/README.md).
 
 ## Setting it up
 
@@ -126,7 +136,7 @@ Details on how to build the tools and use them are available in each tool's READ
 
 [CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
 
-[CloudFormation Guard Rulegen](cfn-guard-rulegen/README.md)
+[CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
 
 ## Using the Makefile
 

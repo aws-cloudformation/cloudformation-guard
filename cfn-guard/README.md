@@ -10,24 +10,6 @@ A command line tool for validating AWS CloudFormation resources against policy.
 * [Testing Code Changes](#to-test)
 
 # About
-```
-CloudFormation Guard
-Check CloudFormation templates against rules
-
-USAGE:
-    cfn-guard [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
-
-FLAGS:
-    -h, --help             Prints help information
-    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
-    -v                     Sets the level of verbosity - add v's to increase output
-    -V, --version          Prints version information
-    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
-
-OPTIONS:
-    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
-    -t, --template <TEMPLATE_FILE>    CloudFormation Template
-```
 `cfn-guard` is a tool for checking CloudFormation resources for properties using a light-weight, firewall-rule-like syntax.
 
 As an example of how to use it, given a CloudFormation template:
@@ -73,7 +55,7 @@ AWS::EC2::Volume AvailabilityZone != /us-east-.*/
 You can check the compliance of that template with those rules:
 
 ```
-> cfn-guard -t ebs_volume_template.json -r ebs_volume_rule_set
+> cfn-guard check -t ebs_volume_template.json -r ebs_volume_rule_set
 "[NewVolume2] failed because [AvailabilityZone] is [us-east-1b] and the pattern [us-east-.*] is not permitted"
 "[NewVolume2] failed because [Encrypted] is [true] and that value is not permitted"
 "[NewVolume2] failed because [us-east-1b] is in [us-east-1a,us-east-1b,us-east-1c] which is not permitted for [AvailabilityZone]"
@@ -91,6 +73,64 @@ If CloudFormation Guard validates the CloudFormation templates successfully, it 
 
 If you want CloudFormation Guard to get the result of the rule check but still get an exit value of `0`, use the `-w` Warn flag.
 
+## Check vs Rulegen
+
+`cfn-guard` has two modes:  
+
+### Check
+`check` (like the example above) checks templates against rulesets.
+```
+cfn-guard-check
+Check CloudFormation templates against rules
+
+USAGE:
+    cfn-guard check [FLAGS] --rule_set <RULE_SET_FILE> --template <TEMPLATE_FILE>
+
+FLAGS:
+    -h, --help             Prints help information
+    -s, --strict-checks    Fail resources if they're missing the property that a rule checks
+    -v                     Sets the level of verbosity - add v's to increase output
+    -V, --version          Prints version information
+    -w, --warn_only        Show results but return an exit code of 0 regardless of rule violations
+
+OPTIONS:
+    -r, --rule_set <RULE_SET_FILE>    Rules to check the template against
+    -t, --template <TEMPLATE_FILE>    CloudFormation Template
+```
+
+### Rulegen
+`rulegen` takes a CloudFormation template and autogenerates a set of `cfn-guard` rules that match the properties of its resources.  This is a useful way to get started rule-writing or just create ready-to-use rulesets from known-good templates.
+
+``` 
+cfn-guard-rulegen
+Autogenerate rules from an existing CloudFormation template
+
+USAGE:
+    cfn-guard rulegen [FLAGS] <TEMPLATE>
+
+FLAGS:
+    -h, --help       Prints help information
+    -v               Sets the level of verbosity - add v's to increase output
+    -V, --version    Prints version information
+
+ARGS:
+    <TEMPLATE>
+```
+For example:
+
+``` 
+> cfn-guard rulegen Examples/ebs-volume-template.json
+AWS::EC2::Volume AvailabilityZone == us-west-2b |OR| AWS::EC2::Volume AvailabilityZone == us-west-2c
+AWS::EC2::Volume Encrypted == false
+AWS::EC2::Volume Size == 50 |OR| AWS::EC2::Volume Size == 500
+```
+
+Given the potential for hundreds or even thousands of rules to emerge, we recommend piping the output through `sort` and into a file for editing:
+
+```
+cfn-guard rulegen Examples/aws-waf-security-automations.template | sort > ~/waf_rules
+```
+
 
 # Writing Rules
 
@@ -101,10 +141,10 @@ We modeled `cfn-guard` rules on firewall rules.  They're easy to write and have 
 The most basic CloudFormation Guard rule has the form:
 
 ```
-<CloudFormation Resource Type> <Property> == <Value>
+<CloudFormation Resource Type> <Property> <Operator> <Value>
 ```
 
-The available operations are:
+The available operators are:
 
 * `==` - Equal
 * `!=` - Not Equal
@@ -114,6 +154,45 @@ The available operations are:
 * `>=` - Greater Than Or Equal To
 * `IN` - In a list of form `[x, y, z]`
 * `NOT_IN` - Not in a list of form `[x, y, z]` 
+
+## Checking Resource Properties and Attributes
+
+Properties in a rule can take two forms.  The basic form exists to make writing simple rules very straightforward:
+
+```
+AWS::EC2::Volume Encryption == true
+```
+
+This simple form makes the assumption that the property you're checking is in the resource's `Properties` section:
+
+```
+    "NewVolume" : {
+           "Type" : "AWS::EC2::Volume",
+           "Properties" : {
+               "Size" : 101,
+               "Encrypted": true,
+               "AvailabilityZone" : "us-west-2b"
+           }
+       }
+```
+
+However, you may also want to write a rule that checks the resource's [Attributes](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-product-attribute-reference.html):
+
+``` 
+    "NewVolume" : {
+       "Type" : "AWS::EC2::Volume",
+       "Properties" : {
+          "Size" : "100",
+          "Encrypted" : "true",
+       },
+       "DeletionPolicy" : "Snapshot"
+    }
+```
+In this case, let's say we want to check the `DeletionPolicy` for deployment safety reasons.  We could write a rule that checks attributes at the level above `Properties` by preceding the symbol in the property position with a `.` to indicate that you want to examine a value at the root of the resource:
+
+``` 
+AWS::EC2::Volume .DeletionPolicy == Snapshot
+```
 
 ## Comments
 
@@ -125,15 +204,41 @@ Comments can be added to a rule set via the `#` operator:
 
 ## Rule Logic
 
+### ANDs and ORs
 Each rule in a given rule set is implicitly `AND`'d to every other rule.
 
-You can `OR` rules to provide alternate acceptable values of arbitrary types using `|OR|`:
+You can `OR` rules on a single line to provide alternate acceptable values of arbitrary types using `|OR|`:
 
 ``` 
 AWS::EBS::Volume Size == 500 |OR| AWS::EBS::Volume AvailabiltyZone == us-east-1b
 ```
 
+### WHEN checks
+At times, you may not want to check every resource of a particular type in a template for the same values.  You can write conditional checks using the `WHEN-CHECK` syntax:
+
+``` 
+<CloudFormation Resource Type> WHEN <Property> <Operator> <Value> CHECK <Property> <Operator> <Value>
+```
+As an example:
+``` 
+AWS::DynamoDB::Table WHEN Tags.* == /.*PROD.*/ CHECK .DeletionPolicy == Retain
+```
+The first section (`WHEN Tags.* == /.*PROD.*/`) is the `condition` you want to filter on.  It uses the same property and value syntax and semantics as a basic rule.  
+
+The second section (`CHECK .DeletionPolicy == Retain`) is the `consequent` that the resource must pass for the rule to pass.
+
+If the `condition` matches, the `consequent` is evaluated and the result of that evaluation is added to the overall ruleset results.
+
+Note that `WHEN` checks **can only operate on a single resource type at a time**.  They can also be aggregated using `OR`'s like a regular rule:
+
+``` 
+AWS::DynamoDB::Table when Tags == /.*PROD.*/ check .DeletionPolicy == Retain |OR| AWS::DynamoDB::Table WHEN Tags.* == /.*DEV.*/ CHECK .DeletionPolicy == Delete
+```
+
+To see a practical example of a conditional rule, look at the `conditional-ddb-template` files in the [Examples](../Examples) directory.
+
 ## Checking nested fields
+### Using explicit paths
 Fields that are nested inside CloudFormation [resource properties](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) can be addressed using a dotted notation:
 
 ```
@@ -154,9 +259,7 @@ Resources:
               Service:
                 - lambda.amazonaws.com
 ```
-## Wildcards
-### Syntax
-
+### Using Wildcards
 You can also refer to template items, lists and maps as wildcards (`*`).  Wildcards are a preprocessor macro that examines both the rules file and the template to expand the wildcards into lists of rules of the same length as those contained in the template that's being checked.
 
 In other words, given a template of the form:
@@ -185,7 +288,7 @@ CloudFormation Guard will walk the template and internally convert the wildcard 
 ```
 AWS::IAM::Role AssumeRolePolicyDocument.Statement.0.Principal.Service.0 == lambda.amazonaws.com |OR| AWS::IAM::Role AssumeRolePolicyDocument.Statement.1.Principal.Service.0 == ec2.amazonaws.com
 ```
-### Semantics
+#### Wildcard Semantics
 Note carefully the different semantic meanings between the equality (`==`) or in-a-list (`IN`) operators and the inequality (`!=`) or not-in-a-list (`NOT_IN`) ones with wildcards:
 
 ```
@@ -288,7 +391,7 @@ That will give you more information on how `cfn-guard` is processing it.
 
 (See [Troubleshooting](#troubleshooting) for more details on using the different logging levels to see how your template and rule set are being processed.)
 
-### Environment Varibles
+### Environment Variables
 You can even reference **environment variables** using the Makefile-style notation: `%{Name}`
 
 So you could rewrite the IAM Role rule above as:
@@ -351,6 +454,20 @@ The result looks like an erroneous repeat:
  "[NewVolume2] failed because [AvailabilityZone] is [us-west-2c] and lorem ipsum"
  "[NewVolume2] failed because [AvailabilityZone] is [us-west-2c] and lorem ipsum"
 ```
+
+Custom messages are syntactically valid on both sides of a [WHEN check](README.md#when-checks):
+
+``` 
+AWS::DynamoDB::Table WHEN Tags == /.*PROD.*/ << custom conditional message CHECK .DeletionPolicy != Retain << custom consequent message
+```
+
+But the `condition`'s custom message is only exposed inline as part of the raw rule included in the error message:
+
+```
+[DDBTable] failed because [.DeletionPolicy] is [Retain] and custom consequent message when AWS::DynamoDB::Table Tags == /.*PROD.*/ << custom conditional message
+```
+
+
 ## Working with CloudFormation Intrinsic Functions
 Because of the way YAML is parsed by serde_yaml, functions like `!GetAtt` are treated as comments and ignored. For example:
 ``` 
@@ -425,6 +542,164 @@ AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 99
 AWS::EC2::Volume Encrypted == true |OR| AWS::EC2::Volume Encrypted == false
 AWS::EC2::Volume AvailabilityZone == {"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}
 ```
+# Strict Checks
+The `--strict-check` flag will cause a resource to fail a check if it does not contain the property the rule is checking.  This is useful to enforce the presence of optional properties like `Encryption == true`.
+
+Strict checks and wildcards need to be carefully thought out before being used together, however.  Wildcards create rules at runtime that map to all of the values that *each* resource of that type has at the position of the wildcard.  That means means that overly broad wildcards will give overly broad failures.
+
+As an example, let's look at the following wildcard scenario:
+
+Here's a template snippet:
+``` 
+{
+    "Resources": {
+        "NewVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "AutoEnableIO": true,
+                "Size" : 101,
+                "Encrypted": true,
+                "AvailabilityZone" : "us-west-2b"
+            }
+        },
+        "NewVolume2" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Size" : 99,
+                "Encrypted": true,
+                "AvailabilityZone" : "us-west-2c"
+            }
+        }
+    }
+}
+```
+It's perfectly valid semantically (although of dubious practical value) to use a wildcard to ensure that at least one property has a value equal to true:
+```
+AWS::EC2::Volume * == true
+```
+As discussed above in the section about wildcards, this translates at runtime to a rule for each property being created and joined by an `|OR|`:
+```
+> cfn-guard -t ~/scratch-template.yaml -r ~/scratch.ruleset -vvv
+...
+2020-08-07 17:25:59,000 INFO  [cfn_guard] Applying rule 'CompoundRule(
+    CompoundRule {
+        compound_type: OR,
+        raw_rule: "AWS::EC2::Volume * == true",
+        rule_list: [
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AvailabilityZone",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Size",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Encrypted",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AutoEnableIO",
+                    operation: Require,
+                    value: "true",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+        ],
+    },
+)'
+
+```
+And the check will pass.
+
+However, if you change your wildcard rule to be a `!=`:
+``` 
+AWS::EC2::Volume * != false
+```
+
+The `OR` rule becomes an `AND` rule:
+```
+2020-08-07 17:33:20,637 INFO  [cfn_guard] Applying rule 'CompoundRule(
+    CompoundRule {
+        compound_type: AND,
+        raw_rule: "AWS::EC2::Volume * != false",
+        rule_list: [
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AvailabilityZone",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "AutoEnableIO",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Size",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+            SimpleRule(
+                Rule {
+                    resource_type: "AWS::EC2::Volume",
+                    field: "Encrypted",
+                    operation: RequireNot,
+                    value: "false",
+                    rule_vtype: Value,
+                    custom_msg: None,
+                },
+            ),
+        ],
+    },
+)'
+```
+
+And if you run it with `--strict-checks` it'll fail because `NewVolume2` does not contain the `AutoEnableIO` property:
+
+``` 
+> cfn-guard -t ~/scratch-template.yaml -r ~/scratch.ruleset --strict-checks
+[NewVolume2] failed because it does not contain the required property of [AutoEnableIO]
+Number of failures: 1
+```
+Admittedly, this is a very contrived example, but it's an important to behavior understand.
+
+
 # Troubleshooting
 `cfn-guard` is meant to be used as part of a tool chain.  It does not, for instance, check to see if the CloudFormation template presented to it is valid CloudFormation.  The [cfn-lint](https://github.com/aws-cloudformation/cfn-python-lint) tool already does a deep and thorough inspection of template structure and provides copious feedback to help users write high-quality templates.  
 
@@ -533,6 +808,12 @@ And the rule:
 }
 ```
 Whenever your rules aren't behaving as expected, this is great way to see why.
+
+## Troubleshooting FAQ
+
+**Q: I keep trying to force a failure with a bad rule value and I'm not getting any results**
+
+A: This is almost always due to fact that there's a typo in the property name you're trying to check for in your rule.  Turn on `--strict-checks` and you'll get an error if the names don't match.  This is an easy way to spot typos.
 
 
 # To Build and Run

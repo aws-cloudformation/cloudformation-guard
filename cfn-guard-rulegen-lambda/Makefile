@@ -1,4 +1,5 @@
 UNAME_S := $(shell uname -s)
+AWS_CLI_VERSION := $(shell aws --version 2>/dev/null | sed 's/aws-cli\/\(.\).*/\1/')
 project_name = cfn-guard-rulegen-lambda
 role_arn := ${CFN_GUARD_LAMBDA_ROLE_ARN}
 
@@ -59,6 +60,12 @@ ifeq (${CFN_GUARD_LAMBDA_ROLE_ARN},)
     $(error You need to set the CFN_GUARD_LAMBDA_ROLE_ARN environment variable)
 endif
 
+ifeq ($(AWS_CLI_VERSION),)
+    $(error You need to install and configure AWS CLI)
+else ifneq ($(AWS_CLI_VERSION),1)
+	aws_cli_parameters = --cli-binary-format raw-in-base64-out
+endif
+
 test: build
 	aws lambda update-function-code --function-name $(project_name) --zip-file fileb://./lambda.zip
 	$(MAKE) run
@@ -98,11 +105,11 @@ build: clean
 	zip lambda.zip bootstrap
 
 run:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 err:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 install: build

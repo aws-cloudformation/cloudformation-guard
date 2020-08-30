@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use std::process;
 #[macro_use]
@@ -35,12 +36,13 @@ fn main() {
 
     info!("Generating rules from {}", &template_file);
 
-    let result = cfn_guard_rulegen::run(template_file).unwrap_or_else(|err| {
+    let mut result = cfn_guard_rulegen::run(template_file).unwrap_or_else(|err| {
         println!("Problem generating rules: {}", err);
         process::exit(1);
     });
 
     if !result.is_empty() {
+	result.sort();
         for res in result.iter() {
             println!("{}", res);
         }

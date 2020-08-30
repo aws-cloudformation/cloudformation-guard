@@ -1,0 +1,336 @@
+{
+    "Resources": {
+        "AmazonMQBroker" : {
+            "Type" : "AWS::AmazonMQ::Broker",
+            "Properties" : {
+                "AutoMinorVersionUpgrade": false,
+                "EncryptionOptions": {
+                    "UseAwsOwnedKey": true
+                },
+                "EngineVersion": "5.15.9",
+                "Logs": {
+                    "Audit": false,
+                    "General": false
+                },
+                "PubliclyAccessible": true
+            }
+        },
+        "ApiGatewayDomain" : {
+            "Type" : "AWS::ApiGateway::DomainName",
+            "Properties" : {
+                "DomainName": "test.com",
+                "SecurityPolicy": "TLS_1_0"
+            }
+        },
+        "ApiGatewayDomainSecure" : {
+            "Type" : "AWS::ApiGateway::DomainName",
+            "Properties" : {
+                "DomainName": "test.com",
+                "SecurityPolicy": "TLS_1_2"
+            }
+        },
+        "CloudFrontDistribution" : {
+            "Type" : "AWS::CloudFront::Distribution",
+            "Properties" : {
+                "ViewerCertificate" : {
+                    "MinimumProtocolVersion" : "TLSv1"
+                }
+            }
+        },
+        "CloudTrailTrail" : {
+            "Type" : "AWS::CloudTrail::Trail",
+            "Properties" : {
+                "EnableLogFileValidation" : false,
+                "IncludeGlobalServiceEvents": false,
+                "IsLogging": false,
+                "IsMultiRegionTrail": false
+            }
+        },
+        "CodeBuildProject" : {
+            "Type" : "AWS::CodeBuild::Project",
+            "Properties" : {
+                
+            }
+        },
+        "CodeBuildCredentials" : {
+            "Type" : "AWS::CodeBuild::SourceCredential",
+            "Properties" : {
+                "Token": "{{resolve:secretsmanager}}"
+            }
+        },
+        "CodeStarRepo" : {
+            "Type" : "AWS::CodeStar::GitHubRepository",
+            "Properties" : {
+                "IsPrivate": false
+            }
+        },
+        "DMSInstance" : {
+            "Type" : "AWS::DMS::ReplicationInstance",
+            "Properties" : {
+                "AllowMajorVersionUpgrade": false,
+                "AutoMinorVersionUpgrade": false,
+                "MultiAZ": false,
+                "PubliclyAccessible": true
+            }
+        },
+        "DocDBCluster" : {
+            "Type" : "AWS::DocDB::DBCluster",
+            "Properties" : {
+                "BackupRetentionPeriod": 1,
+                "StorageEncrypted": false
+            }
+        },
+        "DynamoDBTable" : {
+            "Type" : "AWS::DynamoDB::Table",
+            "Properties" : {
+                "SSESpecification": {
+                    "SSEEnabled": false
+                }
+            }
+        },
+        "EC2Instance" : {
+            "Type" : "AWS::EC2::Instance",
+            "Properties" : {
+                "SourceDestCheck": false
+            }
+        },
+        "EC2SecurityGroup" : {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "CidrIp": "0.0.0.0/0",
+                "FromPort": 22,
+                "ToPort": 22
+            }
+        },
+        "EC2Volume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+                "Encrypted": false
+            }
+        },
+        "EFSFileSystem" : {
+            "Type" : "AWS::EFS::FileSystem",
+            "Properties" : {
+                "Encrypted": false
+            }
+        },
+        "EKSCluster" : {
+            "Type" : "AWS::EKS::Cluster",
+            "Properties" : {
+                "EncryptionConfig": {
+                    "Provider": {
+                        
+                    }
+                }
+            }
+        },
+        "ElastiCacheCluster" : {
+            "Type" : "AWS::ElastiCache::CacheCluster",
+            "Properties" : {
+                "AutoMinorVersionUpgrade": false,
+                "SnapshotRetentionLimit": 1
+            }
+        },
+        "ElasticsearchDomain" : {
+            "Type" : "AWS::Elasticsearch::Domain",
+            "Properties" : {
+                "EncryptionAtRestOptions": {
+                    "Enabled": false
+                },
+                "NodeToNodeEncryptionOptions": {
+                    "Enabled": false
+                }
+            }
+        },
+        "ELB" : {
+            "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties" : {
+                "AccessLoggingPolicy": {
+                    "Enabled": false
+                }
+            }
+        },
+        "FsXFilesystem" : {
+            "Type" : "AWS::FSx::FileSystem",
+            "Properties" : {
+                
+            }
+        },
+        "GuardDutyDetector" : {
+            "Type" : "AWS::GuardDuty::Detector",
+            "Properties" : {
+                "Enabled": true
+            }
+        },
+        "ImageBuilderComponent" : {
+            "Type" : "AWS::ImageBuilder::Component",
+            "Properties" : {
+                
+            }
+        },
+        "ImageBuilderInfrastructureConfiguration": {
+            "Type": "AWS::ImageBuilder::InfrastructureConfiguration",
+            "Properties": {
+                "Logging": {
+                    
+                }
+            }
+        },
+        "KinesisStream" : {
+            "Type" : "AWS::Kinesis::Stream",
+            "Properties" : {
+                "StreamEncryption": {
+                    "EncryptionType": "invalid"
+                }
+            }
+        },
+        "KMSKey" : {
+            "Type" : "AWS::KMS::Key",
+            "Properties" : {
+                "EnableKeyRotation": false
+            }
+        },
+        "LambdaFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "Properties" : {
+                "VpcConfig": {
+
+                }
+            }
+        },
+        "MediaStoreContainer" : {
+            "Type" : "AWS::MediaStore::Container",
+            "Properties" : {
+                "AccessLoggingEnabled": false
+            }
+        },
+        "MSKCluster" : {
+            "Type" : "AWS::MSK::Cluster",
+            "Properties" : {
+                "ClientAuthentication": {
+                    
+                },
+                "EncryptionInfo": {
+                    "EncryptionAtRest": false,
+                    "EncryptionInTransit": false
+                },
+                "EnhancedMonitoring": "PER_BROKER"
+            }
+        },
+        "NeptuneCluster" : {
+            "Type" : "AWS::Neptune::DBCluster",
+            "Properties" : {
+                "BackupRetentionPeriod": 1,
+                "IamAuthEnabled": false,
+                "StorageEncrypted": false
+            }
+        },
+        "NeptuneInstance" : {
+            "Type" : "AWS::Neptune::DBInstance",
+            "Properties" : {
+                "AllowMajorVersionUpgrade": false,
+                "AutoMinorVersionUpgrade": false
+            }
+        },
+        "OpsWorksApp" : {
+            "Type" : "AWS::OpsWorks::App",
+            "Properties" : {
+                "EnableSslx": false
+            }
+        },
+        "OpsWorksCMServer" : {
+            "Type" : "AWS::OpsWorksCM::Server",
+            "Properties" : {
+                "AssociatePublicIpAddress": true,
+                "DisableAutomatedBackup": true
+            }
+        },
+        "RDSDBCluster" : {
+            "Type" : "AWS::RDS::DBCluster",
+            "Properties" : {
+                "BackupRetentionPeriod": 1,
+                "StorageEncrypted": false
+            }
+        },
+        "RDSDBInstance" : {
+            "Type" : "AWS::RDS::DBInstance",
+            "Properties" : {
+                "AllowMajorVersionUpgrade": false,
+                "AutoMinorVersionUpgrade": false,
+                "BackupRetentionPeriod": 1,
+                "PubliclyAccessible": true,
+                "StorageEncrypted": false
+            }
+        },
+        "RDSDBProxy" : {
+            "Type" : "AWS::RDS::DBProxy",
+            "Properties" : {
+                "DebugLogging": true,
+                "RequireTLS": false
+            }
+        },
+        "RedshiftCluster" : {
+            "Type" : "AWS::Redshift::Cluster",
+            "Properties" : {
+                "AllowVersionUpgrade": false,
+                "AutomatedSnapshotRetentionPeriod": 1,
+                "Encrypted": false,
+                "PubliclyAccessible": true
+            }
+        },
+        "S3AccessPoint" : {
+            "Type" : "AWS::S3::AccessPoint",
+            "Properties" : {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": false,
+                    "BlockPublicPolicy": false,
+                    "IgnorePublicAcls": false,
+                    "RestrictPublicBuckets": false
+                }
+            }
+        },
+        "S3Bucket" : {
+            "Type" : "AWS::S3::AccessPoint",
+            "Properties" : {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": false,
+                    "BlockPublicPolicy": false,
+                    "IgnorePublicAcls": false,
+                    "RestrictPublicBuckets": false
+                }
+            }
+        },
+        "SageMakerNotebook" : {
+            "Type" : "AWS::SageMaker::NotebookInstance",
+            "Properties" : {
+                "DirectInternetAccess": "Enabled",
+                "RootAccess": true
+            }
+        },
+        "SNSTopic" : {
+            "Type" : "AWS::SNS::Topic",
+            "Properties" : {
+                
+            }
+        },
+        "SQSQueue" : {
+            "Type" : "AWS::SQS::Queue",
+            "Properties" : {
+                
+            }
+        },
+        "StepFunctionsStateMachine" : {
+            "Type" : "AWS::StepFunctions::StateMachine",
+            "Properties" : {
+                
+            }
+        },
+        "WorkspacesWorkspace" : {
+            "Type" : "AWS::WorkSpaces::Workspace",
+            "Properties" : {
+                "RootVolumeEncryptionEnabled": false,
+                "UserVolumeEncryptionEnabled": false
+            }
+        }
+    }
+}

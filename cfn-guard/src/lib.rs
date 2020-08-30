@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use log::{self, debug, error, info, trace};
 use serde_json::Value;
@@ -8,6 +9,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
+
+use jni::objects::{JClass, JString};
+use jni::sys::jstring;
+use jni::JNIEnv;
 
 mod guard_types;
 mod parser;
@@ -36,16 +41,20 @@ pub fn run(
         rules_file_contents.to_string()
     );
 
-    let (outcome, exit_code) = run_check(&template_contents, &rules_file_contents, strict_checks);
-    debug!("Outcome was: '{:#?}'", &outcome);
-    Ok((outcome, exit_code))
+    match run_check(&template_contents, &rules_file_contents, strict_checks) {
+        Ok(res) => {
+            debug!("Outcome was: '{:#?}'", &res.0);
+            Ok(res)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
-pub fn run_check(
+pub extern "C" fn run_check(
     template_file_contents: &str,
     rules_file_contents: &str,
     strict_checks: bool,
-) -> (Vec<String>, usize) {
+) -> Result<(Vec<String>, usize), String> {
     info!("Loading CloudFormation Template and Rule Set");
     debug!("Entered run_check");
 
@@ -69,13 +78,10 @@ pub fn run_check(
             Err(_) => match serde_yaml::from_str(&cleaned_template_file_contents) {
                 Ok(y) => y,
                 Err(e) => {
-                    return (
-                        vec![format!(
-                            "ERROR:  Template file format was unreadable as json or yaml: {}",
-                            e
-                        )],
-                        1,
-                    );
+                    return Err(format!(
+                        "Template file format was unreadable as json or yaml: {}",
+                        e
+                    ));
                 }
             },
         };
@@ -84,12 +90,8 @@ pub fn run_check(
     let cfn_resources: HashMap<String, Value> = match cfn_template.get("Resources") {
         Some(r) => serde_json::from_value(r.clone()).unwrap(),
         None => {
-            return (
-                vec![
-                    "ERROR:  Template file does not contain a [Resources] section to check"
-                        .to_string(),
-                ],
-                1,
+            return Err(
+                "Template file does not contain a [Resources] section to check".to_string(),
             );
         }
     };
@@ -97,76 +99,242 @@ pub fn run_check(
     trace!("CFN resources are: {:?}", cfn_resources);
 
     info!("Parsing rule set");
-    let parsed_rule_set = parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources);
+    match parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources) {
+        Ok(pr) => {
+            let mut outcome: Vec<String> = vec![];
+            match check_resources(&cfn_resources, &pr, strict_checks) {
+                Some(x) => {
+                    outcome.extend(x);
+                }
+                None => (),
+            }
+            outcome.sort();
 
-    let mut outcome = check_resources(&cfn_resources, &parsed_rule_set, strict_checks);
-    outcome.sort();
-
-    let exit_code = match outcome.len() {
-        0 => 0,
-        _ => 2,
-    };
-    (outcome, exit_code)
+            let exit_code = match outcome.len() {
+                0 => 0,
+                _ => 2,
+            };
+            return Ok((outcome, exit_code));
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn check_resources(
     cfn_resources: &HashMap<String, Value>,
     parsed_rule_set: &structs::ParsedRuleSet,
     strict_checks: bool,
-) -> Vec<String> {
+) -> Option<Vec<String>> {
     info!("Checking resources");
     let mut result: Vec<String> = vec![];
     for c_rule in parsed_rule_set.rule_set.iter() {
         info!("Applying rule '{:#?}'", &c_rule);
-        match c_rule.compound_type {
-            enums::CompoundType::OR => {
+        match c_rule {
+            enums::RuleType::SimpleRule(r) => {
+                trace!("Simple rule is {:#?}", r);
+                if let Some(rule_result) =
+                    apply_rule(&cfn_resources, r, &parsed_rule_set.variables, strict_checks)
+                {
+                    result.extend(rule_result);
+                }
+            }
+            enums::RuleType::ConditionalRule(r) => {
+                trace!("Conditional rule is {:#?}", r);
                 for (name, cfn_resource) in cfn_resources {
-                    trace!("OR'ing [{}] against {:?}", name, c_rule);
-                    let mut pass_fail = HashSet::new();
-                    let mut temp_results: Vec<String> = vec![];
+                    trace!("Checking condition: {:?}", r.condition);
+
                     let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
                     cfn_resource_map.insert(name.clone(), cfn_resource.clone());
-                    for rule in &c_rule.rule_list {
-                        match apply_rule(
-                            &cfn_resource_map,
-                            &rule,
-                            &parsed_rule_set.variables,
-                            strict_checks,
-                        ) {
-                            Some(rule_result) => {
-                                pass_fail.insert("fail");
-                                temp_results.extend(rule_result);
+                    trace!("Temporary resource map is {:#?}", cfn_resource_map);
+
+                    let condition_rule_set = structs::ParsedRuleSet {
+                        variables: parsed_rule_set.variables.clone(),
+                        rule_set: vec![enums::RuleType::CompoundRule(r.clone().condition)],
+                    };
+                    trace!(
+                        "condition_rule_set is {{variables: {:#?}, rule_set: {:#?}}}",
+                        util::filter_for_env_vars(&condition_rule_set.variables),
+                        condition_rule_set.rule_set
+                    );
+
+                    // Use the existing rules logic to see if there's a hit on the Condition clause
+                    match check_resources(&cfn_resource_map, &condition_rule_set, true) {
+                        Some(_) => (), // A result from a condition check means that it *wasn't* met (by def)
+                        None => {
+                            trace!("Condition met for {}", r.condition.raw_rule);
+                            let consequent_rule_set = structs::ParsedRuleSet {
+                                variables: parsed_rule_set.variables.clone(),
+                                rule_set: vec![enums::RuleType::CompoundRule(r.clone().consequent)],
+                            };
+                            let postscript = format!("when {}", r.condition.raw_rule);
+                            match check_resources(
+                                &cfn_resource_map,
+                                &consequent_rule_set,
+                                strict_checks,
+                            ) {
+                                Some(x) => {
+                                    let temp_result = x.into_iter().map(|x| {
+                                        if !x.contains("when") {
+                                            format!("{} {}", x, postscript)
+                                        } else {
+                                            x
+                                        }
+                                    });
+                                    result.extend(temp_result);
+                                }
+                                None => (),
+                            };
+                        }
+                    };
+                }
+            }
+            enums::RuleType::CompoundRule(r) => match r.compound_type {
+                enums::CompoundType::OR => {
+                    for (name, cfn_resource) in cfn_resources {
+                        trace!("OR'ing [{}] against {:?}", name, r);
+                        let mut pass_fail = HashSet::new();
+                        let mut temp_results: Vec<String> = vec![];
+                        let mut cfn_resource_map: HashMap<String, Value> = HashMap::new();
+                        cfn_resource_map.insert(name.clone(), cfn_resource.clone());
+                        for typed_rule in &r.rule_list {
+                            match typed_rule {
+                                enums::RuleType::SimpleRule(r) => {
+                                    match apply_rule(
+                                        &cfn_resource_map,
+                                        r,
+                                        &parsed_rule_set.variables,
+                                        strict_checks,
+                                    ) {
+                                        Some(rule_result) => {
+                                            pass_fail.insert("fail");
+                                            temp_results.extend(rule_result);
+                                        }
+                                        None => {
+                                            pass_fail.insert("pass");
+                                        }
+                                    }
+                                }
+                                enums::RuleType::CompoundRule(r) => {
+                                    let rule_set = structs::ParsedRuleSet {
+                                        variables: parsed_rule_set.variables.clone(),
+                                        rule_set: vec![enums::RuleType::CompoundRule(r.clone())],
+                                    };
+                                    let postscript = format!("when {}", r.raw_rule);
+                                    match check_resources(
+                                        &cfn_resource_map,
+                                        &rule_set,
+                                        strict_checks,
+                                    ) {
+                                        Some(x) => {
+                                            let temp_result = x.into_iter().map(|x| {
+                                                if !x.contains("when") {
+                                                    format!("{} {}", x, postscript)
+                                                } else {
+                                                    x
+                                                }
+                                            });
+                                            result.extend(temp_result);
+                                        }
+                                        None => (),
+                                    };
+                                }
+                                enums::RuleType::ConditionalRule(r) => {
+                                    let rule_set = structs::ParsedRuleSet {
+                                        variables: parsed_rule_set.variables.clone(),
+                                        rule_set: vec![enums::RuleType::ConditionalRule(r.clone())],
+                                    };
+                                    let postscript = format!("when {}", r.condition.raw_rule);
+                                    match check_resources(
+                                        &cfn_resource_map,
+                                        &rule_set,
+                                        strict_checks,
+                                    ) {
+                                        Some(x) => {
+                                            let temp_result = x.into_iter().map(|x| {
+                                                if !x.contains("when") {
+                                                    format!("{} {}", x, postscript)
+                                                } else {
+                                                    x
+                                                }
+                                            });
+                                            result.extend(temp_result);
+                                        }
+                                        None => (),
+                                    };
+                                }
                             }
-                            None => {
-                                pass_fail.insert("pass");
+                        }
+                        trace! {"temp_results are {:?}", &temp_results};
+                        trace! {"pass_fail set is {:?}", &pass_fail};
+                        if !pass_fail.contains("pass") {
+                            result.extend(temp_results);
+                        }
+                    }
+                }
+                enums::CompoundType::AND => {
+                    for typed_rule in &r.rule_list {
+                        match typed_rule {
+                            enums::RuleType::SimpleRule(r) => {
+                                if let Some(rule_result) = apply_rule(
+                                    &cfn_resources,
+                                    r,
+                                    &parsed_rule_set.variables,
+                                    strict_checks,
+                                ) {
+                                    result.extend(rule_result);
+                                }
+                            }
+                            enums::RuleType::CompoundRule(r) => {
+                                let rule_set = structs::ParsedRuleSet {
+                                    variables: parsed_rule_set.variables.clone(),
+                                    rule_set: vec![enums::RuleType::CompoundRule(r.clone())],
+                                };
+                                let postscript = format!("when {}", r.raw_rule);
+                                match check_resources(cfn_resources, &rule_set, strict_checks) {
+                                    Some(x) => {
+                                        let temp_result = x.into_iter().map(|x| {
+                                            if !x.contains("when") {
+                                                format!("{} {}", x, postscript)
+                                            } else {
+                                                x
+                                            }
+                                        });
+                                        result.extend(temp_result);
+                                    }
+                                    None => (),
+                                };
+                            }
+                            enums::RuleType::ConditionalRule(r) => {
+                                let rule_set = structs::ParsedRuleSet {
+                                    variables: parsed_rule_set.variables.clone(),
+                                    rule_set: vec![enums::RuleType::ConditionalRule(r.clone())],
+                                };
+                                let postscript = format!("when {}", r.condition.raw_rule);
+                                match check_resources(cfn_resources, &rule_set, strict_checks) {
+                                    Some(x) => {
+                                        let temp_result = x.into_iter().map(|x| {
+                                            if !x.contains("when") {
+                                                format!("{} {}", x, postscript)
+                                            } else {
+                                                x
+                                            }
+                                        });
+                                        result.extend(temp_result);
+                                    }
+                                    None => (),
+                                };
                             }
                         }
                     }
-                    trace! {"pass_fail set is {:?}", &pass_fail};
-                    trace! {"temp_results are {:?}", &temp_results};
-                    if !pass_fail.contains("pass") {
-                        result.extend(temp_results);
-                    }
                 }
-            }
-            enums::CompoundType::AND => {
-                for rule in &c_rule.rule_list {
-                    if let Some(rule_result) = apply_rule(
-                        &cfn_resources,
-                        &rule,
-                        &parsed_rule_set.variables,
-                        strict_checks,
-                    ) {
-                        result.extend(rule_result);
-                    }
-                }
-            }
+            },
         }
     }
-    if result.is_empty() {
-        info!("All CloudFormation resources passed");
+    if !result.is_empty() {
+        Some(result)
+    } else {
+        None
     }
-    result
 }
 
 fn apply_rule(
@@ -183,15 +351,31 @@ fn apply_rule(
                 "Checking [{}] which is of type {}",
                 &name, &cfn_resource["Type"]
             );
-            let target_field: Vec<&str> = rule.field.split('.').collect();
-            match util::get_resource_prop_value(&cfn_resource["Properties"], &target_field) {
-                Err(e) => {
+            let mut target_field: Vec<&str> = rule.field.split('.').collect();
+            let (property_root, address) = match target_field.first() {
+                Some(x) => {
+                    if *x == "" {
+                        // If the first address segment is a '.'
+                        target_field.remove(0);
+                        target_field.insert(0, "."); // Replace the empty first element with a "."
+                        (cfn_resource, target_field) // Return the root of the Value for lookup
+                    } else {
+                        (&cfn_resource["Properties"], target_field) // Otherwise, treat it as a normal property lookup
+                    }
+                }
+                None => {
+                    error!("Invalid property address: {}", rule.field);
+                    return None;
+                }
+            };
+            match util::get_resource_prop_value(property_root, &address) {
+                Err(_) => {
                     if strict_checks {
                         rule_result.push(match &rule.custom_msg {
                             Some(c) => format!("[{}] failed because {}", name, c),
                             None => format!(
                         "[{}] failed because it does not contain the required property of [{}]",
-                        name, e
+                        name, &rule.field
                     ),
                         })
                     }
@@ -241,7 +425,12 @@ fn apply_rule_operation(
         enums::OpCode::Require => {
             match rule.rule_vtype {
                 enums::RValueType::Value | enums::RValueType::Variable => {
-                    if util::format_value(&val) == util::strip_ws_nl(rule_val.to_string()) {
+                    // Rule and template values are stripped of whitespace here for comparison
+                    let f_template_val = util::format_value(&val);
+                    trace!("f_template_val is {}", f_template_val);
+                    let f_rule_val = util::strip_ws_nl(rule_val.to_string());
+                    trace!("f_rule_val is {}", f_rule_val);
+                    if f_template_val == f_rule_val {
                         info!("Result: PASS");
                         None
                     } else {
@@ -251,16 +440,32 @@ fn apply_rule_operation(
                                 "[{}] failed because [{}] is [{}] and {}",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {
+                                    if val.is_string() {
+                                        //This is necessary to remove extraneous quotes when converting a string
+                                        String::from(val.as_str().unwrap())
+                                    } else {
+                                        //Quotes not added for non-String SerDe values
+                                        val.to_string()
+                                    }
+                                },
                                 c
                             ),
-                            None => format!(
+                            None => {
+                                format!(
                                 "[{}] failed because [{}] is [{}] and the permitted value is [{}]",
                                 res_name,
                                 &rule.field,
-                                util::format_value(&val),
+                                {if val.is_string() {
+                                    //This is necessary to remove extraneous quotes when converting a string
+                                    String::from(val.as_str().unwrap())
+                                } else {
+                                    //Quotes not added for non-String SerDe values
+                                    val.to_string()
+                                }},
                                 rule_val.to_string()
-                            ),
+                            )
+                            }
                         })
                     }
                 }
@@ -544,4 +749,61 @@ fn apply_rule_operation(
             }
         }
     }
+}
+
+// Template contents, rules contents, and result are multiline strings.
+// strict_checks is a string arg because Rust/JNI doesn't have a simple mapping for bools.
+// Example Java class to link to this library function:
+//
+//package com.amazonaws.cfnguard.javawrapper;
+//
+//import java.nio.file.Path;
+//import java.nio.file.Paths;
+//
+//public final class CfnGuardWrapper {
+//
+//    static {
+//        Path path = Paths.get("libcfn_guard.so");
+//        System.load(path.toAbsolutePath().toString());
+//    }
+//
+//    public static native String runCheck(String templateContents, String rulesContents, String strictChecksBool);
+//}
+#[no_mangle]
+pub extern "system" fn Java_com_amazonaws_cfnguard_javawrapper_CfnGuardWrapper_runCheck(
+    env: JNIEnv,
+    _class: JClass,
+    template_contents: JString,
+    rules_contents: JString,
+    strict_checks: JString,
+) -> jstring {
+    let template_string: String = env
+        .get_string(template_contents)
+        .expect("Couldn't get java string for template_contents")
+        .into();
+    let rules_string: String = env
+        .get_string(rules_contents)
+        .expect("Couldn't get java string for rules_contents")
+        .into();
+
+    // Anything but "true" is treated as false.
+    let strict_checks_string: String = env
+        .get_string(strict_checks)
+        .expect("Couldn't get java string for strict_checks")
+        .into();
+    let strict_checks_bool = match strict_checks_string.parse() {
+        Ok(res) => res,
+        Err(_e) => false,
+    };
+
+    let outcome_string: String =
+        match run_check(&template_string, &rules_string, strict_checks_bool) {
+            Ok(res) => res.0.join("\n"),
+            Err(e) => e.to_string(),
+        };
+
+    let result_jni_string = env
+        .new_string(outcome_string)
+        .expect("Couldn't cast check outcome to JNI JString");
+    return result_jni_string.into_inner();
 }

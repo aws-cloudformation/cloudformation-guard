@@ -18,6 +18,7 @@ The primary interface for building and deploying the tool is the [Makefile](Make
 * [Rust](https://rustup.rs/) (See the installation instructions in the [top-level README](../README.md#install-rust))
 * If building on a Mac, you'll need [Homebrew](https://brew.sh/).  
 * If building on Ubuntu, you'll need to run `sudo apt-get update; sudo apt install build-essential` if you haven't already
+* If building on CentOS/RHEL you'll need to add the `musl-libc` package repository to your yum config (see https://copr.fedorainfracloud.org/coprs/ngompa/musl-libc/)
 
 ### Mac/Ubuntu
 1. Install and configure the [dependencies](#dependencies).
@@ -73,7 +74,7 @@ aws lambda update-function-code --function-name cfn-guard-lambda --zip-file file
     "State": "Active",
     "LastUpdateStatus": "Successful"
 }
-aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true\nlet disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]\n\nAWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs\nAWS::EC2::Volume Encrypted != %require_encryption\nAWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99\nAWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18\nAWS::EC2::Volume Lorem == true\nAWS::EC2::Volume Encrypted == %ipsum\nAWS::EC2::Volume AvailabilityZone != /us-east-.*/", "strict_checks": true}' output.json
+aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true\nlet disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]\n\nAWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs\nAWS::EC2::Volume Encrypted != %require_encryption\nAWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99\nAWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18\nAWS::EC2::Volume Lorem == true\nAWS::EC2::Volume Encrypted == %ipsum\nAWS::EC2::Volume AvailabilityZone != /us-east-.*/", "strictChecks": true}' output.json
 {
     "StatusCode": 200,
     "ExecutedVersion": "$LATEST"
@@ -94,9 +95,9 @@ cat output.json | jq '.'
     "[NewVolume] failed because it does not contain the required property of [Lorem]",
     "[NewVolume] failed because there is no value defined for [%ipsum] to check [Encrypted] against"
   ],
-  "exit_status": "FAIL"
+  "exitStatus": "FAIL"
 }
-aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true", "strict_checks": true}' output.json
+aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true", "strictChecks": true}' output.json
 {
     "StatusCode": 200,
     "ExecutedVersion": "$LATEST"
@@ -104,9 +105,9 @@ aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n
 cat output.json | jq '.'
 {
   "message": [],
-  "exit_status": "PASS"
+  "exitStatus": "PASS"
 }
-aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": \n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true", "strict_checks": true}' output.json
+aws lambda invoke --function-name cfn-guard-lambda --payload '{ "template": "{\n    \"Resources\": \n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}", "ruleSet": "let require_encryption = true", "strictChecks": true}' output.json
 {
     "StatusCode": 200,
     "ExecutedVersion": "$LATEST"
@@ -116,7 +117,7 @@ cat output.json | jq '.'
   "message": [
     "ERROR:  Template file format was unreadable as json or yaml: while parsing a flow mapping, did not find expected ',' or '}' at line 3 column 21"
   ],
-  "exit_status": "ERR"
+  "exitStatus": "ERR"
 }
 ```
 ## Calling the Lambda Function
@@ -124,15 +125,15 @@ cat output.json | jq '.'
 Requests to `cfn-guard-lambda` require the following 3 fields:
 * `template` - The string version of the YAML or JSON CloudFormation Template
 * `ruleSet` - The string version of the rule set file
-* `strict_checks` - A boolean indicating whether to apply [strict checks](../cfn-guard/README.md#about)
+* `strictChecks` - A boolean indicating whether to apply [strict checks](../cfn-guard/README.md#about)
 
 #### Example
 There are example payloads in the [Makefile](Makefile).  Here's one we use to test a rule set that should not pass:
 
-``` 
+```
 request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
                      "ruleSet": "let require_encryption = true\nlet disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]\n\nAWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs\nAWS::EC2::Volume Encrypted != %require_encryption\nAWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99\nAWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18\nAWS::EC2::Volume Lorem == true\nAWS::EC2::Volume Encrypted == %ipsum\nAWS::EC2::Volume AvailabilityZone != /us-east-.*/",\
-                      "strict_checks": true}'
+                      "strictChecks": true}'
 
 #======================================================================
 # Request Payload Fail:
@@ -177,7 +178,7 @@ request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVol
 ## FAQ
 
 * **Q: How do I troubleshoot a lambda call returning an opaque error message like:**
-	
+
 	```
 	{"errorType": "Runtime.ExitError", "errorMessage": "RequestId: 1c0c0620-0f83-40bc-8eca-3cf2cf24820f Error: Runtime exited with error: exit status 101"}
 	```
@@ -187,6 +188,5 @@ request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVol
 	```
 	thread 'main' panicked at 'Bad Rule Operator: REQUIRE', src/rule_proc.rs:344:2
 	```
-	
-	We will be working to improve the quality of lambda messages, but as a general rule, `cfn-guard-lambda` is just a wrapper for the `cfn-guard` code and each can be used to test the other.
 
+	We will be working to improve the quality of lambda messages, but as a general rule, `cfn-guard-lambda` is just a wrapper for the `cfn-guard` code and each can be used to test the other.

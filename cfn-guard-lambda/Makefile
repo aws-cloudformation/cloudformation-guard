@@ -1,9 +1,11 @@
 UNAME_S := $(shell uname -s)
+SYSTEM_RELEASE := $(shell cat /etc/system-release 2>/dev/null || echo 'Unknown')
+AWS_CLI_VERSION := $(shell aws --version 2>/dev/null | sed 's/aws-cli\/\(.\).*/\1/')
 project_name = cfn-guard-lambda
 role_arn := ${CFN_GUARD_LAMBDA_ROLE_ARN}
 request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
                      "ruleSet": "let require_encryption = true\nlet disallowed_azs = [us-east-1a,us-east-1b,us-east-1c]\n\nAWS::EC2::Volume AvailabilityZone NOT_IN %disallowed_azs\nAWS::EC2::Volume Encrypted != %require_encryption\nAWS::EC2::Volume Size == 101 |OR| AWS::EC2::Volume Size == 99\nAWS::IAM::Role AssumeRolePolicyDocument.Version == 2012-10-18\nAWS::EC2::Volume Lorem == true\nAWS::EC2::Volume Encrypted == %ipsum\nAWS::EC2::Volume AvailabilityZone != /us-east-.*/",\
-                      "strict_checks": true}'
+                      "strictChecks": true}'
 
 #======================================================================
 # Request Payload Fail:
@@ -47,7 +49,7 @@ request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVol
 
 request_payload_pass = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
                      "ruleSet": "let require_encryption = true",\
-                      "strict_checks": true}'
+                      "strictChecks": true}'
 
 #======================================================================
 # Request Payload Pass
@@ -81,7 +83,7 @@ request_payload_pass = '{ "template": "{\n    \"Resources\": {\n        \"NewVol
 
 request_payload_err = '{ "template": "{\n    \"Resources\": \n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
                      "ruleSet": "let require_encryption = true",\
-                      "strict_checks": true}'
+                      "strictChecks": true}'
 
 #======================================================================
 # Request Payload Fail
@@ -117,6 +119,12 @@ ifeq (${CFN_GUARD_LAMBDA_ROLE_ARN},)
     $(error You need to set the CFN_GUARD_LAMBDA_ROLE_ARN environment variable)
 endif
 
+ifeq ($(AWS_CLI_VERSION),)
+    $(error You need to install and configure AWS CLI)
+else ifneq ($(AWS_CLI_VERSION),1)
+	aws_cli_parameters = --cli-binary-format raw-in-base64-out
+endif
+
 test: build
 	aws lambda update-function-code --function-name $(project_name) --zip-file fileb://./lambda.zip
 	$(MAKE) fail
@@ -131,15 +139,19 @@ pre-reqs:
 	rustup target add x86_64-unknown-linux-musl
     ifeq ($(UNAME_S),Linux)
 		@echo This is a $(UNAME_S) machine...
-        ifeq "$(shell lsb_release -si)" "Ubuntu"
+        ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'Amazon Linux')" ""
+			@echo Distro is Amazon Linux.
+			sudo yum install -y jq gcc zip
+        else ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'CentOS Linux')" ""
+			@echo Distro is CentOS.
+			sudo yum install -y jq gcc zip musl-devel
+        else ifeq "$(shell echo '$(SYSTEM_RELEASE)' | grep -v 'Red Hat Enterprise Linux')" ""
+			@echo Distro is RHEL.
+			sudo yum install -y jq gcc zip musl-devel
+        else ifeq "$(shell lsb_release -si)" "Ubuntu"
 			@echo Distro is Ubuntu
 			sudo apt install jq musl-dev musl-tools zip awscli build-essential
 			sudo ln -s /usr/bin/musl-gcc /usr/local/bin/x86_64-linux-musl-gcc
-        else
-			@echo Distro is CentOS. Support coming soon.
-			# sudo yum install jq
-			# sudo yum install equivalent of musl-dev musl-tools
-			# sudo ln -s /usr/bin/musl-gcc /usr/local/bin/x86_64-linux-musl-gcc
         endif
     endif
     ifeq ($(UNAME_S),Darwin)
@@ -157,15 +169,15 @@ build: clean
 	zip lambda.zip bootstrap
 
 fail:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_fail) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 pass:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_pass) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 err:
-	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) output.json
+	aws lambda invoke --function-name $(project_name) --payload $(request_payload_err) $(aws_cli_parameters) output.json
 	cat output.json | jq '.'
 
 install: build

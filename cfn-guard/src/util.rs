@@ -1,4 +1,5 @@
-// © Amazon Web Services, Inc. or its affiliates. All Rights Reserved. This AWS Content is provided subject to the terms of the AWS Customer Agreement available at http://aws.amazon.com/agreement or other written agreement between Customer and either Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::{enums, structs};
 use lazy_static::lazy_static;
@@ -21,8 +22,10 @@ pub fn fix_stringified_bools(fstr: &str) -> String {
 
 pub fn format_value(v: &Value) -> String {
     let formatted_value = if v.is_string() {
+        //This is necessary to remove extraneous quotes when converting a string
         strip_ws_nl(String::from(v.as_str().unwrap()))
     } else {
+        //Quotes not added for non-String SerDe values
         strip_ws_nl(v.to_string())
     };
     trace!("formatted_value is '{}'", formatted_value);
@@ -31,7 +34,7 @@ pub fn format_value(v: &Value) -> String {
 
 pub fn strip_ws_nl(v: String) -> String {
     trace!("Removing spaces and newline characters from '{}'", &v);
-    v.trim().replace("\n", "")
+    v.replace("\n", "").replace(" ", "")
 }
 
 pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
@@ -70,6 +73,7 @@ pub fn convert_list_var_to_vec(rule_val: &str) -> Vec<String> {
 
 fn match_props<'a>(props: &'a Value, n: &'a dyn serde_json::value::Index) -> Result<&'a Value, ()> {
     trace!("props are {:#?}", props);
+
     match props.get(n) {
         Some(v) => Ok(v),
         None => Err(()),
@@ -80,46 +84,74 @@ pub fn get_resource_prop_value(props: &Value, field: &[&str]) -> Result<Value, S
     trace!("Getting {:?} from {}", &field, &props);
     let mut field_list = field.to_owned();
     trace!("field_list is {:?}", field_list);
-    let next_field = field_list.remove(0);
-    if next_field == "" {
+    if field_list.is_empty() {
         return Ok(props.clone());
     }
-    match next_field.parse::<usize>() {
-        Ok(n) => {
-            trace!(
-                "next_field is {:?} and field_list is now {:?}",
-                &n,
-                &field_list
-            );
+    let next_field = field_list.remove(0);
+    match next_field {
+        "" => return Ok(props.clone()),
+        "." => get_resource_prop_value(&props, &field_list),
+        _ => match next_field.parse::<usize>() {
+            Ok(n) => {
+                trace!(
+                    "next_field is {:?} and field_list is now {:?}",
+                    &n,
+                    &field_list
+                );
 
-            match match_props(props, &n) {
-                Ok(v) => {
-                    if !field_list.is_empty() {
-                        get_resource_prop_value(&v, &field_list)
-                    } else {
-                        Ok(v.clone())
+                match match_props(props, &n) {
+                    Ok(v) => {
+                        if !field_list.is_empty() {
+                            get_resource_prop_value(&v, &field_list)
+                        } else {
+                            Ok(v.clone())
+                        }
                     }
+                    Err(_) => destringify_json(props, &n, &mut field_list),
                 }
-                Err(_) => Err(n.to_string()),
             }
-        }
-        Err(_) => {
-            trace!(
-                "next_field is {:?} and field_list is now {:?}",
-                &next_field,
-                &field_list
-            );
-            match match_props(props, &next_field) {
-                Ok(v) => {
-                    if !field_list.is_empty() {
-                        get_resource_prop_value(&v, &field_list)
-                    } else {
-                        Ok(v.clone())
+            Err(_) => {
+                trace!(
+                    "next_field is {:?} and field_list is now {:?}",
+                    &next_field,
+                    &field_list
+                );
+                match match_props(props, &next_field) {
+                    Ok(v) => {
+                        if !field_list.is_empty() {
+                            get_resource_prop_value(&v, &field_list)
+                        } else {
+                            Ok(v.clone())
+                        }
                     }
+                    Err(_) => destringify_json(props, &next_field, &mut field_list),
                 }
-                Err(_) => Err(next_field.to_string()),
             }
-        }
+        },
+    }
+}
+
+fn destringify_json<'a>(
+    props: &'a Value,
+    field: &'a dyn serde_json::value::Index,
+    field_list: &'a mut Vec<&str>,
+) -> Result<Value, String> {
+    match props.as_str() {
+        Some(p) => match serde_json::from_str::<Value>(p) {
+            Ok(s) => {
+                trace!("sub structure is {:#?}", s);
+                // trace!("next_field is {}", field);
+                match match_props(&s, field) {
+                    Ok(v) => {
+                        trace!("next_props is {:#?}", v);
+                        get_resource_prop_value(&v, &field_list)
+                    }
+                    Err(_) => return Err(format!("Invalid address")),
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        },
+        None => return Err(format!("Could not convert properties to string")),
     }
 }
 
