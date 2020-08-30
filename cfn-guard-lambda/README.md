@@ -19,6 +19,7 @@ The primary interface for building and deploying the tool is the [Makefile](Make
 * If building on a Mac, you'll need [Homebrew](https://brew.sh/).  
 * If building on Ubuntu, you'll need to run `sudo apt-get update; sudo apt install build-essential` if you haven't already
 * If building on CentOS/RHEL you'll need to add the `musl-libc` package repository to your yum config (see https://copr.fedorainfracloud.org/coprs/ngompa/musl-libc/)
+* If leveraging, cloud infrastructure in code and provisioning it through AWS CloudFormation, you'll need to install or update the [AWS CDK CLI] from npm (requires [Node.js ≥ 10.13.0](https://nodejs.org/download/release/latest-v10.x/)): `npm i -g aws-cdk`
 
 ### Mac/Ubuntu
 1. Install and configure the [dependencies](#dependencies).
@@ -29,7 +30,7 @@ The primary interface for building and deploying the tool is the [Makefile](Make
     ```
 1. Ensure you're in the `cfn-guard-lambda` directory
 1. Run `make pre-reqs`.
-1. Run `make install`.
+1. If using AWS CloudFormation Run `make install-cdk`, else Run `make install`.
 
 ## To build and run post-install
 

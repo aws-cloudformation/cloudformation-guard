@@ -13,6 +13,7 @@
 * [Rust](https://rustup.rs/) (See the installation instructions in the [top-level README](../README.md#install-rust))
 * If building on a Mac, you'll need [Homebrew](https://brew.sh/).  
 * If building on Ubuntu, you'll need to run `sudo apt-get update; sudo apt install build-essential` if you haven't already
+* If leveraging, cloud infrastructure in code and provisioning it through AWS CloudFormation, you'll need to install or update the [AWS CDK CLI] from npm (requires [Node.js ≥ 10.13.0](https://nodejs.org/download/release/latest-v10.x/)): `npm i -g aws-cdk`
 
 ### Mac/Ubuntu
 1. Install and configure the [dependencies](#dependencies).
@@ -21,9 +22,9 @@
     [target.x86_64-unknown-linux-musl]
     linker = "x86_64-linux-musl-gcc"
     ```
-1. Ensure you're in the `cfn-guard-lambda` directory
+1. Ensure you're in the `cfn-guard-rulegen-lambda` directory
 1. Run `make pre-reqs`.
-1. Run `make install`.
+1. If using AWS CloudFormation Run `make install-cdk`, else Run `make install`.
 
 ## To build and run post-install
 
