@@ -24,7 +24,7 @@
     ```
 1. Ensure you're in the `cfn-guard-rulegen-lambda` directory
 1. Run `make pre-reqs`.
-1. If using AWS CloudFormation Run `make install-cdk`, else Run `make install`.
+1. Run `make install`. Or to use the Cloud Development Kit (CDK) to deploy, run `make install-cdk` instead
 
 ## To build and run post-install
 
