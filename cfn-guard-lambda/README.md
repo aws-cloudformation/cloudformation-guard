@@ -30,7 +30,7 @@ The primary interface for building and deploying the tool is the [Makefile](Make
     ```
 1. Ensure you're in the `cfn-guard-lambda` directory
 1. Run `make pre-reqs`.
-1. If using AWS CloudFormation Run `make install-cdk`, else Run `make install`.
+1. Run `make install`. Or to use the Cloud Development Kit (CDK) to deploy, run `make install-cdk` instead
 
 ## To build and run post-install
 
