@@ -27,6 +27,10 @@ release_with_binaries: clean cfn-guard cfn-guard-rulegen
 release: clean
 	tar czvf cloudformation-guard.tar.gz -X Exclude.txt .
 
-build-RustFunction:
+build-CfnGuardFunction:
 	cd cfn-guard-lambda; CFN_GUARD_LAMBDA_ROLE_ARN='not-used' make build
 	cp cfn-guard-lambda/bootstrap $(ARTIFACTS_DIR)
+
+build-CfnGuardRulegenFunction:
+	cd cfn-guard-rulegen-lambda; CFN_GUARD_LAMBDA_ROLE_ARN='not-used' make build
+	cp cfn-guard-rulegen-lambda/bootstrap $(ARTIFACTS_DIR)

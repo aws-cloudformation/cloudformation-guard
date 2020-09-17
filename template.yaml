@@ -2,21 +2,37 @@
 # You still have to perform the installation instructions in cfn-guard-lambda, except for running `make install`
 # build with `sam build`
 # deploy with `sam deploy --guided`
-# test with:
+# test locally with:
 # ```
-# sam local invoke -e sam-events/request-payload-pass.json
-# sam local invoke -e sam-events/request-payload-fail.json
-# sam local invoke -e sam-events/request-payload-err.json
+# sam local invoke CfnGuardFunction -e sam-events/cfn-guard/request-payload-pass.json
+# sam local invoke CfnGuardFunction -e sam-events/cfn-guard/request-payload-fail.json
+# sam local invoke CfnGuardFunction -e sam-events/cfn-guard/request-payload-err.json
+#
+# sam local invoke CfnGuardRulegenFunction -e sam-events/cfn-guard-rulegen/request-payload.json
+# sam local invoke CfnGuardRulegenFunction -e sam-events/cfn-guard-rulegen/request-payload-err.json
 # ```
 Transform: AWS::Serverless-2016-10-31
 Resources:
-  RustFunction:
+  CfnGuardFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: bootstrap.is.real.handler
       Runtime: provided
       MemorySize: 512
       # CodeUri needs to be able to copy both ./cfn-guard/ and ./cfn-guard-lambda/
+      CodeUri: .
+      Environment:
+        Variables:
+          RUST_BACKTRACE: '1'
+    Metadata:
+      BuildMethod: makefile
+  CfnGuardRulegenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: bootstrap.is.real.handler
+      Runtime: provided
+      MemorySize: 512
+      # CodeUri needs to be able to copy both ./cfn-guard-rulegen/ and ./cfn-guard-rulegen-lambda/
       CodeUri: .
       Environment:
         Variables:
