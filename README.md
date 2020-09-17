@@ -152,6 +152,10 @@ There are two make targets that package up the source without the git history, e
 
 `make release_with_binaries` will first do a `cargo build --release` for both `cfn-guard-rulegen` and `cfn-guard` targeting whatever architecture the make command is run on (eg, your laptop's OS), placing the binaries in the `cloudformation-guard/bin/` directory.  From there, it tars them and the necessary source files into `cloudformation-guard.tar.gz`.  (NOTE: Mail messages with binaries in zip files may get blocked by spam filters.)
 
+## Additional Documentation
+
+[Write preventive compliance rules for AWS CloudFormation templates the cfn-guard way](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
+
 ## Frequently Asked Questions
 
 ### Q: Why should you use Guard?
