@@ -4,6 +4,8 @@
 .project
 .vscode
 cloudformation-guard.tar.gz
+samconfig.toml
+.aws-sam/
 .DS_Store
 *#
 .idea/
