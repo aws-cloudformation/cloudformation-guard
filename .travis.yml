@@ -9,4 +9,5 @@ deploy:
   file: "./target/release/cfn-guard"
   on:
     repo: jotompki/cloudformation-guard
+    all_branches: true
   skip_cleanup: 'true'
