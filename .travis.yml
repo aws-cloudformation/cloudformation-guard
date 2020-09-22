@@ -25,7 +25,7 @@ matrix:
           - musl-tools
     before_deploy:
       - mkdir "release-artifacts"
-      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-linux
+      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-$TRAVIS_OS_NAME
     <<: *DEPLOY_TO_GITHUB
 
   - name: macOS Binary
@@ -36,5 +36,5 @@ matrix:
     install: true
     before_deploy:
       - mkdir "release-artifacts"
-      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-osx
+      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-$TRAVIS_OS_NAME
     <<: *DEPLOY_TO_GITHUB
