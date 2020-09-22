@@ -9,7 +9,7 @@ DEPLOY_TO_GITHUB: &DEPLOY_TO_GITHUB
     file: "./target/release/cfn-guard"
     on:
       repo: jotompki/cloudformation-guard
-      tags: true
+      all_branches: true
     skip_cleanup: 'true'
 
 matrix:
