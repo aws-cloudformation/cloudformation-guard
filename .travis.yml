@@ -12,7 +12,11 @@ DEPLOY_TO_GITHUB: &DEPLOY_TO_GITHUB
     file_glob: true
     api_key:
       secure: rHRd6poek+A69E8tpW+HZrZHj5y0Q7Wg2CHR5dMOtg9sMMhojXtIOyNPvIDsCMJmfxAILfIrOm6ka/XISqDLHh1hlnMBfmMnC2vfT8tEGSeBww3XKWqWpSG3wyRozK66fLPA1EcSV7e6/hEIlEGYv26040QMqnyRsSxfiXQrt2IpJbi8V6RSQKRVD/bhWrZXpUzGElzj1CWtPT8MMQsCZFFw8v1Rnbq2pKzz7UC+09YqucS9uxkqVrJlaF16bcN/iAbT7dIU5xGpSoJkY55lDfJMowcs09qX1IO51gG6W3xFK106+W7XOK/9sTdk80tEBD+QBZdC8jtJhu0h4Z30xitsRc6yZuWINodbaYkksGxiqLpyf4wClCdKpIf4AzlmkNjXf9QPH0/rcEaCnD1I8Ojxfm52q9zsIw+L4aZX0rA/hfDM/ungTSd+hMN3mAHAEFdOLYamJzQQs0MdyOGPNpS5GSmlf8PFqSCcCh+3qjnbjfTr97e/8gWJw3pjRx/W0jYs3CLnaTnmw78Bo81y5EnY/0yujefBNPlXYUZ7ghvRZaQ97WjjTFyl/x5uLRYFVgAWppg78wJn671oq0gp9dtxLwHUf2q3g0sK38C/O3SXMSaa+J2Kvf6oc7XB0U9GO0H89gv+8rmMpvAJrVko47Ud4yEcI2X21oNxywQiYV4=
-    file: "./release-artifacts/*"
+    files:
+     - "./release-artifacts/*"
+     - LICENSE
+     - NOTICE
+     - README.md
     on:
       repo: jotompki/cloudformation-guard
       all_branches: true
