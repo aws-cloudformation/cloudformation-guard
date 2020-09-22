@@ -1,6 +1,11 @@
 language: rust
 cache: cargo
 
+BEFORE_DEPLOY: &BEFORE_DEPLOY
+  before_deploy:
+    - mkdir "release-artifacts"
+    - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-$TRAVIS_OS_NAME
+
 DEPLOY_TO_GITHUB: &DEPLOY_TO_GITHUB
   deploy:
     provider: releases
@@ -23,9 +28,7 @@ matrix:
       apt:
         packages:
           - musl-tools
-    before_deploy:
-      - mkdir "release-artifacts"
-      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-$TRAVIS_OS_NAME
+    <<: *BEFORE_DEPLOY
     <<: *DEPLOY_TO_GITHUB
 
   - name: macOS Binary
@@ -34,7 +37,5 @@ matrix:
     rust: nightly
     script: cargo build --verbose --release --bin cfn-guard
     install: true
-    before_deploy:
-      - mkdir "release-artifacts"
-      - cp ./target/release/cfn-guard ./release-artifacts/cfn-guard-$TRAVIS_OS_NAME
+    <<: *BEFORE_DEPLOY
     <<: *DEPLOY_TO_GITHUB
