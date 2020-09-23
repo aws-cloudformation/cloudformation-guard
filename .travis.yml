@@ -1,7 +1,45 @@
 language: rust
+cache: cargo
+matrix:
+  include:
+  - name: Linux Binary
+    env: TARGET=x86_64-unknown-linux-musl
+    rust: nightly
+    script: cargo build --workspace --verbose --release
+    addons:
+      apt:
+        packages:
+        - musl-tools
+  - name: macOS Binary
+    env: MACOSX_DEPLOYMENT_TARGET=10.7 TARGET=x86_64-apple-darwin
+    os: osx
+    rust: nightly
+    script: cargo build --workspace --verbose --release
+  - name: Windows Binary
+    os: windows
+    rust: nightly
+    script: cargo build --workspace --verbose --release
 
-script:
-  - pushd cfn-guard && cargo build --verbose --all && cargo test --verbose --all; popd
-  - pushd cfn-guard-lambda && cargo build --verbose --all && cargo test --verbose --all; popd
-  - pushd cfn-guard-rulegen && cargo build --verbose --all && cargo test --verbose --all; popd
-  - pushd cfn-guard-rulegen-lambda && cargo build --verbose --all && cargo test --verbose --all; popd
+before_deploy:
+  - mkdir cfn-guard-$TRAVIS_OS_NAME
+  - |
+    if [[ "$TRAVIS_OS_NAME" == "windows" ]]
+    then
+      cp -f target/release/cfn-guard.exe ./cfn-guard-$TRAVIS_OS_NAME/
+    else
+      cp ./target/release/cfn-guard ./cfn-guard-$TRAVIS_OS_NAME/
+    fi
+  - cp LICENSE ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp NOTICE ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp README.md ./cfn-guard-$TRAVIS_OS_NAME/
+  - tar czvf ./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz ./cfn-guard-$TRAVIS_OS_NAME
+
+deploy:
+  provider: releases
+  api_key:
+    secure: ebvFFPdM4G2Rn9zc1m9KvMBN8bWsBh6rlRhEVSD3s+1vdxOSzhtsjZq3VWjh+eHT+QsvSnQZuL20Cq5YO31WraE/26a7hyx20JoFEEReab9LduGG26MJRapj400O982P/V1IFhMvzZEXB8uVHfpm4h0tVuOkECMGTyA1C0ztyOorjJBbC7kUzTZD+IAWWvIN07bxLgBLvbRzhXwlvJRkoC6GKcu63LA+8hVcL6j06fYFqmN3iY8AZVNwCyvRmA3bi92UUSFFtRfiAjw09gN1Z7pRJCKNlu9dSmZvFWqHyDCCFlwGzoBZPexVEAo2Mi6gOX/FDawBLovqS6CKYiQRfnDQHir+JHTwze47opsSn+bUrF8d6Dkq3enqDlVmy2JZiuo1xluRNhJc5cufg7HoN2fH92oGpo4d2989+NMhqsQTwU7OawbSag045jeL+YX+bOrlcmD/c+qRTFwQYFDc9fOi2UrFDD0Mx9+lAY8jfiLO8d4vB+4FEY/pF6+F4dCCSj8E3Qi6jcNQqhq5Kbx92JVEUopdzJlD0m2FoBPe23MkFhCV0mpCmbqyEeuTg00fbdQvijW6zHmNgtHAePxnE/Dua9txRoD8C3idTvBMNwZh78Het4Ltssb3p+lNWoKH3zgAB/OC3l0FVPpVJLbLTey/8cA/gSSJ8RIOJRwtCEQ=
+  file: "./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz"
+  on:
+    repo: aws-cloudformation/cloudformation-guard
+    tags: true
+  skip_cleanup: 'true'
