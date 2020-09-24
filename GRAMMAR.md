@@ -1,0 +1,22 @@
+# Overview
+Rulesets can be described by the following BNF:
+
+```
+<RULESET> ::= <LINE> | <LINE> <RULESET>
+<LINE> ::= <RULE_LINE> | <ASSIGNMENT> | <COMMENT>
+<RULE_LINE> ::= <RULE> | <RULE> <BOOL_OPERAND> <RULE_LINE>
+<RULE> ::= <BASE_RULE> <OUTPUT_MESSAGE> | <BASE_RULE>
+<BASE_RULE> ::= <CHECK_RULE> | <CONDITIONAL_RULE>
+<CHECK_RULE> ::= <RESOURCE_TYPE> <PROPERTY_CHECK>
+<CHECK_VALUE> ::= <PRIMITIVE> | %<VARIABLE>
+<PROPERTY_CHECK> ::= <PROPERTY_PATH> <OPERAND> <CHECK_VALUE>
+<CONDITIONAL_RULE> ::= <RESOURCE_TYPE> WHEN <PROPERTY_CHECK> CHECK <PROPERTY_CHECK>
+<VARIABLE> ::= define variable
+<OPERAND> ::= ==|!=|<|>|<=|>=|IN|NOT_IN
+<BOOL_OPERAND> ::= |OR| | |AND|
+<RESOURCE_TYPE> ::= Some::Resource::Type
+<PROPERTY_PATH> ::= path.to.property
+<ASSIGNMENT> ::= let <VARIABLE> = <PRIMITIVE>
+<PRIMITIVE> ::== some primitive value
+<COMMENT> ::= # Comment
+```
