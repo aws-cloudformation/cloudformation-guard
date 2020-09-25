@@ -2,21 +2,22 @@
 Rulesets can be described by the following BNF:
 
 ```
-<RULESET> ::= <LINE> | <LINE> <RULESET>
-<LINE> ::= <RULE_LINE> | <ASSIGNMENT> | <COMMENT>
-<RULE_LINE> ::= <RULE> | <RULE> <BOOL_OPERAND> <RULE_LINE>
-<RULE> ::= <BASE_RULE> <OUTPUT_MESSAGE> | <BASE_RULE>
-<BASE_RULE> ::= <CHECK_RULE> | <CONDITIONAL_RULE>
-<CHECK_RULE> ::= <RESOURCE_TYPE> <PROPERTY_CHECK>
-<CHECK_VALUE> ::= <PRIMITIVE> | %<VARIABLE>
-<PROPERTY_CHECK> ::= <PROPERTY_PATH> <OPERAND> <CHECK_VALUE>
-<CONDITIONAL_RULE> ::= <RESOURCE_TYPE> WHEN <PROPERTY_CHECK> CHECK <PROPERTY_CHECK>
-<VARIABLE> ::= define variable
-<OPERAND> ::= ==|!=|<|>|<=|>=|IN|NOT_IN
-<BOOL_OPERAND> ::= |OR| | |AND|
-<RESOURCE_TYPE> ::= Some::Resource::Type
-<PROPERTY_PATH> ::= path.to.property
-<ASSIGNMENT> ::= let <VARIABLE> = <PRIMITIVE>
-<PRIMITIVE> ::== some primitive value
-<COMMENT> ::= # Comment
+ruleset = 1*(line CRLF)
+line = rule-line / assignment / comment
+rule-line = rule / (rule 1*SP bool-operand 1*SP rule-line)
+rule = (base-rule 1*SP output-message) / base-rule
+base-rule = check-rule / conditional-rule
+check-rule = resource-type 1*SP property-check
+check-value = primitive / ("%" variable)
+property-check = property-path 1*SP operand 1*SP check-value
+conditional-rule = resource-type 1*SP "WHEN" 1*SP property-check 1*SP "CHECK" 1*SP property-check
+variable = 1*(ALPHA/DIGIT)
+operand = "==" / "!=" / "<" / ">" / "<=" / ">=" / "IN" / "NOT_IN"
+bool-operand = "|OR|" / "|AND|"
+resource-type = 1*(ALPHA / DIGIT)  2("::" 1*(ALPHA / DIGIT))
+property-path = 1*(["."] 1*ALPHA)
+output-message = "<<" primitive
+assignment = "let" 1*SP variable 1*SP "=" 1*SP primitive
+primitive = 1*(ALPHA / DIGIT)
+comment = "#" *VCHAR
 ```
