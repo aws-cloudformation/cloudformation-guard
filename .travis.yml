@@ -31,6 +31,7 @@ before_deploy:
     fi
   - cp LICENSE ./cfn-guard-$TRAVIS_OS_NAME/
   - cp NOTICE ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp ATTRIBUTION ./cfn-guard-$TRAVIS_OS_NAME/
   - cp README.md ./cfn-guard-$TRAVIS_OS_NAME/
   - tar czvf ./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz ./cfn-guard-$TRAVIS_OS_NAME
 
