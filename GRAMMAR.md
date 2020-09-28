@@ -1,5 +1,5 @@
 # Overview
-Rulesets can be described by the following BNF:
+Rulesets can be described by the following ABNF:
 
 ```
 ruleset = 1*(line CRLF)
@@ -8,10 +8,10 @@ rule-line = rule / (rule 1*SP bool-operand 1*SP rule-line)
 rule = (base-rule 1*SP output-message) / base-rule
 base-rule = check-rule / conditional-rule
 check-rule = resource-type 1*SP property-check
-check-value = primitive / ("%" variable)
+check-value = primitive / ("%" variable) / "%{" variable "}"
 property-check = property-path 1*SP operand 1*SP check-value
 conditional-rule = resource-type 1*SP "WHEN" 1*SP property-check 1*SP "CHECK" 1*SP property-check
-variable = 1*(ALPHA/DIGIT)
+variable = 1*(ALPHA) *(ALPHA / DIGIT /"_" / "-")
 operand = "==" / "!=" / "<" / ">" / "<=" / ">=" / "IN" / "NOT_IN"
 bool-operand = "|OR|" / "|AND|"
 resource-type = 1*(ALPHA / DIGIT)  2("::" 1*(ALPHA / DIGIT))
