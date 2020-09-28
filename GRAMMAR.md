@@ -4,9 +4,8 @@ Rulesets can be described by the following ABNF grammar:
 ```
 ruleset = 1*(line CRLF)
 line = rule-line / assignment / comment
-rule-line = rule / (rule 1*SP bool-operand 1*SP rule-line)
-rule = (base-rule 1*SP output-message) / base-rule
-base-rule = check-rule / conditional-rule
+rule-line = rule *1(1*SP bool-operand 1*SP rule-line)
+rule = (check-rule / conditional-rule) *1(1*SP output-message)
 check-rule = resource-type 1*SP property-check
 check-value = primitive / ("%" variable) / "%{" variable "}"
 property-check = property-path 1*SP operand 1*SP check-value
