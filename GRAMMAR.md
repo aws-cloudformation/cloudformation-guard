@@ -1,5 +1,5 @@
 # Overview
-Rulesets can be described by the following ABNF:
+Rulesets can be described by the following ABNF grammar:
 
 ```
 ruleset = 1*(line CRLF)
