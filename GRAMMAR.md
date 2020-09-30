@@ -1,7 +1,7 @@
 # Overview
 Rulesets can be described by the following ABNF grammar:
 
-```
+```abnf
 ;Defines the list of rules, assignments, and comments that make up the ruleset
 ruleset = 1*([rule / boolean-line / assignment / comment] *WSP CRLF)
 
