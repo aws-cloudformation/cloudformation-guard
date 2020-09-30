@@ -1,29 +1,31 @@
 # Overview
-Rulesets can be described by the following ABNF grammar:
+Rulesets can be defined by the following ABNF grammar:
 
 ```abnf
-;Defines the list of rules, assignments, and comments that make up the ruleset
+;Defines the list of rules, assignments, and comments that make up the ruleset.
+
 ruleset = 1*([rule / boolean-line / assignment / comment] *WSP CRLF)
 
-;The below definitions are types of valid lines
+;The below definitions are types of valid lines.
 rule = (base-rule / conditional-rule) [1*WSP output-message]; Rules are either simple boolean checks or conditional checks
-boolean-line = (rule 1*(%s"|OR|" 1*WSP rule)); or rule line. Made up of number of rules concatenated with "|OR|"
-boolean-line =/ (rule 1*(%s"|AND|" 1*WSP rule)); and rule line. Made up of number of rules concatenated with "|AND|"
+boolean-line = (rule 1*(%s"|OR|" 1*WSP rule)); 'Or' rule line. Made up of number of rules concatenated with "|OR|"
+boolean-line =/ (rule 1*(%s"|AND|" 1*WSP rule)); 'And' rule line. Made up of number of rules concatenated with "|AND|"
 assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP assignment-value; Assignment rule.
-comment = "#" vchar-sp; comment line
+comment = "#" vchar-sp; Comment line
 
 
-;The below definitions describe the basic two types of rules and optional output message
-base-rule = resource-type 1*WSP property-comparison; simple rule that compares a resource type's property value(s) with some value(s)
-conditional-rule = resource-type 1*WSP %s"WHEN" 1*WSP property-comparison 1*WSP %s"CHECK" 1*WSP property-comparison; rule that checks values if a certain condition is met
+;The below definitions describe the basic two types of rules and optional output message.
+base-rule = resource-type 1*WSP property-comparison; Simple rule that compares a resource type's property value(s) with some value(s).
+conditional-rule = resource-type 1*WSP %s"WHEN" 1*WSP property-comparison 1*WSP %s"CHECK" 1*WSP property-comparison; Rule that checks values if a certain condition is met.
 output-message = "<<" vchar-sp
 
-;property comparisons can check string equality, membership in lists, or compare two numbers
-property-comparison = property-path 1*WSP equality-operand 1*WSP eq-value ; equality
-property-comparison =/ property-path 1*WSP greater-less-operand 1*WSP greater-less-value; number comparison
-property-comparison =/ property-path 1*WSP list-operand 1*WSP list-value;  membership in lists
+;The below definitions comprise all available property comparisons.
+; Property comparisons can check string equality, membership in lists, or compare two numbers.
+property-comparison = property-path 1*WSP equality-operand 1*WSP eq-value ; Equality comparison
+property-comparison =/ property-path 1*WSP greater-less-operand 1*WSP greater-less-value; Number comparison
+property-comparison =/ property-path 1*WSP list-operand 1*WSP list-value;  Membership in lists
 
-;operands for comparisons
+;The below definitions comprise operands for comparisons
 equality-operand = "==" / "!="
 greater-less-operand =  "<" / ">" / "<=" / ">="
 list-operand = %s"IN" / %s"NOT_IN"
@@ -34,15 +36,15 @@ property-path = ["."] (1*alphanum / wildcard) *("." (1*alphanum / wildcard))
 variable = 1*(alphanum / "_")
 
 ;The below definitions define right hand side values for both assignments and comparisons
-assignment-value = number / list-value / unquoted-string; assignment values can be valid json lists, csv for non json lists, or unquoted strings
-eq-value =  unquoted-string / regex / variable-dereference; comparisons using equality operators are simply stripped of whitespace and compared. regex patterns are matched
-greater-less-value = number / variable-dereference; all non equality comparison operators require numbers for comparison.
-list-value = csv / array / variable-dereference; lists are comma separated or JSON arrays defined in the below JSON abnf
-variable-dereference =  ("%" variable) / ("%{" variable "}" ); regular and environment variables, respectively
-regex = "/" vchar-sp "/"; regular expression in rust regex syntax: https://docs.rs/regex/1.3.9/regex/#syntax
-csv = csv-value *(value-separator csv-value); if json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
+assignment-value = number / list-value / unquoted-string; Assignment values can be valid json lists, csv for non json lists, or unquoted strings.
+eq-value =  unquoted-string / regex / variable-dereference; Comparisons using equality operators are simply stripped of whitespace and compared. Regex patterns are matched.
+greater-less-value = number / variable-dereference; All non equality comparison operators require numbers for comparison.
+list-value = csv / array / variable-dereference; Lists are comma separated or JSON arrays defined in the below JSON abnf.
+variable-dereference =  ("%" variable) / ("%{" variable "}" ); Regular and environment variables, respectively
+regex = "/" vchar-sp "/"; Regular expression in rust regex syntax: https://docs.rs/regex/1.3.9/regex/#syntax
+csv = csv-value *(value-separator csv-value); If json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
 csv-value = [unquoted-string]
-unquoted-string = VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
+unquoted-string = VCHAR vchar-sp; Unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
 
 wildcard = %s"*"
 vchar-sp = *(VCHAR / WSP)
