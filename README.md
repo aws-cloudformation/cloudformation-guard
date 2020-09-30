@@ -1,4 +1,4 @@
-# [PREVIEW] AWS CloudFormation Guard
+# AWS CloudFormation Guard
 
 This repo contains source code for the following tools:
 
@@ -90,7 +90,28 @@ From there, you can pipe them into a file and add, edit or remove rules as you n
 
 Everything that can be checked from the command-line version of the tool can be checked using [the Lambda version](./cfn-guard-lambda/README.md).  The same is true for the [rulegen functionality](./cfn-guard-rulegen-lambda/README.md).
 
-## Setting it up
+## Installation
+
+### Mac
+
+The CLI tool for cfn-guard is available via [homebrew](https://brew.sh/).
+
+Installation via homebrew:
+```
+brew install cloudformation-guard
+```
+
+### Windows
+The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org).
+
+Installation via chocolatey:
+```
+choco install cloudformation-guard --version=1.0.0
+```
+
+Binaries are also available for each [release](https://github.com/aws-cloudformation/cloudformation-guard/releases) in a tarball with corresponding documents. Currently we distribute for Windows, Mac, and Linux.
+
+## Development
 
 ### Clone this repo:
 
