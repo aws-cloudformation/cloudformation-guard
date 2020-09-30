@@ -9,26 +9,41 @@ ruleset = 1*([rule / boolean-line / assignment / comment] *WSP CRLF)
 rule = (base-rule / conditional-rule) [1*WSP output-message]; Rules are either simple boolean checks or conditional checks
 boolean-line = (rule 1*("|OR|" 1*WSP rule)); or rule line. Made up of number of rules concatenated with "|OR|"
 boolean-line =/ (rule 1*("|AND|" 1*WSP rule)); and rule line. Made up of number of rules concatenated with "|AND|"
-assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP (value / *VCHAR); Assignment rule.
-comment = "#" *VCHAR; comment line
+assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP assignment-value; Assignment rule.
+comment = "#" vchar-sp; comment line
 
-;The below definitions describe the basic two types of rules
-base-rule = resource-type 1*WSP property-check; simple rule that checks a resource type's property value(s)
-conditional-rule = resource-type 1*WSP %s"WHEN" 1*WSP property-check 1*WSP %s"CHECK" 1*WSP property-check; rule that checks values if a certain condition is met
-property-check = property-path 1*WSP operand 1*WSP rule-value
+
+;The below definitions describe the basic two types of rules and optional output message
+base-rule = resource-type 1*WSP property-comparison; simple rule that compares a resource type's property value(s) with some value(s)
+conditional-rule = resource-type 1*WSP %s"WHEN" 1*WSP property-comparison 1*WSP %s"CHECK" 1*WSP property-comparison; rule that checks values if a certain condition is met
+output-message = "<<" vchar-sp
+
+;property comparisons can check string equality, membership in lists, or compare two numbers
+property-comparison = property-path 1*WSP equality-operand 1*WSP eq-value ; equality
+property-comparison =/ property-path 1*WSP greater-less-operand 1*WSP greater-less-value; number comparison
+property-comparison =/ property-path 1*WSP list-operand 1*WSP list-value;  membership in lists
+
+;operands for comparisons
+equality-operand = "==" / "!="
+greater-less-operand =  "<" / ">" / "<=" / ">="
+list-operand = %s"IN" / %s"NOT_IN"
+
+; The below definitions define the left hand side values for comparisons and assignments 
 resource-type = 1*HEXDIG  2("::" 1*HEXDIG)
 property-path = ["."](1*HEXDIG / "*") *("." (1*HEXDIG / "*"))
-
-assignment-value = value / csv / guard-string; assignment values can be valid json values, csv for non json lists, or unquoted strings
-rule-value = value / csv / regex / guard-string / variable-dereference; rules can be valid json values, csv for non json lists, regex, unquoted strings, or dereferenced variables
-operand = "==" / "!=" / "<" / ">" / "<=" / ">=" / %s"IN" / %s"NOT_IN"
-variable-dereference =  ("%" variable) / ("%{" variable "}" )
 variable = 1*(HEXDIG / "_")
-regex = "/" *VCHAR "/"
-csv = *(value-separator *VCHAR); if json array is not valid, guard will split by commas to make a list
-guard-string = *(VCHAR / WSP); unquoted string used in the RHS of guard expressions
-output-message = "<<" *(VCHAR / WSP)
-primitive-value = 1*VCHAR
+
+;The below definitions define right hand side values for both assignments and comparisons
+assignment-value = number / list-value / unquoted-string; assignment values can be valid json lists, csv for non json lists, or unquoted strings
+eq-value =  unquoted-string / regex; comparisons using equality operators are simply stripped of whitespace and compared. regex patterns are matched
+greater-less-value = number; all non equality comparison operators require numbers for comparison.
+list-value = csv / array; lists are comma separated or JSON arrays defined in the below JSON abnf
+variable-dereference =  ("%" variable) / ("%{" variable "}" ); regular and environment variables, respectively
+regex = "/" vchar-sp "/"; regular expression in rust regex syntax: https://docs.rs/regex/1.3.9/regex/#syntax
+csv = 1value-separator *(value-separator / unquoted-string); if json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
+unquoted-string = 1VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
+
+vchar-sp = *(VCHAR / WSP)
 ```
 
 References to `value` refer to the `value` from [JSON's ABNF](https://trac.ietf.org/trac/json/browser/abnf/json.abnf?rev=2) from [RFC7159](https://tools.ietf.org/html/rfc7159), which is provided below for convenience:
