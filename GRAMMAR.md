@@ -50,7 +50,7 @@ alphanum = (ALPHA / DIGIT)
 ```
 
 References to `value` refer to the `value` from [JSON's ABNF](https://trac.ietf.org/trac/json/browser/abnf/json.abnf?rev=2) from [RFC7159](https://tools.ietf.org/html/rfc7159), which is provided below for convenience:
-```
+```abnf
 ; Below portions from IETF json.abnf https://trac.ietf.org/trac/json/browser/abnf/json.abnf?rev=2, which is from https://tools.ietf.org/html/rfc7159
 
 begin-array     = ws %x5B ws  ; [ left square bracket
