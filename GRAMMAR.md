@@ -30,19 +30,19 @@ list-operand = %s"IN" / %s"NOT_IN"
 
 ; The below definitions define the left hand side values for comparisons and assignments 
 resource-type = 1*HEXDIG  2("::" 1*HEXDIG)
-property-path = ["."](1*HEXDIG / "*") *("." (1*HEXDIG / "*"))
+property-path = ["."] (1*HEXDIG / "*") *("." (1*HEXDIG / "*"))
 variable = 1*(HEXDIG / "_")
 
 ;The below definitions define right hand side values for both assignments and comparisons
 assignment-value = number / list-value / unquoted-string; assignment values can be valid json lists, csv for non json lists, or unquoted strings
-eq-value =  unquoted-string / regex; comparisons using equality operators are simply stripped of whitespace and compared. regex patterns are matched
-greater-less-value = number; all non equality comparison operators require numbers for comparison.
-list-value = csv / array; lists are comma separated or JSON arrays defined in the below JSON abnf
+eq-value =  unquoted-string / regex / variable-dereference; comparisons using equality operators are simply stripped of whitespace and compared. regex patterns are matched
+greater-less-value = number / variable-dereference; all non equality comparison operators require numbers for comparison.
+list-value = csv / array / variable-dereference; lists are comma separated or JSON arrays defined in the below JSON abnf
 variable-dereference =  ("%" variable) / ("%{" variable "}" ); regular and environment variables, respectively
 regex = "/" vchar-sp "/"; regular expression in rust regex syntax: https://docs.rs/regex/1.3.9/regex/#syntax
 csv = csv-value *(value-separator csv-value); if json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
 csv-value = [unquoted-string]
-unquoted-string = 1VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
+unquoted-string = VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
 
 vchar-sp = *(VCHAR / WSP)
 ```
