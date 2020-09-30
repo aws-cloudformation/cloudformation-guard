@@ -40,7 +40,8 @@ greater-less-value = number; all non equality comparison operators require numbe
 list-value = csv / array; lists are comma separated or JSON arrays defined in the below JSON abnf
 variable-dereference =  ("%" variable) / ("%{" variable "}" ); regular and environment variables, respectively
 regex = "/" vchar-sp "/"; regular expression in rust regex syntax: https://docs.rs/regex/1.3.9/regex/#syntax
-csv = 1value-separator *(value-separator / unquoted-string); if json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
+csv = csv-value *(value-separator csv-value); if json array is not valid, cfn-guard will split by commas to make a list (elements can be null)
+csv-value = [unquoted-string]
 unquoted-string = 1VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
 
 vchar-sp = *(VCHAR / WSP)
