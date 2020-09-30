@@ -2,21 +2,26 @@
 Rulesets can be described by the following ABNF grammar:
 
 ```
-ruleset = 1*(line CRLF)
-line = rule-line / assignment / comment
-rule-line = rule *1(1*SP bool-operand 1*SP rule-line)
-rule = (check-rule / conditional-rule) *1(1*SP output-message)
-check-rule = resource-type 1*SP property-check
-check-value = primitive / ("%" variable) / "%{" variable "}"
-property-check = property-path 1*SP operand 1*SP check-value
-conditional-rule = resource-type 1*SP "WHEN" 1*SP property-check 1*SP "CHECK" 1*SP property-check
-variable = 1*(ALPHA) *(ALPHA / DIGIT /"_" / "-")
-operand = "==" / "!=" / "<" / ">" / "<=" / ">=" / "IN" / "NOT_IN"
-bool-operand = "|OR|" / "|AND|"
-resource-type = 1*(ALPHA / DIGIT)  2("::" 1*(ALPHA / DIGIT))
-property-path = 1*(["."] 1*ALPHA)
-output-message = "<<" primitive
-assignment = "let" 1*SP variable 1*SP "=" 1*SP primitive
-primitive = 1*(ALPHA / DIGIT)
+ruleset = 1*((rule / boolean-line / assignment / comment) *WSP CRLF)
+
+boolean-line = (rule 1*("|OR|" 1*WSP rule)) / (rule 1*("|AND|" 1*WSP rule))
+assignment = "let" 1*WSP variable 1*WSP "=" 1*WSP primitive
 comment = "#" *VCHAR
+
+rule = (base-rule / conditional-rule) [1*WSP output-message]
+base-rule = resource-type 1*WSP property-check
+conditional-rule = resource-type 1*WSP "WHEN" 1*WSP property-check 1*WSP "CHECK" 1*WSP property-check
+resource-type = 1*alphanum  2("::" 1*alphanum)
+property-check = property-path 1*WSP operand 1*WSP check-value
+check-value = primitive / ("%" variable) / "%{" variable "}" / list
+operand = "==" / "!=" / "<" / ">" / "<=" / ">=" / "IN" / "NOT_IN"
+
+variable = 1*(ALPHA / DIGIT / "_")
+
+property-path = 1*(["."] 1*alphanum)
+output-message = "<<" *VCHAR
+list = "[" [primitive] *("," primitive) "]"
+primitive = 1*VCHAR
+boolean = "true" / "false"
+alphanum = (ALPHA / DIGIT)
 ```
