@@ -7,8 +7,8 @@ ruleset = 1*([rule / boolean-line / assignment / comment] *WSP CRLF)
 
 ;The below definitions are types of valid lines
 rule = (base-rule / conditional-rule) [1*WSP output-message]; Rules are either simple boolean checks or conditional checks
-boolean-line = (rule 1*("|OR|" 1*WSP rule)); or rule line. Made up of number of rules concatenated with "|OR|"
-boolean-line =/ (rule 1*("|AND|" 1*WSP rule)); and rule line. Made up of number of rules concatenated with "|AND|"
+boolean-line = (rule 1*(%s"|OR|" 1*WSP rule)); or rule line. Made up of number of rules concatenated with "|OR|"
+boolean-line =/ (rule 1*(%s"|AND|" 1*WSP rule)); and rule line. Made up of number of rules concatenated with "|AND|"
 assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP assignment-value; Assignment rule.
 comment = "#" vchar-sp; comment line
 
@@ -29,9 +29,9 @@ greater-less-operand =  "<" / ">" / "<=" / ">="
 list-operand = %s"IN" / %s"NOT_IN"
 
 ; The below definitions define the left hand side values for comparisons and assignments 
-resource-type = 1*HEXDIG  2("::" 1*HEXDIG)
-property-path = ["."] (1*HEXDIG / "*") *("." (1*HEXDIG / "*"))
-variable = 1*(HEXDIG / "_")
+resource-type = 1*alphanum  2("::" 1*alphanum)
+property-path = ["."] (1*alphanum / wildcard) *("." (1*alphanum / wildcard))
+variable = 1*(alphanum / "_")
 
 ;The below definitions define right hand side values for both assignments and comparisons
 assignment-value = number / list-value / unquoted-string; assignment values can be valid json lists, csv for non json lists, or unquoted strings
@@ -44,7 +44,9 @@ csv = csv-value *(value-separator csv-value); if json array is not valid, cfn-gu
 csv-value = [unquoted-string]
 unquoted-string = VCHAR vchar-sp; unquoted string used in the RHS of cfn-guard assignments and equality comparisons.
 
+wildcard = %s"*"
 vchar-sp = *(VCHAR / WSP)
+alphanum = (ALPHA / DIGIT)
 ```
 
 References to `value` refer to the `value` from [JSON's ABNF](https://trac.ietf.org/trac/json/browser/abnf/json.abnf?rev=2) from [RFC7159](https://tools.ietf.org/html/rfc7159), which is provided below for convenience:
