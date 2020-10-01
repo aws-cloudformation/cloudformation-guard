@@ -184,17 +184,6 @@ If building on `Ubuntu`, it's recommended to run `sudo apt-get update; sudo apt 
 3. Install [rust](https://forge.rust-lang.org/infra/other-installation-methods.html#other-ways-to-install-rustup)
    1. Download [rust-init.exe](https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe)
    2. Run it and accept the defaults
- 
-
-### Read the individual tools' documentation
-
-Details on how to build the tools and use them are available in each tool's README.
-
-[CloudFormation Guard](cfn-guard/README.md)
-
-[CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
-
-[CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
 
 ### Using the Makefile
 
@@ -213,6 +202,14 @@ There are two make targets that package up the source without the git history, e
 `make release_with_binaries` will first do a `cargo build --release` for both `cfn-guard-rulegen` and `cfn-guard` targeting whatever architecture the make command is run on (eg, your laptop's OS), placing the binaries in the `cloudformation-guard/bin/` directory.  From there, it tars them and the necessary source files into `cloudformation-guard.tar.gz`.  (NOTE: Mail messages with binaries in zip files may get blocked by spam filters.)
 
 ## Additional Documentation
+
+Details on how to use each tool and how to build them are available in each tool's README.
+
+[CloudFormation Guard](cfn-guard/README.md)
+
+[CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
+
+[CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
 
 [Write preventive compliance rules for AWS CloudFormation templates the cfn-guard way](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
 
