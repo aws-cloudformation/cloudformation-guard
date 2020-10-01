@@ -1,4 +1,4 @@
-# [PREVIEW] AWS CloudFormation Guard
+# AWS CloudFormation Guard
 A command line tool for validating AWS CloudFormation resources against policy.
 
 ## Table of Contents
