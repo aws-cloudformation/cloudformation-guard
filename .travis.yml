@@ -40,6 +40,5 @@ deploy:
     secure: oaZUOrAcyp4GwMkhyRYzZVrEbgJs9kXGxm/khqEUHFkayhHlDvcbHi0hrzhFHegIpGHtmEAuQmP0XSfW8nFyhnM/iLAzVlPMFlFq0IHl/pk8LJOAd7crDOmimfj6YEKeDzDvvdgsy32uJOArssQh57/23UEEZ0m0PXU8ywAuC1DCqV75Xfy11kCh4NfFiwv9kPhclbd7LcM+KMLZQ3tN7e6STxPA+6lBVWpMoLF05S9QavrisbZ0UtmC1YD4k88QB+vK2BdKQmOd+5+v72KlDvSnwBSXNiLIu0vx6FtD6tXyoteF7IDX8Pfq/y8eVjxcBZV1UvaNLozYIisVIS4cRMXMFS1oKE3COdMg3ZcilV45zPaBd/GJecKlEw9UHL4hTVouEgLD1DXTwNJxNaOU4l9HesQbssdqKjgxEVJNMhjoIFnSjQPKudwr4rLIWRB+aAgG68lQQOuqVc93HFvA1WM5I0CeWLKkvEzy2yzVHL7qtVw+LWWtvaIavrWSKThvQ5K++15ZaipLK72DDCDpTm6eyU0rGtz5IZCihm3aUlZeoOIGGQkt2C+2PX73b11eeiuNvhr6c1JkOQKSo9McGZqwuuay5PiQoSnTcpoF6AUGts8jyNkVq7YQOztqPqnno+yjlMGdgbxSLPzkDZOx+SKvFLbkP0dFBXu3Sni+NN8=
   file: "./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz"
   on:
-    repo: aws-cloudformation/cloudformation-guard
-    tags: true
+    branch: apikey-update
   skip_cleanup: 'true'
