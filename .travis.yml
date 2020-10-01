@@ -19,6 +19,7 @@ matrix:
     os: windows
     rust: nightly
     script: cargo build --workspace --verbose --release
+
 before_deploy:
   - mkdir cfn-guard-$TRAVIS_OS_NAME
   - |
