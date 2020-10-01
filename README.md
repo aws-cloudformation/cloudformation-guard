@@ -8,6 +8,18 @@ This repo contains source code for the following tools:
 * `CloudFormation Guard Lambda` is the AWS Lambda version of CloudFormation Guard's `check` functionality 
 * `CloudFormation Guard Rulegen Lambda` is the AWS Lambda version of CloudFormation Guard's `rulegen` functionality
 
+## Table of Contents
+
+* [How it works](#how-it-works)
+* [Installation](#installation)
+* [Development](#development)
+* [Using the Makefile](#using-the-makefile)
+* [Grabbing a copy to distribute](#grabbing-a-copy-to-distribute)
+* [Additional Documentation](#additional-documentation)
+* [Frequently Asked Questions](#frequently-asked-questions)
+
+
+
 ## How it works
 
 ### Checking Templates
@@ -109,7 +121,34 @@ Installation via chocolatey:
 choco install cloudformation-guard --version=1.0.0
 ```
 
-Binaries are also available for each [release](https://github.com/aws-cloudformation/cloudformation-guard/releases) in a tarball with corresponding documents. Currently we distribute for Windows, Mac, and Linux.
+### Linux
+The CLI tool for cfn-guard is available from GitHub releases. 
+
+Grab the latest release from our [releases page](https://github.com/aws-cloudformation/cloudformation-guard/releases):
+
+```
+wget https://github.com/jotompki/cloudformation-guard/releases/download/VERSION/cfn-guard-linux-VERSION.tar.gz
+tar -xvf cfn-guard-linux-1.0.0.tar.gz
+cd ./cfn-guard-linux
+./cfn-guard 
+CloudFormation Guard 1.0.0
+
+USAGE:
+    cfn-guard [SUBCOMMAND]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+SUBCOMMANDS:
+    check      Check CloudFormation templates against rules
+    help       Prints this message or the help of the given subcommand(s)
+    rulegen    Autogenerate rules from an existing CloudFormation template
+```
+
+You can then move this to the directory of your choosing so it is on  your $PATH
+
+Binaries are also available for Mac and Windows on the [releases page](https://github.com/aws-cloudformation/cloudformation-guard/releases) in a tarball with corresponding documents.
 
 ## Development
 
@@ -166,6 +205,8 @@ The primary interface to the toolchain is the [Makefile](Makefile).  To build th
 `cfn-guard-lambda` is a little trickier since it's a lambda, not a binary, and therefore has different steps for `install` and `update`.  It also requires you to set up some things before you can deploy it from the Makefile.  (Please see [its documentation](cfn-guard-lambda/README.md) for more information.). Once it's set up, it can be deployed from the top-level Makefile with targets for `cfn-guard-lambda_install` and `cfn-guard-lambda_update`.
 
 ## Grabbing a copy to distribute
+
+Releases are available via the repo's [GitHub releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) for each platform. Alternatively, you can build a copy from source.
 
 There are two make targets that package up the source without the git history, etc.
 
