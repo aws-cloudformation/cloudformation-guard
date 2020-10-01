@@ -1,4 +1,4 @@
-# [PREVIEW] CloudFormation Guard as a Lambda
+# CloudFormation Guard as a Lambda
 
 The Lambda version of the tool is a lightweight wrapper around the core [cfn-guard](../cfn-guard) code that can simply be invoked as a Lambda.
 

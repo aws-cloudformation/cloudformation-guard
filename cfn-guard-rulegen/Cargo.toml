@@ -1,7 +1,9 @@
 [package]
 name = "cfn-guard-rulegen"
-version = "0.7.0"
+version = "1.0.0"
 edition = "2018"
+authors = ["John Tompkins <jotompki@amazon.com>", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
+
 
 [dependencies]
 serde = { version = "1.0.92", features = ["derive"] }

@@ -1,4 +1,4 @@
-# [PREVIEW] AWS CloudFormation Guard
+# AWS CloudFormation Guard
 
 This repo contains source code for the following tools:
 
@@ -7,6 +7,16 @@ This repo contains source code for the following tools:
 	* Can autogenerate rules from existing CloudFormation templates
 * `CloudFormation Guard Lambda` is the AWS Lambda version of CloudFormation Guard's `check` functionality 
 * `CloudFormation Guard Rulegen Lambda` is the AWS Lambda version of CloudFormation Guard's `rulegen` functionality
+
+## Table of Contents
+
+* [How it works](#how-it-works)
+* [Installation](#installation)
+* [Development](#development)
+* [Additional Documentation](#additional-documentation)
+* [Frequently Asked Questions](#frequently-asked-questions)
+
+
 
 ## How it works
 
@@ -90,7 +100,55 @@ From there, you can pipe them into a file and add, edit or remove rules as you n
 
 Everything that can be checked from the command-line version of the tool can be checked using [the Lambda version](./cfn-guard-lambda/README.md).  The same is true for the [rulegen functionality](./cfn-guard-rulegen-lambda/README.md).
 
-## Setting it up
+## Installation
+
+### Mac
+
+The CLI tool for cfn-guard is available via [homebrew](https://brew.sh/).
+
+Installation via homebrew:
+```
+brew install cloudformation-guard
+```
+
+### Windows
+The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org).
+
+Installation via chocolatey:
+```
+choco install cloudformation-guard --version=1.0.0
+```
+
+### Linux
+The CLI tool for cfn-guard is available from GitHub releases. 
+
+Grab the latest release from our [releases page](https://github.com/aws-cloudformation/cloudformation-guard/releases):
+
+```
+wget https://github.com/jotompki/cloudformation-guard/releases/download/VERSION/cfn-guard-linux-VERSION.tar.gz
+tar -xvf cfn-guard-linux-1.0.0.tar.gz
+cd ./cfn-guard-linux
+./cfn-guard 
+CloudFormation Guard 1.0.0
+
+USAGE:
+    cfn-guard [SUBCOMMAND]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+SUBCOMMANDS:
+    check      Check CloudFormation templates against rules
+    help       Prints this message or the help of the given subcommand(s)
+    rulegen    Autogenerate rules from an existing CloudFormation template
+```
+
+You can then move this to the directory of your choosing so it is on  your $PATH
+
+Binaries are also available for Mac and Windows on the [releases page](https://github.com/aws-cloudformation/cloudformation-guard/releases) in a tarball with corresponding documents.
+
+## Development
 
 ### Clone this repo:
 
@@ -126,25 +184,16 @@ If building on `Ubuntu`, it's recommended to run `sudo apt-get update; sudo apt 
 3. Install [rust](https://forge.rust-lang.org/infra/other-installation-methods.html#other-ways-to-install-rustup)
    1. Download [rust-init.exe](https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe)
    2. Run it and accept the defaults
- 
 
-### Read the individual tools' documentation
-
-Details on how to build the tools and use them are available in each tool's README.
-
-[CloudFormation Guard](cfn-guard/README.md)
-
-[CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
-
-[CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
-
-## Using the Makefile
+### Using the Makefile
 
 The primary interface to the toolchain is the [Makefile](Makefile).  To build the binaries or deploy the lambda you want, simply run their make target (eg `make cfn-guard-rulegen`).  A copy of the resulting binary will be moved to the top-level `cfn-guard-toolchain/bin/` directory.  (Note that the files inside `bin/` aren't version-controlled, though.)
 
 `cfn-guard-lambda` is a little trickier since it's a lambda, not a binary, and therefore has different steps for `install` and `update`.  It also requires you to set up some things before you can deploy it from the Makefile.  (Please see [its documentation](cfn-guard-lambda/README.md) for more information.). Once it's set up, it can be deployed from the top-level Makefile with targets for `cfn-guard-lambda_install` and `cfn-guard-lambda_update`.
 
-## Grabbing a copy to distribute
+### Grabbing a copy to distribute
+
+Releases are available via the repo's [GitHub releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) for each platform. Alternatively, you can build a copy from source.
 
 There are two make targets that package up the source without the git history, etc.
 
@@ -154,7 +203,15 @@ There are two make targets that package up the source without the git history, e
 
 ## Additional Documentation
 
-[Write preventive compliance rules for AWS CloudFormation templates the cfn-guard way](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
+Details on how to use each tool and how to build them are available in each tool's README.
+
+[CloudFormation Guard](cfn-guard/README.md)
+
+[CloudFormation Guard Lambda](cfn-guard-lambda/README.md)
+
+[CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
+
+For a detailed walkthrough of CloudFormation Guard, please follow [this blog](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
 
 ## Frequently Asked Questions
 
