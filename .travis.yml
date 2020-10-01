@@ -40,5 +40,6 @@ deploy:
     secure: KmAvC/VoofISXnlzcfP3PDdVD4qNuoXHrf1g/6mPbRRqY1k4wET8GDaLBWsAcjY6hibqSmOrOjDV8TVzIEkKa5rfkjnh7GWPe5na4qZVvkmvmx8fHNWy6uFa0KKJxB8FG0+uPj8wtnIWutVYdWk1JTTBagRZ4l5UCm4catl4Yb3Avm4uYd3LIKRRXXmtgcc/B7E3xYQCf0tBAnx4qD4GNOs13B6h9m8jF7XZPTkRxk+vnpYB6rdlHLLKkNQ2PEP5QAdik6+eFCzTwtoP/NzOcdtCrl8aaGBJvpHGA8V+aZ/BvCn0YFfM1uW1IKp2dMDYYO0zUrWLDKT9IcG1oXh2uVduVEbMC48BVsOxIBs7NzMkXkiW/3/P3EtZ+0p/OWZr9g0CnS6sLeyGc0mLx/Tyl92yRiO44k+2AJFQSArEDn5w3+vuMQgsiK9tv0EdefPDyRzPdxarLFz3PSWrI360fZZmsUBaNuU5tMgUwOFFNrsSPjLsPUcI25BbaM+5WqFObn/bYNiUPuMpFM8X2sJT81OEQ9+gmkwUx2U0IgLUqpmcLOEncWi0NMf2bPl6KssP0NwJmwpV0u1SP0iEVoNnALNPrrsqYIkxkn7pvmlZKEcufz/7/posMA0umFiY1ABSn0aVISDJfZeXiqXRBAhIt1dPpGVvfxRc6zCA+fgl1jE=
   file: "./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz"
   on:
-    branch: apikey-update
+    repo: aws-cloudformation/cloudformation-guard
+    tags: true
   skip_cleanup: 'true'
