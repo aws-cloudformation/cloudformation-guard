@@ -19,7 +19,6 @@ matrix:
     os: windows
     rust: nightly
     script: cargo build --workspace --verbose --release
-
 before_deploy:
   - mkdir cfn-guard-$TRAVIS_OS_NAME
   - |
@@ -38,7 +37,7 @@ before_deploy:
 deploy:
   provider: releases
   api_key:
-    secure: ebvFFPdM4G2Rn9zc1m9KvMBN8bWsBh6rlRhEVSD3s+1vdxOSzhtsjZq3VWjh+eHT+QsvSnQZuL20Cq5YO31WraE/26a7hyx20JoFEEReab9LduGG26MJRapj400O982P/V1IFhMvzZEXB8uVHfpm4h0tVuOkECMGTyA1C0ztyOorjJBbC7kUzTZD+IAWWvIN07bxLgBLvbRzhXwlvJRkoC6GKcu63LA+8hVcL6j06fYFqmN3iY8AZVNwCyvRmA3bi92UUSFFtRfiAjw09gN1Z7pRJCKNlu9dSmZvFWqHyDCCFlwGzoBZPexVEAo2Mi6gOX/FDawBLovqS6CKYiQRfnDQHir+JHTwze47opsSn+bUrF8d6Dkq3enqDlVmy2JZiuo1xluRNhJc5cufg7HoN2fH92oGpo4d2989+NMhqsQTwU7OawbSag045jeL+YX+bOrlcmD/c+qRTFwQYFDc9fOi2UrFDD0Mx9+lAY8jfiLO8d4vB+4FEY/pF6+F4dCCSj8E3Qi6jcNQqhq5Kbx92JVEUopdzJlD0m2FoBPe23MkFhCV0mpCmbqyEeuTg00fbdQvijW6zHmNgtHAePxnE/Dua9txRoD8C3idTvBMNwZh78Het4Ltssb3p+lNWoKH3zgAB/OC3l0FVPpVJLbLTey/8cA/gSSJ8RIOJRwtCEQ=
+    secure: oaZUOrAcyp4GwMkhyRYzZVrEbgJs9kXGxm/khqEUHFkayhHlDvcbHi0hrzhFHegIpGHtmEAuQmP0XSfW8nFyhnM/iLAzVlPMFlFq0IHl/pk8LJOAd7crDOmimfj6YEKeDzDvvdgsy32uJOArssQh57/23UEEZ0m0PXU8ywAuC1DCqV75Xfy11kCh4NfFiwv9kPhclbd7LcM+KMLZQ3tN7e6STxPA+6lBVWpMoLF05S9QavrisbZ0UtmC1YD4k88QB+vK2BdKQmOd+5+v72KlDvSnwBSXNiLIu0vx6FtD6tXyoteF7IDX8Pfq/y8eVjxcBZV1UvaNLozYIisVIS4cRMXMFS1oKE3COdMg3ZcilV45zPaBd/GJecKlEw9UHL4hTVouEgLD1DXTwNJxNaOU4l9HesQbssdqKjgxEVJNMhjoIFnSjQPKudwr4rLIWRB+aAgG68lQQOuqVc93HFvA1WM5I0CeWLKkvEzy2yzVHL7qtVw+LWWtvaIavrWSKThvQ5K++15ZaipLK72DDCDpTm6eyU0rGtz5IZCihm3aUlZeoOIGGQkt2C+2PX73b11eeiuNvhr6c1JkOQKSo9McGZqwuuay5PiQoSnTcpoF6AUGts8jyNkVq7YQOztqPqnno+yjlMGdgbxSLPzkDZOx+SKvFLbkP0dFBXu3Sni+NN8=
   file: "./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz"
   on:
     repo: aws-cloudformation/cloudformation-guard
