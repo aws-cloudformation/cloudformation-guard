@@ -4,12 +4,12 @@ Rulesets can be defined by the following ABNF grammar:
 ```abnf
 ;Defines the list of rules, assignments, and comments that make up the ruleset.
 
-ruleset = 1*([rule / boolean-line / assignment / comment] *WSP CRLF)
+ruleset = 1*([rule / clause / assignment / comment] *WSP CRLF)
 
 ;The below definitions are types of valid lines.
 rule = (base-rule / conditional-rule) [1*WSP output-message]; Rules are either simple boolean checks or conditional checks
-boolean-line = (rule 1*(%s"|OR|" 1*WSP rule)); 'Or' rule line. Made up of number of rules concatenated with "|OR|"
-boolean-line =/ (rule 1*(%s"|AND|" 1*WSP rule)); 'And' rule line. Made up of number of rules concatenated with "|AND|"
+clause = (rule 1*(%s"|OR|" 1*WSP rule)) / (rule 1*(%s"|AND|" 1*WSP rule)); 'And' or 'Or' clause. Made up of number of rules concatenated with "|AND|" or "|OR|".
+                                                                         ; clause cannot contain both expression forms |OR| and |AND|.
 assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP assignment-value; Assignment rule.
 comment = "#" vchar-sp; Comment line
 
