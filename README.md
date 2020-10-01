@@ -211,7 +211,7 @@ Details on how to use each tool and how to build them are available in each tool
 
 [CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
 
-[Write preventive compliance rules for AWS CloudFormation templates the cfn-guard way](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
+For a detailed walkthrough of CloudFormation Guard, please follow [this blog](https://aws.amazon.com/blogs/mt/write-preventive-compliance-rules-for-aws-cloudformation-templates-the-cfn-guard-way/)
 
 ## Frequently Asked Questions
 
