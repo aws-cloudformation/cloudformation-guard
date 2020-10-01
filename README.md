@@ -13,8 +13,6 @@ This repo contains source code for the following tools:
 * [How it works](#how-it-works)
 * [Installation](#installation)
 * [Development](#development)
-* [Using the Makefile](#using-the-makefile)
-* [Grabbing a copy to distribute](#grabbing-a-copy-to-distribute)
 * [Additional Documentation](#additional-documentation)
 * [Frequently Asked Questions](#frequently-asked-questions)
 
@@ -198,13 +196,13 @@ Details on how to build the tools and use them are available in each tool's READ
 
 [CloudFormation Guard Rulegen Lambda](cfn-guard-rulegen-lambda/README.md)
 
-## Using the Makefile
+### Using the Makefile
 
 The primary interface to the toolchain is the [Makefile](Makefile).  To build the binaries or deploy the lambda you want, simply run their make target (eg `make cfn-guard-rulegen`).  A copy of the resulting binary will be moved to the top-level `cfn-guard-toolchain/bin/` directory.  (Note that the files inside `bin/` aren't version-controlled, though.)
 
 `cfn-guard-lambda` is a little trickier since it's a lambda, not a binary, and therefore has different steps for `install` and `update`.  It also requires you to set up some things before you can deploy it from the Makefile.  (Please see [its documentation](cfn-guard-lambda/README.md) for more information.). Once it's set up, it can be deployed from the top-level Makefile with targets for `cfn-guard-lambda_install` and `cfn-guard-lambda_update`.
 
-## Grabbing a copy to distribute
+### Grabbing a copy to distribute
 
 Releases are available via the repo's [GitHub releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) for each platform. Alternatively, you can build a copy from source.
 
