@@ -125,7 +125,7 @@ The CLI tool for cfn-guard is available from GitHub releases.
 Grab the latest release from our [releases page](https://github.com/aws-cloudformation/cloudformation-guard/releases):
 
 ```
-wget https://github.com/jotompki/cloudformation-guard/releases/download/VERSION/cfn-guard-linux-VERSION.tar.gz
+wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/VERSION/cfn-guard-linux-VERSION.tar.gz
 tar -xvf cfn-guard-linux-1.0.0.tar.gz
 cd ./cfn-guard-linux
 ./cfn-guard 
