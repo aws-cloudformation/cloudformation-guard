@@ -3,7 +3,9 @@ name = "cfn-guard-rulegen"
 version = "1.0.0"
 edition = "2018"
 authors = ["John Tompkins <jotompki@amazon.com>", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
-
+description = "rulegen takes a CloudFormation template and autogenerates a set of cfn-guard rules that match the properties of its resources. This is a useful way to get started rule-writing or just create ready-to-use rulesets from known-good templates."
+license = "Apache-2.0"
+repository = "https://github.com/aws-cloudformation/cloudformation-guard"
 
 [dependencies]
 serde = { version = "1.0.92", features = ["derive"] }
