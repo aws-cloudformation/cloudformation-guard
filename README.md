@@ -112,7 +112,7 @@ brew install cloudformation-guard
 ```
 
 ### Windows
-The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org/packages/cloudformation-guard/1.0.0).
+The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org/packages/cloudformation-guard).
 
 Installation via chocolatey:
 ```
