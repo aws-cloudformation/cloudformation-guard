@@ -307,6 +307,12 @@
                 "RootAccess": true
             }
         },
+        "SecretsManagerSecret" : {
+            "Type" : "AWS::SecretsManager::Secret",
+            "Properties" : {
+                "SecretString" : "Secret"
+            }
+        },
         "SNSTopic" : {
             "Type" : "AWS::SNS::Topic",
             "Properties" : {
