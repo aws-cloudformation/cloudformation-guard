@@ -73,7 +73,7 @@ Number of failures: 3
 CloudFormation Guard can be used to evaluate security best practices for infrastructure deployed via CloudFormation. A number of example rules are included:
 
 ```
-$> cfn-guard check -t Examples/security-template.json -r Examples/security-template.ruleset
+$> cfn-guard check -t Examples/security-template.json -r Examples/security-template.ruleset --strict-checks
    "[AmazonMQBroker] failed because [AutoMinorVersionUpgrade] is [false] and Version upgrades should be enabled to receive security updates"
    "[AmazonMQBroker] failed because [EncryptionOptions.UseAwsOwnedKey] is [true] and CMKs should be used instead of AWS-provided KMS keys"
    "[AmazonMQBroker] failed because [EngineVersion] is [5.15.9] and Broker engine version should be at least 5.15.10"
