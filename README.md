@@ -104,7 +104,7 @@ Everything that can be checked from the command-line version of the tool can be 
 
 ### Mac
 
-The CLI tool for cfn-guard is available via [homebrew](https://brew.sh/).
+The CLI tool for cfn-guard is available via [homebrew](https://formulae.brew.sh/formula/cloudformation-guard).
 
 Installation via homebrew:
 ```
@@ -112,7 +112,7 @@ brew install cloudformation-guard
 ```
 
 ### Windows
-The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org).
+The CLI tool for cfn-guard is available via [chocolatey](https://chocolatey.org/packages/cloudformation-guard/1.0.0).
 
 Installation via chocolatey:
 ```
@@ -187,7 +187,7 @@ If building on `Ubuntu`, it's recommended to run `sudo apt-get update; sudo apt 
 
 ### Using the Makefile
 
-The primary interface to the toolchain is the [Makefile](Makefile).  To build the binaries or deploy the lambda you want, simply run their make target (eg `make cfn-guard-rulegen`).  A copy of the resulting binary will be moved to the top-level `cfn-guard-toolchain/bin/` directory.  (Note that the files inside `bin/` aren't version-controlled, though.)
+The primary interface to the toolchain is the [Makefile](Makefile).  To build the binaries or deploy the lambda you want, simply run their make target (eg `make cfn-guard`).  A copy of the resulting binary will be moved to the top-level `cfn-guard-toolchain/bin/` directory.  (Note that the files inside `bin/` aren't version-controlled, though.)
 
 `cfn-guard-lambda` is a little trickier since it's a lambda, not a binary, and therefore has different steps for `install` and `update`.  It also requires you to set up some things before you can deploy it from the Makefile.  (Please see [its documentation](cfn-guard-lambda/README.md) for more information.). Once it's set up, it can be deployed from the top-level Makefile with targets for `cfn-guard-lambda_install` and `cfn-guard-lambda_update`.
 
@@ -199,7 +199,7 @@ There are two make targets that package up the source without the git history, e
 
 `make release` will package the source into a file called `cloudformation-guard.tar.gz` without the git history.
 
-`make release_with_binaries` will first do a `cargo build --release` for both `cfn-guard-rulegen` and `cfn-guard` targeting whatever architecture the make command is run on (eg, your laptop's OS), placing the binaries in the `cloudformation-guard/bin/` directory.  From there, it tars them and the necessary source files into `cloudformation-guard.tar.gz`.  (NOTE: Mail messages with binaries in zip files may get blocked by spam filters.)
+`make release_with_binaries` will first do a `cargo build --release` for both `cfn-guard-rulegen` and `cfn-guard` targeting whatever architecture the make command is run on (eg, your laptop's OS), placing the binaries in the `cloudformation-guard/bin/` directory.  Note that cfn-guard contains the functionality of cfn-guard-rulegen under the `rulegen` subcommand. From there, it tars them and the necessary source files into `cloudformation-guard.tar.gz`.  (NOTE: Mail messages with binaries in zip files may get blocked by spam filters.)
 
 ## Additional Documentation
 
@@ -223,7 +223,7 @@ A: Guard solves a number of use-cases:
 * It can be a deployment gate in a CI/CD pipeline. 
 * It allows you to define a single source-of-truth for what constitutes valid infrastructure definitions. Define rules once and have them run both locally and as lambdas in your AWS account for integration with other AWS services.
 * It allows for pre-deployment safety checks of your CloudFormation template resources. You can both require settings to be included and prohibit configurations that have caused issues previously.  
-* It's easy to get started.  You can extract rules you want from existing, known-good templates using the CloudFormation Guard Rulegen auto-generation tool.
+* It's easy to get started.  You can extract rules you want from existing, known-good templates using the rulegen functionality of cfn-guard.
 
 
 ### Q: How does CloudFormation Guard relate to other services?
