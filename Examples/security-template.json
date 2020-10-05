@@ -307,10 +307,17 @@
                 "RootAccess": true
             }
         },
-        "SecretsManagerSecret" : {
+        "SecretsManagerSecretFail" : {
             "Type" : "AWS::SecretsManager::Secret",
             "Properties" : {
                 "SecretString" : "Secret"
+            }
+        },
+        "SecretsManagerSecretPass" : {
+            "Type" : "AWS::SecretsManager::Secret",
+            "Properties" : {
+                "SecretString" : "Secret",
+                "KmsKeyId" : "kmsKeyAlias"
             }
         },
         "SNSTopic" : {
