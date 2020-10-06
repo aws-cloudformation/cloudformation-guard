@@ -29,6 +29,28 @@
                 "SecurityPolicy": "TLS_1_2"
             }
         },
+        "ApiGatewayV2DomainFail" : {
+            "Type": "AWS::ApiGatewayV2::DomainName",
+            "Properties": {
+                "DomainName": "test.com",
+                "DomainNameConfigurations": [
+                    {
+                        "SecurityPolicy": "TLS_1_0"
+                    }
+                ]
+            }
+        },
+        "ApiGatewayV2DomainPass" : {
+            "Type": "AWS::ApiGatewayV2::DomainName",
+            "Properties": {
+                "DomainName": "test.com",
+                "DomainNameConfigurations": [
+                    {
+                        "SecurityPolicy": "TLS_1_2"
+                    }
+                ]
+            }
+        },
         "CloudFrontDistribution" : {
             "Type" : "AWS::CloudFront::Distribution",
             "Properties" : {

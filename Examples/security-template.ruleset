@@ -12,6 +12,8 @@ AWS::AmazonMQ::Configuration EngineVersion == 5.15.10 << Broker engine version s
 
 AWS::ApiGateway::DomainName SecurityPolicy == TLS_1_2 << API Gateway DomainName SecurityPolicy should use TLS 1.2
 
+AWS::ApiGatewayV2::DomainName DomainNameConfigurations.0.SecurityPolicy == TLS_1_2 << API GatewayV2 DomainName SecurityPolicy should use TLS 1.2
+
 AWS::CloudFront::Distribution ViewerCertificate.MinimumProtocolVersion == TLSv1.2_2018 << CloudFront TLS version should be 1.2
 
 AWS::CloudTrail::Trail EnableLogFileValidation == true << CloudTrail file validation should be enabled
@@ -125,7 +127,7 @@ AWS::SageMaker::NotebookInstance DirectInternetAccess == Disabled << Notebooks s
 AWS::SageMaker::NotebookInstance KmsKeyId == /.*/ << KMS encryption should be enabled
 AWS::SageMaker::NotebookInstance RootAccess == Disabled << Root access for users should be disabled
 
-AWS::SecretsManager::Secret KmsKeyId == /.*/ << KMS encryption should be enabled
+AWS::SecretsManager::Secret KmsKeyId == /.*/ << Secrets should be encrypted using a CMK instead of AWS-provided KMS keys
 
 AWS::SNS::Topic KmsMasterKeyId == /.*/ << KMS encryption should be enabled
 
