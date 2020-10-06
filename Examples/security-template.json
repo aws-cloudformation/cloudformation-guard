@@ -96,6 +96,38 @@
                 "IsPrivate": false
             }
         },
+        "CognitoUserPoolFail" : {
+            "Type" : "AWS::Cognito::UserPool",
+            "Properties" : {
+                "EnabledMfas": "SMS_MFA",
+                "MfaConfiguration": "OFF",
+                "Policies": {
+                    "PasswordPolicy": {
+                        "MinimumLength": 6,
+                        "RequireLowercase": false,
+                        "RequireNumbers": false,
+                        "RequireSymbols": false,
+                        "RequireUppercase": false
+                    }
+                }
+            }
+        },
+        "CognitoUserPoolPass" : {
+            "Type" : "AWS::Cognito::UserPool",
+            "Properties" : {
+                "EnabledMfas": "SOFTWARE_TOKEN_MFA",
+                "MfaConfiguration": "ON",
+                "Policies": {
+                    "PasswordPolicy": {
+                        "MinimumLength": 10,
+                        "RequireLowercase": true,
+                        "RequireNumbers": true,
+                        "RequireSymbols": true,
+                        "RequireUppercase": true
+                    }
+                }
+            }
+        },
         "DMSInstance" : {
             "Type" : "AWS::DMS::ReplicationInstance",
             "Properties" : {

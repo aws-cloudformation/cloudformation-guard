@@ -29,6 +29,15 @@ AWS::CodeBuild::SourceCredential Token == /^\{\{resolve:secretsmanager.*$/ << Co
 
 AWS::CodeStar::GitHubRepository IsPrivate == true << GitHub repository should be private
 
+AWS::Cognito::UserPool EnabledMfas == SOFTWARE_TOKEN_MFA << Cognito user pools should use software-based MFA
+AWS::Cognito::UserPool MfaConfiguration == ON << Cognito user pools should have MFA enabled for all users
+AWS::Cognito::UserPool Policies.PasswordPolicy.MinimumLength > 8 << Cognito user pool passwords should be over 8 characters in length
+AWS::Cognito::UserPool Policies.PasswordPolicy.RequireLowercase == true << Cognito user pool passwords should require lowercase characters
+AWS::Cognito::UserPool Policies.PasswordPolicy.RequireNumbers == true << Cognito user pool passwords should require numbers
+AWS::Cognito::UserPool Policies.PasswordPolicy.RequireSymbols == true << Cognito user pool passwords should require symbols
+AWS::Cognito::UserPool Policies.PasswordPolicy.RequireUppercase == true << Cognito user pool passwords should require uppercase characters
+
+
 AWS::DAX::Cluster SSESpecification.SSEEnabled == true << DAX cluster encryption should be enabled
 
 AWS::DMS::ReplicationInstance AllowMajorVersionUpgrade == true << DMS instance upgrades should be enabled
