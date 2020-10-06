@@ -59,13 +59,23 @@
                 }
             }
         },
-        "CloudTrailTrail" : {
+        "CloudTrailTrailFail" : {
             "Type" : "AWS::CloudTrail::Trail",
             "Properties" : {
                 "EnableLogFileValidation" : false,
                 "IncludeGlobalServiceEvents": false,
                 "IsLogging": false,
                 "IsMultiRegionTrail": false
+            }
+        },
+        "CloudTrailTrailPass" : {
+            "Type" : "AWS::CloudTrail::Trail",
+            "Properties" : {
+                "EnableLogFileValidation" : true,
+                "IncludeGlobalServiceEvents": true,
+                "IsLogging": true,
+                "IsMultiRegionTrail": true,
+                "KMSKeyId": "alias/MyAliasName"
             }
         },
         "CodeBuildProject" : {

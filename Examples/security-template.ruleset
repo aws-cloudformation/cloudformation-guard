@@ -20,6 +20,7 @@ AWS::CloudTrail::Trail EnableLogFileValidation == true << CloudTrail file valida
 AWS::CloudTrail::Trail IncludeGlobalServiceEvents == true << CloudTrail should include global service events
 AWS::CloudTrail::Trail IsLogging == true << CloudTrail logging should be enabled
 AWS::CloudTrail::Trail IsMultiRegionTrail == true << CloudTrail trails should cover all regions
+AWS::CloudTrail::Trail KMSKeyId == /.*/ << CloudTrail logs should be encrypted with a CMK. See: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/encrypting-cloudtrail-log-files-with-aws-kms.html
 
 AWS::CodeBuild::Project EncryptionKey == /.*/ << CodeBuild should use a CMK instead of AWS-provided KMS keys
 AWS::CodeBuild::Project VpcConfig.VpcId == /.*/ << CodeBuild projects should be built in a VPC
