@@ -12,7 +12,7 @@ AWS::AmazonMQ::Configuration EngineVersion == 5.15.10 << Broker engine version s
 
 AWS::ApiGateway::DomainName SecurityPolicy == TLS_1_2 << API Gateway DomainName SecurityPolicy should use TLS 1.2
 
-AWS::ApiGatewayV2::DomainName DomainNameConfigurations.0.SecurityPolicy == TLS_1_2 << API GatewayV2 DomainName SecurityPolicy should use TLS 1.2
+AWS::ApiGatewayV2::DomainName DomainNameConfigurations.*.SecurityPolicy == TLS_1_2 << API GatewayV2 DomainName SecurityPolicy should use TLS 1.2
 
 AWS::CloudFront::Distribution ViewerCertificate.MinimumProtocolVersion == TLSv1.2_2018 << CloudFront TLS version should be 1.2
 
