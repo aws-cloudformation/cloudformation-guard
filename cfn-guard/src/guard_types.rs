@@ -10,6 +10,7 @@ pub mod enums {
         Conditional,
         Rule,
         WhiteSpace,
+        Import
     }
 
     #[derive(Debug, Hash, PartialEq, Eq, Clone)]

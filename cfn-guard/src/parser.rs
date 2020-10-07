@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::fs;
 
 use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
@@ -24,6 +25,7 @@ lazy_static! {
         r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
     static ref WHITE_SPACE_REG: Regex = Regex::new(r"^\s+$").unwrap();
     static ref CONDITIONAL_RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(when|WHEN) +(?P<condition>.+) +(check|CHECK) +(?P<consequent>.*)").unwrap();
+    static ref IMPORT_REG: Regex = Regex::new(r"import (?P<ruleset_path>[\w\.\*/\\~]+)").unwrap();
 }
 
 pub(crate) fn parse_rules(
@@ -102,6 +104,19 @@ pub(crate) fn parse_rules(
             LineType::WhiteSpace => {
                 debug!("Line is white space");
                 continue;
+            }
+            LineType::Import => {
+                let import_cap = IMPORT_REG.captures(trimmed_line).unwrap();
+                let import_file = &import_cap["ruleset_path"];
+
+                let imported_ruleset_contents = match fs::read_to_string(&import_cap["ruleset_path"]){
+                    Ok(contents) => contents,
+                    Err(e) => return Err(e.to_string()),
+                };
+                match parse_rules(&imported_ruleset_contents, cfn_resources) {
+                    Ok(mut import_ruleset) => rule_set.append(&mut import_ruleset.rule_set),
+                    Err(e) => return Err(e),
+                };
             }
         }
     }
@@ -204,6 +219,9 @@ fn find_line_type(line: &str) -> Result<LineType, String> {
     };
     if WHITE_SPACE_REG.is_match(line) {
         return Ok(LineType::WhiteSpace);
+    }
+    if IMPORT_REG.is_match(line) {
+        return Ok(LineType::Import)
     }
     let msg_string = format!("BAD RULE: {:?}", line);
     error!("{}", &msg_string);
