@@ -28,19 +28,19 @@ matrix:
     script: cargo build --workspace --verbose --release
 
 before_deploy:
-- mkdir cfn-guard-$TRAVIS_OS_NAME
-- |
-  if [[ "$TRAVIS_OS_NAME" == "windows" ]]
-  then
-    cp -f target/release/cfn-guard.exe ./cfn-guard-$TRAVIS_OS_NAME/
-  else
-    cp ./target/release/cfn-guard ./cfn-guard-$TRAVIS_OS_NAME/
-  fi
-- cp LICENSE ./cfn-guard-$TRAVIS_OS_NAME/
-- cp NOTICE ./cfn-guard-$TRAVIS_OS_NAME/
-- cp ATTRIBUTION ./cfn-guard-$TRAVIS_OS_NAME/
-- cp README.md ./cfn-guard-$TRAVIS_OS_NAME/
-- tar czvf ./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz ./cfn-guard-$TRAVIS_OS_NAME
+  - mkdir cfn-guard-$TRAVIS_OS_NAME
+  - |
+    if [[ "$TRAVIS_OS_NAME" == "windows" ]]
+    then
+      cp -f target/release/cfn-guard.exe ./cfn-guard-$TRAVIS_OS_NAME/
+    else
+      cp ./target/release/cfn-guard ./cfn-guard-$TRAVIS_OS_NAME/
+    fi
+  - cp LICENSE ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp NOTICE ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp ATTRIBUTION ./cfn-guard-$TRAVIS_OS_NAME/
+  - cp README.md ./cfn-guard-$TRAVIS_OS_NAME/
+  - tar czvf ./cfn-guard-$TRAVIS_OS_NAME-$TRAVIS_TAG.tar.gz ./cfn-guard-$TRAVIS_OS_NAME
 
 deploy:
   provider: releases
