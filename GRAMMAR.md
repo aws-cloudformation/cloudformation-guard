@@ -4,7 +4,7 @@ Rulesets can be defined by the following ABNF grammar:
 ```abnf
 ;Defines the list of rules, assignments, and comments that make up the ruleset.
 
-ruleset = 1*([rule / clause / assignment / comment] *WSP CRLF)
+ruleset = 1*([rule / clause / assignment / comment / import-statement] *WSP CRLF)
 
 ;The below definitions are types of valid lines.
 rule = (base-rule / conditional-rule) [1*WSP output-message]; Rules are either simple boolean checks or conditional checks
@@ -12,7 +12,9 @@ clause = (rule 1*(%s"|OR|" 1*WSP rule)) / (rule 1*(%s"|AND|" 1*WSP rule)); 'And'
                                                                          ; clause cannot contain both expression forms |OR| and |AND|.
 assignment = %s"let" 1*WSP variable 1*WSP %s"=" 1*WSP assignment-value; Assignment rule.
 comment = "#" vchar-sp; Comment line
-
+import-statement = %s"import" 1*WSP file-path
+file-path = ["/"] (file-part) *("/" file-part )
+file-part = "." / ".." / "~" / VCHAR*
 
 ;The below definitions describe the basic two types of rules and optional output message.
 base-rule = resource-type 1*WSP property-comparison; Simple rule that compares a resource type's property value(s) with some value(s).

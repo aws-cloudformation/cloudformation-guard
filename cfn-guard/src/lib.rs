@@ -99,7 +99,7 @@ pub extern "C" fn run_check(
     trace!("CFN resources are: {:?}", cfn_resources);
 
     info!("Parsing rule set");
-    match parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources) {
+    match parser::parse_rules(&cleaned_rules_file_contents, &cfn_resources, &mut HashSet::new()) {
         Ok(pr) => {
             let mut outcome: Vec<String> = vec![];
             match check_resources(&cfn_resources, &pr, strict_checks) {

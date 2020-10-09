@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::path;
 
 use log::{self, debug, error, trace};
 use regex::{Captures, Regex};
@@ -25,12 +26,13 @@ lazy_static! {
         r"^(?P<resource_type>\S+) +(?P<resource_property>[\w\.\*]+) +(?P<operator>==|!=|<|>|<=|>=|IN|NOT_IN) +(?P<rule_value>[^\n\r]+) +<{2} *(?P<custom_msg>.*)").unwrap();
     static ref WHITE_SPACE_REG: Regex = Regex::new(r"^\s+$").unwrap();
     static ref CONDITIONAL_RULE_REG: Regex = Regex::new(r"(?P<resource_type>\S+) +(when|WHEN) +(?P<condition>.+) +(check|CHECK) +(?P<consequent>.*)").unwrap();
-    static ref IMPORT_REG: Regex = Regex::new(r"import (?P<ruleset_path>[\w\.\*/\\~]+)").unwrap();
+    static ref IMPORT_REG: Regex = Regex::new(r"^import (?P<ruleset_path>[\w\.\*/\\~]+)$").unwrap();
 }
 
 pub(crate) fn parse_rules(
     rules_file_contents: &str,
     cfn_resources: &HashMap<String, Value>,
+    mut imported_files: &mut HashSet<path::PathBuf>
 ) -> Result<ParsedRuleSet, String> {
     debug!("Entered parse_rules");
     trace!(
@@ -107,13 +109,22 @@ pub(crate) fn parse_rules(
             }
             LineType::Import => {
                 let import_cap = IMPORT_REG.captures(trimmed_line).unwrap();
-                let import_file = &import_cap["ruleset_path"];
+                let import_file = match fs::canonicalize(&import_cap["ruleset_path"]) {
+                    Ok(canonicalized_file) => canonicalized_file,
+                    Err(e) => return Err(e.to_string())
+                };
 
-                let imported_ruleset_contents = match fs::read_to_string(&import_cap["ruleset_path"]){
+                if imported_files.contains(&import_file) {
+                    return Err("Circular import detected. Check your ruleset files for circular references.".to_string())
+                }
+
+                let imported_ruleset_contents = match fs::read_to_string(&import_file){
                     Ok(contents) => contents,
                     Err(e) => return Err(e.to_string()),
                 };
-                match parse_rules(&imported_ruleset_contents, cfn_resources) {
+                imported_files.insert(import_file);
+
+                match parse_rules(&imported_ruleset_contents, cfn_resources, imported_files) {
                     Ok(mut import_ruleset) => rule_set.append(&mut import_ruleset.rule_set),
                     Err(e) => return Err(e),
                 };
@@ -428,7 +439,7 @@ mod tests {
         let mut var_map: HashMap<String, String> = HashMap::new();
         var_map.insert("var".to_string(), "[128]".to_string());
 
-        let parsed_rules = parse_rules(assignment, &cfn_resources).unwrap();
+        let parsed_rules = parse_rules(assignment, &cfn_resources, &mut HashSet::new()).unwrap();
         assert!(parsed_rules.variables["var"] == "[128]");
     }
 }
