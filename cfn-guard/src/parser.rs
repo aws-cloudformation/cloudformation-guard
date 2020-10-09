@@ -113,21 +113,18 @@ pub(crate) fn parse_rules(
                     Ok(canonicalized_file) => canonicalized_file,
                     Err(e) => return Err(e.to_string())
                 };
+                if !imported_files.contains(&import_file) {
+                    let imported_ruleset_contents = match fs::read_to_string(&import_file){
+                        Ok(contents) => contents,
+                        Err(e) => return Err(e.to_string()),
+                    };
+                    imported_files.insert(import_file);
 
-                if imported_files.contains(&import_file) {
-                    return Err("Circular import detected. Check your ruleset files for circular references.".to_string())
+                    match parse_rules(&imported_ruleset_contents, cfn_resources, imported_files) {
+                        Ok(mut import_ruleset) => rule_set.append(&mut import_ruleset.rule_set),
+                        Err(e) => return Err(e),
+                    };
                 }
-
-                let imported_ruleset_contents = match fs::read_to_string(&import_file){
-                    Ok(contents) => contents,
-                    Err(e) => return Err(e.to_string()),
-                };
-                imported_files.insert(import_file);
-
-                match parse_rules(&imported_ruleset_contents, cfn_resources, imported_files) {
-                    Ok(mut import_ruleset) => rule_set.append(&mut import_ruleset.rule_set),
-                    Err(e) => return Err(e),
-                };
             }
         }
     }
