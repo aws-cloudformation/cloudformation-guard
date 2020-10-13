@@ -223,7 +223,7 @@ A: Guard solves a number of use-cases:
 * It can be a deployment gate in a CI/CD pipeline. 
 * It allows you to define a single source-of-truth for what constitutes valid infrastructure definitions. Define rules once and have them run both locally and as lambdas in your AWS account for integration with other AWS services.
 * It allows for pre-deployment safety checks of your CloudFormation template resources. You can both require settings to be included and prohibit configurations that have caused issues previously.  
-* It's easy to get started.  You can extract rules you want from existing, known-good templates using the rulegen functionality of cfn-guard.
+* It's easy to get started. You can extract rules you want from existing, known-good templates using the rulegen functionality of cfn-guard.
 
 
 ### Q: How does CloudFormation Guard relate to other services?
