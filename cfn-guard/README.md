@@ -341,7 +341,7 @@ And then refer to those variables in rules using `%`:
 AWS::EBS::Volume Size == %size
 ```
 
-### JSON lists vs non-JSON lists
+## JSON lists vs non-JSON lists
 
 #### JSON Lists
 Any valid JSON list literal is a valid JSON list. The list:
@@ -391,7 +391,7 @@ That will give you more information on how `cfn-guard` is processing it.
 
 (See [Troubleshooting](#troubleshooting) for more details on using the different logging levels to see how your template and rule set are being processed.)
 
-### Environment Variables
+## Environment Variables
 You can even reference **environment variables** using the Makefile-style notation: `%{Name}`
 
 So you could rewrite the IAM Role rule above as:
@@ -409,6 +409,28 @@ IAM_PRIN=lambda.amazonaws.com cfn-guard -t iam_template -r iam_rule_set
 Note:  All environment variables are available for use at runtime. They don't need to be explicitly set during the `cfn-guard` invocation.
 
 **Environment Variables are not logged to avoid persisting sensitive information.  You should use them to pass sensitive values in to `cfn-guard` instead of the `let` form.**
+
+## Importing Rulesets
+It is also possible to import rulesets locally into other rulesets using the `import` keyword. For example, if you had two rulesets:
+ 
+
+`secure_named_bucket.ruleset`
+```
+import bucket_encryption.ruleset
+
+AWS::S3::Bucket BucketName == /NecessaryPrefix.*/
+```
+and 
+`bucket_encryption.ruleset`
+```
+AWS::S3::Bucket BucketEncryption.ServerSideEncryptionConfiguration.*.ServerSideEncryptionByDefault.SSEAlgorithm == aws:kms
+```
+
+The resulting ruleset evaluated by cfn-guard for the `secure_named_bucket.ruleset` would be:
+```
+AWS::S3::Bucket BucketEncryption.ServerSideEncryptionConfiguration.*.ServerSideEncryptionByDefault.SSEAlgorithm == aws:kms
+AWS::S3::Bucket BucketName == /NecessaryPrefix.*/
+```
 
 ## Custom Failure Messages
 
