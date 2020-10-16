@@ -1,10 +1,10 @@
 .PHONY: cfn-guard cfn-guard-rulegen
 
 cfn-guard:
-	cargo build --release; cp target/release/cfn-guard ../bin
+	cargo build --release; cp target/release/cfn-guard ./bin
 
 cfn-guard-rulegen:
-	cargo build --release; cp target/release/cfn-guard-rulegen ../bin
+	cargo build --release; cp target/release/cfn-guard-rulegen ./bin
 
 cfn-guard-lambda_install:
 	cd cfn-guard-lambda; make install
