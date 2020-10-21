@@ -3,13 +3,20 @@ cache: cargo
 matrix:
   include:
   - name: Linux Binary
-    env: TARGET=x86_64-unknown-linux-musl
+    services: docker
+    env:
+      - OS_VERSION=7
+    before_install:
+      - sudo apt-get update
+      - echo 'DOCKER_OPTS="-H tcp://127.0.0.1:2375 -H unix:///var/run/docker.sock -s
+        devicemapper"' | sudo tee /etc/default/docker > /dev/null
+      - sudo service docker restart
+      - sudo docker pull centos:centos${OS_VERSION}
     rust: nightly
-    script: cargo build --workspace --verbose --release
-    addons:
-      apt:
-        packages:
-        - musl-tools
+    script: docker run --rm=true -v `pwd`:/centosbuild:rw centos:centos${OS_VERSION} /bin/bash
+      -c "yum groupinstall -y 'Development Tools' && curl https://sh.rustup.rs -sSf
+      | bash -s -- -y && cd centosbuild && /root/.cargo/bin/cargo build --workspace
+      --verbose --release"
   - name: macOS Binary
     env: MACOSX_DEPLOYMENT_TARGET=10.7 TARGET=x86_64-apple-darwin
     os: osx

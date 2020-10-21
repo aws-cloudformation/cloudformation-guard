@@ -1,5 +1,7 @@
 # AWS CloudFormation Guard
 
+[![Build Status](https://travis-ci.com/aws-cloudformation/cloudformation-guard.svg?branch=master)](https://travis-ci.com/aws-cloudformation/cloudformation-guard)
+
 This repo contains source code for the following tools:
 
 * `CloudFormation Guard` A CLI tool that 
