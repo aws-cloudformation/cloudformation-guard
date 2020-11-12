@@ -543,7 +543,7 @@ AWS::EC2::Volume Encrypted == true |OR| AWS::EC2::Volume Encrypted == false
 AWS::EC2::Volume AvailabilityZone == {"Fn::GetAtt":["EC2Instance","AvailabilityZone"]}
 ```
 # Strict Checks
-The `--strict-check` flag will cause a resource to fail a check if it does not contain the property the rule is checking.  This is useful to enforce the presence of optional properties like `Encryption == true`.
+The `--strict-checks` flag will cause a resource to fail a check if it does not contain the property the rule is checking.  This is useful to enforce the presence of optional properties like `Encryption == true`.
 
 Strict checks and wildcards need to be carefully thought out before being used together, however.  Wildcards create rules at runtime that map to all of the values that *each* resource of that type has at the position of the wildcard.  That means means that overly broad wildcards will give overly broad failures.
 
