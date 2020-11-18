@@ -101,28 +101,20 @@
 //
 // Extern crate dependencies
 //
-use linked_hash_map::LinkedHashMap;
-use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1, take_while, is_not, is_a, take_till};
-use nom::character::complete::{alphanumeric1, char, digit1, one_of, alpha1};
-use nom::character::complete::{anychar, space0, space1, multispace0, multispace1};
-use nom::combinator::{map, map_res, opt, value, cut, all_consuming, rest, peek};
-use nom::multi::{separated_list, separated_nonempty_list, many0, many1, fold_many1};
-use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, separated_pair, tuple, terminated, pair};
 use nom::{FindSubstring, InputTake};
-
-use super::super::values::*;
-use super::super::common::*;
-use super::super::expr::*;
-
-use nom_locate::LocatedSpan;
-use nom::error::{ParseError, ErrorKind, context};
-use std::fmt::Formatter;
-use nom::character::{is_alphabetic, is_digit};
+use nom::branch::alt;
+use nom::bytes::complete::{tag, take_while, take_while1};
+use nom::character::is_digit;
+use nom::character::complete::{alpha1, char, space1};
+use nom::combinator::{cut, map, opt, value};
+use nom::error::ParseError;
+use nom::multi::fold_many1;
+use nom::sequence::{delimited, pair, preceded, tuple};
 
 use super::*;
 use super::common::*;
+use super::super::expr::*;
+use super::super::values::*;
 use super::values::parse_value;
 
 //
@@ -363,13 +355,23 @@ fn clause(input: Span2) -> IResult<Span2, Clause> {
             }
     };
 
-    let parser = if no_rhs_expected {
-        map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
+    if no_rhs_expected {
+        let (rest, custom_message) = cut(
+            map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
             |msg| {
-                (None, msg.map(String::from).or(None))
-            })
+                msg.map(String::from).or(None)
+            }))(input)?;
+        Ok((rest,
+            Clause {
+                access: lhs,
+                comparator: cmp,
+                compare_with: None,
+                custom_message,
+                location
+            }
+        ))
     } else {
-        alt((
+        let (rest, (compare_with, custom_message)) = cut(alt((
             map(tuple((
                 access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                 |(rhs, msg)| {
@@ -380,19 +382,17 @@ fn clause(input: Span2) -> IResult<Span2, Clause> {
                 move |(rhs, msg)| {
                     (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
                 })
+        )))(rest)?;
+        Ok((rest,
+            Clause {
+                access: lhs,
+                comparator: cmp,
+                compare_with,
+                custom_message,
+                location
+            }
         ))
-    };
-
-    let (rest, (compare_with, custom_message)) =
-        cut(parser)(input)?;
-
-    Ok((rest, Clause {
-        access: lhs,
-        comparator: cmp,
-        compare_with,
-        custom_message,
-        location
-    }))
+    }
 }
 
 //
@@ -627,7 +627,7 @@ mod tests {
                 },
                 "var".to_string()
             )),
-            Err(nom::Err::Error((
+            Err(nom::Err::Error(
                 ParserError {
                     span: unsafe {
                         Span2::new_from_raw_offset(
@@ -639,7 +639,7 @@ mod tests {
                     },
                     kind: nom::error::ErrorKind::Alpha,
                     context: "".to_string(),
-                }))),
+                })),
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
@@ -1168,7 +1168,7 @@ mod tests {
         ];
 
         for (idx, each) in examples.iter().enumerate() {
-            let span = Span2::new_extra(examples[idx], "");
+            let span = Span2::new_extra(*each, "");
             let result = access(span);
             assert_eq!(&result, &expectations[idx]);
         }
@@ -1581,8 +1581,205 @@ mod tests {
             ">=", // ok, 3
             "<", // ok, 4
             "<= ", // ok, 5
+            ">=\n", // ok, 6
+            "IN\n", // ok 7
+            "!IN\n", // ok 8
+        ];
+
+        let expectations = [
+            // "", // err 0
+            Err(nom::Err::Error(ParserError {
+                span: from_str2(examples[0]),
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Tag,
+            })),
+
+            // " >", // err 1,
+            Err(nom::Err::Error(ParserError {
+                span: from_str2(examples[1]),
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Tag,
+            })),
+
+
+            // ">", // ok, 2
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[2].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::Gt)
+            )),
+
+            // ">=", // ok, 3
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[3].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::Ge)
+            )),
+
+            // "<", // ok, 4
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[4].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::Lt)
+            )),
+
+            // "<= ", // ok, 5
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[5].len()-1,
+                        1,
+                        " ",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::Le)
+            )),
+
+            // ">=\n", // ok, 6
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[6].len()-1,
+                        1,
+                        "\n",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::Ge)
+            )),
+
+            // "IN\n", // ok 7
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[7].len()-1,
+                        1,
+                        "\n",
+                        ""
+                    )
+                },
+                ValueOperator::Cmp(CmpOperator::In)
+            )),
+
+            // "!IN\n", // ok 8
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[8].len()-1,
+                        1,
+                        "\n",
+                        ""
+                    )
+                },
+                ValueOperator::Not(CmpOperator::In)
+            )),
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            let span = from_str2(*each);
+            let result = value_cmp(span);
+            assert_eq!(&result, &expectations[idx]);
+        }
+
+    }
+
+    #[test]
+    fn test_clause_success() {
+        let lhs = [
+            "configuration.containers.*.image",
+            "engine",
+        ];
+
+        let rhs = "PARAMETERS.ImageList";
+        let comparators = [
+            (">", ValueOperator::Cmp(CmpOperator::Gt)),
+            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
+            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
+            ("!=", ValueOperator::Not(CmpOperator::Eq)),
+            ("IN", ValueOperator::Cmp(CmpOperator::In)),
+            ("!IN", ValueOperator::Not(CmpOperator::In)),
+            ("not IN", ValueOperator::Not(CmpOperator::In)),
+            ("NOT IN", ValueOperator::Not(CmpOperator::In)),
+            ("KEYS IN", ValueOperator::Cmp(CmpOperator::KeysIn)),
+            ("KEYS ==", ValueOperator::Cmp(CmpOperator::KeysEq)),
+            ("KEYS !=", ValueOperator::Not(CmpOperator::KeysEq)),
+            ("KEYS !IN", ValueOperator::Not(CmpOperator::KeysIn)),
+        ];
+        let separators = [
+            " ",
+            "\n\n\t",
+            "\n#this comment\n",
+            " #this comment\n"
+        ];
+
+        let rhs_dotted = rhs.split(".").map(String::from).collect::<Vec<String>>();
+        let rhs_access = Some(LetValue::PropertyAccess(PropertyAccess {
+            var_access: None,
+            property_dotted_notation: rhs_dotted
+        }));
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+            let lhs_access = PropertyAccess {
+                var_access: None,
+                property_dotted_notation: dotted
+            };
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, rhs,
+                                    || lhs_access.clone(),
+                                    || rhs_access.clone());
+        }
+
+        let comparators = [
             ""
         ];
     }
+
+    fn testing_access_with_cmp<A, C>(separators: &[&str],
+                                     comparators: &[(&str, ValueOperator)],
+                                     lhs: &str,
+                                     rhs: &str,
+                                     access: A,
+                                     cmp_with: C)
+        where A: Fn() -> PropertyAccess,
+              C: Fn() -> Option<LetValue>
+    {
+        for each in separators {
+            for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
+                let access_pattern = format!("{lhs}{sep}{op}{sep}{rhs}",
+                                             lhs = lhs, rhs = rhs, op = *each_op, sep = *each);
+                println!("Access tp test {}", access_pattern);
+                let span = from_str2(&access_pattern);
+                let result = clause(span);
+                assert_eq!(result.is_ok(), true);
+                let result = result.unwrap().1;
+                assert_eq!(result.access, access());
+                assert_eq!(result.compare_with, cmp_with());
+                assert_eq!(&result.comparator, value_cmp);
+                assert_eq!(result.custom_message, None);
+            }
+        }
+    }
+
 
 }

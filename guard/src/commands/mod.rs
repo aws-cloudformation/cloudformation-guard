@@ -1,6 +1,3 @@
-use clap::ArgMatches;
-use crate::errors::Error;
-
 pub(crate) mod parse_tree;
 pub(crate) mod files;
 pub(crate) mod evaluate;

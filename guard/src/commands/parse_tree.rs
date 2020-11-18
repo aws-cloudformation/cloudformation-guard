@@ -1,18 +1,19 @@
-use clap::{ArgMatches, App, Arg};
-use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
-use crate::command::Command;
-use crate::errors::Error;
+use std::fs::File;
 
+use clap::{App, Arg, ArgMatches};
+use colored::*;
+
+use crate::command::Command;
+use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
+use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
 use crate::errors;
-use crate::rules::expr::*;
+use crate::errors::Error;
 use crate::rules;
-use crate::rules::parser::Span;
 use crate::rules::dependency;
+use crate::rules::expr::*;
+use crate::rules::parser::Span;
 
 use super::files;
-use crate::commands::files::{get_files, alpabetical, last_modified, regular_ordering, read_file_content};
-use std::fs::File;
-use colored::*;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ParseTreeView {}

@@ -77,7 +77,7 @@
 ///  value                      = primitives / map_type / list_type
 ///
 ///  assignment                 = "let" 1*SP var_name ("=" / ":=") 1*SP value
-///  named_rule                 = "rule" 1*SP var_name "{" 
+///  named_rule                 = "rule" 1*SP var_name "{"
 ///
 ///
 ///
@@ -93,32 +93,31 @@
 // Extern crate dependencies
 //
 use linked_hash_map::LinkedHashMap;
+use nom::{FindSubstring, InputTake, IResult};
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1, take_while, is_not, is_a};
+use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
 use nom::character::complete::{alphanumeric1, char, digit1, one_of};
-use nom::character::complete::{anychar, space0, space1, multispace0,  multispace1};
-use nom::combinator::{map, map_res, opt, value, cut, all_consuming, rest, peek};
-use nom::multi::{separated_list, separated_nonempty_list, many0, many1};
+use nom::character::complete::{anychar, multispace0, multispace1, space0, space1};
+use nom::combinator::{all_consuming, cut, map, map_res, opt, peek, rest, value};
+use nom::multi::{many0, many1, separated_list, separated_nonempty_list};
 use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, separated_pair, tuple, terminated};
-use nom::{IResult, FindSubstring, InputTake};
-
-use super::values::*;
-use super::expr::*;
-use super::common::*;
-
+use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
 use nom_locate::LocatedSpan;
+
+use crate::rules::common::*;
+//
+// Local crate
+//
+use crate::rules::values::{LOWER_INCLUSIVE, RangeType, UPPER_INCLUSIVE, Value};
+
+use super::expr::*;
+use super::values::*;
+
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
 pub(crate) fn from_str(in_str: &str) -> Span {
     Span::new_extra(in_str, "")
 }
-
-//
-// Local crate
-//
-use crate::rules::values::{Value, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
-use crate::rules::common::*;
 
 //
 // Rust std crate
@@ -405,7 +404,7 @@ pub(crate) fn var_assignment(input: Span) -> IResult<Span, LetExpr> {
           tuple((
               preceded(tag("let"), space1),  // optional let keyword
               var_name, // var_name
-              cut(preceded(space1, (alt((tag(":="), tag("=")))))), // followed by := or =
+              cut(preceded(space1, alt((tag(":="), tag("="))))), // followed by := or =
               cut(preceded(take_while_ws_or_comment, value_or_access)), // value access
               var_terminated, // already throws nom::Err::Failure(...) // terminated with newline or comment
           )),
@@ -829,9 +828,10 @@ pub(crate) fn parse_rules(input: Span) -> IResult<Span, Rules> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::rules::values::WithinRange;
     use crate::rules::values::make_linked_hashmap;
+    use crate::rules::values::WithinRange;
+
+    use super::*;
 
     #[test]
     fn test_int_parse() {
@@ -2652,7 +2652,7 @@ let latest := "ami-6458235"
 
         let rules = parse_rules(Span::new_extra(s, ""));
         match rules {
-            Err(nom::Err::Failure((i, k))) => {
+            Err(nom::Err::Failure((i, _k))) => {
                 let span = i as Span;
                 assert_eq!(3, span.location_line());
                 assert_eq!(17, span.get_utf8_column());

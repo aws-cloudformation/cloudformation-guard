@@ -1,28 +1,18 @@
+use std::collections::HashMap;
+use std::convert::TryFrom;
+
 //
 // extern crates
 //
-use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1};
-use nom::character::complete::{char, multispace0, space0, space1};
-use nom::combinator::{cut, map, opt, value};
-use nom::multi::{many0, many1, separated_nonempty_list};
-use nom::sequence::{delimited, preceded, terminated, tuple};
-use nom::{FindSubstring, IResult, InputTake};
-
-use crate::rules::common::take_while_ws_or_comment;
-
+use crate::errors::{Error, ErrorKind};
+use crate::rules::common::walk_value;
+use crate::rules::dependency::rules_execution_order_itr;
+use crate::rules::EvalStatus;
+use crate::rules::scope::BlockScope;
 //
 // crate level
 //
 use crate::rules::values::*;
-use crate::rules::common::{walk_value, walk_type_value};
-use crate::rules::scope;
-use crate::errors::{Error, ErrorKind};
-use std::convert::TryFrom;
-use crate::rules::EvalStatus;
-use crate::rules::scope::BlockScope;
-use std::collections::HashMap;
-use crate::rules::dependency::{rules_execution_order, rules_execution_order_itr};
 
 ///
 /// Named Rule model
@@ -272,7 +262,7 @@ impl<'loc> Clause<'loc> {
                     // This is reason why the status is inverted below, it returns FAIL if we
                     // did succeed retrieving the value. the inverse of that is !=
                     //
-                    let status = if let Ok(values) = Self::property_access(
+                    let status = if let Ok(_values) = Self::property_access(
                         &self.access, scope, context, &self.location, resolutions, hierarchy.clone()) {
                         EvalStatus::FAIL
                     } else {
@@ -323,14 +313,14 @@ impl<'loc> Clause<'loc> {
                     CmpOperator::Gt => Self::compute(lhs, rhs, compare_gt, is_inverse),
                     CmpOperator::Ge => Self::compute(lhs, rhs, compare_ge, is_inverse),
                     CmpOperator::In => {
-                        let eval = 'outer: loop {
+                        let eval = 'outer_in: loop {
                             'next: for each_lhs in &lhs {
                                 for each_rhs in &rhs {
                                     if compare_eq(each_lhs, each_rhs)? {
                                         continue 'next;
                                     }
                                 }
-                                break 'outer EvalStatus::FAIL;
+                                break 'outer_in EvalStatus::FAIL;
                             }
                             break EvalStatus::PASS;
                         };
@@ -604,10 +594,11 @@ impl Resolutions {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::rules::parser::*;
 
-    //
+    use super::*;
+
+//
     // Testing default rule
     //
 

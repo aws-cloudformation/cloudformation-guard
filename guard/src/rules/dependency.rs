@@ -1,14 +1,16 @@
-use crate::rules::expr::*;
 use std::collections::HashMap;
-use crate::errors::{Error, ErrorKind};
+
 use nom::lib::std::collections::HashSet;
+
+use crate::errors::{Error, ErrorKind};
+use crate::rules::expr::*;
 
 fn dependency_order<'r, T: ?Sized>(current: &'r str,
                                    visited: &mut HashSet<&'r str>,
                                    dependencies: &HashMap<&'r str, (Vec<&'r str>, &'r T)>,
                                    order: &mut Vec<&'r str>) -> Result<(), Error> {
     visited.insert(current);
-    if let Some((deps, obj)) = dependencies.get(current) {
+    if let Some((deps, _obj)) = dependencies.get(current) {
         for each in deps {
             if !visited.contains(*each) {
                 dependency_order(*each, visited, dependencies, order)?;
@@ -108,9 +110,9 @@ pub(crate) fn rules_execution_order<'r>(rules: &'r Rules<'r>) -> Result<Vec<(&'r
 
 #[cfg(test)]
 mod tests {
+    use crate::rules::parser::*;
 
     use super::*;
-    use crate::rules::parser::*;
 
     #[test]
     fn dep_order() {

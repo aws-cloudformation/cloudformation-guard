@@ -1,15 +1,12 @@
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1, take_while, is_not, is_a, take_till};
-use nom::character::complete::{alphanumeric1, char, digit1, one_of, alpha1};
-use nom::character::complete::{anychar, space0, space1, multispace0, multispace1};
-use nom::combinator::{map, map_res, opt, value, cut, all_consuming, rest, peek};
-use nom::multi::{separated_list, separated_nonempty_list, many0, many1, fold_many1};
-use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, separated_pair, tuple, terminated, pair};
-use nom::{FindSubstring, InputTake};
+use nom::bytes::complete::{tag, take_till};
+use nom::character::complete::{char, multispace0, multispace1, space0};
+use nom::combinator::{map, value};
+use nom::error::context;
+use nom::multi::{many0, many1};
+use nom::sequence::{delimited, preceded, tuple};
 
 use super::*;
-use nom::error::context;
 
 impl<'a> ParserError<'a> {
     pub(crate) fn context(&self) -> &str {
@@ -34,7 +31,7 @@ impl<'a> ParseError<Span2<'a>> for ParserError<'a> {
         }
     }
 
-    fn append(input: Span2<'a>, kind: ErrorKind, other: Self) -> Self {
+    fn append(_input: Span2<'a>, kind: ErrorKind, other: Self) -> Self {
         other
     }
 
@@ -55,7 +52,7 @@ impl<'a> ParseError<Span2<'a>> for ParserError<'a> {
 
 impl<'a> std::fmt::Display for ParserError<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut message = format!(
+        let message = format!(
             "Error parsing file {} at line {} at column {}, when handling {}",
             self.span.extra, self.span.location_line(), self.span.get_utf8_column(),
             self.context);

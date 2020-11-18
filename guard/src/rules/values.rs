@@ -1,12 +1,10 @@
-use linked_hash_map::LinkedHashMap;
-use nom_locate::LocatedSpan;
-use nom::lib::std::cmp::Ordering;
-use crate::errors::{Error, ErrorKind};
-
-
 use std::convert::TryFrom;
 use std::str::FromStr;
-use regex::Regex;
+
+use linked_hash_map::LinkedHashMap;
+use nom::lib::std::cmp::Ordering;
+
+use crate::errors::{Error, ErrorKind};
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum CmpOperator {
@@ -248,9 +246,11 @@ pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool, Error> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use std::convert::TryInto;
+
     use crate::errors;
+
+    use super::*;
 
     #[test]
     fn test_convert_from_to_value() -> Result<(), errors::Error> {

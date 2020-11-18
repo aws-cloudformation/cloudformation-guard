@@ -1,3 +1,8 @@
+use std::fmt::Formatter;
+
+use nom::error::{ErrorKind, ParseError};
+use nom_locate::LocatedSpan;
+
 ///
 /// Parser Grammar for the CFN Guard rule syntax. Any enhancements to the grammar
 /// **MUST** be reflected in this doc section.
@@ -96,10 +101,6 @@
 mod expr;
 mod values;
 mod common;
-
-use nom_locate::LocatedSpan;
-use nom::error::{ParseError, ErrorKind};
-use std::fmt::Formatter;
 
 pub(crate) type Span2<'a> = LocatedSpan<&'a str, &'a str>;
 

@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use crate::rules::expr::*;
+
 use crate::errors::{Error, ErrorKind};
-use crate::rules::dependency::make_dependency_order;
+use crate::rules::common::walk_type_value;
+use crate::rules::expr::*;
 use crate::rules::values::Value;
-use crate::rules::common::{walk_type_value, walk_value};
-use std::convert::TryFrom;
 
 #[derive(Clone, Debug)]
 pub(crate) struct BlockScope<'r> {

@@ -1,23 +1,19 @@
-use clap::{ArgMatches, App, Arg};
-use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
-use crate::command::Command;
-use crate::errors::Error;
-
-use crate::errors;
-use crate::rules::expr::*;
-use crate::rules;
-use crate::rules::parser::Span;
-use crate::rules::{dependency, EvalStatus};
-
-use super::files;
-use crate::commands::files::{get_files, alpabetical, last_modified, regular_ordering, read_file_content};
+use std::collections::HashMap;
 use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
+
+use clap::{App, Arg, ArgMatches};
 use colored::*;
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::io::BufReader;
+use crate::command::Command;
+use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
+use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
+use crate::errors;
+use crate::errors::Error;
+use crate::rules;
+use crate::rules::EvalStatus;
+use crate::rules::expr::*;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct EvaluateRules {}
@@ -91,7 +87,7 @@ impl Command for EvaluateRules {
                 continue;
             }
 
-            for (each, rule_evaluations) in result? {
+            for (_each, rule_evaluations) in result? {
                 if let Err(error) = rule_evaluations {
                     println!("Ruleset {}: Rules Evaluation Error {}", name.underline(), error);
                     continue;

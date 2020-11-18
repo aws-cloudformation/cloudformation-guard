@@ -1,10 +1,11 @@
-use serde_json;
+use std::convert::Infallible;
+use std::fmt::Display;
+use std::fmt::Formatter;
+
 use nom;
+use serde_json;
 
 use crate::rules::parser::Span;
-use std::convert::Infallible;
-use std::fmt::Formatter;
-use std::fmt::Display;
 
 #[derive(Debug)]
 pub struct Error(pub ErrorKind);

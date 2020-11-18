@@ -2,32 +2,31 @@
 // Extern crate dependencies
 //
 use linked_hash_map::LinkedHashMap;
+use nom::InputTake;
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1, take_while, is_not, is_a};
+use nom::bytes::complete::{is_a, is_not, tag, take_while};
 use nom::character::complete::{alphanumeric1, char, digit1, one_of};
-use nom::character::complete::{anychar, space0, space1, multispace0,  multispace1};
-use nom::combinator::{map, map_res, opt, value, cut, all_consuming, rest, peek};
-use nom::multi::{separated_list, separated_nonempty_list, many0, many1};
+use nom::character::complete::{anychar, space0};
+use nom::combinator::{ map, map_res, opt, value};
+use nom::multi::separated_list;
 use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, separated_pair, tuple, terminated};
-use nom::{FindSubstring, InputTake};
+use nom::sequence::{delimited, preceded, separated_pair, tuple};
+use nom_locate::LocatedSpan;
 
-use crate::rules::values::*;
+use crate::rules::parser2::common::zero_or_more_ws_or_comment;
+//
+// Local crate
+//
+use crate::rules::values::{LOWER_INCLUSIVE, RangeType, UPPER_INCLUSIVE, Value};
+
 use super::*;
 use super::common::*;
 
-use nom_locate::LocatedSpan;
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
 pub(crate) fn from_str(in_str: &str) -> Span {
     Span::new_extra(in_str, "")
 }
-
-//
-// Local crate
-//
-use crate::rules::values::{Value, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
-use crate::rules::parser2::common::zero_or_more_ws_or_comment;
 
 //
 // Rust std crate
@@ -251,9 +250,10 @@ pub(super) fn parse_value(input: Span) -> IResult<Span, Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::rules::values::WithinRange;
     use crate::rules::values::make_linked_hashmap;
+    use crate::rules::values::WithinRange;
+
+    use super::*;
 
     #[test]
     fn test_int_parse() {

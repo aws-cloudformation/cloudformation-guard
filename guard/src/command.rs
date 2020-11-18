@@ -1,4 +1,5 @@
-use clap::{ArgMatches, App};
+use clap::{App, ArgMatches};
+
 use crate::errors::Error;
 
 pub(crate) trait Command {

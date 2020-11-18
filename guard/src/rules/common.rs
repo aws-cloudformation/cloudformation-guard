@@ -1,18 +1,16 @@
-
-use super::values::Value;
-use super::parser::Span;
-use crate::errors::{Error, ErrorKind};
-
+use heck::{CamelCase, KebabCase, MixedCase, SnakeCase, TitleCase};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{map, value};
-use nom::multi::many0;
-use nom::sequence::{preceded, delimited};
 use nom::IResult;
+use nom::multi::many0;
+use nom::sequence::preceded;
 
-use lazy_static::*;
-use heck::{CamelCase, KebabCase, TitleCase, SnakeCase, MixedCase};
+use crate::errors::{Error, ErrorKind};
+
+use super::parser::Span;
+use super::values::Value;
 
 pub(in crate::rules) fn take_while_ws_or_comment(input: Span) -> IResult<Span, Vec<&str>> {
     many0(alt((value("", multispace1), comment)))(input)
@@ -264,10 +262,11 @@ pub(crate) fn walk_type_value<'a>(in_val: &'a Value, fields: &[String], hierarch
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use crate::rules::parser::from_str;
 
     use super::*;
-    use crate::rules::parser::from_str;
-    use std::collections::HashMap;
 
     #[test]
     fn test_walk_property() {

@@ -1,10 +1,9 @@
-
-use std::io::{BufReader, Read, Error};
-use std::path::{Path, PathBuf};
-use std::fs::File;
-
 use std::cmp::Ordering;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::PathBuf;
 use std::str::FromStr;
+
 use walkdir::WalkDir;
 
 use crate::errors;
@@ -56,7 +55,7 @@ pub(crate) fn last_modified(first: &walkdir::DirEntry, second: &walkdir::DirEntr
     return Ordering::Equal
 }
 
-pub(crate) fn regular_ordering(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn regular_ordering(_first: &walkdir::DirEntry, _second: &walkdir::DirEntry) -> Ordering {
     Ordering::Equal
 }
 
