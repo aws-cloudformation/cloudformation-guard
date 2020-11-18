@@ -1,0 +1,77 @@
+#
+#  this is the set of rules for secure S3 bucket
+#  it must not be public AND
+#  it must have a policy associated
+#
+rule s3_secure {
+    AWS::S3::Bucket {
+        public != true
+        policy != null
+    }
+}
+
+#
+# must be s3_secure or
+# there must a tag with a key ExternalS3Approved as an exception
+#
+rule s3_secure_exception {
+    s3_secure or
+    AWS::S3::Bucket tags.*.key in ["ExternalS3Approved"]
+}
+
+kms_keys := [
+    "arn:aws:kms:123456789012:alias/allowed-primary",
+    "arn:aws:kms:123456789012:alias/allowed-secondary"
+]
+
+encrypted := false
+latest := "ami-6458235"
+
+#
+#   TypeClause {
+#       type_name: "AWS::EC2::Instance",
+#       clauses: [
+#           PropertyClause::Clause(
+#               access: PropertyAccess {
+#                   var_access: None,
+#                   property_dotted_name: ["securityGroups"],
+#               },
+#               comparator: ValueOperation::Cmp(CmpOperator::Eq),
+#               compare_with: LetValue::Value(Value::List(["InstanceSecurityGroup"]),
+#               custom_message: None
+#           ),
+#         PropertyClause::Disjunction([
+#           PropertyClause::Clause(
+#               access: PropertyAccess {
+#                   var_access: None,
+#                   property_dotted_name: ["keyName"],
+#               },
+#               comparator: ValueOperation::Cmp(CmpOperator::Eq),
+#               compare_with: LetValue::Value(Value::String("KeyName")),
+#               custom_message: None
+#           ),
+#           PropertyClause::Clause(
+#               access: PropertyAccess {
+#                   var_access: None,
+#                   property_dotted_name: ["keyName"],
+#               },
+#               comparator: ValueOperation::Cmp(CmpOperator::Eq),
+#               compare_with: LetValue::Value(Value::String("Key2")),
+#               custom_message: None
+#           )])
+#       ]
+#   }
+#
+#
+
+AWS::EC2::Instance securityGroups == ["InstanceSecurityGroup"]
+AWS::EC2::Instance keyName == "KeyName" or keyName == "Key2"
+AWS::EC2::Instance availabilityZone in ["us-east-2a", "us-east-2b"]
+AWS::EC2::Instance image == %latest
+AWS::EC2::Instance instanceType == "t3.medium"
+
+rule X {
+    a or b
+    !(a and b)
+}
+

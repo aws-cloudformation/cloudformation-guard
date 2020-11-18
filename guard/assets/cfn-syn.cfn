@@ -1,0 +1,72 @@
+#
+# CloudFormation 2.0 syntax for resources and properties.
+#
+
+business-tax-application := AWS::Application {
+  # Top level business application
+  parent := null
+
+  # has the following stack associated with it
+  contains := [
+    code-repository-stack.arn,
+    toolchain-pipeline-stack.arn
+  ]
+
+  # has the following sub applications for Beta, Gamma and Prod environments
+  comprises-of := [
+    beta-stage-application.arn,
+    gamma-stage-application.arn,
+    prod-stage-application.arn
+  ]
+
+  # associated types and untyped metadata
+  meta-data := [
+    Intuit::App::Info { # typed metadata
+      cost-center := "Intuit-Biz-Tax",
+      cti := "Intuit/Biz/TaxApps"
+    }, { # untyped metadata
+      random := 10
+      other := "there"
+    }
+  ]
+}
+
+code-repository-stack := AWS::CloudFormation::Stack {
+  # github repository setup
+  github             := GitHub::Repository {
+    repo-name        := "biz-tax-repo",
+    org-name         := "intuit",
+    actions          := {
+      on-push        := ....
+      on-pull-merge  := {
+        # property access relationship
+        web-hook     := {
+          endpoint   := toolchain-pipeline-stack.code-pipeline.endpoint
+          credential :=
+        }
+
+        # it can also be modeled as connect-to relationship which can
+        # setup API access credentials as well
+        # web-hook := connect-to(toolchain-pipeline-stack.code-pipeline.endpoint)
+      }
+    }
+  }
+}
+
+toolchain-pipeline-stack := AWS::CloudFormation::Stack {
+  # code pipeline set for GitOps based CI/CD pipeline.
+  # the GitHub code-repository-stack has a web-hook that connectes
+  # the pipeline to on-pull-merge action
+ code-pipeline       := AWS::Code::Pipeline {
+   stages := [
+       AWS::CodePipeline::BuildStage {
+         repo        := code-repository-stack.gitbuh.repo-url
+         credentials :=
+       },
+       AWS::CodePipeline::DeployStage {
+       name := "Beta",
+
+       }
+   ]
+ }
+}

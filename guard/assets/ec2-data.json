@@ -1,0 +1,16 @@
+{
+  "latest": "ami-123456",
+  "allowedZones": [
+    "us-west-2a",
+    "us-west-2b"
+  ],
+  "AWS::EC2::Instance": {
+    "keyName": "Key2",
+    "availabilityZone": "us-east-2a",
+    "instanceType": "t3.medium",
+    "imageId": "ami-123456",
+    "securityGroups": [
+      "InstanceSecurityGroup"
+    ]
+  }
+}

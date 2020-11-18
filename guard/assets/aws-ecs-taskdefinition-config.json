@@ -1,0 +1,106 @@
+{
+  "PARAMETERS": {
+      "allowedHostPortList": [
+        {
+          "begin": 80,
+          "end": 1024
+        }
+      ],
+      "RepositoryImageUriList": ["httpd:2.4"]
+
+  },
+  "arn": "arn:aws:ecs:us-west-2:827740659343:task-definition/first-run-task-definition:1",
+  "availabilityZone": "Regional",
+  "resourceId": "arn:aws:ecs:us-west-2:827740659343:task-definition/first-run-task-definition:1",
+  "resourceName": "arn:aws:ecs:us-west-2:827740659343:task-definition/first-run-task-definition:1",
+  "tags": null,
+  "relationships": [ {
+    "relationshipName": "Is associated with Task Role",
+    "resourceId": null,
+    "resourceType": "AWS::IAM::Role"
+  }, {
+    "relationshipName": "Is associated with Execution Role",
+    "resourceId": null,
+    "resourceType": "AWS::IAM::Role"
+  }, {
+    "relationshipName": "Is associated with Repository",
+    "resourceId": null,
+    "resourceType": "AWS::ECS::Repository"
+  } ],
+  "accountId": "000000000000",
+  "awsRegion": "us-west-2",
+  "configurationItemCaptureTime": "2020-10-28T07:41:03.658Z",
+  "resourceType": "AWS::ECS::TaskDefinition",
+  "configuration": {
+    "ContainerDefinitions": [ {
+      "Name": "sample-app",
+      "Image": "httpd:2.4",
+      "RepositoryCredentials": null,
+      "Cpu": 256,
+      "Memory": null,
+      "MemoryReservation": 512,
+      "Links": [ ],
+      "PortMappings": [ {
+        "ContainerPort": 80,
+        "HostPort": 80,
+        "Protocol": "tcp"
+      } ],
+      "Essential": true,
+      "EntryPoint": [ "sh", "-c" ],
+      "Command": [ "/bin/sh -c \"echo '<html> <head> <title>Amazon ECS Sample App</title> <style>body {margin-top: 40px; background-color: #333;} </style> </head><body> <div style=color:white;text-align:center> <h1>Amazon ECS Sample App</h1> <h2>Congratulations!</h2> <p>Your application is now running on a container in Amazon ECS.</p> </div></body></html>' >  /usr/local/apache2/htdocs/index.html && httpd-foreground\"" ],
+      "Environment": [ ],
+      "EnvironmentFiles": [ ],
+      "MountPoints": [ ],
+      "VolumesFrom": [ ],
+      "LinuxParameters": null,
+      "Secrets": [ ],
+      "DependsOn": [ ],
+      "StartTimeout": null,
+      "StopTimeout": null,
+      "Hostname": null,
+      "User": null,
+      "WorkingDirectory": null,
+      "DisableNetworking": null,
+      "Privileged": null,
+      "ReadonlyRootFilesystem": null,
+      "DnsServers": [ ],
+      "DnsSearchDomains": [ ],
+      "ExtraHosts": [ ],
+      "DockerSecurityOptions": [ ],
+      "Interactive": null,
+      "PseudoTerminal": null,
+      "DockerLabels": { },
+      "Ulimits": [ ],
+      "LogConfiguration": {
+        "LogDriver": "awslogs",
+        "Options": {
+          "awslogs-group": "/ecs/first-run-task-definition",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "ecs"
+        },
+        "SecretOptions": [ ]
+      },
+      "HealthCheck": null,
+      "SystemControls": [ ],
+      "ResourceRequirements": [ ],
+      "FirelensConfiguration": null
+    } ],
+    "Cpu": "256",
+    "ExecutionRoleArn": "arn:aws:iam::827740659343:role/ecsTaskExecutionRole",
+    "Family": "first-run-task-definition",
+    "InferenceAccelerators": [ ],
+    "IpcMode": null,
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "PidMode": null,
+    "PlacementConstraints": [ ],
+    "ProxyConfiguration": null,
+    "RequiresCompatibilities": [ "FARGATE" ],
+    "Tags": [ ],
+    "TaskDefinitionArn": "arn:aws:ecs:us-west-2:827740659343:task-definition/first-run-task-definition:1",
+    "TaskRoleArn": null,
+    "Volumes": [ ]
+  },
+  "version": "1.0",
+  "modelVersion": "2.0"
+}

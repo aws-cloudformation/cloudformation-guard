@@ -1,0 +1,13 @@
+AWS::IAM::Role AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
+AWS::IAM::Role PermissionsBoundary == /arn:aws:iam::(\d{12}):policy/
+AWS::IAM::Role Tags == /[\[\{\}\.\-_\+=\s\/a-zA-Z0-9\]]+/
+AWS::IAM::Role ManagedPolicyArns != /(arn:aws:iam::aws:policy)+/
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Action == "sts:AssumeRole"
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* != "*"
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Condition == /"SAML:aud": "https:\/\/signin\.aws\.amazon\.com/saml"/
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Condition == /(StringLike)+(.)+/ OR AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Condition == /(StringEquals)+(.)+/
+AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Service.* == /(.)+\.amazonaws\.com/ OR AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.AWS.* == /arn:(aws[a-zA-Z-]*):iam::\d{12}:root/ OR AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.AWS.* == /arn:(aws[a-zA-Z-]*):iam::\d{12}:user/(.)+/ OR AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.Federated.* == {$IDP} OR AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Principal.AWS.* == {$PRINCIPALS} 
+AWS::IAM::Policy PolicyDocument.Statement.*.Condition.NotIpAddress.aws:SourceIp.* == /(0-2{1})*(0-5{1})*(0-5{1})+)\.(0-2{1})*(0-5{1})*(0-5{1})+)\.(0-2{1})*(0-5{1})*(0-5{1})+)\.(0-2{1})*(0-5{1})*(0-5{1})+)/(0-9{2})+/
+AWS::EC2::VPCEndpoint PrivateDnsEnabled == true
+AWS::EC2::VPCEndpoint PolicyDocument == /.+/
+AWS::EC2::VPCEndpoint ServiceName == /com\.amazonaws\.(.)+\.sts/
