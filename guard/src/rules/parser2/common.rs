@@ -76,11 +76,10 @@ pub(super) fn comment2(input: Span2) -> IResult<Span2, Span2> {
 //    nom::error::ErrorKind::Char => if the comment does not start with '#'
 //
 pub(super) fn white_space_or_comment(input: Span2) -> IResult<Span2, ()> {
-    context("comment_whitespace",
-            value((), alt((
-                multispace1,
-                comment2
-            ))))(input)
+    value((), alt((
+        multispace1,
+        comment2
+    )))(input)
 }
 
 //
@@ -89,8 +88,7 @@ pub(super) fn white_space_or_comment(input: Span2) -> IResult<Span2, ()> {
 // cut or handle it as a failure if that is the right outcome
 //
 pub(super) fn one_or_more_ws_or_comment(input: Span2) -> IResult<Span2, ()> {
-    context("one_or_more",
-            value((), many1(white_space_or_comment)))(input)
+    value((), many1(white_space_or_comment))(input)
 }
 
 //
@@ -98,8 +96,7 @@ pub(super) fn one_or_more_ws_or_comment(input: Span2) -> IResult<Span2, ()> {
 // errors out
 //
 pub(super) fn zero_or_more_ws_or_comment(input: Span2) -> IResult<Span2, ()> {
-    context("zero_or_more",
-            value((), many0(white_space_or_comment)))(input)
+    value((), many0(white_space_or_comment))(input)
 }
 
 pub(super) fn white_space(ch: char) -> impl Fn(Span2) -> IResult<Span2, char> {

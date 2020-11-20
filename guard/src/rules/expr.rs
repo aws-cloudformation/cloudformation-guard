@@ -69,6 +69,56 @@ pub(crate) struct Clause<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub(crate) enum GuardClause<'loc> {
+    Clause(Clause<'loc>, bool),
+    NamedRule(String, Location<'loc>, bool, Option<String>),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) enum ConjunctionClause<'loc> {
+    And(GuardClause<'loc>),
+    Or(Vec<GuardClause<'loc>>, bool),
+}
+
+pub(crate) type Conjunctions<'loc> = Vec<ConjunctionClause<'loc>>;
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) struct WhenBlock<'loc> {
+    pub(crate) conditions: Option<Conjunctions<'loc>>,
+    pub(crate) clauses: Conjunctions<'loc>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) struct TypeBlock<'loc> {
+    pub(crate) type_name: String,
+    pub(crate) assignments: Vec<LetExpr>,
+    pub(crate) clauses: WhenBlock<'loc>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) enum RuleBlockClauseType<'loc> {
+    When(WhenBlock<'loc>),
+    Type(TypeBlock<'loc>),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) struct RuleBlock<'loc> {
+    pub(crate) rule_name: String,
+    pub(crate) assignments: Vec<LetExpr>,
+    pub(crate) clauses: Vec<RuleBlockClauseType<'loc>>
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) enum GuardExpr<'loc> {
+    Assignment(LetExpr),
+    Type(TypeBlock<'loc>),
+    Rule(RuleBlock<'loc>),
+}
+
+pub(crate) type Guards<'loc> = Vec<GuardExpr<'loc>>;
+
+
+#[derive(PartialEq, Debug, Clone)]
 pub(crate) enum PropertyClause<'loc> {
     Clause(Clause<'loc>),
     // single clause

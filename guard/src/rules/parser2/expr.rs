@@ -105,11 +105,11 @@ use nom::{FindSubstring, InputTake};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while, take_while1};
 use nom::character::is_digit;
-use nom::character::complete::{alpha1, char, space1};
-use nom::combinator::{cut, map, opt, value};
-use nom::error::ParseError;
-use nom::multi::fold_many1;
-use nom::sequence::{delimited, pair, preceded, tuple};
+use nom::character::complete::{alpha1, char, space1, one_of, newline, space0, multispace0};
+use nom::combinator::{cut, map, opt, value, peek};
+use nom::error::{ParseError, context};
+use nom::multi::{fold_many1, separated_nonempty_list, separated_list};
+use nom::sequence::{delimited, pair, preceded, tuple, terminated};
 
 use super::*;
 use super::common::*;
@@ -148,6 +148,127 @@ fn var_name(input: Span2) -> IResult<Span2, String> {
 //
 fn var_name_access(input: Span2) -> IResult<Span2, String> {
     preceded(char('%'), var_name)(input)
+}
+
+//
+// Comparison operators
+//
+fn in_keyword(input: Span2) -> IResult<Span2, CmpOperator> {
+    value(CmpOperator::In, alt((
+        tag("in"),
+        tag("IN")
+    )))(input)
+}
+
+fn not(input: Span2) -> IResult<Span2, ()> {
+    match alt((
+        preceded(tag("not"), space1),
+        preceded(tag("NOT"), space1)))(input) {
+        Ok((remainder, _not)) => Ok((remainder, ())),
+
+        Err(nom::Err::Error(_)) => {
+            let (input, _bang_char) = char('!')(input)?;
+            Ok((input, ()))
+        }
+
+        Err(e) => Err(e)
+    }
+}
+
+fn eq(input: Span2) -> IResult<Span2, ValueOperator> {
+    alt((
+        value(ValueOperator::Cmp(CmpOperator::Eq), tag("==")),
+        value(ValueOperator::Not(CmpOperator::Eq), tag("!=")),
+    ))(input)
+}
+
+fn keys(input: Span2) -> IResult<Span2, ()> {
+    value((), preceded(
+        alt((
+            tag("KEYS"),
+            tag("keys"))), space1))(input)
+}
+
+fn keys_keyword(input: Span2) -> IResult<Span2, ValueOperator> {
+    let (input, _keys_word) = keys(input)?;
+    let (input, comparator) = alt((
+        eq,
+        other_operations,
+    ))(input)?;
+
+    let is_not = if let ValueOperator::Not(_) = &comparator { true } else { false };
+    let comparator = match comparator {
+        ValueOperator::Cmp(op) | ValueOperator::Not(op) => {
+            match op {
+                CmpOperator::Eq => CmpOperator::KeysEq,
+                CmpOperator::In => CmpOperator::KeysIn,
+                CmpOperator::Exists => CmpOperator::KeysExists,
+                CmpOperator::Empty => CmpOperator::KeysEmpty,
+                _ => unreachable!(),
+            }
+        }
+    };
+
+    let comparator = if is_not { ValueOperator::Not(comparator) } else { ValueOperator::Cmp(comparator) };
+    Ok((input, comparator))
+}
+
+fn exists(input: Span2) -> IResult<Span2, CmpOperator> {
+    value(CmpOperator::Exists, alt((tag("EXISTS"), tag("exists"))))(input)
+}
+
+fn empty(input: Span2) -> IResult<Span2, CmpOperator> {
+    value(CmpOperator::Empty, alt((tag("EMPTY"), tag("empty"))))(input)
+}
+
+fn other_operations(input: Span2) -> IResult<Span2, ValueOperator> {
+    let (input, not) = opt(not)(input)?;
+    let (input, operation) = alt((
+        in_keyword,
+        exists,
+        empty
+    ))(input)?;
+    let cmp = if not.is_some() { ValueOperator::Not(operation) } else { ValueOperator::Cmp(operation) };
+    Ok((input, cmp))
+}
+
+
+fn value_cmp(input: Span2) -> IResult<Span2, ValueOperator> {
+    alt((
+        //
+        // Basic cmp checks. Order does matter, you always go from more specific to less
+        // specific. '>=' before '>' to ensure that we do not compare '>' first and conclude
+        //
+        eq,
+        value(ValueOperator::Cmp(CmpOperator::Ge), tag(">=")),
+        value(ValueOperator::Cmp(CmpOperator::Le), tag("<=")),
+        value(ValueOperator::Cmp(CmpOperator::Gt), char('>')),
+        value(ValueOperator::Cmp(CmpOperator::Lt), char('<')),
+
+        //
+        // Other operations
+        //
+        keys_keyword,
+        other_operations,
+    ))(input)
+}
+
+fn extract_message(input: Span2) -> IResult<Span2, &str> {
+    match input.find_substring(">>") {
+        None => Err(nom::Err::Failure(ParserError {
+            span: input,
+            kind: nom::error::ErrorKind::Tag,
+            context: format!("Unable to find a closing >> tag for message"),
+        })),
+        Some(v) => {
+            let split = input.take_split(v);
+            Ok((split.0, *split.1.fragment()))
+        }
+    }
+}
+
+fn custom_message(input: Span2) -> IResult<Span2, &str> {
+    delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
 //
@@ -206,149 +327,48 @@ fn access(input: Span2) -> IResult<Span2, PropertyAccess> {
 }
 
 //
-// Comparison operators
+//  simple_unary               = "EXISTS" / "EMPTY"
+//  keys_unary                 = "KEYS" 1*SP simple_unary
+//  keys_not_unary             = "KEYS" 1*SP not_keyword 1*SP unary_operators
+//  unary_operators            = simple_unary / keys_unary / not_keyword simple_unary / keys_not_unary
 //
-fn in_keyword(input: Span2) -> IResult<Span2, CmpOperator>{
-    value(CmpOperator::In, alt((
-        tag("in"),
-        tag("IN")
-    )))(input)
-}
-
-fn not(input: Span2) -> IResult<Span2, ()> {
-    match alt((
-        preceded(tag("not"), space1),
-        preceded(tag("NOT"), space1)))(input) {
-        Ok((remainder, _not)) => Ok((remainder, ())),
-
-        Err(nom::Err::Error(_)) => {
-            let (input, _bang_char) = char('!')(input)?;
-            Ok((input, ()))
-        },
-
-        Err(e) => Err(e)
-    }
-}
-
-fn eq(input: Span2) -> IResult<Span2, ValueOperator> {
-    alt((
-        value(ValueOperator::Cmp(CmpOperator::Eq), tag("==")),
-        value(ValueOperator::Not(CmpOperator::Eq), tag("!=")),
-    ))(input)
-}
-
-fn keys(input: Span2) -> IResult<Span2, ()> {
-    value((), preceded(
-        alt((
-            tag("KEYS"),
-            tag("keys"))), space1))(input)
-}
-
-fn keys_keyword(input: Span2) -> IResult<Span2, ValueOperator> {
-    let (input, _keys_word) = keys(input)?;
-    let (input, comparator) = alt((
-        eq,
-        other_operations,
-    ))(input)?;
-
-    let is_not = if let ValueOperator::Not(_) = &comparator { true } else { false };
-    let comparator = match comparator {
-        ValueOperator::Cmp(op) | ValueOperator::Not(op) => {
-            match op {
-                CmpOperator::Eq => CmpOperator::KeysEq,
-                CmpOperator::In => CmpOperator::KeysIn,
-                CmpOperator::Exists => CmpOperator::KeysExists,
-                CmpOperator::Empty => CmpOperator::KeysEmpty,
-                _ => unreachable!(),
-            }
-        }
-    };
-
-    let comparator = if is_not { ValueOperator::Not(comparator) }
-    else { ValueOperator::Cmp(comparator) };
-    Ok((input, comparator))
-}
-
-fn exists(input: Span2) -> IResult<Span2, CmpOperator> {
-    value(CmpOperator::Exists, alt((tag("EXISTS"), tag("exists"))))(input)
-}
-
-fn empty(input: Span2) -> IResult<Span2, CmpOperator> {
-    value(CmpOperator::Empty, alt((tag("EMPTY"), tag("empty"))))(input)
-}
-
-fn other_operations(input: Span2) -> IResult<Span2, ValueOperator> {
-    let (input, not) = opt(not)(input)?;
-    let (input, operation) = alt((
-        in_keyword,
-        exists,
-        empty
-    ))(input)?;
-    let cmp = if not.is_some() { ValueOperator::Not(operation) } else { ValueOperator::Cmp(operation) };
-    Ok((input, cmp))
-}
-
-
-fn value_cmp(input: Span2) -> IResult<Span2, ValueOperator> {
-    alt((
-        //
-        // Basic cmp checks. Order does matter, you always go from more specific to less
-        // specific. '>=' before '>' to ensure that we do not compare '>' first and conclude
-        //
-        eq,
-        value(ValueOperator::Cmp(CmpOperator::Ge), tag(">=")),
-        value(ValueOperator::Cmp(CmpOperator::Le), tag("<=")),
-        value(ValueOperator::Cmp(CmpOperator::Gt), char('>')),
-        value(ValueOperator::Cmp(CmpOperator::Lt), char('<')),
-
-        //
-        // Other operations
-        //
-        keys_keyword,
-        other_operations,
-    ))(input)
-}
-
-fn extract_message(input: Span2) -> IResult<Span2, &str> {
-    match input.find_substring(">>") {
-        None => Err(nom::Err::Failure(ParserError {
-            span: input,
-            kind: nom::error::ErrorKind::Tag,
-            context: format!("Unable to find a closing >> tag for message")
-        })),
-        Some(v) => {
-            let split = input.take_split(v);
-            Ok((split.0, *split.1.fragment()))
-        }
-    }
-}
-fn custom_message(input: Span2) -> IResult<Span2, &str> {
-    delimited(tag("<<"), extract_message, tag(">>"))(input)
-}
-
-
-fn clause(input: Span2) -> IResult<Span2, Clause> {
+//
+//  clause                     = access 1*SP unary_operators *(LWSP/comment) custom_message /
+//                               access 1*SP binary_operators 1*(LWSP/comment) (access/value) *(LWSP/comment) custom_message
+//
+// Errors:
+//     nom::error::ErrorKind::Alpha, if var_name_access / var_name does not work out
+//     nom::error::ErrorKind::Char, if whitespace / comment does not work out for needed spaces
+//
+// Failures:
+//     nom::error::ErrorKind::Char  if access / parse_value does not work out
+//
+//
+fn clause(input: Span2) -> IResult<Span2, GuardClause> {
     let location = Location {
         file_name: input.extra,
         line: input.location_line(),
         column: input.get_utf8_column() as u32,
     };
 
+    let (rest, not) = opt(not)(input)?;
     let (rest, (lhs, _ignored_space, cmp, _ignored)) = tuple((
         access,
-        // It is an failure to not have a ws/comment following it
-        cut(one_or_more_ws_or_comment),
-        // failure if there is no value_cmp
-        cut(value_cmp),
-        // failure if this isn't followed by space or comment or newline
-        cut(one_or_more_ws_or_comment)))(input)?;
+        // It is an error to not have a ws/comment following it
+        context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+        // error if there is no value_cmp
+        context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                value_cmp),
+        // error if this isn't followed by space or comment or newline
+        context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+    ))(input)?;
 
     let no_rhs_expected = match &cmp {
         ValueOperator::Cmp(op) | ValueOperator::Not(op) =>
             match op {
-                CmpOperator::KeysExists     |
-                CmpOperator::KeysEmpty      |
-                CmpOperator::Empty          |
+                CmpOperator::KeysExists |
+                CmpOperator::KeysEmpty |
+                CmpOperator::Empty |
                 CmpOperator::Exists => true,
 
                 _ => false
@@ -358,42 +378,133 @@ fn clause(input: Span2) -> IResult<Span2, Clause> {
     if no_rhs_expected {
         let (rest, custom_message) = cut(
             map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
-            |msg| {
-                msg.map(String::from).or(None)
-            }))(input)?;
+                |msg| {
+                    msg.map(String::from)
+                }))(input)?;
         Ok((rest,
-            Clause {
+            GuardClause::Clause(Clause {
                 access: lhs,
                 comparator: cmp,
                 compare_with: None,
                 custom_message,
-                location
-            }
+                location,
+            }, not.is_some())
         ))
     } else {
-        let (rest, (compare_with, custom_message)) = cut(alt((
-            map(tuple((
-                access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
-                |(rhs, msg)| {
-                    (Some(LetValue::PropertyAccess(rhs)), msg.map(String::from).or(None))
-                }),
-            map(tuple((
-                parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
-                move |(rhs, msg)| {
-                    (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
-                })
-        )))(rest)?;
+        let (rest, (compare_with, custom_message)) =
+            context("expecting either a property access \"engine.core\" or value like \"string\" or [\"this\", \"that\"]",
+                    cut(alt((
+                        map(tuple((
+                            access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            |(rhs, msg)| {
+                                (Some(LetValue::PropertyAccess(rhs)), msg.map(String::from).or(None))
+                            }),
+                        map(tuple((
+                            parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            move |(rhs, msg)| {
+                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
+                            })
+                    ))))(rest)?;
         Ok((rest,
-            Clause {
+            GuardClause::Clause(Clause {
                 access: lhs,
                 comparator: cmp,
                 compare_with,
                 custom_message,
-                location
-            }
+                location,
+            }, not.is_some())
         ))
     }
 }
+
+//
+//  rule_clause   =   (var_name (LWSP/comment)) /
+//                    (var_name [1*SP << anychar >>] (LWSP/comment)
+//
+//
+//  rule_clause get to be the most pesky of them all. It has the least
+//  form and there can interpret partials of other form as a rule_clause
+//  To ensure we don't do that we need to peek ahead after a rule name
+//  parsing to see which of these forms is present for the rule clause
+//  to succeed
+//
+//      rule_name[ \t]*\n
+//      rule_name[ \t\n]+or[ \t\n]+
+//      rule_name(#[^\n]+)
+//
+//      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
+//
+fn rule_clause(input: Span2) -> IResult<Span2, GuardClause> {
+    let location = Location {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
+
+    let (remaining, not) = opt(not)(input)?;
+    let (remaining, ct_type) = var_name(remaining)?;
+
+    //
+    // we peek to preserve the input, if it is or, space+newline or comment
+    // we return
+    //
+    if let Ok((same, _ignored)) = peek(alt((
+        preceded(space0, value((), newline)),
+        preceded(space0, value((), comment2)),
+        value((), or_join),
+    )))(remaining) {
+        return Ok((same, GuardClause::NamedRule(ct_type, location, not.is_some(), None)))
+    }
+
+    //
+    // Else it must have a custom message
+    //
+    let (remaining, message) = preceded(space0, custom_message)(remaining)?;
+    Ok((remaining, GuardClause::NamedRule(ct_type, location, not.is_some(), Some(message.to_string()))))
+}
+
+//
+// clauses
+//
+fn clauses(input: Span2) -> IResult<Span2, Conjunctions> {
+    let mut clauses = Conjunctions::new();
+    let mut remaining = input;
+    loop {
+        let (rest, set) = separated_list(
+            or_join,
+
+            //
+            // Order does matter here. Both rule_clause and access clause have the same syntax
+            // for the first part e.g
+            //
+            // s3_encrypted_bucket  or configuration.containers.*.port == 80
+            //
+            // the first part is a rule clause and the second part is access clause. Consider
+            // this example
+            //
+            // s3_encrypted_bucket or bucket_encryption EXISTS
+            //
+            // The first part if rule clause and second part is access. if we use the rule_clause
+            // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
+            // we are using the alt form to first parse to see if it is clause and then try rules_clause
+            //
+            preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause, ))),
+        )(remaining)?;
+
+        remaining = rest;
+
+        match set.len() {
+            0 => return Ok((remaining, clauses)),
+            1 => clauses.push(ConjunctionClause::And(set[0].clone())),
+            _ => clauses.push(ConjunctionClause::Or(set, false)),
+        }
+    }
+}
+
+//
+// when block
+//
+
 
 //
 //  ABNF        = "or" / "OR" / "|OR|"
@@ -404,6 +515,14 @@ fn or_term(input: Span2) -> IResult<Span2, Span2> {
         tag("OR"),
         tag("|OR|")
     ))(input)
+}
+
+fn or_join(input: Span2) -> IResult<Span2, Span2> {
+    delimited(
+        one_or_more_ws_or_comment,
+        or_term,
+        one_or_more_ws_or_comment
+    )(input)
 }
 
 #[cfg(test)]
@@ -430,14 +549,14 @@ mod tests {
                     ParserError {
                         span: from_str2(""),
                         kind: nom::error::ErrorKind::Char,
-                        context: "comment_whitespace".to_string(),
+                        context: "".to_string(),
                     })), // white_space_or_comment
                 Ok((from_str2(""), ())), // zero_or_more
                 Err(nom::Err::Error(
                     ParserError {
                         span: from_str2(""),
                         kind: nom::error::ErrorKind::Char,
-                        context: "one_or_more/comment_whitespace".to_string(),
+                        context: "".to_string(),
                     })), // white_space_or_comment
             ],
             [
@@ -461,14 +580,14 @@ mod tests {
                     ParserError {
                         span: from_str2(examples[3]),
                         kind: nom::error::ErrorKind::Char,
-                        context: "comment_whitespace".to_string(),
+                        context: "".to_string(),
                     })), // white_space_or_comment
                 Ok((from_str2(examples[3]), ())), // zero_or_more
                 Err(nom::Err::Error(
                     ParserError {
                         span: from_str2(examples[3]),
                         kind: nom::error::ErrorKind::Char,
-                        context: "one_or_more/comment_whitespace".to_string(),
+                        context: "".to_string(),
                     })), // white_space_or_comment
             ],
         ];
@@ -922,25 +1041,21 @@ mod tests {
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
             })),
-
             Err(nom::Err::Error(ParserError { // 1
                 span: from_str2("."),
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
             })),
-
             Err(nom::Err::Error(ParserError { // 2
                 span: from_str2(".engine"),
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
             })),
-
             Err(nom::Err::Error(ParserError { // 3
                 span: from_str2(" engine"),
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
             })),
-
             Ok(( // 4
                  unsafe {
                      Span2::new_from_raw_offset(
@@ -1025,7 +1140,6 @@ mod tests {
                      var_access: None,
                  }
             )),
-
             Ok(( // 10 "engine .0", // 10 ok engine will be property access part
                  unsafe {
                      Span2::new_from_raw_offset(
@@ -1164,7 +1278,6 @@ mod tests {
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
             })),
-
         ];
 
         for (idx, each) in examples.iter().enumerate() {
@@ -1172,7 +1285,6 @@ mod tests {
             let result = access(span);
             assert_eq!(&result, &expectations[idx]);
         }
-
     }
 
     #[test]
@@ -1204,14 +1316,14 @@ mod tests {
             Err(nom::Err::Error(ParserError {
                 span: from_str2(""),
                 context: "".to_string(),
-                kind: nom::error::ErrorKind::Tag
+                kind: nom::error::ErrorKind::Tag,
             })),
 
             // " exists", // 1 err
             Err(nom::Err::Error(ParserError {
                 span: from_str2(" exists"),
                 context: "".to_string(),
-                kind: nom::error::ErrorKind::Tag
+                kind: nom::error::ErrorKind::Tag,
             })),
 
             // "exists", // 2 ok
@@ -1221,7 +1333,7 @@ mod tests {
                         examples[2].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Exists),
@@ -1234,7 +1346,7 @@ mod tests {
                         examples[3].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::Exists),
@@ -1247,7 +1359,7 @@ mod tests {
                         examples[4].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::Exists),
@@ -1260,7 +1372,7 @@ mod tests {
                         examples[5].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::Exists),
@@ -1288,7 +1400,7 @@ mod tests {
                         examples[7].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::In),
@@ -1301,7 +1413,7 @@ mod tests {
                         examples[8].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::In),
@@ -1314,7 +1426,7 @@ mod tests {
                         examples[9].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::In),
@@ -1327,7 +1439,7 @@ mod tests {
                         examples[10].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Empty),
@@ -1341,7 +1453,7 @@ mod tests {
                             1,
                             1,
                             " EMPTY",
-                            ""
+                            "",
                         )
                     },
                     kind: nom::error::ErrorKind::Tag,
@@ -1356,7 +1468,7 @@ mod tests {
                         examples[12].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::Empty),
@@ -1369,7 +1481,7 @@ mod tests {
                         2,
                         1,
                         " [\"t\", \"n\"]",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::In),
@@ -1416,7 +1528,7 @@ mod tests {
                         examples[1].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 kind: nom::error::ErrorKind::Space,
@@ -1430,7 +1542,7 @@ mod tests {
                         examples[2].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::KeysIn),
@@ -1443,7 +1555,7 @@ mod tests {
                         examples[3].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::KeysIn),
@@ -1456,7 +1568,7 @@ mod tests {
                         examples[4].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::KeysExists),
@@ -1469,7 +1581,7 @@ mod tests {
                         examples[5].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::KeysExists),
@@ -1482,7 +1594,7 @@ mod tests {
                         examples[6].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::KeysEq),
@@ -1495,7 +1607,7 @@ mod tests {
                         examples[7].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::KeysEq),
@@ -1508,7 +1620,7 @@ mod tests {
                         "keys !".len(),
                         1,
                         " in",
-                        ""
+                        "",
                     )
                 },
                 kind: nom::error::ErrorKind::Tag,
@@ -1522,7 +1634,7 @@ mod tests {
                         examples[9].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::KeysEmpty),
@@ -1535,7 +1647,7 @@ mod tests {
                         examples[10].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::KeysEmpty),
@@ -1555,13 +1667,12 @@ mod tests {
                         "KEYS ".len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 kind: nom::error::ErrorKind::Tag,
                 context: "".to_string(),
             })),
-
         ];
 
         for (idx, each) in examples.iter().enumerate() {
@@ -1609,7 +1720,7 @@ mod tests {
                         examples[2].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Gt)
@@ -1622,7 +1733,7 @@ mod tests {
                         examples[3].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Ge)
@@ -1635,7 +1746,7 @@ mod tests {
                         examples[4].len(),
                         1,
                         "",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Lt)
@@ -1645,10 +1756,10 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[5].len()-1,
+                        examples[5].len() - 1,
                         1,
                         " ",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Le)
@@ -1658,10 +1769,10 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[6].len()-1,
+                        examples[6].len() - 1,
                         1,
                         "\n",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::Ge)
@@ -1671,10 +1782,10 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[7].len()-1,
+                        examples[7].len() - 1,
                         1,
                         "\n",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Cmp(CmpOperator::In)
@@ -1684,10 +1795,10 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[8].len()-1,
+                        examples[8].len() - 1,
                         1,
                         "\n",
-                        ""
+                        "",
                     )
                 },
                 ValueOperator::Not(CmpOperator::In)
@@ -1699,7 +1810,6 @@ mod tests {
             let result = value_cmp(span);
             assert_eq!(&result, &expectations[idx]);
         }
-
     }
 
     #[test]
@@ -1725,23 +1835,24 @@ mod tests {
             ("KEYS !IN", ValueOperator::Not(CmpOperator::KeysIn)),
         ];
         let separators = [
-            " ",
-            "\n\n\t",
-            "\n#this comment\n",
-            " #this comment\n"
+            (" ", " "),
+            ("\t", "\n\n\t"),
+            ("\t  ", "\t\t"),
+            (" ", "\n#this comment\n"),
+            (" ", "#this comment\n")
         ];
 
         let rhs_dotted = rhs.split(".").map(String::from).collect::<Vec<String>>();
         let rhs_access = Some(LetValue::PropertyAccess(PropertyAccess {
             var_access: None,
-            property_dotted_notation: rhs_dotted
+            property_dotted_notation: rhs_dotted,
         }));
 
         for each_lhs in lhs.iter() {
             let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
             let lhs_access = PropertyAccess {
                 var_access: None,
-                property_dotted_notation: dotted
+                property_dotted_notation: dotted,
             };
 
             testing_access_with_cmp(&separators, &comparators,
@@ -1751,11 +1862,104 @@ mod tests {
         }
 
         let comparators = [
-            ""
+            ("EXISTS", ValueOperator::Cmp(CmpOperator::Exists)),
+            ("!EXISTS", ValueOperator::Not(CmpOperator::Exists)),
+            ("EMPTY", ValueOperator::Cmp(CmpOperator::Empty)),
+            ("NOT EMPTY", ValueOperator::Not(CmpOperator::Empty)),
+            ("KEYS EXISTS", ValueOperator::Cmp(CmpOperator::KeysExists)),
+            ("KEYS NOT EMPTY", ValueOperator::Not(CmpOperator::KeysEmpty))
         ];
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+            let lhs_access = PropertyAccess {
+                var_access: None,
+                property_dotted_notation: dotted,
+            };
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, "",
+                                    || lhs_access.clone(),
+                                    || None);
+        }
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+            let lhs_access = PropertyAccess {
+                var_access: None,
+                property_dotted_notation: dotted,
+            };
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, " does.not.error", // this will not error,
+                                    // the fragment you are left with is the one above and
+                                    // the next clause fetch will error out for either no "OR" or
+                                    // not newline for "and"
+                                    || lhs_access.clone(),
+                                    || None);
+        }
+
+
+        let lhs = [
+            "%engine.port",
+            "%engine.%port",
+            "%engine.*.image"
+        ];
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+            let (var_name, remainder) = dotted.split_at(1);
+            let dotted = remainder.iter().map(|s| s.to_owned())
+                .collect::<Vec<String>>();
+            let var_name = var_name[0].replace("%", "");
+            let lhs_access = PropertyAccess {
+                var_access: Some(var_name),
+                property_dotted_notation: dotted,
+            };
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, "",
+                                    || lhs_access.clone(),
+                                    || None);
+        }
+
+        let rhs = [
+            "\"ami-12344545\"",
+            "/ami-12/",
+            "[\"ami-12\", \"ami-21\"]",
+            "{ bare: 10, 'work': 20, 'other': 12.4 }"
+        ];
+        let comparators = [
+            (">", ValueOperator::Cmp(CmpOperator::Gt)),
+            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
+            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
+            ("!=", ValueOperator::Not(CmpOperator::Eq)),
+            ("IN", ValueOperator::Cmp(CmpOperator::In)),
+            ("!IN", ValueOperator::Not(CmpOperator::In)),
+        ];
+
+        for each_rhs in &rhs {
+            for each_lhs in lhs.iter() {
+                let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+                let (var_name, remainder) = dotted.split_at(1);
+                let dotted = remainder.iter().map(|s| s.to_owned())
+                    .collect::<Vec<String>>();
+                let var_name = var_name[0].replace("%", "");
+                let lhs_access = PropertyAccess {
+                    var_access: Some(var_name),
+                    property_dotted_notation: dotted,
+                };
+
+                let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
+                testing_access_with_cmp(&separators, &comparators,
+                                        *each_lhs, *each_rhs,
+                                        || lhs_access.clone(),
+                                        || Some(LetValue::Value(rhs_value.clone())));
+            }
+        }
     }
 
-    fn testing_access_with_cmp<A, C>(separators: &[&str],
+    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
                                      comparators: &[(&str, ValueOperator)],
                                      lhs: &str,
                                      rhs: &str,
@@ -1764,22 +1968,479 @@ mod tests {
         where A: Fn() -> PropertyAccess,
               C: Fn() -> Option<LetValue>
     {
-        for each in separators {
+        for (lhs_sep, rhs_sep) in separators {
             for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
-                let access_pattern = format!("{lhs}{sep}{op}{sep}{rhs}",
-                                             lhs = lhs, rhs = rhs, op = *each_op, sep = *each);
-                println!("Access tp test {}", access_pattern);
+                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
+                                             lhs = lhs, rhs = rhs, op = *each_op, lhs_sep = *lhs_sep, rhs_sep = *rhs_sep);
+                println!("Testing Access pattern = {}", access_pattern);
                 let span = from_str2(&access_pattern);
                 let result = clause(span);
-                assert_eq!(result.is_ok(), true);
-                let result = result.unwrap().1;
-                assert_eq!(result.access, access());
-                assert_eq!(result.compare_with, cmp_with());
-                assert_eq!(&result.comparator, value_cmp);
-                assert_eq!(result.custom_message, None);
+                if result.is_err() {
+                    let parser_error = &result.unwrap_err();
+                    let parser_error = match parser_error {
+                        nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
+                        nom::Err::Incomplete(_) => "More input needed".to_string(),
+                    };
+                    println!("{}", parser_error);
+                    assert_eq!(false, true);
+                } else {
+                    assert_eq!(result.is_ok(), true);
+                    let result = match result.unwrap().1 {
+                        GuardClause::Clause(clause, _) => clause,
+                        _ => unreachable!()
+                    };
+                    assert_eq!(result.access, access());
+                    assert_eq!(result.compare_with, cmp_with());
+                    assert_eq!(&result.comparator, value_cmp);
+                    assert_eq!(result.custom_message, None);
+                }
             }
         }
     }
 
+    #[test]
+    fn test_clause_failures() {
+        let lhs = [
+            "configuration.containers.*.image",
+            "engine",
+        ];
 
+        //
+        // Testing white space problems
+        //
+        let rhs = "PARAMETERS.ImageList";
+        let lhs_separator = "";
+        let rhs_separator = "";
+        let comparators = [
+            (">", ValueOperator::Cmp(CmpOperator::Gt)),
+            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
+            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
+            ("!=", ValueOperator::Not(CmpOperator::Eq)),
+        ];
+
+        for each in lhs.iter() {
+            for (op, _) in comparators.iter() {
+                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
+                                             lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator);
+                let offset = (*each).len();
+                let fragment = format!("{op}{sep}{rhs}",
+                                       rhs = rhs, op = *op, sep = rhs_separator);
+                let error = Err(nom::Err::Error(ParserError {
+                    span: unsafe {
+                        Span2::new_from_raw_offset(
+                            offset,
+                            1,
+                            &fragment,
+                            "",
+                        )
+                    },
+                    kind: nom::error::ErrorKind::Space,
+                    context: "expecting one or more WS or comment blocks".to_string(),
+                }));
+                assert_eq!(clause(from_str2(&access_pattern)), error);
+            }
+        }
+
+        let lhs_separator = " ";
+        for each in lhs.iter() {
+            for (op, _) in comparators.iter() {
+                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}{msg}",
+                                             lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator, msg = "<< message >>");
+                let offset = (*each).len() + (*op).len() + 1;
+                let fragment = format!("{sep}{rhs}{msg}", rhs = rhs, sep = rhs_separator, msg = "<< message >>");
+                let error = Err(nom::Err::Error(ParserError {
+                    span: unsafe {
+                        Span2::new_from_raw_offset(
+                            offset,
+                            1,
+                            &fragment,
+                            "",
+                        )
+                    },
+                    kind: nom::error::ErrorKind::Char,
+                    context: "expecting one or more WS or comment blocks".to_string(),
+                }));
+                assert_eq!(clause(from_str2(&access_pattern)), error);
+            }
+        }
+
+        //
+        // Testing for missing access part
+        //
+        assert_eq!(Err(nom::Err::Error(ParserError {
+            span: from_str2(""),
+            kind: nom::error::ErrorKind::Alpha,
+            context: "".to_string(),
+        })), clause(from_str2("")));
+
+        //
+        // Testing for missing access
+        //
+        assert_eq!(Err(nom::Err::Error(ParserError {
+            span: from_str2(" > 10"),
+            kind: nom::error::ErrorKind::Alpha,
+            context: "".to_string(),
+        })), clause(from_str2(" > 10")));
+
+        //
+        // Testing binary operator missing RHS
+        //
+        for each in lhs.iter() {
+            for (op, _) in comparators.iter() {
+                let access_pattern = format!("{lhs} {op} << message >>", lhs = *each, op = *op);
+                println!("Testing for {}", access_pattern);
+                let offset = (*each).len() + (*op).len() + 2; // 2 is for 2 spaces
+                let error = Err(nom::Err::Failure(ParserError {
+                    span: unsafe {
+                        Span2::new_from_raw_offset(
+                            offset,
+                            1,
+                            "<< message >>",
+                            "",
+                        )
+                    },
+                    kind: nom::error::ErrorKind::Char, // this comes off parse_map
+                    context: r#"expecting either a property access "engine.core" or value like "string" or ["this", "that"]"#.to_string(),
+                }));
+                assert_eq!(clause(from_str2(&access_pattern)), error);
+            }
+        }
+    }
+
+    #[test]
+    fn test_rule_clauses() {
+        let examples = [
+            "",                             // 0 err
+            "secure\n",                     // 1 Ok
+            "!secure or !encrypted",        // 2 Ok
+            "secure\n\nor\t encrypted",     // 3 Ok
+            "let x = 10",                   // 4 err
+            "port == 10",                   // 5 err
+            "secure <<this is secure ${PARAMETER.MSG}>>", // 6 Ok
+            "!secure <<this is not secure ${PARAMETER.MSG}>> or !encrypted", // 7 Ok
+        ];
+
+        let expectations = [
+            // "",                             // 0 err
+            Err(nom::Err::Error(ParserError {
+                span: from_str2(""),
+                kind: nom::error::ErrorKind::Alpha,
+                context: "".to_string(),
+            })),
+
+            // "secure",                       // 1 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[1].len() - 1,
+                        1,
+                        "\n",
+                        ""
+                    )
+                },
+                GuardClause::NamedRule(
+                    "secure".to_string(),
+                    Location { line: 1, column: 1, file_name: "" },
+                    false,
+                    None)
+            )),
+
+            // "!secure or !encrypted",        // 2 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        "!secure".len(),
+                        1,
+                        " or !encrypted",
+                        ""
+                    )
+                },
+                GuardClause::NamedRule(
+                    "secure".to_string(),
+                    Location { line: 1, column: 1, file_name: "" },
+                    true,
+                    None)
+            )),
+
+            // "secure\n\nor\t encrypted",     // 3 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        "secure".len(),
+                        1,
+                        "\n\nor\t encrypted",
+                        ""
+                    )
+                },
+                GuardClause::NamedRule(
+                    "secure".to_string(),
+                    Location { line: 1, column: 1, file_name: "" },
+                    false,
+                    None)
+            )),
+
+            // "let x = 10",                   // 4 err
+            Err(nom::Err::Error(
+                ParserError {
+                    span: unsafe {
+                        Span2::new_from_raw_offset(
+                            "let ".len(),
+                        1,
+                            "x = 10",
+                            ""
+                        )
+                    },
+                    kind: nom::error::ErrorKind::Tag,
+                    context: "".to_string(),
+                }
+            )),
+
+            // "port == 10",                   // 5 err
+            Err(nom::Err::Error(
+                ParserError {
+                    span: unsafe {
+                        Span2::new_from_raw_offset(
+                            "port ".len(),
+                            1,
+                            "== 10",
+                            ""
+                        )
+                    },
+                    kind: nom::error::ErrorKind::Tag,
+                    context: "".to_string(),
+                }
+            )),
+
+            // "secure <<this is secure ${PARAMETER.MSG}>>", // 6 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[6].len(),
+                        1,
+                        "",
+                        "",
+                    )
+                },
+                GuardClause::NamedRule(
+                    "secure".to_string(),
+                    Location { line: 1, column: 1, file_name: "" },
+                    false,
+                    Some("this is secure ${PARAMETER.MSG}".to_string())),
+            )),
+
+            // "!secure <<this is not secure ${PARAMETER.MSG}>> or !encrypted" // 8 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[7].len() - " or !encrypted".len(),
+                        1,
+                        " or !encrypted",
+                        ""
+                    )
+                },
+                GuardClause::NamedRule(
+                    "secure".to_string(),
+                    Location { line: 1, column: 1, file_name: "" },
+                    true,
+                    Some("this is not secure ${PARAMETER.MSG}".to_string())),
+            )),
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            let span = from_str2(*each);
+            let result = rule_clause(span);
+            assert_eq!(&result, &expectations[idx]);
+        }
+    }
+
+    #[test]
+    fn test_clauses() {
+        let examples = [
+            "", // Ok 0
+            "secure\n", // Ok 1
+            "!secure << was not secure ${PARAMETER.SECURE_MSG}>>", // Ok 2
+            "secure\nconfigurations.containers.*.image == /httpd:2.4/", // Ok 3
+            r#"secure or
+               !exception
+
+               configurations.containers.*.image == /httpd:2.4/"#, // Ok 4
+            r#"secure or
+               !exception
+               let x = 10"# // Ok 5
+        ];
+
+        let expectations = [
+
+            // "", // err 0
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[0].len(),
+                        1,
+                        "",
+                        "",
+                    )
+                },
+                vec![],
+            )),
+
+            // "secure\n", // Ok 1
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[1].len() - 1,
+                        1,
+                        "\n",
+                        "",
+                    )
+                },
+                vec![
+                    ConjunctionClause::And(
+                        GuardClause::NamedRule(
+                            "secure".to_string(),
+                            Location {
+                                line: 1,
+                                column: 1,
+                                file_name: "",
+                            },
+                            false,
+                            None,
+                        )
+                    )
+                ]
+            )),
+
+            // "!secure << was not secure ${PARAMETER.SECURE_MSG}>>", // Ok 2
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[2].len(),
+                        1,
+                        "",
+                        "",
+                    )
+                },
+                vec![ConjunctionClause::And(
+                    GuardClause::NamedRule(
+                        "secure".to_string(),
+                        Location {
+                            line: 1,
+                            column: 1,
+                            file_name: "",
+                        },
+                        true,
+                        Some(" was not secure ${PARAMETER.SECURE_MSG}".to_string())))]
+            )),
+
+            // "secure\nconfigurations.containers.*.image == /httpd:2.4/", // Ok 3
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[3].len(),
+                        2,
+                        "",
+                        "",
+                    )
+                },
+                vec![
+                    ConjunctionClause::And(
+                        GuardClause::NamedRule(
+                            "secure".to_string(),
+                            Location {
+                                line: 1,
+                                column: 1,
+                                file_name: "",
+                            },
+                            false,
+                            None)),
+                    ConjunctionClause::And(
+                        GuardClause::Clause(
+                            Clause {
+                                location: Location {
+                                    file_name: "",
+                                    column: 1,
+                                    line: 2,
+                                },
+                                compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
+                                access: PropertyAccess {
+                                    var_access: None,
+                                    property_dotted_notation: "configurations.containers.*.image".split(".").map(String::from).collect(),
+                                },
+                                custom_message: None,
+                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
+                            },
+                            false,
+                        )
+                    )]
+            )),
+
+            // r#"secure or
+            //    !exception
+            //
+            //    configurations.containers.*.image == /httpd:2.4/"#, // Ok 4
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[4].len(),
+                        4,
+                        "",
+                        "",
+                    )
+                },
+                vec![
+                    ConjunctionClause::Or(
+                        vec![
+                            GuardClause::NamedRule("secure".to_string(), Location { line: 1, column: 1, file_name: "" }, false, None),
+                            GuardClause::NamedRule("exception".to_string(), Location { line: 2, column: 16, file_name: "" }, true, None),
+                        ],
+                        false,
+                    ),
+                    ConjunctionClause::And(
+                        GuardClause::Clause(
+                            Clause {
+                                location: Location { file_name: "", column: 16, line: 4 },
+                                compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
+                                access: PropertyAccess {
+                                    var_access: None,
+                                    property_dotted_notation: "configurations.containers.*.image".split(".").map(String::from).collect(),
+                                },
+                                custom_message: None,
+                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
+                            },
+                            false,
+                        )
+                    ),
+                ]
+            )),
+
+            // r#"secure or
+            //    !exception
+            //    let x = 10"# // Ok 5
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[5].len() - "\n               let x = 10".len(),
+                        2,
+                        "\n               let x = 10",
+                        "",
+                    )
+                },
+                vec![
+                    ConjunctionClause::Or(
+                        vec![
+                            GuardClause::NamedRule("secure".to_string(), Location { line: 1, column: 1, file_name: "" }, false, None),
+                            GuardClause::NamedRule("exception".to_string(), Location { line: 2, column: 16, file_name: "" }, true, None),
+                        ],
+                        false,
+                    ),
+                ]
+            )),
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            let span = from_str2(*each);
+            let result = clauses(span);
+            assert_eq!(&result, &expectations[idx]);
+        }
+    }
 }
