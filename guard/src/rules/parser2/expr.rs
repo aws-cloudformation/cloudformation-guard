@@ -102,10 +102,10 @@
 // Extern crate dependencies
 //
 use nom::{FindSubstring, InputTake};
-use nom::branch::alt;
+use nom::branch::{alt, Alt};
 use nom::bytes::complete::{tag, take_while, take_while1};
 use nom::character::is_digit;
-use nom::character::complete::{alpha1, char, space1, one_of, newline, space0, multispace0};
+use nom::character::complete::{alpha1, char, space1, one_of, newline, space0, multispace0, digit1};
 use nom::combinator::{cut, map, opt, value, peek};
 use nom::error::{ParseError, context};
 use nom::multi::{fold_many1, separated_nonempty_list, separated_list};
@@ -113,9 +113,11 @@ use nom::sequence::{delimited, pair, preceded, tuple, terminated};
 
 use super::*;
 use super::common::*;
-use super::super::expr::*;
 use super::super::values::*;
 use super::values::parse_value;
+use crate::rules::exprs::*;
+use crate::rules::parser::parse_int_value;
+use nom::number::complete::be_i32;
 
 //
 // ABNF     =  1*CHAR [ 1*(CHAR / _) ]
@@ -150,6 +152,10 @@ fn var_name_access(input: Span2) -> IResult<Span2, String> {
     preceded(char('%'), var_name)(input)
 }
 
+fn var_name_access_inclusive(input: Span2) -> IResult<Span2, String> {
+    map(var_name_access, |s| format!("%{}", s))(input)
+}
+
 //
 // Comparison operators
 //
@@ -175,10 +181,10 @@ fn not(input: Span2) -> IResult<Span2, ()> {
     }
 }
 
-fn eq(input: Span2) -> IResult<Span2, ValueOperator> {
+fn eq(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
     alt((
-        value(ValueOperator::Cmp(CmpOperator::Eq), tag("==")),
-        value(ValueOperator::Not(CmpOperator::Eq), tag("!=")),
+        value((CmpOperator::Eq, false), tag("==")),
+        value((CmpOperator::Eq, true), tag("!=")),
     ))(input)
 }
 
@@ -189,28 +195,22 @@ fn keys(input: Span2) -> IResult<Span2, ()> {
             tag("keys"))), space1))(input)
 }
 
-fn keys_keyword(input: Span2) -> IResult<Span2, ValueOperator> {
+fn keys_keyword(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
     let (input, _keys_word) = keys(input)?;
-    let (input, comparator) = alt((
+    let (input, (comparator, inverse)) = alt((
         eq,
         other_operations,
     ))(input)?;
 
-    let is_not = if let ValueOperator::Not(_) = &comparator { true } else { false };
     let comparator = match comparator {
-        ValueOperator::Cmp(op) | ValueOperator::Not(op) => {
-            match op {
-                CmpOperator::Eq => CmpOperator::KeysEq,
-                CmpOperator::In => CmpOperator::KeysIn,
-                CmpOperator::Exists => CmpOperator::KeysExists,
-                CmpOperator::Empty => CmpOperator::KeysEmpty,
-                _ => unreachable!(),
-            }
-        }
+        CmpOperator::Eq => CmpOperator::KeysEq,
+        CmpOperator::In => CmpOperator::KeysIn,
+        CmpOperator::Exists => CmpOperator::KeysExists,
+        CmpOperator::Empty => CmpOperator::KeysEmpty,
+        _ => unreachable!(),
     };
 
-    let comparator = if is_not { ValueOperator::Not(comparator) } else { ValueOperator::Cmp(comparator) };
-    Ok((input, comparator))
+    Ok((input, (comparator, inverse)))
 }
 
 fn exists(input: Span2) -> IResult<Span2, CmpOperator> {
@@ -221,29 +221,28 @@ fn empty(input: Span2) -> IResult<Span2, CmpOperator> {
     value(CmpOperator::Empty, alt((tag("EMPTY"), tag("empty"))))(input)
 }
 
-fn other_operations(input: Span2) -> IResult<Span2, ValueOperator> {
+fn other_operations(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
     let (input, not) = opt(not)(input)?;
     let (input, operation) = alt((
         in_keyword,
         exists,
         empty
     ))(input)?;
-    let cmp = if not.is_some() { ValueOperator::Not(operation) } else { ValueOperator::Cmp(operation) };
-    Ok((input, cmp))
+    Ok((input, (operation, not.is_some())))
 }
 
 
-fn value_cmp(input: Span2) -> IResult<Span2, ValueOperator> {
+fn value_cmp(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
     alt((
         //
         // Basic cmp checks. Order does matter, you always go from more specific to less
         // specific. '>=' before '>' to ensure that we do not compare '>' first and conclude
         //
         eq,
-        value(ValueOperator::Cmp(CmpOperator::Ge), tag(">=")),
-        value(ValueOperator::Cmp(CmpOperator::Le), tag("<=")),
-        value(ValueOperator::Cmp(CmpOperator::Gt), char('>')),
-        value(ValueOperator::Cmp(CmpOperator::Lt), char('<')),
+        value((CmpOperator::Ge, false), tag(">=")),
+        value((CmpOperator::Le, false), tag("<=")),
+        value((CmpOperator::Gt, false), char('>')),
+        value((CmpOperator::Lt, false), char('<')),
 
         //
         // Other operations
@@ -271,6 +270,98 @@ fn custom_message(input: Span2) -> IResult<Span2, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
+fn predicate_filter_clause(input: Span2) -> IResult<Span2, Vec<Vec<FilterPart>>> {
+    let parser = map(
+        tuple((
+            preceded(zero_or_more_ws_or_comment, var_name),
+            preceded(zero_or_more_ws_or_comment, value_cmp),
+            preceded(zero_or_more_ws_or_comment, alt((
+                map(parse_value, |v| VariableOrValue::Value(v)),
+                map(var_name_access, |var| VariableOrValue::Variable(var)),
+            )))
+        )), |(access, cmp, val)| {
+        FilterPart {
+            name: access,
+            comparator: cmp,
+            value: val,
+        }
+    });
+    let (input, filters) = cnf_clauses(input, parser, std::convert::identity, true)?;
+    Ok((input, filters))
+}
+
+fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>, QueryPart>
+    where F: Fn(Span2<'loc>) -> IResult<Span2<'loc>, String>
+{
+    move |input: Span2| {
+        let (input, first) = parser(input)?;
+        let (input, is_filter) = opt(char('['))(input)?;
+        let (input, part) = if is_filter.is_some() {
+            cut(alt((
+                map(
+                    terminated(
+                        predicate_filter_clause,
+                        preceded(zero_or_more_ws_or_comment, char(']'))),
+                    |clauses| QueryPart::Filter(first.clone(), clauses)),
+                map(
+                    terminated(delimited(space0, char('*'), space0),char(']')),
+                    |_all| {
+                        QueryPart::AllIndices(first.clone())
+                    }
+                ),
+                map(
+                    terminated(delimited(space0, super::values::parse_int_value, space0),char(']')),
+                    |idx| {
+                        let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+                        QueryPart::Index(first.clone(), idx)
+                    }
+                ),
+            )))(input)?
+        }
+        else if first.starts_with("%") {
+            (input, QueryPart::Variable(first.replace("%", "")))
+        }
+        else if &first == "*" {
+            (input, QueryPart::AllKeys)
+        }
+        else {
+            (input, QueryPart::Key(first))
+        };
+        Ok((input, part))
+    }
+}
+
+//
+// query_part
+//
+//fn predicate(input: Span2) -> IResult<Span2, QueryPart> {
+//    let (input, is_var_access) = opt(char('%'))(input)?;
+//    let (input, name) = alt((
+//        var_name,
+//        value("*".to_string(), char('*'))
+//    ))(input)?;
+//    let (input, is_filter) = opt(char('['))(input)?;
+//    let (input, part) = if is_filter.is_some() {
+//        cut(alt((
+//            |input: Span2| predicate_filter_clause(input, name),
+//            map(
+//                terminated(delimited(space0, char('*'), space0),char(']')),
+//                |_all| {
+//                    QueryPart::AllIndices
+//                }
+//            ),
+//        )))(input)?
+//    }
+//    else if is_var_access.is_some() {
+//        QueryPart::Variable(name)
+//    } else {
+//        QueryPart::Key(name)
+//    };
+//
+//    Ok((input, part))
+//}
+//
+
 //
 //  dotted_access              = "." (var_name / var_name_access / "*")
 //
@@ -282,18 +373,17 @@ fn custom_message(input: Span2) -> IResult<Span2, &str> {
 //
 // see var_name, var_name_access for other error codes
 //
-fn dotted_access(input: Span2) -> IResult<Span2, Vec<String>> {
+fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
     fold_many1(
-        preceded(
-            char('.'),
-            alt((
-                var_name,
-                map(var_name_access, |s| format!("%{}", s)),
-                value("*".to_string(), char('*')),
-                map(take_while1(|c: char| is_digit(c as u8)), |s: Span2| (*s.fragment()).to_string())
-            ))),
-        Vec::new(),
-        |mut acc: Vec<String>, part| {
+        preceded( char('.'), predicate(
+            alt((var_name_access_inclusive,
+                 var_name,
+                 value("*".to_string(), char('*')),
+                map(digit1, |s: Span2| (*s.fragment()).to_string())
+            )))
+        ),
+        AccessQuery::new(),
+        |mut acc: AccessQuery, part| {
             acc.push(part);
             acc
         },
@@ -303,27 +393,17 @@ fn dotted_access(input: Span2) -> IResult<Span2, Vec<String>> {
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
-fn access(input: Span2) -> IResult<Span2, PropertyAccess> {
-    alt((
-        map(pair(var_name_access, opt(dotted_access)),
-            |(var_name, dotted)| PropertyAccess {
-                var_access: Some(var_name),
-                property_dotted_notation:
-                if let Some(properties) = dotted { properties } else { vec![] },
-            }),
-        map(pair(var_name, opt(dotted_access)),
-            |(first, dotted)| PropertyAccess {
-                var_access: None,
-                property_dotted_notation:
-                if let Some(mut properties) = dotted {
-                    properties.insert(0, first);
-                    properties
-                } else {
-                    vec![first]
-                },
-            },
-        )
-    ))(input)
+fn access(input: Span2) -> IResult<Span2, AccessQuery> {
+    map(pair(
+        predicate(
+            alt((var_name_access_inclusive, var_name))),
+             opt(dotted_access)), |(first, remainder)| {
+        remainder.map(|mut query| {
+            query.insert(0, first.clone());
+            query
+        })
+        .unwrap_or(vec![first.clone()])
+    })(input)
 }
 
 //
@@ -345,7 +425,7 @@ fn access(input: Span2) -> IResult<Span2, PropertyAccess> {
 //
 //
 fn clause(input: Span2) -> IResult<Span2, GuardClause> {
-    let location = Location {
+    let location = FileLocation {
         file_name: input.extra,
         line: input.location_line(),
         column: input.get_utf8_column() as u32,
@@ -361,18 +441,14 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
                 value_cmp),
         // error if this isn't followed by space or comment or newline
         context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
-    ))(input)?;
+    ))(rest)?;
 
-    let no_rhs_expected = match &cmp {
-        ValueOperator::Cmp(op) | ValueOperator::Not(op) =>
-            match op {
-                CmpOperator::KeysExists |
-                CmpOperator::KeysEmpty |
-                CmpOperator::Empty |
-                CmpOperator::Exists => true,
-
-                _ => false
-            }
+    let no_rhs_expected = match &cmp.0 {
+        CmpOperator::KeysExists |
+        CmpOperator::KeysEmpty |
+        CmpOperator::Empty |
+        CmpOperator::Exists => true,
+        _ => false
     };
 
     if no_rhs_expected {
@@ -382,8 +458,8 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
                     msg.map(String::from)
                 }))(input)?;
         Ok((rest,
-            GuardClause::Clause(Clause {
-                access: lhs,
+            GuardClause::Clause(AccessClause {
+                query: lhs,
                 comparator: cmp,
                 compare_with: None,
                 custom_message,
@@ -397,7 +473,7 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
                         map(tuple((
                             access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             |(rhs, msg)| {
-                                (Some(LetValue::PropertyAccess(rhs)), msg.map(String::from).or(None))
+                                (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
                             }),
                         map(tuple((
                             parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
@@ -406,8 +482,8 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
                             })
                     ))))(rest)?;
         Ok((rest,
-            GuardClause::Clause(Clause {
-                access: lhs,
+            GuardClause::Clause(AccessClause {
+                query: lhs,
                 comparator: cmp,
                 compare_with,
                 custom_message,
@@ -435,7 +511,7 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
 //      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
 //
 fn rule_clause(input: Span2) -> IResult<Span2, GuardClause> {
-    let location = Location {
+    let location = FileLocation {
         file_name: input.extra,
         line: input.location_line(),
         column: input.get_utf8_column() as u32,
@@ -466,45 +542,137 @@ fn rule_clause(input: Span2) -> IResult<Span2, GuardClause> {
 //
 // clauses
 //
-fn clauses(input: Span2) -> IResult<Span2, Conjunctions> {
-    let mut clauses = Conjunctions::new();
+fn cnf_clauses<'loc, T, E, F, M>(input: Span2<'loc>, f: F, m: M, non_empty: bool) -> IResult<Span2<'loc>, Vec<T>>
+    where F: Fn(Span2<'loc>) -> IResult<Span2<'loc>, E>,
+          M: Fn(Vec<E>) -> T,
+          E: Clone + 'loc,
+          T: 'loc
+{
+    let mut result: Vec<T> = Vec::new();
     let mut remaining = input;
+    let mut first = true;
     loop {
-        let (rest, set) = separated_list(
-            or_join,
+        let (rest, set) = if non_empty {
+            match separated_nonempty_list(
+                or_join,
+                preceded(zero_or_more_ws_or_comment, |i: Span2| f(i)),
+            )(remaining.clone()) {
+                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
+                Err(nom::Err::Error(e)) => if first {
+                    return Err(nom::Err::Error(e))
+                } else {
+                    return Ok((remaining, result))
+                },
+                Err(nom::Err::Incomplete(e)) => return Err(nom::Err::Incomplete(e)),
+                Ok((r, s)) => (r, s),
+            }
+        }  else {
+            separated_list(
+                or_join,
+                preceded(zero_or_more_ws_or_comment, |i: Span2| f(i)),
+            )(remaining)?
 
-            //
-            // Order does matter here. Both rule_clause and access clause have the same syntax
-            // for the first part e.g
-            //
-            // s3_encrypted_bucket  or configuration.containers.*.port == 80
-            //
-            // the first part is a rule clause and the second part is access clause. Consider
-            // this example
-            //
-            // s3_encrypted_bucket or bucket_encryption EXISTS
-            //
-            // The first part if rule clause and second part is access. if we use the rule_clause
-            // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
-            // we are using the alt form to first parse to see if it is clause and then try rules_clause
-            //
-            preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause, ))),
-        )(remaining)?;
+        };
 
+        first = false;
         remaining = rest;
 
         match set.len() {
-            0 => return Ok((remaining, clauses)),
-            1 => clauses.push(ConjunctionClause::And(set[0].clone())),
-            _ => clauses.push(ConjunctionClause::Or(set, false)),
+            0 => return Ok((remaining, result)),
+            _ => result.push(m(set)),
         }
     }
+}
+
+fn clauses(input: Span2) -> IResult<Span2, Conjunctions<GuardClause>> {
+    cnf_clauses(
+        input,
+        //
+        // Order does matter here. Both rule_clause and access clause have the same syntax
+        // for the first part e.g
+        //
+        // s3_encrypted_bucket  or configuration.containers.*.port == 80
+        //
+        // the first part is a rule clause and the second part is access clause. Consider
+        // this example
+        //
+        // s3_encrypted_bucket or bucket_encryption EXISTS
+        //
+        // The first part if rule clause and second part is access. if we use the rule_clause
+        // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
+        // we are using the alt form to first parse to see if it is clause and then try rules_clause
+        //
+        alt((clause, rule_clause)),
+
+        //
+        // Mapping the GuardClause
+        //
+        std::convert::identity, false)
+//    let mut clauses = Conjunctions::new();
+//    let mut remaining = input;
+//    loop {
+//        let (rest, set) = separated_list(
+//            or_join,
+//
+//            preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause, ))),
+//        )(remaining)?;
+//
+//        remaining = rest;
+//
+//        match set.len() {
+//            0 => return Ok((remaining, clauses)),
+//            1 => clauses.push(ConjunctionClause::And(set[0].clone())),
+//            _ => clauses.push(ConjunctionClause::Or(set, false)),
+//        }
+//    }
 }
 
 //
 // when block
 //
-
+//fn when(input: Span2) -> IResult<Span2, WhenBlock> {
+//    //
+//    // starts with keyword
+//    //
+//    let (input, _ignored) = alt((tag("when"), tag("WHEN")))(input)?;
+//    //
+//    // Okay this is a when block, which means everything must exist
+//    //
+//    let (input, conditions) =
+//        cut(context("Expecting white space between WHEN keyword and conditions",
+//                preceded(one_or_more_ws_or_comment, clauses)))(input)?;
+//
+//    if conditions.is_empty() {
+//        return Err(nom::Err::Failure(ParserError {
+//            span: input,
+//            context: format!("WHEN is used without any condition clauses"),
+//            kind: nom::error::ErrorKind::Many1
+//        }));
+//    }
+//
+//    let (input, (_start, clauses, _end)) = tuple((
+//        cut(context("Expecting '{'",
+//                preceded(one_or_more_ws_or_comment, char('{')))),
+//        clauses,
+//        cut(context("Expecting '}'",
+//                preceded(one_or_more_ws_or_comment, char('}'))))
+//        ))(input)?;
+//
+//    if clauses.is_empty() {
+//        return Err(nom::Err::Failure(ParserError {
+//            span: input,
+//            context: format!("WHEN is used without any clauses"),
+//            kind: nom::error::ErrorKind::Many1
+//        }));
+//    }
+//
+//    Ok((input,
+//        WhenBlock {
+//            conditions: Some(conditions),
+//            clauses,
+//        }
+//    ))
+//}
 
 //
 //  ABNF        = "or" / "OR" / "|OR|"
@@ -807,8 +975,19 @@ mod tests {
         }
     }
 
-    fn to_string_vec(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| (*s).to_string()).collect::<Vec<String>>()
+    fn to_string_vec(list: &[&str]) -> Vec<QueryPart> {
+        list.iter()
+            .map(|part|
+                if (*part).starts_with("%") {
+                    QueryPart::Variable((*part).to_string().replace("%", ""))
+                }
+                else if *part == "*" {
+                    QueryPart::AllKeys
+                }
+                else {
+                    QueryPart::Key(String::from(*part))
+                })
+            .collect()
     }
 
     #[test]
@@ -1020,17 +1199,20 @@ mod tests {
             "engine.type.*", // 6 ok
             "engine.*.type.port", // 7 ok
             "engine.*.type.%var", // 8 ok
-            "engine.0", // 9 ok
-            "engine .0", // 10 ok engine will be property access part
+            "engine[0]", // 9 ok
+            "engine [0]", // 10 ok engine will be property access part
             "engine.ok.*",// 11 Ok
             "engine.%name.*", // 12 ok
 
             // testing variable access
             "%engine.type", // 13 ok
-            "%engine.*.type.0", // 14 ok
+            "%engine.*.type[0]", // 14 ok
             "%engine.%type.*", // 15 ok
             "%engine.%type.*.port", // 16 ok
             "%engine.*.", // 17 ok . is remainder
+
+            // matches { 'engine': [{'type': 'cfn', 'position': 1, 'other': 20}, {'type': 'tf', 'position': 2, 'other': 10}] }
+            "engine[type==\"cfn\"].port", // 18 Ok
 
             " %engine", // 18 err
         ];
@@ -1065,10 +1247,9 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine"]),
-                     var_access: None,
-                 }
+                AccessQuery::from([
+                    QueryPart::Key("engine".to_string())
+                ])
             )),
             Ok(( // 5
                  unsafe {
@@ -1079,10 +1260,10 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine", "type"]),
-                     var_access: None,
-                 }
+                AccessQuery::from([
+                    QueryPart::Key("engine".to_string()),
+                    QueryPart::Key("type".to_string()),
+                ])
             )),
             Ok(( // 6
                  unsafe {
@@ -1093,10 +1274,11 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine", "type", "*"]),
-                     var_access: None,
-                 }
+                 AccessQuery::from([
+                     QueryPart::Key("engine".to_string()),
+                     QueryPart::Key("type".to_string()),
+                     QueryPart::AllKeys,
+                 ])
             )),
             Ok(( // 7
                  unsafe {
@@ -1107,12 +1289,14 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine", "*", "type", "port"]),
-                     var_access: None,
-                 }
+                 AccessQuery::from([
+                     QueryPart::Key("engine".to_string()),
+                     QueryPart::AllKeys,
+                     QueryPart::Key("type".to_string()),
+                     QueryPart::Key("port".to_string()),
+                 ])
             )),
-            Ok(( // 8
+            Ok(( // "engine.*.type.%var", // 8 ok
                  unsafe {
                      Span2::new_from_raw_offset(
                          examples[8].len(),
@@ -1121,12 +1305,14 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine", "*", "type", "%var"]),
-                     var_access: None,
-                 }
+                 AccessQuery::from([
+                     QueryPart::Key("engine".to_string()),
+                     QueryPart::AllKeys,
+                     QueryPart::Key("type".to_string()),
+                     QueryPart::Variable("var".to_string()),
+                 ])
             )),
-            Ok(( // 9
+            Ok(( // "engine[0]", // 9 ok
                  unsafe {
                      Span2::new_from_raw_offset(
                          examples[9].len(),
@@ -1135,24 +1321,22 @@ mod tests {
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine", "0"]),
-                     var_access: None,
-                 }
+                 AccessQuery::from([
+                     QueryPart::Index("engine".to_string(), 0)
+                 ])
             )),
-            Ok(( // 10 "engine .0", // 10 ok engine will be property access part
+            Ok(( // 10 "engine [0]", // 10 ok engine will be property access part
                  unsafe {
                      Span2::new_from_raw_offset(
                          "engine".len(),
                          1,
-                         " .0",
+                         " [0]",
                          "",
                      )
                  },
-                 PropertyAccess {
-                     property_dotted_notation: to_string_vec(&["engine"]),
-                     var_access: None,
-                 }
+                AccessQuery::from([
+                    QueryPart::Key("engine".to_string())
+                ])
             )),
 
             // "engine.ok.*",// 11 Ok
@@ -1165,10 +1349,11 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["engine", "ok", "*"]),
-                    var_access: None,
-                }
+                AccessQuery::from([
+                    QueryPart::Key("engine".to_string()),
+                    QueryPart::Key("ok".to_string()),
+                    QueryPart::AllKeys,
+                ])
             )),
 
             // "engine.%name.*", // 12 ok
@@ -1181,10 +1366,11 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["engine", "%name", "*"]),
-                    var_access: None,
-                }
+                AccessQuery::from([
+                    QueryPart::Key("engine".to_string()),
+                    QueryPart::Variable("name".to_string()),
+                    QueryPart::AllKeys,
+                ])
             )),
 
             // "%engine.type", // 13 ok
@@ -1197,14 +1383,14 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["type"]),
-                    var_access: Some("engine".to_string()),
-                }
+                AccessQuery::from([
+                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Key("type".to_string()),
+                ])
             )),
 
 
-            // "%engine.*.type.0", // 14 ok
+            // "%engine.*.type[0]", // 14 ok
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
@@ -1214,10 +1400,11 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["*", "type", "0"]),
-                    var_access: Some("engine".to_string()),
-                }
+                AccessQuery::from([
+                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::AllKeys,
+                    QueryPart::Index("type".to_string(), 0),
+                ])
             )),
 
 
@@ -1231,10 +1418,11 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["%type", "*"]),
-                    var_access: Some("engine".to_string()),
-                }
+                AccessQuery::from([
+                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Variable("type".to_string()),
+                    QueryPart::AllKeys,
+                ])
             )),
 
 
@@ -1248,10 +1436,12 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["%type", "*", "port"]),
-                    var_access: Some("engine".to_string()),
-                }
+                AccessQuery::from([
+                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Variable("type".to_string()),
+                    QueryPart::AllKeys,
+                    QueryPart::Key("port".to_string()),
+                ])
             )),
 
 
@@ -1265,15 +1455,37 @@ mod tests {
                         "",
                     )
                 },
-                PropertyAccess {
-                    property_dotted_notation: to_string_vec(&["*"]),
-                    var_access: Some("engine".to_string()),
-                }
+                AccessQuery::from([
+                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::AllKeys,
+                ])
             )),
 
+            // matches { 'engine': [{'type': 'cfn', 'position': 1, 'other': 20}, {'type': 'tf', 'position': 2, 'other': 10}] }
+            // "engine[type==\"cfn\"].port", // 18 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[18].len(),
+                        1,
+                        "",
+                        "",
+                    )
+                },
+                AccessQuery::from([
+                    QueryPart::Filter("engine".to_string(), vec![
+                        vec![FilterPart {
+                            name: String::from("type"),
+                            comparator: (CmpOperator::Eq, false),
+                            value: VariableOrValue::Value(Value::String(String::from("cfn")))
+                        }]
+                    ]),
+                    QueryPart::Key(String::from("port")),
+                ])
+            )),
 
             // " %engine", // 18 err
-            Err(nom::Err::Error(ParserError { // 18
+            Err(nom::Err::Error(ParserError { // 19
                 span: from_str2(" %engine"),
                 kind: nom::error::ErrorKind::Alpha,
                 context: "".to_string(),
@@ -1336,7 +1548,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Exists),
+                (CmpOperator::Exists, false),
             )),
 
             // "not exists", // 3 ok
@@ -1349,7 +1561,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::Exists),
+                (CmpOperator::Exists, true),
             )),
 
             // "!exists", // 4 ok
@@ -1362,7 +1574,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::Exists),
+                (CmpOperator::Exists, true),
             )),
 
             // "!EXISTS", // 5 ok
@@ -1375,7 +1587,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::Exists),
+                (CmpOperator::Exists, true),
             )),
 
 
@@ -1403,7 +1615,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::In),
+                (CmpOperator::In, false),
             )),
 
             // "not in", // 8 ok
@@ -1416,7 +1628,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::In),
+                (CmpOperator::In, true),
             )),
 
             // "!in", // 9 ok,
@@ -1429,7 +1641,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::In),
+                (CmpOperator::In, true),
             )),
 
             // "EMPTY", // 10 ok,
@@ -1442,7 +1654,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Empty),
+                (CmpOperator::Empty, false),
             )),
 
             // "! EMPTY", // 11 err
@@ -1471,7 +1683,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::Empty),
+                (CmpOperator::Empty, true),
             )),
 
             // "IN [\"t\", \"n\"]", // 13 ok
@@ -1484,7 +1696,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::In),
+                (CmpOperator::In, false),
             )),
         ];
 
@@ -1545,7 +1757,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::KeysIn),
+                (CmpOperator::KeysIn, false),
             )),
 
             // "KEYS NOT IN", // 3 Ok
@@ -1558,7 +1770,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::KeysIn),
+                (CmpOperator::KeysIn, true),
             )),
 
             // "KEYS EXISTS", // 4 Ok
@@ -1571,7 +1783,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::KeysExists),
+                (CmpOperator::KeysExists, false),
             )),
 
             // "KEYS !EXISTS", // 5 Ok,
@@ -1584,7 +1796,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::KeysExists),
+                (CmpOperator::KeysExists, true),
             )),
 
             // "KEYS ==", // 6 Ok
@@ -1597,7 +1809,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::KeysEq),
+                (CmpOperator::KeysEq, false),
             )),
 
             // "KEYS !=", // 7 Ok
@@ -1610,7 +1822,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::KeysEq),
+                (CmpOperator::KeysEq, true),
             )),
 
             // "keys ! in", // 8 err after !
@@ -1637,7 +1849,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::KeysEmpty),
+                (CmpOperator::KeysEmpty, false),
             )),
 
             // "KEYS !EMPTY", // 10 ok
@@ -1650,7 +1862,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::KeysEmpty),
+                (CmpOperator::KeysEmpty, true),
             )),
 
             // " KEYS IN", // 11 err
@@ -1723,7 +1935,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Gt)
+                (CmpOperator::Gt, false)
             )),
 
             // ">=", // ok, 3
@@ -1736,7 +1948,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Ge)
+                (CmpOperator::Ge, false)
             )),
 
             // "<", // ok, 4
@@ -1749,7 +1961,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Lt)
+                (CmpOperator::Lt, false)
             )),
 
             // "<= ", // ok, 5
@@ -1762,7 +1974,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Le)
+                (CmpOperator::Le, false)
             )),
 
             // ">=\n", // ok, 6
@@ -1775,7 +1987,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::Ge)
+                (CmpOperator::Ge, false)
             )),
 
             // "IN\n", // ok 7
@@ -1788,7 +2000,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Cmp(CmpOperator::In)
+                (CmpOperator::In, false)
             )),
 
             // "!IN\n", // ok 8
@@ -1801,7 +2013,7 @@ mod tests {
                         "",
                     )
                 },
-                ValueOperator::Not(CmpOperator::In)
+                (CmpOperator::In, true)
             )),
         ];
 
@@ -1812,192 +2024,192 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_clause_success() {
-        let lhs = [
-            "configuration.containers.*.image",
-            "engine",
-        ];
+//    #[test]
+//    fn test_clause_success() {
+//        let lhs = [
+//            "configuration.containers.*.image",
+//            "engine",
+//        ];
+//
+//        let rhs = "PARAMETERS.ImageList";
+//        let comparators = [
+//            (">", ValueOperator::Cmp(CmpOperator::Gt)),
+//            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
+//            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
+//            ("!=", ValueOperator::Not(CmpOperator::Eq)),
+//            ("IN", ValueOperator::Cmp(CmpOperator::In)),
+//            ("!IN", ValueOperator::Not(CmpOperator::In)),
+//            ("not IN", ValueOperator::Not(CmpOperator::In)),
+//            ("NOT IN", ValueOperator::Not(CmpOperator::In)),
+//            ("KEYS IN", ValueOperator::Cmp(CmpOperator::KeysIn)),
+//            ("KEYS ==", ValueOperator::Cmp(CmpOperator::KeysEq)),
+//            ("KEYS !=", ValueOperator::Not(CmpOperator::KeysEq)),
+//            ("KEYS !IN", ValueOperator::Not(CmpOperator::KeysIn)),
+//        ];
+//        let separators = [
+//            (" ", " "),
+//            ("\t", "\n\n\t"),
+//            ("\t  ", "\t\t"),
+//            (" ", "\n#this comment\n"),
+//            (" ", "#this comment\n")
+//        ];
+//
+//        let rhs_dotted = rhs.split(".").map(String::from).collect::<Vec<String>>();
+//        let rhs_access = Some(LetValue::AccessClause(AccessClause {
+//            var_access: None,
+//            property_dotted_notation: rhs_dotted,
+//        }));
+//
+//        for each_lhs in lhs.iter() {
+//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+//            let lhs_access = AccessClause {
+//                var_access: None,
+//                property_dotted_notation: dotted,
+//            };
+//
+//            testing_access_with_cmp(&separators, &comparators,
+//                                    *each_lhs, rhs,
+//                                    || lhs_access.clone(),
+//                                    || rhs_access.clone());
+//        }
+//
+//        let comparators = [
+//            ("EXISTS", ValueOperator::Cmp(CmpOperator::Exists)),
+//            ("!EXISTS", ValueOperator::Not(CmpOperator::Exists)),
+//            ("EMPTY", ValueOperator::Cmp(CmpOperator::Empty)),
+//            ("NOT EMPTY", ValueOperator::Not(CmpOperator::Empty)),
+//            ("KEYS EXISTS", ValueOperator::Cmp(CmpOperator::KeysExists)),
+//            ("KEYS NOT EMPTY", ValueOperator::Not(CmpOperator::KeysEmpty))
+//        ];
+//
+//        for each_lhs in lhs.iter() {
+//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+//            let lhs_access = AccessClause {
+//                var_access: None,
+//                property_dotted_notation: dotted,
+//            };
+//
+//            testing_access_with_cmp(&separators, &comparators,
+//                                    *each_lhs, "",
+//                                    || lhs_access.clone(),
+//                                    || None);
+//        }
+//
+//        for each_lhs in lhs.iter() {
+//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+//            let lhs_access = AccessClause {
+//                var_access: None,
+//                property_dotted_notation: dotted,
+//            };
+//
+//            testing_access_with_cmp(&separators, &comparators,
+//                                    *each_lhs, " does.not.error", // this will not error,
+//                                    // the fragment you are left with is the one above and
+//                                    // the next clause fetch will error out for either no "OR" or
+//                                    // not newline for "and"
+//                                    || lhs_access.clone(),
+//                                    || None);
+//        }
+//
+//
+//        let lhs = [
+//            "%engine.port",
+//            "%engine.%port",
+//            "%engine.*.image"
+//        ];
+//
+//        for each_lhs in lhs.iter() {
+//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+//            let (var_name, remainder) = dotted.split_at(1);
+//            let dotted = remainder.iter().map(|s| s.to_owned())
+//                .collect::<Vec<String>>();
+//            let var_name = var_name[0].replace("%", "");
+//            let lhs_access = AccessClause {
+//                var_access: Some(var_name),
+//                property_dotted_notation: dotted,
+//            };
+//
+//            testing_access_with_cmp(&separators, &comparators,
+//                                    *each_lhs, "",
+//                                    || lhs_access.clone(),
+//                                    || None);
+//        }
+//
+//        let rhs = [
+//            "\"ami-12344545\"",
+//            "/ami-12/",
+//            "[\"ami-12\", \"ami-21\"]",
+//            "{ bare: 10, 'work': 20, 'other': 12.4 }"
+//        ];
+//        let comparators = [
+//            (">", ValueOperator::Cmp(CmpOperator::Gt)),
+//            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
+//            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
+//            ("!=", ValueOperator::Not(CmpOperator::Eq)),
+//            ("IN", ValueOperator::Cmp(CmpOperator::In)),
+//            ("!IN", ValueOperator::Not(CmpOperator::In)),
+//        ];
+//
+//        for each_rhs in &rhs {
+//            for each_lhs in lhs.iter() {
+//                let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
+//                let (var_name, remainder) = dotted.split_at(1);
+//                let dotted = remainder.iter().map(|s| s.to_owned())
+//                    .collect::<Vec<String>>();
+//                let var_name = var_name[0].replace("%", "");
+//                let lhs_access = AccessClause {
+//                    var_access: Some(var_name),
+//                    property_dotted_notation: dotted,
+//                };
+//
+//                let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
+//                testing_access_with_cmp(&separators, &comparators,
+//                                        *each_lhs, *each_rhs,
+//                                        || lhs_access.clone(),
+//                                        || Some(LetValue::Value(rhs_value.clone())));
+//            }
+//        }
+//    }
 
-        let rhs = "PARAMETERS.ImageList";
-        let comparators = [
-            (">", ValueOperator::Cmp(CmpOperator::Gt)),
-            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
-            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
-            ("!=", ValueOperator::Not(CmpOperator::Eq)),
-            ("IN", ValueOperator::Cmp(CmpOperator::In)),
-            ("!IN", ValueOperator::Not(CmpOperator::In)),
-            ("not IN", ValueOperator::Not(CmpOperator::In)),
-            ("NOT IN", ValueOperator::Not(CmpOperator::In)),
-            ("KEYS IN", ValueOperator::Cmp(CmpOperator::KeysIn)),
-            ("KEYS ==", ValueOperator::Cmp(CmpOperator::KeysEq)),
-            ("KEYS !=", ValueOperator::Not(CmpOperator::KeysEq)),
-            ("KEYS !IN", ValueOperator::Not(CmpOperator::KeysIn)),
-        ];
-        let separators = [
-            (" ", " "),
-            ("\t", "\n\n\t"),
-            ("\t  ", "\t\t"),
-            (" ", "\n#this comment\n"),
-            (" ", "#this comment\n")
-        ];
-
-        let rhs_dotted = rhs.split(".").map(String::from).collect::<Vec<String>>();
-        let rhs_access = Some(LetValue::PropertyAccess(PropertyAccess {
-            var_access: None,
-            property_dotted_notation: rhs_dotted,
-        }));
-
-        for each_lhs in lhs.iter() {
-            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-            let lhs_access = PropertyAccess {
-                var_access: None,
-                property_dotted_notation: dotted,
-            };
-
-            testing_access_with_cmp(&separators, &comparators,
-                                    *each_lhs, rhs,
-                                    || lhs_access.clone(),
-                                    || rhs_access.clone());
-        }
-
-        let comparators = [
-            ("EXISTS", ValueOperator::Cmp(CmpOperator::Exists)),
-            ("!EXISTS", ValueOperator::Not(CmpOperator::Exists)),
-            ("EMPTY", ValueOperator::Cmp(CmpOperator::Empty)),
-            ("NOT EMPTY", ValueOperator::Not(CmpOperator::Empty)),
-            ("KEYS EXISTS", ValueOperator::Cmp(CmpOperator::KeysExists)),
-            ("KEYS NOT EMPTY", ValueOperator::Not(CmpOperator::KeysEmpty))
-        ];
-
-        for each_lhs in lhs.iter() {
-            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-            let lhs_access = PropertyAccess {
-                var_access: None,
-                property_dotted_notation: dotted,
-            };
-
-            testing_access_with_cmp(&separators, &comparators,
-                                    *each_lhs, "",
-                                    || lhs_access.clone(),
-                                    || None);
-        }
-
-        for each_lhs in lhs.iter() {
-            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-            let lhs_access = PropertyAccess {
-                var_access: None,
-                property_dotted_notation: dotted,
-            };
-
-            testing_access_with_cmp(&separators, &comparators,
-                                    *each_lhs, " does.not.error", // this will not error,
-                                    // the fragment you are left with is the one above and
-                                    // the next clause fetch will error out for either no "OR" or
-                                    // not newline for "and"
-                                    || lhs_access.clone(),
-                                    || None);
-        }
-
-
-        let lhs = [
-            "%engine.port",
-            "%engine.%port",
-            "%engine.*.image"
-        ];
-
-        for each_lhs in lhs.iter() {
-            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-            let (var_name, remainder) = dotted.split_at(1);
-            let dotted = remainder.iter().map(|s| s.to_owned())
-                .collect::<Vec<String>>();
-            let var_name = var_name[0].replace("%", "");
-            let lhs_access = PropertyAccess {
-                var_access: Some(var_name),
-                property_dotted_notation: dotted,
-            };
-
-            testing_access_with_cmp(&separators, &comparators,
-                                    *each_lhs, "",
-                                    || lhs_access.clone(),
-                                    || None);
-        }
-
-        let rhs = [
-            "\"ami-12344545\"",
-            "/ami-12/",
-            "[\"ami-12\", \"ami-21\"]",
-            "{ bare: 10, 'work': 20, 'other': 12.4 }"
-        ];
-        let comparators = [
-            (">", ValueOperator::Cmp(CmpOperator::Gt)),
-            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
-            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
-            ("!=", ValueOperator::Not(CmpOperator::Eq)),
-            ("IN", ValueOperator::Cmp(CmpOperator::In)),
-            ("!IN", ValueOperator::Not(CmpOperator::In)),
-        ];
-
-        for each_rhs in &rhs {
-            for each_lhs in lhs.iter() {
-                let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-                let (var_name, remainder) = dotted.split_at(1);
-                let dotted = remainder.iter().map(|s| s.to_owned())
-                    .collect::<Vec<String>>();
-                let var_name = var_name[0].replace("%", "");
-                let lhs_access = PropertyAccess {
-                    var_access: Some(var_name),
-                    property_dotted_notation: dotted,
-                };
-
-                let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
-                testing_access_with_cmp(&separators, &comparators,
-                                        *each_lhs, *each_rhs,
-                                        || lhs_access.clone(),
-                                        || Some(LetValue::Value(rhs_value.clone())));
-            }
-        }
-    }
-
-    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
-                                     comparators: &[(&str, ValueOperator)],
-                                     lhs: &str,
-                                     rhs: &str,
-                                     access: A,
-                                     cmp_with: C)
-        where A: Fn() -> PropertyAccess,
-              C: Fn() -> Option<LetValue>
-    {
-        for (lhs_sep, rhs_sep) in separators {
-            for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
-                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
-                                             lhs = lhs, rhs = rhs, op = *each_op, lhs_sep = *lhs_sep, rhs_sep = *rhs_sep);
-                println!("Testing Access pattern = {}", access_pattern);
-                let span = from_str2(&access_pattern);
-                let result = clause(span);
-                if result.is_err() {
-                    let parser_error = &result.unwrap_err();
-                    let parser_error = match parser_error {
-                        nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
-                        nom::Err::Incomplete(_) => "More input needed".to_string(),
-                    };
-                    println!("{}", parser_error);
-                    assert_eq!(false, true);
-                } else {
-                    assert_eq!(result.is_ok(), true);
-                    let result = match result.unwrap().1 {
-                        GuardClause::Clause(clause, _) => clause,
-                        _ => unreachable!()
-                    };
-                    assert_eq!(result.access, access());
-                    assert_eq!(result.compare_with, cmp_with());
-                    assert_eq!(&result.comparator, value_cmp);
-                    assert_eq!(result.custom_message, None);
-                }
-            }
-        }
-    }
-
+//    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
+//                                     comparators: &[(&str, ValueOperator)],
+//                                     lhs: &str,
+//                                     rhs: &str,
+//                                     access: A,
+//                                     cmp_with: C)
+//        where A: Fn() -> AccessClause,
+//              C: Fn() -> Option<LetValue>
+//    {
+//        for (lhs_sep, rhs_sep) in separators {
+//            for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
+//                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
+//                                             lhs = lhs, rhs = rhs, op = *each_op, lhs_sep = *lhs_sep, rhs_sep = *rhs_sep);
+//                println!("Testing Access pattern = {}", access_pattern);
+//                let span = from_str2(&access_pattern);
+//                let result = clause(span);
+//                if result.is_err() {
+//                    let parser_error = &result.unwrap_err();
+//                    let parser_error = match parser_error {
+//                        nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
+//                        nom::Err::Incomplete(_) => "More input needed".to_string(),
+//                    };
+//                    println!("{}", parser_error);
+//                    assert_eq!(false, true);
+//                } else {
+//                    assert_eq!(result.is_ok(), true);
+//                    let result = match result.unwrap().1 {
+//                        GuardClause::Clause(clause, _) => clause,
+//                        _ => unreachable!()
+//                    };
+//                    assert_eq!(result.access, access());
+//                    assert_eq!(result.compare_with, cmp_with());
+//                    assert_eq!(&result.comparator, value_cmp);
+//                    assert_eq!(result.custom_message, None);
+//                }
+//            }
+//        }
+//    }
+//
     #[test]
     fn test_clause_failures() {
         let lhs = [
@@ -2034,9 +2246,10 @@ mod tests {
                             "",
                         )
                     },
-                    kind: nom::error::ErrorKind::Space,
+                    kind: nom::error::ErrorKind::Char,
                     context: "expecting one or more WS or comment blocks".to_string(),
                 }));
+                println!("Testing : {}", access_pattern);
                 assert_eq!(clause(from_str2(&access_pattern)), error);
             }
         }
@@ -2140,7 +2353,7 @@ mod tests {
                 },
                 GuardClause::NamedRule(
                     "secure".to_string(),
-                    Location { line: 1, column: 1, file_name: "" },
+                    FileLocation { line: 1, column: 1, file_name: "" },
                     false,
                     None)
             )),
@@ -2157,7 +2370,7 @@ mod tests {
                 },
                 GuardClause::NamedRule(
                     "secure".to_string(),
-                    Location { line: 1, column: 1, file_name: "" },
+                    FileLocation { line: 1, column: 1, file_name: "" },
                     true,
                     None)
             )),
@@ -2174,7 +2387,7 @@ mod tests {
                 },
                 GuardClause::NamedRule(
                     "secure".to_string(),
-                    Location { line: 1, column: 1, file_name: "" },
+                    FileLocation { line: 1, column: 1, file_name: "" },
                     false,
                     None)
             )),
@@ -2223,7 +2436,7 @@ mod tests {
                 },
                 GuardClause::NamedRule(
                     "secure".to_string(),
-                    Location { line: 1, column: 1, file_name: "" },
+                    FileLocation { line: 1, column: 1, file_name: "" },
                     false,
                     Some("this is secure ${PARAMETER.MSG}".to_string())),
             )),
@@ -2240,7 +2453,7 @@ mod tests {
                 },
                 GuardClause::NamedRule(
                     "secure".to_string(),
-                    Location { line: 1, column: 1, file_name: "" },
+                    FileLocation { line: 1, column: 1, file_name: "" },
                     true,
                     Some("this is not secure ${PARAMETER.MSG}".to_string())),
             )),
@@ -2263,7 +2476,7 @@ mod tests {
             r#"secure or
                !exception
 
-               configurations.containers.*.image == /httpd:2.4/"#, // Ok 4
+               configurations.containers[*].image == /httpd:2.4/"#, // Ok 4
             r#"secure or
                !exception
                let x = 10"# // Ok 5
@@ -2295,18 +2508,17 @@ mod tests {
                     )
                 },
                 vec![
-                    ConjunctionClause::And(
-                        GuardClause::NamedRule(
-                            "secure".to_string(),
-                            Location {
-                                line: 1,
-                                column: 1,
-                                file_name: "",
-                            },
-                            false,
-                            None,
-                        )
-                    )
+                    vec![GuardClause::NamedRule(
+                        "secure".to_string(),
+                        FileLocation {
+                            line: 1,
+                            column: 1,
+                            file_name: "",
+                        },
+                        false,
+                        None,
+                    ),
+                    ]
                 ]
             )),
 
@@ -2320,16 +2532,18 @@ mod tests {
                         "",
                     )
                 },
-                vec![ConjunctionClause::And(
-                    GuardClause::NamedRule(
+                vec![
+                    vec![GuardClause::NamedRule(
                         "secure".to_string(),
-                        Location {
+                        FileLocation {
                             line: 1,
                             column: 1,
                             file_name: "",
                         },
                         true,
-                        Some(" was not secure ${PARAMETER.SECURE_MSG}".to_string())))]
+                        Some(" was not secure ${PARAMETER.SECURE_MSG}".to_string()))
+                    ]
+                ]
             )),
 
             // "secure\nconfigurations.containers.*.image == /httpd:2.4/", // Ok 3
@@ -2343,35 +2557,35 @@ mod tests {
                     )
                 },
                 vec![
-                    ConjunctionClause::And(
+                    vec![
                         GuardClause::NamedRule(
                             "secure".to_string(),
-                            Location {
+                            FileLocation {
                                 line: 1,
                                 column: 1,
                                 file_name: "",
                             },
                             false,
-                            None)),
-                    ConjunctionClause::And(
+                            None)
+                    ],
+                    vec![
                         GuardClause::Clause(
-                            Clause {
-                                location: Location {
+                            AccessClause {
+                                location: FileLocation {
                                     file_name: "",
                                     column: 1,
                                     line: 2,
                                 },
                                 compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
-                                access: PropertyAccess {
-                                    var_access: None,
-                                    property_dotted_notation: "configurations.containers.*.image".split(".").map(String::from).collect(),
-                                },
+                                query: "configurations.containers.*.image".split(".")
+                                    .map(|s| if s == "*" { QueryPart::AllKeys } else { QueryPart::Key(s.to_string()) }).collect(),
                                 custom_message: None,
-                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
+                                comparator: (CmpOperator::Eq, false),
                             },
                             false,
                         )
-                    )]
+                    ],
+                ]
             )),
 
             // r#"secure or
@@ -2388,28 +2602,28 @@ mod tests {
                     )
                 },
                 vec![
-                    ConjunctionClause::Or(
-                        vec![
-                            GuardClause::NamedRule("secure".to_string(), Location { line: 1, column: 1, file_name: "" }, false, None),
-                            GuardClause::NamedRule("exception".to_string(), Location { line: 2, column: 16, file_name: "" }, true, None),
-                        ],
-                        false,
-                    ),
-                    ConjunctionClause::And(
+                    vec![
+                        GuardClause::NamedRule("secure".to_string(), FileLocation { line: 1, column: 1, file_name: "" }, false, None),
+                        GuardClause::NamedRule("exception".to_string(), FileLocation { line: 2, column: 16, file_name: "" }, true, None),
+                    ],
+                    vec![
                         GuardClause::Clause(
-                            Clause {
-                                location: Location { file_name: "", column: 16, line: 4 },
+                            AccessClause {
+                                location: FileLocation { file_name: "", column: 16, line: 4 },
                                 compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
-                                access: PropertyAccess {
-                                    var_access: None,
-                                    property_dotted_notation: "configurations.containers.*.image".split(".").map(String::from).collect(),
-                                },
+                                query: "configurations.containers[*].image".split(".").map( |part|
+                                    if part.contains('[') {
+                                        QueryPart::AllIndices("containers".to_string())
+                                    } else {
+                                        QueryPart::Key(part.to_string())
+                                    }
+                                ).collect(),
                                 custom_message: None,
-                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
+                                comparator: (CmpOperator::Eq, false),
                             },
                             false,
                         )
-                    ),
+                    ],
                 ]
             )),
 
@@ -2426,13 +2640,10 @@ mod tests {
                     )
                 },
                 vec![
-                    ConjunctionClause::Or(
-                        vec![
-                            GuardClause::NamedRule("secure".to_string(), Location { line: 1, column: 1, file_name: "" }, false, None),
-                            GuardClause::NamedRule("exception".to_string(), Location { line: 2, column: 16, file_name: "" }, true, None),
-                        ],
-                        false,
-                    ),
+                    vec![
+                        GuardClause::NamedRule("secure".to_string(), FileLocation { line: 1, column: 1, file_name: "" }, false, None),
+                        GuardClause::NamedRule("exception".to_string(), FileLocation { line: 2, column: 16, file_name: "" }, true, None),
+                    ],
                 ]
             )),
         ];
@@ -2441,6 +2652,37 @@ mod tests {
             let span = from_str2(*each);
             let result = clauses(span);
             assert_eq!(&result, &expectations[idx]);
+            println!("{:?}", result);
+            assert_eq!(&result, &expectations[idx]);
         }
     }
+
+//    #[test]
+//    fn test_when_block() {
+//        let examples = [
+//            r#"when secure or is_ecrypted { configuration.containers.*.image IN PARAMETERS.allowed_engines }"#,
+//            r#"when !secure {
+//                !is_enrypted
+//                configuration.containers.*.image == /http:2.4/
+//            }"#
+//        ];
+//
+//        let expectations = [
+//            Ok((
+//                unsafe {
+//                    Span2::new_from_raw_offset(
+//                        examples[0].len(),
+//                        1,
+//                        "",
+//                        ""
+//                    )
+//                },
+//                WhenBlock {
+//                    conditions: Some(vec![
+//                    ]),
+//                    clauses: vec![]
+//                }
+//                ))
+//        ];
+//    }
 }

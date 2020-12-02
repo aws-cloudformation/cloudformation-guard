@@ -177,6 +177,7 @@ pub(crate) mod values;
 pub(crate) mod parser;
 pub(crate) mod expr;
 mod parser2;
+pub(in crate::rules) mod exprs;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum EvalStatus {

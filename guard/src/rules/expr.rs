@@ -40,6 +40,12 @@ pub(crate) enum LetValue {
     PropertyAccess(PropertyAccess),
 }
 
+///
+/// This expression encapsulates assignment expressions inside a block expression
+/// or at the file let. An assignment can either be a direct Value object or access
+/// from incoming context. Access expressions support **predicate** queries to help
+/// match specific selections [crate::rules::common::walk_type]
+///
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) struct LetExpr {
     pub(crate) var: String,
@@ -67,56 +73,6 @@ pub(crate) struct Clause<'loc> {
     pub(crate) custom_message: Option<String>,
     pub(crate) location: Location<'loc>,
 }
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) enum GuardClause<'loc> {
-    Clause(Clause<'loc>, bool),
-    NamedRule(String, Location<'loc>, bool, Option<String>),
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) enum ConjunctionClause<'loc> {
-    And(GuardClause<'loc>),
-    Or(Vec<GuardClause<'loc>>, bool),
-}
-
-pub(crate) type Conjunctions<'loc> = Vec<ConjunctionClause<'loc>>;
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) struct WhenBlock<'loc> {
-    pub(crate) conditions: Option<Conjunctions<'loc>>,
-    pub(crate) clauses: Conjunctions<'loc>,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) struct TypeBlock<'loc> {
-    pub(crate) type_name: String,
-    pub(crate) assignments: Vec<LetExpr>,
-    pub(crate) clauses: WhenBlock<'loc>,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) enum RuleBlockClauseType<'loc> {
-    When(WhenBlock<'loc>),
-    Type(TypeBlock<'loc>),
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) struct RuleBlock<'loc> {
-    pub(crate) rule_name: String,
-    pub(crate) assignments: Vec<LetExpr>,
-    pub(crate) clauses: Vec<RuleBlockClauseType<'loc>>
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) enum GuardExpr<'loc> {
-    Assignment(LetExpr),
-    Type(TypeBlock<'loc>),
-    Rule(RuleBlock<'loc>),
-}
-
-pub(crate) type Guards<'loc> = Vec<GuardExpr<'loc>>;
-
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum PropertyClause<'loc> {

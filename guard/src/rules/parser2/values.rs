@@ -36,7 +36,7 @@ pub(crate) fn from_str(in_str: &str) -> Span {
 /// Scalar Values string, bool, int, f64
 ///
 
-fn parse_int_value(input: Span) -> IResult<Span, Value> {
+pub(super) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-1 * i))
     });
