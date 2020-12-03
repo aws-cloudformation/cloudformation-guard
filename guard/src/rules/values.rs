@@ -149,6 +149,14 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
     }
 }
 
+impl TryFrom<serde_json::Value> for Value {
+    type Error = crate::errors::Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        Value::try_from(&value)
+    }
+}
+
 impl <'a> TryFrom<&'a str> for Value {
     type Error = crate::errors::Error;
 

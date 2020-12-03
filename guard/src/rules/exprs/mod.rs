@@ -118,7 +118,7 @@ pub(crate) enum VariableOrValue {
 pub(crate) struct FilterPart {
     pub(crate) name: String,
     pub(crate) comparator: (CmpOperator, bool),
-    pub(crate) value: VariableOrValue,
+    pub(crate) value: Option<VariableOrValue>,
 }
 
 pub(crate) type AccessQuery = Vec<QueryPart>;
@@ -132,7 +132,8 @@ pub(crate) struct AccessClause<'loc> {
     pub(crate) location: FileLocation<'loc>,
 }
 
-pub(crate) type Conjunctions<T> = Vec<Vec<T>>;
+pub(crate) type Disjunctions<T> = Vec<T>;
+pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum GuardClause<'loc> {

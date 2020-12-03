@@ -274,11 +274,11 @@ fn predicate_filter_clause(input: Span2) -> IResult<Span2, Vec<Vec<FilterPart>>>
     let parser = map(
         tuple((
             preceded(zero_or_more_ws_or_comment, var_name),
-            preceded(zero_or_more_ws_or_comment, value_cmp),
-            preceded(zero_or_more_ws_or_comment, alt((
+            cut(preceded(zero_or_more_ws_or_comment, value_cmp)),
+            preceded(zero_or_more_ws_or_comment, opt(alt((
                 map(parse_value, |v| VariableOrValue::Value(v)),
                 map(var_name_access, |var| VariableOrValue::Variable(var)),
-            )))
+            ))))
         )), |(access, cmp, val)| {
         FilterPart {
             name: access,
@@ -297,26 +297,17 @@ fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>,
         let (input, first) = parser(input)?;
         let (input, is_filter) = opt(char('['))(input)?;
         let (input, part) = if is_filter.is_some() {
-            cut(alt((
-                map(
-                    terminated(
-                        predicate_filter_clause,
-                        preceded(zero_or_more_ws_or_comment, char(']'))),
-                    |clauses| QueryPart::Filter(first.clone(), clauses)),
-                map(
-                    terminated(delimited(space0, char('*'), space0),char(']')),
-                    |_all| {
-                        QueryPart::AllIndices(first.clone())
-                    }
-                ),
-                map(
-                    terminated(delimited(space0, super::values::parse_int_value, space0),char(']')),
-                    |idx| {
+            let (input, part) = cut(alt((
+                map( predicate_filter_clause, |clauses| QueryPart::Filter(first.clone(), clauses)),
+                map( preceded(space0, char('*')), |_all| QueryPart::AllIndices(first.clone())),
+                map( preceded(space0, super::values::parse_int_value), |idx| {
                         let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
                         QueryPart::Index(first.clone(), idx)
                     }
                 ),
-            )))(input)?
+            )))(input)?;
+            let (input, _ignored) = cut(terminated(zero_or_more_ws_or_comment, char(']')))(input)?;
+            (input, part)
         }
         else if first.starts_with("%") {
             (input, QueryPart::Variable(first.replace("%", "")))
@@ -535,7 +526,7 @@ fn rule_clause(input: Span2) -> IResult<Span2, GuardClause> {
     //
     // Else it must have a custom message
     //
-    let (remaining, message) = preceded(space0, custom_message)(remaining)?;
+    let (remaining, message) = cut(preceded(space0, custom_message))(remaining)?;
     Ok((remaining, GuardClause::NamedRule(ct_type, location, not.is_some(), Some(message.to_string()))))
 }
 
@@ -608,23 +599,32 @@ fn clauses(input: Span2) -> IResult<Span2, Conjunctions<GuardClause>> {
         // Mapping the GuardClause
         //
         std::convert::identity, false)
-//    let mut clauses = Conjunctions::new();
-//    let mut remaining = input;
-//    loop {
-//        let (rest, set) = separated_list(
-//            or_join,
-//
-//            preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause, ))),
-//        )(remaining)?;
-//
-//        remaining = rest;
-//
-//        match set.len() {
-//            0 => return Ok((remaining, clauses)),
-//            1 => clauses.push(ConjunctionClause::And(set[0].clone())),
-//            _ => clauses.push(ConjunctionClause::Or(set, false)),
-//        }
-//    }
+}
+
+fn assignment(input: Span2) -> IResult<Span2, LetExpr> {
+    let (input, _let_keyword) = tag("let")(input)?;
+    let (input, (var_name, _eq_sign)) = tuple((
+        preceded(one_or_more_ws_or_comment, var_name),
+        cut(preceded(zero_or_more_ws_or_comment, tag("="))),
+        ))(input)?;
+
+    match parse_value(input) {
+        Ok((input, value)) => Ok((input, LetExpr {
+            var: var_name,
+            value: LetValue::Value(value)
+        })),
+
+        Err(nom::Err::Error(_)) => {
+            let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))
+                (input)?;
+            Ok((input, LetExpr {
+                var: var_name,
+                value: LetValue::AccessClause(access),
+            }))
+        },
+
+        Err(e) => Err(e)
+    }
 }
 
 //
@@ -696,6 +696,7 @@ fn or_join(input: Span2) -> IResult<Span2, Span2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::convert::TryInto;
 
     #[test]
     fn test_white_space_with_comments() {
@@ -973,6 +974,10 @@ mod tests {
             let actual = var_name_access(span);
             assert_eq!(&actual, &expectations[idx]);
         }
+    }
+
+    fn to_query_part(vec: Vec<&str>) -> Vec<QueryPart> {
+        to_string_vec(&vec)
     }
 
     fn to_string_vec(list: &[&str]) -> Vec<QueryPart> {
@@ -1477,7 +1482,7 @@ mod tests {
                         vec![FilterPart {
                             name: String::from("type"),
                             comparator: (CmpOperator::Eq, false),
-                            value: VariableOrValue::Value(Value::String(String::from("cfn")))
+                            value: Some(VariableOrValue::Value(Value::String(String::from("cfn"))))
                         }]
                     ]),
                     QueryPart::Key(String::from("port")),
@@ -2024,192 +2029,295 @@ mod tests {
         }
     }
 
-//    #[test]
-//    fn test_clause_success() {
-//        let lhs = [
-//            "configuration.containers.*.image",
-//            "engine",
-//        ];
-//
-//        let rhs = "PARAMETERS.ImageList";
-//        let comparators = [
-//            (">", ValueOperator::Cmp(CmpOperator::Gt)),
-//            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
-//            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
-//            ("!=", ValueOperator::Not(CmpOperator::Eq)),
-//            ("IN", ValueOperator::Cmp(CmpOperator::In)),
-//            ("!IN", ValueOperator::Not(CmpOperator::In)),
-//            ("not IN", ValueOperator::Not(CmpOperator::In)),
-//            ("NOT IN", ValueOperator::Not(CmpOperator::In)),
-//            ("KEYS IN", ValueOperator::Cmp(CmpOperator::KeysIn)),
-//            ("KEYS ==", ValueOperator::Cmp(CmpOperator::KeysEq)),
-//            ("KEYS !=", ValueOperator::Not(CmpOperator::KeysEq)),
-//            ("KEYS !IN", ValueOperator::Not(CmpOperator::KeysIn)),
-//        ];
-//        let separators = [
-//            (" ", " "),
-//            ("\t", "\n\n\t"),
-//            ("\t  ", "\t\t"),
-//            (" ", "\n#this comment\n"),
-//            (" ", "#this comment\n")
-//        ];
-//
-//        let rhs_dotted = rhs.split(".").map(String::from).collect::<Vec<String>>();
-//        let rhs_access = Some(LetValue::AccessClause(AccessClause {
-//            var_access: None,
-//            property_dotted_notation: rhs_dotted,
-//        }));
-//
-//        for each_lhs in lhs.iter() {
-//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-//            let lhs_access = AccessClause {
-//                var_access: None,
-//                property_dotted_notation: dotted,
-//            };
-//
-//            testing_access_with_cmp(&separators, &comparators,
-//                                    *each_lhs, rhs,
-//                                    || lhs_access.clone(),
-//                                    || rhs_access.clone());
-//        }
-//
-//        let comparators = [
-//            ("EXISTS", ValueOperator::Cmp(CmpOperator::Exists)),
-//            ("!EXISTS", ValueOperator::Not(CmpOperator::Exists)),
-//            ("EMPTY", ValueOperator::Cmp(CmpOperator::Empty)),
-//            ("NOT EMPTY", ValueOperator::Not(CmpOperator::Empty)),
-//            ("KEYS EXISTS", ValueOperator::Cmp(CmpOperator::KeysExists)),
-//            ("KEYS NOT EMPTY", ValueOperator::Not(CmpOperator::KeysEmpty))
-//        ];
-//
-//        for each_lhs in lhs.iter() {
-//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-//            let lhs_access = AccessClause {
-//                var_access: None,
-//                property_dotted_notation: dotted,
-//            };
-//
-//            testing_access_with_cmp(&separators, &comparators,
-//                                    *each_lhs, "",
-//                                    || lhs_access.clone(),
-//                                    || None);
-//        }
-//
-//        for each_lhs in lhs.iter() {
-//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-//            let lhs_access = AccessClause {
-//                var_access: None,
-//                property_dotted_notation: dotted,
-//            };
-//
-//            testing_access_with_cmp(&separators, &comparators,
-//                                    *each_lhs, " does.not.error", // this will not error,
-//                                    // the fragment you are left with is the one above and
-//                                    // the next clause fetch will error out for either no "OR" or
-//                                    // not newline for "and"
-//                                    || lhs_access.clone(),
-//                                    || None);
-//        }
-//
-//
-//        let lhs = [
-//            "%engine.port",
-//            "%engine.%port",
-//            "%engine.*.image"
-//        ];
-//
-//        for each_lhs in lhs.iter() {
-//            let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-//            let (var_name, remainder) = dotted.split_at(1);
-//            let dotted = remainder.iter().map(|s| s.to_owned())
-//                .collect::<Vec<String>>();
-//            let var_name = var_name[0].replace("%", "");
-//            let lhs_access = AccessClause {
-//                var_access: Some(var_name),
-//                property_dotted_notation: dotted,
-//            };
-//
-//            testing_access_with_cmp(&separators, &comparators,
-//                                    *each_lhs, "",
-//                                    || lhs_access.clone(),
-//                                    || None);
-//        }
-//
-//        let rhs = [
-//            "\"ami-12344545\"",
-//            "/ami-12/",
-//            "[\"ami-12\", \"ami-21\"]",
-//            "{ bare: 10, 'work': 20, 'other': 12.4 }"
-//        ];
-//        let comparators = [
-//            (">", ValueOperator::Cmp(CmpOperator::Gt)),
-//            ("<", ValueOperator::Cmp(CmpOperator::Lt)),
-//            ("==", ValueOperator::Cmp(CmpOperator::Eq)),
-//            ("!=", ValueOperator::Not(CmpOperator::Eq)),
-//            ("IN", ValueOperator::Cmp(CmpOperator::In)),
-//            ("!IN", ValueOperator::Not(CmpOperator::In)),
-//        ];
-//
-//        for each_rhs in &rhs {
-//            for each_lhs in lhs.iter() {
-//                let dotted = (*each_lhs).split(".").map(String::from).collect::<Vec<String>>();
-//                let (var_name, remainder) = dotted.split_at(1);
-//                let dotted = remainder.iter().map(|s| s.to_owned())
-//                    .collect::<Vec<String>>();
-//                let var_name = var_name[0].replace("%", "");
-//                let lhs_access = AccessClause {
-//                    var_access: Some(var_name),
-//                    property_dotted_notation: dotted,
-//                };
-//
-//                let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
-//                testing_access_with_cmp(&separators, &comparators,
-//                                        *each_lhs, *each_rhs,
-//                                        || lhs_access.clone(),
-//                                        || Some(LetValue::Value(rhs_value.clone())));
-//            }
-//        }
-//    }
+    #[test]
+    fn test_clause_success() {
+        let lhs = [
+            "configuration.containers.*.image",
+            "engine",
+        ];
 
-//    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
-//                                     comparators: &[(&str, ValueOperator)],
-//                                     lhs: &str,
-//                                     rhs: &str,
-//                                     access: A,
-//                                     cmp_with: C)
-//        where A: Fn() -> AccessClause,
-//              C: Fn() -> Option<LetValue>
-//    {
-//        for (lhs_sep, rhs_sep) in separators {
-//            for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
-//                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
-//                                             lhs = lhs, rhs = rhs, op = *each_op, lhs_sep = *lhs_sep, rhs_sep = *rhs_sep);
-//                println!("Testing Access pattern = {}", access_pattern);
-//                let span = from_str2(&access_pattern);
-//                let result = clause(span);
-//                if result.is_err() {
-//                    let parser_error = &result.unwrap_err();
-//                    let parser_error = match parser_error {
-//                        nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
-//                        nom::Err::Incomplete(_) => "More input needed".to_string(),
-//                    };
-//                    println!("{}", parser_error);
-//                    assert_eq!(false, true);
-//                } else {
-//                    assert_eq!(result.is_ok(), true);
-//                    let result = match result.unwrap().1 {
-//                        GuardClause::Clause(clause, _) => clause,
-//                        _ => unreachable!()
-//                    };
-//                    assert_eq!(result.access, access());
-//                    assert_eq!(result.compare_with, cmp_with());
-//                    assert_eq!(&result.comparator, value_cmp);
-//                    assert_eq!(result.custom_message, None);
-//                }
-//            }
-//        }
-//    }
-//
+        let rhs = "PARAMETERS.ImageList";
+        let comparators = [
+            (">", (CmpOperator::Gt, false)),
+            ("<", (CmpOperator::Lt, false)),
+            ("==", (CmpOperator::Eq, false)),
+            ("!=", (CmpOperator::Eq, true)),
+            ("IN", (CmpOperator::In, false)),
+            ("!IN", (CmpOperator::In, true)),
+            ("not IN", (CmpOperator::In, true)),
+            ("NOT IN", (CmpOperator::In, true)),
+            ("KEYS IN", (CmpOperator::KeysIn, false)),
+            ("KEYS ==", (CmpOperator::KeysEq, false)),
+            ("KEYS !=", (CmpOperator::KeysEq, true)),
+            ("KEYS !IN", (CmpOperator::KeysIn, true)),
+        ];
+        let separators = [
+            (" ", " "),
+            ("\t", "\n\n\t"),
+            ("\t  ", "\t\t"),
+            (" ", "\n#this comment\n"),
+            (" ", "#this comment\n")
+        ];
+
+        let rhs_dotted: Vec<&str> = rhs.split(".").collect();
+        let rhs_dotted = to_string_vec(&rhs_dotted);
+        let rhs_access = Some(LetValue::AccessClause(rhs_dotted));
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+            let dotted = to_string_vec(&dotted);
+            let lhs_access =
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, rhs,
+                                    || dotted.clone(),
+                                    || rhs_access.clone());
+        }
+
+        let comparators = [
+            ("EXISTS", (CmpOperator::Exists, false)),
+            ("!EXISTS", (CmpOperator::Exists, true)),
+            ("EMPTY", (CmpOperator::Empty, false)),
+            ("NOT EMPTY", (CmpOperator::Empty, true)),
+            ("KEYS EXISTS", (CmpOperator::KeysExists, false)),
+            ("KEYS NOT EMPTY", (CmpOperator::KeysEmpty, true))
+        ];
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+            let dotted = to_string_vec(&dotted);
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, "",
+                                    || dotted.clone(),
+                                    || None);
+        }
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+            let dotted = to_string_vec(&dotted);
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, " does.not.error", // this will not error,
+                                    // the fragment you are left with is the one above and
+                                    // the next clause fetch will error out for either no "OR" or
+                                    // not newline for "and"
+                                    || dotted.clone(),
+                                    || None);
+        }
+
+
+        let lhs = [
+            "%engine.port",
+            "%engine.%port",
+            "%engine.*.image"
+        ];
+
+        for each_lhs in lhs.iter() {
+            let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+            let dotted = to_string_vec(&dotted);
+
+            testing_access_with_cmp(&separators, &comparators,
+                                    *each_lhs, "",
+                                    || dotted.clone(),
+                                    || None);
+        }
+
+        let rhs = [
+            "\"ami-12344545\"",
+            "/ami-12/",
+            "[\"ami-12\", \"ami-21\"]",
+            "{ bare: 10, 'work': 20, 'other': 12.4 }"
+        ];
+        let comparators = [
+            (">", (CmpOperator::Gt, false)),
+            ("<", (CmpOperator::Lt, false)),
+            ("==", (CmpOperator::Eq, false)),
+            ("!=", (CmpOperator::Eq, true)),
+            ("IN", (CmpOperator::In, false)),
+            ("!IN", (CmpOperator::In, true)),
+        ];
+
+        for each_rhs in &rhs {
+            for each_lhs in lhs.iter() {
+                let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+                let dotted = to_string_vec(&dotted);
+
+                let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
+                testing_access_with_cmp(&separators, &comparators,
+                                        *each_lhs, *each_rhs,
+                                        || dotted.clone(),
+                                        || Some(LetValue::Value(rhs_value.clone())));
+            }
+        }
+    }
+
+    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
+                                     comparators: &[(&str, (CmpOperator, bool))],
+                                     lhs: &str,
+                                     rhs: &str,
+                                     access: A,
+                                     cmp_with: C)
+        where A: Fn() -> AccessQuery,
+              C: Fn() -> Option<LetValue>
+    {
+        for (lhs_sep, rhs_sep) in separators {
+            for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
+                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
+                                             lhs = lhs, rhs = rhs, op = *each_op, lhs_sep = *lhs_sep, rhs_sep = *rhs_sep);
+                println!("Testing Access pattern = {}", access_pattern);
+                let span = from_str2(&access_pattern);
+                let result = clause(span);
+                if result.is_err() {
+                    let parser_error = &result.unwrap_err();
+                    let parser_error = match parser_error {
+                        nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
+                        nom::Err::Incomplete(_) => "More input needed".to_string(),
+                    };
+                    println!("{}", parser_error);
+                    assert_eq!(false, true);
+                } else {
+                    assert_eq!(result.is_ok(), true);
+                    let result = match result.unwrap().1 {
+                        GuardClause::Clause(clause, _) => clause,
+                        _ => unreachable!()
+                    };
+                    assert_eq!(result.query, access());
+                    assert_eq!(result.compare_with, cmp_with());
+                    assert_eq!(&result.comparator, value_cmp);
+                    assert_eq!(result.custom_message, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_predicate_clause_success() {
+        let examples = [
+            "resources", // 0 Ok
+            "resources.*.type", // 1 Ok
+            "resources.*[ type == /AWS::RDS/ ]", // 2 Ok
+            r#"resources.*[ type == /AWS::RDS/
+                            deletion_policy EXISTS
+                            deletion_policy == "RETAIN" ].properties"#, // 3 ok
+            r#"resources.*[]"#, // 4 err
+            "resources.*[type == /AWS::RDS/", // 4 err
+
+        ];
+
+        let expectations = [
+            // "resources", // 0 Ok
+            Ok((unsafe { Span2::new_from_raw_offset(
+                examples[0].len(),
+                1,
+                "",
+                ""
+            )},
+                AccessQuery::from([
+                    QueryPart::Key(examples[0].to_string())
+                ])
+            )),
+
+            // "resources.*.type", // 1 Ok
+            Ok((unsafe { Span2::new_from_raw_offset(
+                examples[1].len(),
+                1,
+                "",
+                ""
+            )},
+                to_query_part(examples[1].split(".").collect())
+            )),
+
+            // "resources.*[ type == /AWS::RDS/ ]", // 2 Ok
+            Ok((unsafe { Span2::new_from_raw_offset(
+                examples[2].len(),
+                1,
+                "",
+                ""
+            )},
+                AccessQuery::from([
+                    QueryPart::Key("resources".to_string()),
+                    QueryPart::Filter("*".to_string(), Conjunctions::from([
+                        Disjunctions::from([FilterPart {
+                            value: Some(VariableOrValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                            comparator: (CmpOperator::Eq, false),
+                            name: "type".to_string()
+                        }]),
+                    ]))
+                ])
+            )),
+
+
+            // r#"resources.*[ type == /AWS::RDS/
+            //                 deletion_policy EXISTS
+            //                 deletion_policy == "RETAIN" ].properties"#
+            Ok((unsafe { Span2::new_from_raw_offset(
+                examples[3].len(),
+                3,
+                "",
+                ""
+            )},
+                AccessQuery::from([
+                    QueryPart::Key("resources".to_string()),
+                    QueryPart::Filter("*".to_string(), Conjunctions::from([
+                        Disjunctions::from([FilterPart {
+                            value: Some(VariableOrValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                            comparator: (CmpOperator::Eq, false),
+                            name: "type".to_string()
+                        }]),
+                        Disjunctions::from([FilterPart {
+                            value: None,
+                            comparator: (CmpOperator::Exists, false),
+                            name: "deletion_policy".to_string()
+                        }]),
+                        Disjunctions::from([FilterPart {
+                            value: Some(VariableOrValue::Value(Value::String("RETAIN".to_string()))),
+                            comparator: (CmpOperator::Eq, false),
+                            name: "deletion_policy".to_string()
+                        }]),
+                    ])),
+                    QueryPart::Key("properties".to_string()),
+                ])
+            )),
+
+            // r#"resources.*[]"#, // 4 err
+            Err(nom::Err::Failure(ParserError {
+                span: unsafe {
+                    Span2::new_from_raw_offset(
+                        "resources.*[".len(),
+                        1,
+                        "]",
+                        ""
+                    )
+                },
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Tag, // for negative number in parse_int_value
+            })),
+
+            // "resources.*[type == /AWS::RDS/", // 5 err
+            Err(nom::Err::Failure(ParserError {
+                span: unsafe {
+                    Span2::new_from_raw_offset(
+                        "resources.*[type == /AWS::RDS/".len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Char,
+            }))
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            println!("Test # {}: {}", idx, *each);
+            let span = from_str2(*each);
+            let result = access(span);
+            println!("Result for Test # {}, {:?}", idx, result);
+            assert_eq!(&result, &expectations[idx]);
+        }
+    }
+
     #[test]
     fn test_clause_failures() {
         let lhs = [
@@ -2393,7 +2501,7 @@ mod tests {
             )),
 
             // "let x = 10",                   // 4 err
-            Err(nom::Err::Error(
+            Err(nom::Err::Failure(
                 ParserError {
                     span: unsafe {
                         Span2::new_from_raw_offset(
@@ -2409,7 +2517,7 @@ mod tests {
             )),
 
             // "port == 10",                   // 5 err
-            Err(nom::Err::Error(
+            Err(nom::Err::Failure(
                 ParserError {
                     span: unsafe {
                         Span2::new_from_raw_offset(
@@ -2629,23 +2737,19 @@ mod tests {
 
             // r#"secure or
             //    !exception
-            //    let x = 10"# // Ok 5
-            Ok((
-                unsafe {
+            //    let x = 10"# // Err, can not handle assignments
+            Err(nom::Err::Failure(ParserError {
+                span: unsafe {
                     Span2::new_from_raw_offset(
-                        examples[5].len() - "\n               let x = 10".len(),
-                        2,
-                        "\n               let x = 10",
+                        examples[5].len() - "x = 10".len(),
+                        3,
+                        "x = 10",
                         "",
                     )
                 },
-                vec![
-                    vec![
-                        GuardClause::NamedRule("secure".to_string(), FileLocation { line: 1, column: 1, file_name: "" }, false, None),
-                        GuardClause::NamedRule("exception".to_string(), FileLocation { line: 2, column: 16, file_name: "" }, true, None),
-                    ],
-                ]
-            )),
+                kind: nom::error::ErrorKind::Tag,
+                context: "".to_string(),
+            })),
         ];
 
         for (idx, each) in examples.iter().enumerate() {
@@ -2653,6 +2757,207 @@ mod tests {
             let result = clauses(span);
             assert_eq!(&result, &expectations[idx]);
             println!("{:?}", result);
+            assert_eq!(&result, &expectations[idx]);
+        }
+    }
+
+    #[test]
+    fn test_assignments() {
+        let examples = [
+            "letx",                 // 0 Error
+            "let x",                // 1 Failure
+            "let x = 10",           // 2 Ok
+            "let x = [10, 20]",     // 3 Ok
+            "let x = engine",       // 4 Ok
+            "let engines = %engines", // 5 Ok
+            r#"let ENGINE_LOGS = {
+    'postgres':      ["postgresql", "upgrade"],
+    'mariadb':       ["audit", "error", "general", "slowquery"],
+    'mysql':         ["audit", "error", "general", "slowquery"],
+    'oracle-ee':     ["trace", "audit", "alert", "listener"],
+    'oracle-se':     ["trace", "audit", "alert", "listener"],
+    'oracle-se1':    ["trace", "audit", "alert", "listener"],
+    'oracle-se2':    ["trace", "audit", "alert", "listener"],
+    'sqlserver-ee':  ["error", "agent"],
+    'sqlserver-ex':  ["error"],
+    'sqlserver-se':  ["error", "agent"],
+    'sqlserver-web': ["error", "agent"],
+    'aurora':        ["audit", "error", "general", "slowquery"],
+    'aurora-mysql':  ["audit", "error", "general", "slowquery"],
+    'aurora-postgresql': ["postgresql", "upgrade"]
+}"#,                             // 6 Ok
+            "let x =",           // 7 Failure
+        ];
+
+        let engines: serde_json::Value = serde_json::from_str(
+            r#"{
+                "postgres":      ["postgresql", "upgrade"],
+                "mariadb":       ["audit", "error", "general", "slowquery"],
+                "mysql":         ["audit", "error", "general", "slowquery"],
+                "oracle-ee":     ["trace", "audit", "alert", "listener"],
+                "oracle-se":     ["trace", "audit", "alert", "listener"],
+                "oracle-se1":    ["trace", "audit", "alert", "listener"],
+                "oracle-se2":    ["trace", "audit", "alert", "listener"],
+                "sqlserver-ee":  ["error", "agent"],
+                "sqlserver-ex":  ["error"],
+                "sqlserver-se":  ["error", "agent"],
+                "sqlserver-web": ["error", "agent"],
+                "aurora":        ["audit", "error", "general", "slowquery"],
+                "aurora-mysql":  ["audit", "error", "general", "slowquery"],
+                "aurora-postgresql": ["postgresql", "upgrade"]
+            }"#
+        ).unwrap();
+
+        let engines: Value = engines.try_into().unwrap();
+
+        let expectations = [
+            // "letx",                 // 0 Error
+            Err(nom::Err::Error(ParserError {
+                span: unsafe {
+                    Span2::new_from_raw_offset(
+                        "let".len(),
+                        1,
+                        "x",
+                        ""
+                    )
+                },
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Char, // from comment
+            })),
+
+            // "let x",                // 1 Failure
+            Err(nom::Err::Failure(ParserError {
+                span: unsafe {
+                    Span2::new_from_raw_offset(
+                        "let x".len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Tag, // from "="
+            })),
+
+            // "let x = 10",           // 2 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        "let x = 10".len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("x"),
+                    value: LetValue::Value(Value::Int(10))
+                }
+            )),
+
+            // "let x = [10, 20]",     // 3 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[3].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("x"),
+                    value: LetValue::Value(Value::List(vec![
+                        Value::Int(10), Value::Int(20)
+                    ]))
+                }
+            )),
+
+            // "let x = engine",       // 4 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[4].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("x"),
+                    value: LetValue::AccessClause(AccessQuery::from([
+                        QueryPart::Key(String::from("engine"))]))
+                }
+            )),
+
+            // "let engines = %engines", // 5 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[5].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("engines"),
+                    value: LetValue::AccessClause(AccessQuery::from([
+                        QueryPart::Variable(String::from("engines"))]))
+                }
+            )),
+
+            // r#"let ENGINE_LOGS = {
+            //     'postgres':      ["postgresql", "upgrade"],
+            //     'mariadb':       ["audit", "error", "general", "slowquery"],
+            //     'mysql':         ["audit", "error", "general", "slowquery"],
+            //     'oracle-ee':     ["trace", "audit", "alert", "listener"],
+            //     'oracle-se':     ["trace", "audit", "alert", "listener"],
+            //     'oracle-se1':    ["trace", "audit", "alert", "listener"],
+            //     'oracle-se2':    ["trace", "audit", "alert", "listener"],
+            //     'sqlserver-ee':  ["error", "agent"],
+            //     'sqlserver-ex':  ["error"],
+            //     'sqlserver-se':  ["error", "agent"],
+            //     'sqlserver-web': ["error", "agent"],
+            //     'aurora':        ["audit", "error", "general", "slowquery"],
+            //     'aurora-mysql':  ["audit", "error", "general", "slowquery"],
+            //     'aurora-postgresql': ["postgresql", "upgrade"]
+            // }"#,                             // 6 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[6].len(),
+                        16,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("ENGINE_LOGS"),
+                    value: LetValue::Value(engines)
+                }
+            )),
+
+            // "let x =",           // 7 Failure
+            Err(nom::Err::Failure(ParserError {
+                span: unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[7].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                context: "".to_string(),
+                kind: nom::error::ErrorKind::Alpha, // from access
+            })),
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            println!("Test #{}: {}", idx, *each);
+            let span = Span2::new_extra(*each, "");
+            let result = assignment(span);
+            println!("Test #{} Result: {:?}", idx, result);
             assert_eq!(&result, &expectations[idx]);
         }
     }
