@@ -1,10 +1,10 @@
 use std::convert::TryFrom;
 use std::str::FromStr;
 
-use linked_hash_map::LinkedHashMap;
-use nom::lib::std::cmp::Ordering;
+use std::cmp::Ordering;
 
 use crate::errors::{Error, ErrorKind};
+use indexmap::map::IndexMap;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum CmpOperator {
@@ -39,7 +39,7 @@ pub enum Value {
     Float(f64),
     Char(char),
     List(Vec<Value>),
-    Map(LinkedHashMap<String, Value>),
+    Map(IndexMap<String, Value>),
     Variable(String),
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
@@ -100,7 +100,7 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
-pub fn make_linked_hashmap<'a, I>(values: I) -> LinkedHashMap<String, Value>
+pub fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
     where
         I: IntoIterator<Item = (&'a str, Value)>,
 {
@@ -138,7 +138,7 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
                 Ok(Value::List(result))
             },
             serde_json::Value::Object(map) => {
-                let mut result: LinkedHashMap<String, Value> = linked_hash_map::LinkedHashMap::with_capacity(map.len());
+                let mut result = IndexMap::with_capacity(map.len());
                 for (key, value) in map.iter() {
                     result.insert(key.to_owned(),Value::try_from(value)?);
                 }

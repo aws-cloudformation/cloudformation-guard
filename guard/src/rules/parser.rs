@@ -92,7 +92,6 @@
 //
 // Extern crate dependencies
 //
-use linked_hash_map::LinkedHashMap;
 use nom::{FindSubstring, InputTake, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
@@ -112,6 +111,7 @@ use crate::rules::values::{LOWER_INCLUSIVE, RangeType, UPPER_INCLUSIVE, Value};
 
 use super::expr::*;
 use super::values::*;
+use indexmap::map::IndexMap;
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
@@ -309,7 +309,7 @@ pub(super) fn parse_map(input: Span) -> IResult<Span, Value> {
             result
                 .1
                 .into_iter()
-                .collect::<LinkedHashMap<String, Value>>(),
+                .collect::<IndexMap<String, Value>>(),
         ),
     ))
 }
@@ -1126,7 +1126,7 @@ mod tests {
         let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
         assert_eq!(
             parse_map(from_str(s)),
-            Ok((cmp, Value::Map(LinkedHashMap::new())))
+            Ok((cmp, Value::Map(IndexMap::new())))
         );
         let s = "{ key:\n 1}";
         let cmp = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
