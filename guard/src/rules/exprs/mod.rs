@@ -153,7 +153,7 @@ pub(crate) struct Block<T> {
 pub(crate) struct TypeBlock<'loc> {
     pub(crate) type_name: String,
     pub(crate) conditions: Option<WhenConditions<'loc>>,
-    pub(crate) block: Block<AccessClause<'loc>>,
+    pub(crate) block: Block<GuardClause<'loc>>, // only contains access clauses
 }
 
 #[derive(PartialEq, Debug, Clone)]

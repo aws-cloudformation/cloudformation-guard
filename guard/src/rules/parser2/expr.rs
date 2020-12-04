@@ -270,27 +270,46 @@ fn custom_message(input: Span2) -> IResult<Span2, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
-fn predicate_filter_clause(input: Span2) -> IResult<Span2, Vec<Vec<FilterPart>>> {
-    let parser = map(
-        tuple((
-            preceded(zero_or_more_ws_or_comment, var_name),
-            cut(preceded(zero_or_more_ws_or_comment, value_cmp)),
-            preceded(zero_or_more_ws_or_comment, opt(alt((
-                map(parse_value, |v| VariableOrValue::Value(v)),
-                map(var_name_access, |var| VariableOrValue::Variable(var)),
-            ))))
-        )), |(access, cmp, val)| {
-        FilterPart {
-            name: access,
-            comparator: cmp,
-            value: val,
-        }
-    });
-    let (input, filters) = cnf_clauses(input, parser, std::convert::identity, true)?;
+fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
+    match op {
+        CmpOperator::KeysExists |
+        CmpOperator::KeysEmpty |
+        CmpOperator::Empty |
+        CmpOperator::Exists => false,
+        _ => true
+    }
+}
+
+fn predicate_filter_clause(input: Span2) -> IResult<Span2, FilterPart> {
+    let (input, (name, cmp)) = tuple((
+        preceded(zero_or_more_ws_or_comment, var_name),
+        cut(preceded(zero_or_more_ws_or_comment, value_cmp))))(input)?;
+
+    let (input, value) = if does_comparator_have_rhs(&cmp.0) {
+        cut(
+            preceded(zero_or_more_ws_or_comment, alt((
+                map(parse_value, |v| Some(VariableOrValue::Value(v))),
+                map(var_name_access, |var| Some(VariableOrValue::Variable(var))),
+            )))
+        )(input)?
+    } else {
+        (input, None)
+    };
+
+    Ok((input, FilterPart {
+        name,
+        comparator: cmp,
+        value,
+    }))
+}
+
+fn predicate_filter_clauses(input: Span2) -> IResult<Span2, Vec<Vec<FilterPart>>> {
+    let (input, filters) = cnf_clauses(
+        input, predicate_filter_clause, std::convert::identity, true)?;
     Ok((input, filters))
 }
 
-fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>, QueryPart>
+fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>, QueryPart>
     where F: Fn(Span2<'loc>) -> IResult<Span2<'loc>, String>
 {
     move |input: Span2| {
@@ -298,7 +317,7 @@ fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>,
         let (input, is_filter) = opt(char('['))(input)?;
         let (input, part) = if is_filter.is_some() {
             let (input, part) = cut(alt((
-                map( predicate_filter_clause, |clauses| QueryPart::Filter(first.clone(), clauses)),
+                map(predicate_filter_clauses, |clauses| QueryPart::Filter(first.clone(), clauses)),
                 map( preceded(space0, char('*')), |_all| QueryPart::AllIndices(first.clone())),
                 map( preceded(space0, super::values::parse_int_value), |idx| {
                         let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
@@ -323,37 +342,6 @@ fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>,
 }
 
 //
-// query_part
-//
-//fn predicate(input: Span2) -> IResult<Span2, QueryPart> {
-//    let (input, is_var_access) = opt(char('%'))(input)?;
-//    let (input, name) = alt((
-//        var_name,
-//        value("*".to_string(), char('*'))
-//    ))(input)?;
-//    let (input, is_filter) = opt(char('['))(input)?;
-//    let (input, part) = if is_filter.is_some() {
-//        cut(alt((
-//            |input: Span2| predicate_filter_clause(input, name),
-//            map(
-//                terminated(delimited(space0, char('*'), space0),char(']')),
-//                |_all| {
-//                    QueryPart::AllIndices
-//                }
-//            ),
-//        )))(input)?
-//    }
-//    else if is_var_access.is_some() {
-//        QueryPart::Variable(name)
-//    } else {
-//        QueryPart::Key(name)
-//    };
-//
-//    Ok((input, part))
-//}
-//
-
-//
 //  dotted_access              = "." (var_name / var_name_access / "*")
 //
 // This combinator does not fail. It is the responsibility of the consumer to fail based
@@ -366,7 +354,7 @@ fn predicate<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>,
 //
 fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
     fold_many1(
-        preceded( char('.'), predicate(
+        preceded(char('.'), predicate_clause(
             alt((var_name_access_inclusive,
                  var_name,
                  value("*".to_string(), char('*')),
@@ -386,9 +374,9 @@ fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
 //
 fn access(input: Span2) -> IResult<Span2, AccessQuery> {
     map(pair(
-        predicate(
+        predicate_clause(
             alt((var_name_access_inclusive, var_name))),
-             opt(dotted_access)), |(first, remainder)| {
+        opt(dotted_access)), |(first, remainder)| {
         remainder.map(|mut query| {
             query.insert(0, first.clone());
             query
@@ -442,7 +430,7 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
         _ => false
     };
 
-    if no_rhs_expected {
+    if !does_comparator_have_rhs(&cmp.0) {
         let (rest, custom_message) = cut(
             map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
                 |msg| {
@@ -490,7 +478,7 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
 //
 //
 //  rule_clause get to be the most pesky of them all. It has the least
-//  form and there can interpret partials of other form as a rule_clause
+//  form and thereby can interpret partials of other forms as a rule_clause
 //  To ensure we don't do that we need to peek ahead after a rule name
 //  parsing to see which of these forms is present for the rule clause
 //  to succeed
@@ -548,14 +536,13 @@ fn cnf_clauses<'loc, T, E, F, M>(input: Span2<'loc>, f: F, m: M, non_empty: bool
                 or_join,
                 preceded(zero_or_more_ws_or_comment, |i: Span2| f(i)),
             )(remaining.clone()) {
-                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
                 Err(nom::Err::Error(e)) => if first {
                     return Err(nom::Err::Error(e))
                 } else {
                     return Ok((remaining, result))
                 },
-                Err(nom::Err::Incomplete(e)) => return Err(nom::Err::Incomplete(e)),
                 Ok((r, s)) => (r, s),
+                Err(e) => return Err(e),
             }
         }  else {
             separated_list(
@@ -604,9 +591,22 @@ fn clauses(input: Span2) -> IResult<Span2, Conjunctions<GuardClause>> {
 fn assignment(input: Span2) -> IResult<Span2, LetExpr> {
     let (input, _let_keyword) = tag("let")(input)?;
     let (input, (var_name, _eq_sign)) = tuple((
+        //
+        // if we have a pattern like "letproperty" that can be an access keyword
+        // then there is no space in between. This will error out.
+        //
         preceded(one_or_more_ws_or_comment, var_name),
-        cut(preceded(zero_or_more_ws_or_comment, tag("="))),
-        ))(input)?;
+        //
+        // if we succeed in reading the form "let <var_name>", it must be be
+        // followed with an assignment sign "=" or ":="
+        //
+        cut(
+            preceded(
+                zero_or_more_ws_or_comment,
+                alt((tag("="), tag(":=")))
+            )
+        ),
+    ))(input)?;
 
     match parse_value(input) {
         Ok((input, value)) => Ok((input, LetExpr {
@@ -615,8 +615,17 @@ fn assignment(input: Span2) -> IResult<Span2, LetExpr> {
         })),
 
         Err(nom::Err::Error(_)) => {
-            let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))
-                (input)?;
+            //
+            // if we did not succeed in parsing a value object, then
+            // if must be an access pattern, else it is a failure
+            //
+            let (input, access) = cut(
+                preceded(
+                    zero_or_more_ws_or_comment,
+                    access
+                )
+            )(input)?;
+
             Ok((input, LetExpr {
                 var: var_name,
                 value: LetValue::AccessClause(access),
@@ -628,51 +637,126 @@ fn assignment(input: Span2) -> IResult<Span2, LetExpr> {
 }
 
 //
-// when block
+// when keyword
 //
-//fn when(input: Span2) -> IResult<Span2, WhenBlock> {
-//    //
-//    // starts with keyword
-//    //
-//    let (input, _ignored) = alt((tag("when"), tag("WHEN")))(input)?;
-//    //
-//    // Okay this is a when block, which means everything must exist
-//    //
-//    let (input, conditions) =
-//        cut(context("Expecting white space between WHEN keyword and conditions",
-//                preceded(one_or_more_ws_or_comment, clauses)))(input)?;
+fn when(input: Span2) -> IResult<Span2, ()> {
+    value((), alt((tag("when"), tag("WHEN"))))(input)
+}
+
 //
-//    if conditions.is_empty() {
-//        return Err(nom::Err::Failure(ParserError {
-//            span: input,
-//            context: format!("WHEN is used without any condition clauses"),
-//            kind: nom::error::ErrorKind::Many1
-//        }));
-//    }
 //
-//    let (input, (_start, clauses, _end)) = tuple((
-//        cut(context("Expecting '{'",
-//                preceded(one_or_more_ws_or_comment, char('{')))),
-//        clauses,
-//        cut(context("Expecting '}'",
-//                preceded(one_or_more_ws_or_comment, char('}'))))
-//        ))(input)?;
 //
-//    if clauses.is_empty() {
-//        return Err(nom::Err::Failure(ParserError {
-//            span: input,
-//            context: format!("WHEN is used without any clauses"),
-//            kind: nom::error::ErrorKind::Many1
-//        }));
-//    }
+fn when_conditions(input: Span2) -> IResult<Span2, Conjunctions<GuardClause>> {
+    Ok((input, Conjunctions::new()))
+}
+
+fn type_name(input: Span2) -> IResult<Span2, &str> {
+    map(
+        take_while1(|c: char| c.is_alphanumeric() || c == ':'),
+        |s: Span2| *s.fragment(),
+    )(input)
+}
+
 //
-//    Ok((input,
-//        WhenBlock {
-//            conditions: Some(conditions),
-//            clauses,
-//        }
-//    ))
-//}
+// Type block
+//
+fn type_block(input: Span2) -> IResult<Span2, TypeBlock> {
+    //
+    // Start must be a type name like "AWS::SQS::Queue"
+    //
+    let (input, name) = type_name(input)?;
+
+    //
+    // There has to be a space following type name, else it is a failure
+    //
+    let (input, _space) = cut(one_or_more_ws_or_comment)(input)?;
+
+    //
+    // see if there is a "when" keyword
+    //
+    let (input, when_keyword) = opt( when)(input)?;
+
+    //
+    // If there is "when" then parse conditions. It is an error not to have
+    // clauses following it
+    //
+    let (input, when_conditions) = if when_keyword.is_some() {
+        let (input, clauses) = cut(
+            //
+            // when keyword must be followed by a space and then clauses. Fail if that
+            // is not the case
+            //
+            preceded(
+                one_or_more_ws_or_comment,
+                     clauses))(input)?;
+        (input, Some(clauses))
+    } else {
+        (input, None)
+    };
+
+    //
+    // Type can be block form or single line form. If there was a when clause then only allowed
+    // form is the block form.
+    //
+    let start = preceded( zero_or_more_ws_or_comment, char('{'));
+    let start_strict = cut(preceded( zero_or_more_ws_or_comment, char('{')));
+    let end = cut(preceded( zero_or_more_ws_or_comment, char('}')));
+
+    let (input, (assignments, clauses)) =
+        match if when_keyword.is_some() { start_strict(input) } else { start(input) }
+        {
+            Ok((input, _start)) => {
+                let (input, results) = fold_many1(alt((
+                    map(preceded(zero_or_more_ws_or_comment, assignment), |s| (Some(s), None)),
+                    map(
+                        |i: Span2| cnf_clauses(i, clause, std::convert::identity, true),
+                        |c: Conjunctions<GuardClause>| (None, Some(c)))
+                    )),
+                    Vec::new(),
+                    |mut acc, pair| {
+                        acc.push(pair);
+                        acc
+                    }
+                )(input)?;
+
+                let (input, _end) = end(input)?;
+
+                let mut assignments = vec![];
+                let mut conjunctions: Conjunctions<GuardClause> = Conjunctions::new();
+                for each in results {
+                    match each {
+                        (Some(let_expr), None) => {
+                            assignments.push(let_expr);
+                        },
+                        (None, Some(v)) => {
+                            conjunctions.extend(v)
+                        },
+                        (_, _) => unreachable!(),
+                    }
+                }
+                (input, (assignments, conjunctions))
+            },
+
+            Err(nom::Err::Error(_)) => {
+                let (input, conjs)  = cut(preceded(
+                    zero_or_more_ws_or_comment,
+                    map(clause, |s| vec![s])
+                ))(input)?;
+                (input, (Vec::new(), vec![conjs]))
+            }
+
+            Err(e) => return Err(e),
+        };
+
+    Ok((input, TypeBlock {
+        conditions: when_conditions,
+        type_name: String::from(name),
+        block: Block {
+            assignment: assignments,
+            conjunctions: clauses,
+        }
+    }))
+}
 
 //
 //  ABNF        = "or" / "OR" / "|OR|"
@@ -697,6 +781,7 @@ fn or_join(input: Span2) -> IResult<Span2, Span2> {
 mod tests {
     use super::*;
     use std::convert::TryInto;
+    use crate::rules::expr::PropertyClause::Disjunction;
 
     #[test]
     fn test_white_space_with_comments() {
@@ -2787,6 +2872,7 @@ mod tests {
     'aurora-postgresql': ["postgresql", "upgrade"]
 }"#,                             // 6 Ok
             "let x =",           // 7 Failure
+            "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
         ];
 
         let engines: serde_json::Value = serde_json::from_str(
@@ -2951,6 +3037,41 @@ mod tests {
                 context: "".to_string(),
                 kind: nom::error::ErrorKind::Alpha, // from access
             })),
+
+            // "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[8].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                LetExpr {
+                    var: String::from("aurora_dbs"),
+                    value: LetValue::AccessClause(
+                        AccessQuery::from([
+                            QueryPart::Key(String::from("resources")),
+                            QueryPart::Filter(String::from("*"), Conjunctions::from(
+                                [
+                                    Disjunctions::from([
+                                        FilterPart {
+                                            name: String::from("type"),
+                                            comparator: (CmpOperator::In, false),
+                                            value: Some(VariableOrValue::Value(Value::List(
+                                                vec![Value::Regex(String::from("AWS::RDS::DBCluster")),
+                                                     Value::Regex(String::from("AWS::RDS::GlobalCluster"))]
+                                            ))),
+                                        }
+                                    ])
+                                ],
+                            ))
+                        ])
+                    )
+                }
+
+            )),
         ];
 
         for (idx, each) in examples.iter().enumerate() {
@@ -2962,32 +3083,97 @@ mod tests {
         }
     }
 
-//    #[test]
-//    fn test_when_block() {
-//        let examples = [
-//            r#"when secure or is_ecrypted { configuration.containers.*.image IN PARAMETERS.allowed_engines }"#,
-//            r#"when !secure {
-//                !is_enrypted
-//                configuration.containers.*.image == /http:2.4/
-//            }"#
-//        ];
-//
-//        let expectations = [
-//            Ok((
-//                unsafe {
-//                    Span2::new_from_raw_offset(
-//                        examples[0].len(),
-//                        1,
-//                        "",
-//                        ""
-//                    )
-//                },
-//                WhenBlock {
-//                    conditions: Some(vec![
-//                    ]),
-//                    clauses: vec![]
-//                }
-//                ))
-//        ];
-//    }
+    #[test]
+    fn test_type_block() {
+        let examples = [
+            r#"AWS::EC2::Instance {
+                let keyName := keyName
+
+                %keyName        IN ["keyName", "keyName2", "keyName3"]
+                %keyName        NOT IN ["keyNameIs", "notInthis"]
+            }"#,
+        ];
+
+        let expectations = [
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[0].len(),
+                        6,
+                        "",
+                        ""
+                    )
+                },
+                TypeBlock {
+                    type_name: String::from("AWS::EC2::Instance"),
+                    conditions: None,
+                    block: Block {
+                        assignment: vec![
+                            LetExpr {
+                                var: String::from("keyName"),
+                                value: LetValue::AccessClause(
+                                    AccessQuery::from([
+                                        QueryPart::Key(String::from("keyName"))
+                                    ])
+                                )
+                            }
+                        ],
+                        conjunctions: Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(AccessClause {
+                                    query: AccessQuery::from([
+                                        QueryPart::Variable(String::from("keyName"))
+                                    ]),
+                                    comparator: (CmpOperator::In, false),
+                                    custom_message: None,
+                                    compare_with: Some(LetValue::Value(
+                                        Value::List(vec![
+                                            Value::String(String::from("keyName")),
+                                            Value::String(String::from("keyName2")),
+                                            Value::String(String::from("keyName3")),
+                                        ])
+                                    )),
+                                    location: FileLocation {
+                                        file_name: "",
+                                        column: 17,
+                                        line: 4,
+                                    }
+                                }, false),
+                            ]),
+                            Disjunctions::from([
+                                GuardClause::Clause(AccessClause {
+                                    query: AccessQuery::from([
+                                        QueryPart::Variable(String::from("keyName"))
+                                    ]),
+                                    comparator: (CmpOperator::In, true),
+                                    custom_message: None,
+                                    compare_with: Some(LetValue::Value(
+                                        Value::List(vec![
+                                            Value::String(String::from("keyNameIs")),
+                                            Value::String(String::from("notInthis")),
+                                        ])
+                                    )),
+                                    location: FileLocation {
+                                        file_name: "",
+                                        column: 17,
+                                        line: 5,
+                                    }
+                                }, false),
+                            ]),
+                        ])
+                    }
+                }
+            ))
+        ];
+
+        for (idx, each) in examples.iter().enumerate() {
+            println!("Test #{}: {}", idx, *each);
+            let span = from_str2(*each);
+            let result = type_block(span);
+            println!("Result #{} = {:?}", idx, result);
+            assert_eq!(&result, &expectations[idx]);
+        }
+
+    }
+
 }
