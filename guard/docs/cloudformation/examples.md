@@ -19,6 +19,18 @@ rule deletion_policy_is_set when cfn_contains_stateful_resources {
 }
 ```
 
+Sample evaluation result 
+
+```
+cfn_contains_stateful_resources                     FAIL
+deletion_policy_is_set                              SKIP
+```
+
+```
+cfn_contains_stateful_resources                     PASS
+deletion_policy_is_set                              PASS
+```
+
 ### Check that all resources have tags present
 
 ```
