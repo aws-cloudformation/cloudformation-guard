@@ -145,7 +145,7 @@ pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) struct Block<T> {
-    pub(crate) assignment: Vec<LetExpr>,
+    pub(crate) assignments: Vec<LetExpr>,
     pub(crate) conjunctions: Conjunctions<T>,
 }
 
@@ -159,7 +159,7 @@ pub(crate) struct TypeBlock<'loc> {
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum RuleClause<'loc> {
     Clauses(Conjunctions<GuardClause<'loc>>),
-    WhenBlock(WhenConditions<'loc>, Block<RuleClause<'loc>>),
+    WhenBlock(WhenConditions<'loc>, Block<GuardClause<'loc>>),
     TypeBlock(TypeBlock<'loc>)
 }
 
