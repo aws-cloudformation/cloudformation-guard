@@ -158,7 +158,7 @@ pub(crate) struct TypeBlock<'loc> {
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum RuleClause<'loc> {
-    Clauses(Conjunctions<GuardClause<'loc>>),
+    Clause(GuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<GuardClause<'loc>>),
     TypeBlock(TypeBlock<'loc>)
 }

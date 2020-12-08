@@ -721,7 +721,7 @@ fn type_name(input: Span2) -> IResult<Span2, String> {
 
     let (input, _skip_module) = opt(tag("::MODULE"))(input)?;
 
-    Ok((input, parts join("::")))
+    Ok((input, format!("{}::{}::{}", parts.0, parts.1, parts.2)))
 }
 
 //
@@ -859,7 +859,7 @@ fn rule_block_clause(input: Span2) -> IResult<Span2, RuleClause> {
            |(conditions, block)| {
            RuleClause::WhenBlock(conditions, Block{ assignments: block.0, conjunctions: block.1 })
        }),
-       map(preceded(zero_or_more_ws_or_comment, clauses), RuleClause::Clauses)
+       map(preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause))), RuleClause::Clause)
    ))(input)
 }
 
@@ -3420,11 +3420,10 @@ mod tests {
     # valid or invalid
     AWS::EC2::Instance {                          # Either an EBS volume
         let volumes := block_device_mappings      # var local, snake case allowed.
-        when %volumes.*.Ebs != null {                  # Ebs is setup
+          %volumes.*.Ebs EXISTS
           %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
           %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
           %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
-        }
     } or
     AWS::EC2::Instance {                   # OR a regular volume (disjunction)
         block_device_mappings.*.device_name == /^\/dev\/sdc-\d/ # all other local must have sdc
