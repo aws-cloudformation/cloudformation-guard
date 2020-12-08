@@ -21,14 +21,15 @@ inside it" </code>.
 - **Character** any UTF-8 encoded character
 - **booleans** true/false 
 - **Regex** are regular expression string that are enclosed in-between ```/```. If the string contains a ```/```, it needs 
-to be escaped using ```\```. Examples <code>  /^.*.dkr.ecr..*.amazonaws[.*]*.com\/.*[:@]+(.*){2,255}$/, </code>
+to be escaped using <code>\\</code>. Examples <code>  /^.\*.dkr.ecr.\*.amazonaws[.\*]\*.com\\/.\*[:@]+(.\*){2,255}$/ </code>
 
 #### Structured or Map Type
 
 This value type provides associative data with _strings_ as keys and values that can be scalars, collection or another 
  map type separated with a ```:``` and enclosed between ```{}```. Keys can be barewords (a.k.a symbols) without quotes. 
 Examples
-<pre><code>
+<pre>
+# example of map/structured object 
 {
     'postgres':      ["postgresql", "upgrade"],
     'mariadb':       ["audit", "error", "general", "slowquery"],
@@ -45,15 +46,28 @@ Examples
     'aurora-mysql':  ["audit", "error", "general", "slowquery"],
     'aurora-postgresql': ["postgresql", "upgrade"]
 }
-</code></pre>
+
+# Example of map/structured type with keys without "" or '', a.k.a symbols.
+{ prod-id: "prod-app-x123345", app-id: "app-X123434" }
+</pre>
 
 #### Collection Type
 
 The value type represent ordered list of values contained inside ```[]``` separated by a common. The value type can be 
-either a scalar, map type, or a collection type. Examples 
-<pre><code>
+scalar, map type, or a collection type. Examples 
+<pre>
+# collection scalars like string, number etc.
 ["postgresql", "upgrade"]
-</code></pre>
+[ 10, 20, 40 ]
+
+# collection of map-types.
+[ { prod-id: "prod-app-x123345", app-id: "app-X123434" }, 
+  { prod-id: "prod-app-x23rer", app-id: "app-Y1234" } ]
+  
+# collection of collection type
+[ [10, 20, 30], [60, 70, 80] ]
+</pre>
+
 
 ### Query 
 
@@ -63,11 +77,11 @@ The query permits selecting all elements in a collection or selecting a particul
 
 Here are example queries  
 <pre>
-   BucketName
-   configuration.containerDefinitions.*.image
-   block_device_mappings[*].device_name
-   resources.*[type == "AWS::RDS::DBCluster"].properties
-   %aurora_dbs.BackupRetentionPeriod
+BucketName
+configuration.containerDefinitions.*.image
+block_device_mappings[*].device_name
+resources.*[type == "AWS::RDS::DBCluster"].properties
+%aurora_dbs.BackupRetentionPeriod
 </pre>
 
 For in depth treatise read detailed [query](query-RFC.md) document. For the remainder of this document we will use 
@@ -75,13 +89,33 @@ simpler queries to demonstrate the language and its usage.
 
 ### Operator
 
-The next part of the clause is an Operator. Operator is either unary, that do not have an RHS (right hand side) to 
-evaluate or binary which does. Here are set of operators
+The next part of the clause is an Operator. Operator is either unary or binary. Unary operators like ```NOT, EXISTS, EMPTY``` 
+and others operate on single arguments. Binary operators like ```==, <=, >, !=``` and more operate on 2 arguments. To 
+improve readability of clauses the operators are embedded (specified using infix notation). E.g
 
-#### Binary Operators 
+```
+resources.* NOT EMPTY      # uanry 
+resources.*.Type == /RDS/  # binary has LHS, and RHS
 
-In the remainder of the section we will use LHS to mean left hand side of the operator and RHS mean right have side. All
-clauses in the language the LHS is always a query expression. The RHS can either be a query expression or value object.
+# tags contains KEYS that have PROD substring in them 
+resources.*.properties.tags[*] KEYS == /PROD/
+
+# tags VALUES contains PROD, tags: [{"PROD-ID": "PROD-122434"}, ... ]  
+resources.*.properties.tags[*].* == /PROD/ 
+
+# select tags where KEYS match /aws:application/ and check if 
+# the values start with app-x1234 
+resources.*.properties.tags[ KEYS == /aws:application/ ].* == /^app-x1234/ 
+
+```
+
+Here is the list of the **Unary Operators**
+
+- *NOT* used to negate the result of the clause 
+- *EMPTY* used to check is a collection is empty 
+- *EXISTS* used to check is a property was set or not
+
+Here are the list of **Binary Operators**
 
 **Equality Operation**
 
@@ -102,11 +136,68 @@ Key points
 **Comparison Operators**
 
 The standard comparison operators are ```>, >=, <, <=``` are used for checking order. Comparison operator can be used 
-directly on scalar or collection of scalar. They can also be used for 
+directly on scalar or collection of scalars. Examples 
 
-The language comprises of rules that are defined in blocks. Each block contains clauses in CNF form to be evaluated 
-for the rule. A clause can reference other rules for decomposing complex evaluations. 
+<pre>
+resources.*[ type == /AWS::RDS/ ].BackupRetentionPeriod >= 7
+</pre>
 
+Queries can be assigned to variables and then compared using operators
 
-i) a simple but expressive query clause, ii) single assignment variables to value objects for both literal constants or from queries iii) value objects for string, regex, int, float, boolean for primitive types, and structued types composed of primitives, iv) collections of value objects r from queries, for literal and dynamic, property access notation on variables and incoming payload context, implicit ANDs with explicit ORs (CNF), and named rule references for composition is shown below.
+<pre>
+#
+# select all Aurora DB clusters in the template.
+#
+let aurora_db_clusters = resources.*[type == /AWS::RDS::DBCluster/]
 
+#
+# For each cluster selected checks for the all of these being set (with ANDs)
+# - Backup is >= 7 days
+# - deletion protection is enabled
+# - storage encryption is on
+#
+%aurora_db_clusters.BackupRetentionPeriod >= 7
+%aurora_db_clusters.deletion_protection == true  # the tool must support casing differences for match. 
+%aurora_db_clusters.StorageEncrypted == true
+</pre>
+
+**Special Operators**
+
+There are 2 special purpose operators <code>KEYS, IN</code>. 
+
+<ul>
+<li> <em>KEYS</em>: is used in the context of map/structured types to access the "keys" for the structured type. This is useful when 
+the keys are not based on pre-defined schema. E.g when tags are specified, the keys are not known ahead of time. It 
+ is effectively a list of key-value pairs, e.g. <code>[ { "prod-id": "prod-env-ID233434", "app-id": "app-ID12343sdfsf" } ]</code>
+ KEYS is used in the scenarios to collect all the keys contained in the structure. Example usages 
+ <pre>
+    resources.*.properties.tags[*] KEYS == /prod/
+ </pre>
+ This effectively selects tags from all resources inside a CFN template and extracts the KEYS for them. This would return
+ <code>[ "prod-id", "app-id" ]</code> which is then compared against the Regex. In this case it fails as "app-id" does not
+ match. <p>
+ In this example the incoming tags contains <code>[ { "aws:application-id": "app-x1233434" }, { "prod-env": "prod-IDasasas" } ]</code> 
+ <pre>    
+    resources.*.properties.tags[ KEYS == /aws:application/ ].* == /^app-x1234/ 
+ </pre>
+ This is a variation that uses <em>KEYS</em> for filtering. This is selecting all tags key-value pairs when the "key" matches
+ "aws:application". The above query will return <code>[ { "aws:application-id": "app-x1233434" } ]</code>. We then select 
+ all values from the tag structured object that resolves to <code>[ "app-x1233434" ]</code>. The comparison succeeds againts
+ the Regex.
+</li>
+<li><em>IN</em>: operator is used when we need to match ANY one of the values in the list. Example usage 
+<pre>
+    let aurora_db_clusters = resources.*[type == /AWS::RDS::DBCluster/]
+    %aurora_db_clusters.enable_cloudwatch_logs_exports IN 
+        ["audit", error, general, "slowquery"]
+</pre> 
+This is equivalent to the following 
+<pre>
+    %aurora_db_clusters.enable_cloudwatch_logs_exports == "audit"       OR
+    %aurora_db_clusters.enable_cloudwatch_logs_exports == "error"       OR
+    %aurora_db_clusters.enable_cloudwatch_logs_exports == "general"     OR
+    %aurora_db_clusters.enable_cloudwatch_logs_exports == "slowquery"
+</pre>
+Values can be scalars, map-types or even collections.
+</li>
+</ul>

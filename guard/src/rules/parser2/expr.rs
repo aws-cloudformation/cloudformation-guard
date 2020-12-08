@@ -152,6 +152,9 @@ fn var_name_access(input: Span2) -> IResult<Span2, String> {
     preceded(char('%'), var_name)(input)
 }
 
+//
+// This version is the same as var_name_access
+//
 fn var_name_access_inclusive(input: Span2) -> IResult<Span2, String> {
     map(var_name_access, |s| format!("%{}", s))(input)
 }
@@ -738,43 +741,12 @@ fn type_block(input: Span2) -> IResult<Span2, TypeBlock> {
     //
     let (input, _space) = cut(one_or_more_ws_or_comment)(input)?;
 
-//    //
-//    // see if there is a "when" keyword
-//    //
-//    let (input, when_keyword) = opt( when)(input)?;
-//
-//    //
-//    // If there is "when" then parse conditions. It is an error not to have
-//    // clauses following it
-//    //
-//    let (input, when_conditions) = if when_keyword.is_some() {
-//        let (input, clauses) = cut(
-//            //
-//            // when keyword must be followed by a space and then clauses. Fail if that
-//            // is not the case
-//            //
-//            preceded(
-//                one_or_more_ws_or_comment,
-//                     clauses))(input)?;
-//        (input, Some(clauses))
-//    } else {
-//        (input, None)
-//    };
-
     let (input, when_conditions) = opt(
         when_conditions(|i: Span2| cnf_clauses(i,
                                                preceded(zero_or_more_ws_or_comment, clause),
                                                std::convert::identity, true)))
         (input)?;
 
-    //
-    // Type can be block form or single line form. If there was a when clause then only allowed
-    // form is the block form.
-    //
-//    let start = preceded( zero_or_more_ws_or_comment, char('{'));
-//    let start_strict = cut(preceded( zero_or_more_ws_or_comment, char('{')));
-//    let end = cut(preceded( zero_or_more_ws_or_comment, char('}')));
-//
     let (input, (assignments, clauses)) =
         if when_conditions.is_some() {
             cut(block(clause))(input)?
@@ -792,52 +764,6 @@ fn type_block(input: Span2) -> IResult<Span2, TypeBlock> {
             }
         };
 
-//    let (input, (assignments, clauses)) =
-//        match if when_conditions.is_some() { start_strict(input) } else { start(input) }
-//        {
-//            Ok((input, _start)) => {
-//                let (input, results) = fold_many1(alt((
-//                    map(preceded(zero_or_more_ws_or_comment, assignment), |s| (Some(s), None)),
-//                    map(
-//                        |i: Span2| cnf_clauses(i, clause, std::convert::identity, true),
-//                        |c: Conjunctions<GuardClause>| (None, Some(c)))
-//                    )),
-//                    Vec::new(),
-//                    |mut acc, pair| {
-//                        acc.push(pair);
-//                        acc
-//                    }
-//                )(input)?;
-//
-//                let (input, _end) = end(input)?;
-//
-//                let mut assignments = vec![];
-//                let mut conjunctions: Conjunctions<GuardClause> = Conjunctions::new();
-//                for each in results {
-//                    match each {
-//                        (Some(let_expr), None) => {
-//                            assignments.push(let_expr);
-//                        },
-//                        (None, Some(v)) => {
-//                            conjunctions.extend(v)
-//                        },
-//                        (_, _) => unreachable!(),
-//                    }
-//                }
-//                (input, (assignments, conjunctions))
-//            },
-//
-//            Err(nom::Err::Error(_)) => {
-//                let (input, conjs)  = cut(preceded(
-//                    zero_or_more_ws_or_comment,
-//                    map(clause, |s| vec![s])
-//                ))(input)?;
-//                (input, (Vec::new(), vec![conjs]))
-//            }
-//
-//            Err(e) => return Err(e),
-//        };
-//
     Ok((input, TypeBlock {
         conditions: when_conditions,
         type_name: name,

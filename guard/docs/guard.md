@@ -58,11 +58,10 @@ rule example_rule when stage == 'prod' {
     # valid or invalid
     AWS::EC2::Instance {                          # Either an EBS volume
         let volumes := block_device_mappings      # var local, snake case allowed.
-        when %volumes.*.Ebs != null {                  # Ebs is setup
-          %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
-          %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
-          %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
-        }
+        %volumes.*.Ebs EXISTS 
+        %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
+        %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
+        %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
     } or
     AWS::EC2::Instance {                   # OR a regular volume (disjunction)
         block_device_mappings.*.device_name == /^\/dev\/sdc-\d/ # all other local must have sdc
