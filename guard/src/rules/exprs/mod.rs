@@ -1,4 +1,10 @@
+mod query;
+
 use crate::rules::values::*;
+use crate::errors::Error;
+
+use std::hash::{Hash, Hasher};
+use std::collections::HashMap;
 
 ///
 /// Guard Language Syntax
@@ -97,7 +103,7 @@ pub(crate) struct LetExpr {
 /// DynamoDB Table we can use the following `resources.*[type=/AWS::Dynamo/]`
 ///
 ///
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum QueryPart {
     Variable(String),
     Key(String),
@@ -108,13 +114,13 @@ pub(crate) enum QueryPart {
 }
 
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum VariableOrValue {
     Variable(String),
     Value(Value),
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct FilterPart {
     pub(crate) name: String,
     pub(crate) comparator: (CmpOperator, bool),
@@ -176,6 +182,19 @@ pub(crate) struct RulesFile<'loc> {
     pub(crate) guard_rules: Vec<Rule<'loc>>,
 }
 
+#[derive(Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct Path {
+    pointers: Vec<String>
+}
 
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct QueryResult<'loc> {
+    result: HashMap<Path, Vec<&'loc Value>>,
+    query: &'loc[QueryPart],
+}
 
+pub(crate) trait Evaluate {
+    type Item;
+    fn evaluate(&self, context: &Value, path: &Path) -> Result<Self::Item, Error>;
+}
 

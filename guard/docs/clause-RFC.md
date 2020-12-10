@@ -25,7 +25,7 @@ to be escaped using <code>\\</code>. Examples <code>  /^.\*.dkr.ecr.\*.amazonaws
 
 #### Structured or Map Type
 
-This value type provides associative data with _strings_ as keys and values that can be scalars, collection or another 
+This value type provides associative data with _strings_ or _symbols_ (strings without quotes) as keys and values that can be scalars, collection or another 
  map type separated with a ```:``` and enclosed between ```{}```. Keys can be barewords (a.k.a symbols) without quotes. 
 Examples
 <pre>

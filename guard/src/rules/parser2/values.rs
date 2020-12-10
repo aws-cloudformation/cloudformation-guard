@@ -3,7 +3,7 @@
 //
 use nom::InputTake;
 use nom::branch::alt;
-use nom::bytes::complete::{is_a, is_not, tag, take_while};
+use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
 use nom::character::complete::{alphanumeric1, char, digit1, one_of};
 use nom::character::complete::{anychar, space0};
 use nom::combinator::{ map, map_res, opt, value};
@@ -22,12 +22,7 @@ use super::*;
 use super::common::*;
 use indexmap::map::IndexMap;
 
-pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
-
-pub(crate) fn from_str(in_str: &str) -> Span {
-    Span::new_extra(in_str, "")
-}
-
+type Span<'loc> = super::Span2<'loc>;
 //
 // Rust std crate
 //
@@ -54,9 +49,9 @@ fn parse_string(input: Span) -> IResult<Span, Value> {
                 take_while(|c| c != '"'),
                 tag("\"")),
             delimited(
-                tag(from_str("'")),
+                tag(from_str2("'")),
                 take_while(|c| c != '\''),
-                tag(from_str("'"))),
+                tag(from_str2("'"))),
         )),
         |s: Span| Value::String((*s.fragment()).to_string()),
     )(input)
@@ -194,7 +189,7 @@ fn parse_list(input: Span) -> IResult<Span, Value> {
 
 fn key_part(input: Span) -> IResult<Span, String> {
     alt((
-        map(alphanumeric1,
+        map(take_while1(|c:char| c.is_alphanumeric() || c == '-' || c == '_'),
             |s: Span| (*s.fragment()).to_string()),
         map(parse_string, |v| {
             if let Value::String(s) = v {
@@ -235,7 +230,7 @@ fn parse_null(input: Span) -> IResult<Span, Value> {
     value(Value::Null, alt((tag("null"), tag("NULL"))))(input)
 }
 
-pub(super) fn parse_value(input: Span) -> IResult<Span, Value> {
+pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
     preceded(
         zero_or_more_ws_or_comment,
         alt((

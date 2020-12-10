@@ -5,8 +5,9 @@ use std::cmp::Ordering;
 
 use crate::errors::{Error, ErrorKind};
 use indexmap::map::IndexMap;
+use std::hash::{Hash, Hasher};
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub enum CmpOperator {
     Eq,
     In,
@@ -44,6 +45,54 @@ pub enum Value {
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
     RangeChar(RangeType<char>),
+}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::String(s)        |
+            Value::Variable(s)      |
+            Value::Regex(s)        => { s.hash(state); },
+
+            Value::Char(c)          => { c.hash(state); },
+            Value::Int(i)            => { i.hash(state); },
+            Value::Null                     => { "NULL".hash(state); },
+            Value::Float(f)          => { (*f as i64).hash(state); }
+
+            Value::RangeChar(r) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            },
+
+            Value::RangeInt(r) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            },
+
+            Value::RangeFloat(r) => {
+                (r.lower as i64).hash(state);
+                (r.upper as i64).hash(state);
+                r.inclusive.hash(state);
+            },
+
+            Value::Bool(b) => { b.hash(state); },
+
+            Value::List(l) => {
+                for each in l {
+                    each.hash(state);
+                }
+            },
+
+            Value::Map(map) => {
+                for (key, value) in map.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            },
+        }
+    }
 }
 
 //

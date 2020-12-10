@@ -6,6 +6,7 @@ use nom;
 use serde_json;
 
 use crate::rules::parser::Span;
+use crate::rules::parser2::{ Span2, ParserError };
 
 #[derive(Debug)]
 pub struct Error(pub ErrorKind);
@@ -61,6 +62,14 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
         ErrorKind::Errors(all) => {
             let vec = all.iter().map(|e| error_kind_msg(e) ).collect::<Vec<String>>();
             format!("{:?}", &vec)
+        },
+
+        ErrorKind::RetrievalError(err) => {
+            format!("Could not retrieve data from incoming context. Error = {}", err)
+        },
+
+        ErrorKind::MissingValue(err) => {
+            format!("There was no variable or value object to resolve. Error = {}", err)
         }
     }
 }
@@ -83,6 +92,8 @@ pub enum ErrorKind {
     ParseError(String),
     RegexError(regex::Error),
     MissingProperty(String),
+    MissingValue(String),
+    RetrievalError(String),
     MissingVariable(String),
     MultipleValues(String),
     IncompatibleError(String),
@@ -124,6 +135,16 @@ impl <'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
                 format!("Error parsing file {} at line {} at column {}, remaining {}",
                         span.extra, span.location_line(), span.get_utf8_column(), *span.fragment())
             }
+        };
+        Error(ErrorKind::ParseError(msg))
+    }
+}
+
+impl<'a> From<nom::Err<ParserError<'a>>> for Error {
+    fn from(err: nom::Err<ParserError<'a>>) -> Self {
+        let msg = match err {
+            nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {}", e),
+            nom::Err::Incomplete(_) => format!("More bytes required for parsing"),
         };
         Error(ErrorKind::ParseError(msg))
     }

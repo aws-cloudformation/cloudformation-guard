@@ -273,7 +273,7 @@ fn custom_message(input: Span2) -> IResult<Span2, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
-fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
+pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     match op {
         CmpOperator::KeysExists |
         CmpOperator::KeysEmpty |

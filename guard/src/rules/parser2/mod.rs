@@ -117,4 +117,7 @@ pub(crate) struct ParserError<'a> {
 
 pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
 
+pub(crate) use expr::does_comparator_have_rhs;
+pub(crate) use values::parse_value;
+
 

@@ -176,7 +176,7 @@ pub(crate) mod dependency;
 pub(crate) mod values;
 pub(crate) mod parser;
 pub(crate) mod expr;
-mod parser2;
+pub(crate) mod parser2;
 pub(in crate::rules) mod exprs;
 
 #[derive(Clone, Debug, PartialEq)]
