@@ -11,46 +11,10 @@ use super::*;
 use std::hash::{Hash, Hasher};
 use std::fmt::Formatter;
 
-impl Path {
-    pub(super) fn append_str(mut self, path: &str) -> Self {
-        self.append(path.to_owned())
-    }
-
-    pub(super) fn append(mut self, path: String) -> Self {
-        self.pointers.push(path);
-        Path {
-            pointers: self.pointers
-        }
-    }
-
-}
-
-impl std::fmt::Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let str = self.pointers.join("/");
-        f.write_str(&str);
-        Ok(())
-    }
-}
-
-impl<'loc> QueryResult<'loc> {
-    fn result(self) -> HashMap<Path, Vec<&'loc Value>> {
-        self.result
-    }
-}
-
-impl<'loc> Hash for QueryResult<'loc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.query.hash(state);
-    }
-}
-
-impl<'loc> Eq for QueryResult<'loc> {}
-
 impl Evaluate for FilterPart {
     type Item = bool;
 
-    fn evaluate(&self, context: &Value, path: &Path) -> Result<Self::Item, Error> {
+    fn evaluate(&self, context: &Value, path: &Path, scope: &Scope) -> Result<Self::Item, Error> {
         let map = match_map(context, path)?;
         let cmp = match &self.value {
             Some(VariableOrValue::Value(v)) => Some(v),
@@ -190,14 +154,14 @@ fn retrieve_index<'loc>(index: i32, value: &'loc Value, path: &Path, query: &[Qu
     }
 }
 
-fn select(criteria: &Conjunctions<FilterPart>, value: &Value, path: &Path) -> Result<bool, Error> {
+fn select(criteria: &Conjunctions<GuardClause>, value: &Value, path: &Path) -> Result<bool, Error> {
     let selected = 'outer: loop {
         for each in criteria {
             let disjunctions = 'disjunctions: loop {
                 for each_or_clause in each {
-                    if each_or_clause.evaluate(value, path)? {
+                    // if each_or_clause.evaluate(value, path)? {
                         break 'disjunctions true
-                    }
+                    // }
                 }
                 break false
             };
@@ -239,7 +203,7 @@ pub(super) fn query_value<'loc>(query: &'loc[QueryPart], value: &'loc Value, pat
                                 result.extend(sub_query.result());
                             }
                         }
-                        Ok(QueryResult { result, query })
+                        Ok(QueryResult::new(query,result))
                     }
                     else {
                         Err(Error::new(ErrorKind::RetrievalError(
@@ -257,7 +221,7 @@ pub(super) fn query_value<'loc>(query: &'loc[QueryPart], value: &'loc Value, pat
                         result.extend(sub_query.result());
                     }
                 }
-                return Ok(QueryResult{ result, query })
+                return Ok(QueryResult::new(query,result))
             },
 
             QueryPart::AllIndices(name) => {
@@ -269,7 +233,7 @@ pub(super) fn query_value<'loc>(query: &'loc[QueryPart], value: &'loc Value, pat
                         &query[idx + 1..], value, sub_path)?;
                     result.extend(sub_query.result());
                 }
-                return Ok(QueryResult { result, query })
+                return Ok(QueryResult::new(query,result))
             }
 
             _ => unimplemented!()
@@ -277,10 +241,7 @@ pub(super) fn query_value<'loc>(query: &'loc[QueryPart], value: &'loc Value, pat
     }
 
     result.insert(path_ref, vec![value_ref]);
-    Ok((QueryResult {
-        query,
-        result,
-    }))
+    Ok(QueryResult::new(query,result))
 }
 
 #[cfg(test)]
@@ -298,9 +259,9 @@ mod tests {
             Value::String(String::from("this")),
         ];
         let path_values = [
-            (Path { pointers: vec![String::from("resources"), String::from("a") ] }, vec![&values[0]]),
-            (Path { pointers: vec![String::from("resources"), String::from("b") ] }, vec![&values[1]]),
-            (Path { pointers: vec![String::from("resources"), String::from("c") ] }, vec![&values[2]]),
+            (Path::new( &["resources", "a"]), vec![&values[0]]),
+            (Path::new( &["resources", "b"]), vec![&values[1]]),
+            (Path::new( &["resources", "c"]), vec![&values[2]]),
         ].to_vec().into_iter().collect::<HashMap<Path, Vec<&Value>>>();
 
         let query = [
@@ -313,9 +274,9 @@ mod tests {
         query2.push(QueryPart::AllIndices(String::from("tags")));
 
 
-        let result1 = QueryResult { query: &query, result: path_values.clone() };
-        let result2 = QueryResult { query: &query, result: path_values.clone() };
-        let result3 = QueryResult { query: &query2, result: path_values };
+        let result1 = QueryResult::new(&query, path_values.clone());
+        let result2 = QueryResult::new(&query, path_values.clone());
+        let result3 = QueryResult::new(&query, path_values);
 
         assert_eq!(result1, result2);
         assert_ne!(result1, result3);
@@ -333,7 +294,47 @@ mod tests {
             app-id: "app-IDxer4543634",
             env-id: "env-IDsdse34"
         }
-        "#))?;
+        "#))?.1;
+
+        let template = std::fs::File::open("assets/cfn-sample.json")?;
+        let template = crate::commands::files::read_file_content(template)?;
+        let resources = parse_value(from_str2(&template))?.1;
+        println!("{:?}", resources);
+
+        let filters = [
+            FilterPart {
+                name: String::from("prod-id"),
+                comparator: (CmpOperator::Exists, false),
+                value: None
+            },
+
+            FilterPart {
+                name: String::from("prod-id"),
+                comparator: (CmpOperator::Eq, false),
+                value: Some(VariableOrValue::Value(Value::String(String::from("prod-id"))))
+            },
+
+            FilterPart {
+                name: String::from("prod-id"),
+                comparator: (CmpOperator::Eq, false),
+                value: Some(VariableOrValue::Value(Value::Regex(String::from("^prod")))),
+            },
+
+        ];
+
+        let expectations = [
+            true,
+            true,
+            true
+        ];
+
+        let path = Path::new(&["/"]);
+
+        for (idx, each) in filters.iter().enumerate() {
+            println!("Testing #{} = {}", idx, each);
+            //assert_eq!(each.evaluate(&value, &path)?, expectations[idx]);
+        }
+
         Ok(())
     }
 }

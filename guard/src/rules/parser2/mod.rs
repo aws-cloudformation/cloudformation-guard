@@ -1,8 +1,3 @@
-use std::fmt::Formatter;
-
-use nom::error::{ErrorKind, ParseError};
-use nom_locate::LocatedSpan;
-
 ///
 /// Parser Grammar for the CFN Guard rule syntax. Any enhancements to the grammar
 /// **MUST** be reflected in this doc section.
@@ -101,23 +96,10 @@ use nom_locate::LocatedSpan;
 mod expr;
 mod values;
 mod common;
+mod types;
 
-pub(crate) type Span2<'a> = LocatedSpan<&'a str, &'a str>;
-
-pub(crate) fn from_str2(in_str: &str) -> Span2 {
-    Span2::new_extra(in_str, "")
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) struct ParserError<'a> {
-    context: String,
-    span: Span2<'a>,
-    kind: nom::error::ErrorKind,
-}
-
-pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
-
-pub(crate) use expr::does_comparator_have_rhs;
-pub(crate) use values::parse_value;
-
+pub(crate) use expr::*;
+pub(crate) use values::*;
+pub(crate) use common::*;
+pub(crate) use types::*;
 

@@ -57,7 +57,7 @@ impl Hash for Value {
             Value::Char(c)          => { c.hash(state); },
             Value::Int(i)            => { i.hash(state); },
             Value::Null                     => { "NULL".hash(state); },
-            Value::Float(f)          => { (*f as i64).hash(state); }
+            Value::Float(f)          => { (*f as u64).hash(state); }
 
             Value::RangeChar(r) => {
                 r.lower.hash(state);
@@ -72,8 +72,8 @@ impl Hash for Value {
             },
 
             Value::RangeFloat(r) => {
-                (r.lower as i64).hash(state);
-                (r.upper as i64).hash(state);
+                (r.lower as u64).hash(state);
+                (r.upper as u64).hash(state);
                 r.inclusive.hash(state);
             },
 

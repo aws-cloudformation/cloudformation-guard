@@ -306,9 +306,9 @@ fn predicate_filter_clause(input: Span2) -> IResult<Span2, FilterPart> {
     }))
 }
 
-fn predicate_filter_clauses(input: Span2) -> IResult<Span2, Vec<Vec<FilterPart>>> {
+fn predicate_filter_clauses(input: Span2) -> IResult<Span2, Conjunctions<GuardClause>> {
     let (input, filters) = cnf_clauses(
-        input, predicate_filter_clause, std::convert::identity, true)?;
+        input, clause, std::convert::identity, true)?;
     Ok((input, filters))
 }
 
@@ -425,14 +425,6 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
         context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
     ))(rest)?;
 
-    let no_rhs_expected = match &cmp.0 {
-        CmpOperator::KeysExists |
-        CmpOperator::KeysEmpty |
-        CmpOperator::Empty |
-        CmpOperator::Exists => true,
-        _ => false
-    };
-
     if !does_comparator_have_rhs(&cmp.0) {
         let (rest, custom_message) = cut(
             map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
@@ -452,16 +444,19 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
         let (rest, (compare_with, custom_message)) =
             context("expecting either a property access \"engine.core\" or value like \"string\" or [\"this\", \"that\"]",
                     cut(alt((
+                        //
+                        // Order does matter here as true/false and other values can be interpreted as access
+                        //
+                        map(tuple((
+                            parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            move |(rhs, msg)| {
+                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
+                            }),
                         map(tuple((
                             access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             |(rhs, msg)| {
                                 (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
                             }),
-                        map(tuple((
-                            parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
-                            move |(rhs, msg)| {
-                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
-                            })
                     ))))(rest)?;
         Ok((rest,
             GuardClause::Clause(AccessClause {
@@ -1123,7 +1118,7 @@ mod tests {
         to_string_vec(&vec)
     }
 
-    fn to_string_vec(list: &[&str]) -> Vec<QueryPart> {
+    fn to_string_vec<'loc>(list: &[&str]) -> Vec<QueryPart<'loc>> {
         list.iter()
             .map(|part|
                 if (*part).starts_with("%") {
@@ -1360,7 +1355,7 @@ mod tests {
             "%engine.*.", // 17 ok . is remainder
 
             // matches { 'engine': [{'type': 'cfn', 'position': 1, 'other': 20}, {'type': 'tf', 'position': 2, 'other': 10}] }
-            "engine[type==\"cfn\"].port", // 18 Ok
+            "engine[type == \"cfn\"].port", // 18 Ok
 
             " %engine", // 18 err
         ];
@@ -1622,11 +1617,20 @@ mod tests {
                 },
                 AccessQuery::from([
                     QueryPart::Filter("engine".to_string(), vec![
-                        vec![FilterPart {
-                            name: String::from("type"),
+                        vec![GuardClause::Clause(AccessClause {
+                            query: AccessQuery::from([
+                                QueryPart::Key(String::from("type"))
+                            ]),
                             comparator: (CmpOperator::Eq, false),
-                            value: Some(VariableOrValue::Value(Value::String(String::from("cfn"))))
-                        }]
+                            custom_message: None,
+                            compare_with: Some(LetValue::Value(Value::String(String::from("cfn")))),
+                            location: FileLocation {
+                                line: 1,
+                                column: "engine[".len() as u32 + 1,
+                                file_name: ""
+                            }
+                        }, false),
+                        ]
                     ]),
                     QueryPart::Key(String::from("port")),
                 ])
@@ -2295,14 +2299,14 @@ mod tests {
         }
     }
 
-    fn testing_access_with_cmp<A, C>(separators: &[(&str, &str)],
+    fn testing_access_with_cmp<'loc, A, C>(separators: &[(&str, &str)],
                                      comparators: &[(&str, (CmpOperator, bool))],
                                      lhs: &str,
                                      rhs: &str,
                                      access: A,
                                      cmp_with: C)
-        where A: Fn() -> AccessQuery,
-              C: Fn() -> Option<LetValue>
+        where A: Fn() -> AccessQuery<'loc>,
+              C: Fn() -> Option<LetValue<'loc>>
     {
         for (lhs_sep, rhs_sep) in separators {
             for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
@@ -2381,11 +2385,19 @@ mod tests {
                 AccessQuery::from([
                     QueryPart::Key("resources".to_string()),
                     QueryPart::Filter("*".to_string(), Conjunctions::from([
-                        Disjunctions::from([FilterPart {
-                            value: Some(VariableOrValue::Value(Value::Regex("AWS::RDS".to_string()))),
-                            comparator: (CmpOperator::Eq, false),
-                            name: "type".to_string()
-                        }]),
+                        Disjunctions::from([
+                            GuardClause::Clause(AccessClause {
+                                compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                                comparator: (CmpOperator::Eq, false),
+                                query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                custom_message: None,
+                                location: FileLocation {
+                                    line: 1,
+                                    column: "resources.*[ ".len() as u32 + 1,
+                                    file_name: ""
+                                }
+                            }, false)
+                        ]),
                     ]))
                 ])
             )),
@@ -2403,21 +2415,45 @@ mod tests {
                 AccessQuery::from([
                     QueryPart::Key("resources".to_string()),
                     QueryPart::Filter("*".to_string(), Conjunctions::from([
-                        Disjunctions::from([FilterPart {
-                            value: Some(VariableOrValue::Value(Value::Regex("AWS::RDS".to_string()))),
-                            comparator: (CmpOperator::Eq, false),
-                            name: "type".to_string()
-                        }]),
-                        Disjunctions::from([FilterPart {
-                            value: None,
-                            comparator: (CmpOperator::Exists, false),
-                            name: "deletion_policy".to_string()
-                        }]),
-                        Disjunctions::from([FilterPart {
-                            value: Some(VariableOrValue::Value(Value::String("RETAIN".to_string()))),
-                            comparator: (CmpOperator::Eq, false),
-                            name: "deletion_policy".to_string()
-                        }]),
+                        Disjunctions::from([
+                            GuardClause::Clause(AccessClause {
+                                compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                                comparator: (CmpOperator::Eq, false),
+                                query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                custom_message: None,
+                                location: FileLocation {
+                                    line: 1,
+                                    column: "resources.*[ ".len() as u32 + 1,
+                                    file_name: ""
+                                }
+                            }, false)
+                        ]),
+                        Disjunctions::from([
+                            GuardClause::Clause(AccessClause {
+                                compare_with: None,
+                                comparator: (CmpOperator::Exists, false),
+                                query: AccessQuery::from([QueryPart::Key(String::from("deletion_policy"))]),
+                                custom_message: None,
+                                location: FileLocation {
+                                    line: 2,
+                                    column: 29,
+                                    file_name: ""
+                                }
+                            }, false)
+                        ]),
+                        Disjunctions::from([
+                            GuardClause::Clause(AccessClause {
+                                compare_with: Some(LetValue::Value(Value::String("RETAIN".to_string()))),
+                                comparator: (CmpOperator::Eq, false),
+                                query: AccessQuery::from([QueryPart::Key(String::from("deletion_policy"))]),
+                                custom_message: None,
+                                location: FileLocation {
+                                    line: 3,
+                                    column: 29,
+                                    file_name: ""
+                                }
+                            }, false)
+                        ]),
                     ])),
                     QueryPart::Key("properties".to_string()),
                 ])
@@ -3114,15 +3150,20 @@ mod tests {
                             QueryPart::Filter(String::from("*"), Conjunctions::from(
                                 [
                                     Disjunctions::from([
-                                        FilterPart {
-                                            name: String::from("type"),
-                                            comparator: (CmpOperator::In, false),
-                                            value: Some(VariableOrValue::Value(Value::List(
+                                        GuardClause::Clause(AccessClause {
+                                            compare_with: Some(LetValue::Value(Value::List(
                                                 vec![Value::Regex(String::from("AWS::RDS::DBCluster")),
-                                                     Value::Regex(String::from("AWS::RDS::GlobalCluster"))]
-                                            ))),
-                                        }
-                                    ])
+                                                     Value::Regex(String::from("AWS::RDS::GlobalCluster"))]))),
+                                            query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                            custom_message: None,
+                                            comparator: (CmpOperator::In, false),
+                                            location: FileLocation {
+                                                line: 1,
+                                                column: "let aurora_dbs = resources.*[ ".len() as u32 + 1,
+                                                file_name: ""
+                                            }
+                                        }, false),
+                                    ]),
                                 ],
                             ))
                         ])
@@ -3348,7 +3389,7 @@ mod tests {
         let volumes := block_device_mappings      # var local, snake case allowed.
           %volumes.*.Ebs EXISTS
           %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
-          %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
+          %volumes.*.Ebs.encrypted == true               # Ebs volume must be encryped
           %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
     } or
     AWS::EC2::Instance {                   # OR a regular volume (disjunction)
@@ -3357,7 +3398,210 @@ mod tests {
 }"#
         ];
 
-        println!("{:?}", rule_block(from_str2(examples[0])).unwrap());
+        let type_name = "AWS::EC2::Instance";
+
+        let expectations = [
+            Ok((
+                unsafe {
+                    Span2::new_from_raw_offset(
+                        examples[0].len(),
+                        24,
+                        "",
+                        ""
+                    )
+                },
+                Rule {
+                    rule_name: String::from("example_rule"),
+                    conditions: Some(Conjunctions::from([
+                        Disjunctions::from([
+                        GuardClause::Clause(AccessClause{
+                            custom_message: None,
+                            query: access_from(&["stage"]),
+                            compare_with: Some(let_value_from("prod")),
+                            location: FileLocation {
+                                file_name: "",
+                                line: 1,
+                                column: "rule example_rule when ".len() as u32 + 1,
+                            },
+                            comparator: (CmpOperator::Eq, false)
+                        }, false)
+                    ])])),
+                    block: Block {
+                        assignments: vec![
+                            LetExpr {
+                                var: String::from("ec2_instance_types"),
+                                value: let_regex_list_value_from(&["^t*", "^m*"])
+                            }
+                        ],
+                        conjunctions: Conjunctions::from([
+                            Disjunctions::from([
+                                RuleClause::Clause(GuardClause::NamedRule(
+                                    String::from("dependent_rule"),
+                                    FileLocation {
+                                        file_name: "",
+                                        line: 5,
+                                        column: 5
+                                    },
+                                    false,
+                                    None,
+                                ))
+                            ]),
+                            Disjunctions::from([
+                                RuleClause::TypeBlock(TypeBlock {
+                                    type_name: type_name.to_string(),
+                                    conditions: None,
+                                    block: Block {
+                                        assignments: vec![],
+                                        conjunctions: Conjunctions::from([
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+                                                    custom_message: None,
+                                                    query: access_from(&["InstanceType"]),
+                                                    compare_with: Some(LetValue::AccessClause(AccessQuery::from([
+                                                        QueryPart::Variable("ec2_instance_types".to_string())
+                                                    ]))),
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 8,
+                                                        column: 24,
+                                                    },
+                                                    comparator: (CmpOperator::In, false)
+
+                                                }, false)
+                                            ])
+                                        ])
+                                    }
+                                })
+                            ]),
+                            Disjunctions::from([
+                                RuleClause::TypeBlock(TypeBlock {
+                                    type_name: type_name.to_string(),
+                                    conditions: None,
+                                    block: Block {
+                                        assignments: vec![
+                                            LetExpr {
+                                                var: "volumes".to_string(),
+                                                value: LetValue::AccessClause(access_from(&["block_device_mappings"]))
+                                            }
+                                        ],
+                                        // %volumes.*.Ebs EXISTS
+                                        // %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
+                                        // %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
+                                        // %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
+                                        conjunctions: Conjunctions::from([
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Variable("volumes".to_string()),
+                                                        QueryPart::AllKeys,
+                                                        QueryPart::Key("Ebs".to_string())
+                                                    ]),
+                                                    comparator: (CmpOperator::Exists, false),
+                                                    compare_with: None,
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 16,
+                                                        column: 11
+                                                    }
+                                                }, false),
+                                            ]),
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Variable("volumes".to_string()),
+                                                        QueryPart::AllKeys,
+                                                        QueryPart::Key("device_name".to_string())
+                                                    ]),
+                                                    comparator: (CmpOperator::Eq, false),
+                                                    compare_with: Some(LetValue::Value(Value::Regex("^/dev/ebs-".to_string()))),
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 17,
+                                                        column: 11
+                                                    }
+                                                }, false),
+                                            ]),
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Variable("volumes".to_string()),
+                                                        QueryPart::AllKeys,
+                                                        QueryPart::Key("Ebs".to_string()),
+                                                        QueryPart::Key("encrypted".to_string())
+                                                    ]),
+                                                    comparator: (CmpOperator::Eq, false),
+                                                    compare_with: Some(LetValue::Value(Value::Bool(true))),
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 18,
+                                                        column: 11
+                                                    }
+                                                }, false),
+                                            ]),
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Variable("volumes".to_string()),
+                                                        QueryPart::AllKeys,
+                                                        QueryPart::Key("Ebs".to_string()),
+                                                        QueryPart::Key("delete_on_termination".to_string())
+                                                    ]),
+                                                    comparator: (CmpOperator::Eq, false),
+                                                    compare_with: Some(LetValue::Value(Value::Bool(true))),
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 19,
+                                                        column: 11
+                                                    }
+                                                }, false),
+                                            ]),
+                                        ]),
+                                    }
+                                }),
+                                RuleClause::TypeBlock(TypeBlock {
+                                    type_name: type_name.to_string(),
+                                    conditions: None,
+                                    block: Block {
+                                        assignments: vec![],
+                                        // block_device_mappings.*.device_name == /^\/dev\/sdc-\d/ # all other local must have sdc
+
+                                        conjunctions: Conjunctions::from([
+                                            Disjunctions::from([
+                                                GuardClause::Clause(AccessClause {
+
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Key("block_device_mappings".to_string()),
+                                                        QueryPart::AllKeys,
+                                                        QueryPart::Key("device_name".to_string())
+                                                    ]),
+                                                    comparator: (CmpOperator::Eq, false),
+                                                    compare_with: Some(LetValue::Value(Value::Regex("^/dev/sdc-\\d".to_string()))),
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 22,
+                                                        column: 9
+                                                    }
+                                                }, false)
+                                            ])
+                                        ])
+                                    }
+
+                                })
+                            ])
+                        ]),
+                    }
+                }
+            )),
+        ];
+
+        let val = rule_block(from_str2(examples[0]));
+        assert_eq!(val, expectations[0]);
+        println!("{:?}", val.unwrap().1);
     }
 
 }

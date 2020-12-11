@@ -2,11 +2,14 @@ use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{map, value};
-use nom::error::context;
+use nom::error::{context, ErrorKind};
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, preceded, tuple};
 
 use super::*;
+use std::fmt::Formatter;
+use crate::rules::exprs::{AccessQuery, QueryPart, LetExpr, LetValue};
+use crate::rules::values::Value;
 
 impl<'a> ParserError<'a> {
     pub(crate) fn context(&self) -> &str {
@@ -22,7 +25,7 @@ impl<'a> ParserError<'a> {
     }
 }
 
-impl<'a> ParseError<Span2<'a>> for ParserError<'a> {
+impl<'a> nom::error::ParseError<Span2<'a>> for ParserError<'a> {
     fn from_error_kind(input: Span2<'a>, kind: ErrorKind) -> Self {
         ParserError {
             context: "".to_string(),
@@ -61,6 +64,27 @@ impl<'a> std::fmt::Display for ParserError<'a> {
     }
 }
 
+pub(crate) fn access_from<'loc>(keys: &[&str]) -> AccessQuery<'loc> {
+    keys.iter().map(|s|QueryPart::Key((*s).to_owned())).collect::<Vec<QueryPart<'loc>>>()
+}
+
+pub(crate) fn let_value_from<'loc>(value: &str) -> LetValue<'loc> {
+    LetValue::Value(Value::String(value.to_owned()))
+}
+
+pub(crate) fn let_regex_value_from<'loc>(value: &str) -> LetValue<'loc> {
+    LetValue::Value(Value::Regex(value.to_owned()))
+}
+
+pub(crate) fn let_list_value_from<'loc>(value: &[&str]) -> LetValue<'loc> {
+    LetValue::Value(crate::rules::values::Value::List(
+        value.iter().map(|s| Value::String((*s).to_owned())).collect::<Vec<Value>>()))
+}
+
+pub(crate) fn let_regex_list_value_from<'loc>(value: &[&str]) -> LetValue<'loc> {
+    LetValue::Value(crate::rules::values::Value::List(
+        value.iter().map(|s| Value::Regex((*s).to_owned())).collect::<Vec<Value>>()))
+}
 
 
 pub(super) fn comment2(input: Span2) -> IResult<Span2, Span2> {
