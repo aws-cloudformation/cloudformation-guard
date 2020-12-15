@@ -4,6 +4,7 @@ use crate::errors::Error;
 use std::hash::{Hash, Hasher};
 use std::collections::HashMap;
 use std::fmt::Formatter;
+//use super::scope::Scope;
 
 #[derive(PartialEq, Debug, Clone, Copy, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -86,9 +87,23 @@ pub(crate) type Disjunctions<T> = Vec<T>;
 pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
+pub(crate) struct GuardAccessClause<'loc> {
+    pub(crate) access_clause: AccessClause<'loc>,
+    pub(crate) negation: bool
+}
+
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(crate) struct GuardNamedRuleClause<'loc> {
+    pub(crate) dependent_rule: String,
+    pub(crate) negation: bool,
+    pub(crate) comment: Option<String>,
+    pub(crate) location: FileLocation<'loc>
+}
+
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum GuardClause<'loc> {
-    Clause(AccessClause<'loc>, bool),
-    NamedRule(String, FileLocation<'loc>, bool, Option<String>),
+    Clause(GuardAccessClause<'loc>),
+    NamedRule(GuardNamedRuleClause<'loc>)
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
@@ -131,19 +146,47 @@ pub(crate) struct Path {
     pointers: Vec<String>
 }
 
+
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct QueryResult<'loc> {
     results: HashMap<Path, Vec<&'loc Value>>,
     query: &'loc[QueryPart<'loc>],
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Scope {
+#[derive(Clone, PartialEq, Debug, Copy)]
+pub(crate) enum Status {
+    SKIP,
+    PASS,
+    FAIL
 }
 
-pub(crate) trait Evaluate {
-    type Item;
-    fn evaluate(&self, context: &Value, path: &Path, scope: &Scope) -> Result<Self::Item, Error>;
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct ComparisonResult<'loc> {
+    status: Status,
+    from: Option<(&'loc Path, &'loc Value)>,
+    with: Option<(&'loc Path, &'loc Value)>,
+}
+
+impl<'loc> ComparisonResult<'loc> {
+    pub(crate) fn new(status: Status,
+                      from: Option<(&'loc Path, &'loc Value)>,
+                      with: Option<(&'loc Path, &'loc Value)>) -> Self {
+        ComparisonResult {
+            status, from, with
+        }
+    }
+
+    pub(crate) fn status(&self) -> Status {
+        self.status
+    }
+
+    pub(crate) fn from(&self) -> Option<(&'loc Path, &'loc Value)> {
+        self.from
+    }
+
+    pub(crate) fn with(&self) -> Option<(&'loc Path, &'loc Value)> {
+        self.with
+    }
 }
 
 impl Path {
