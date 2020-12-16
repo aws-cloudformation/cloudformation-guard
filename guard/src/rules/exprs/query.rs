@@ -7,152 +7,10 @@ use crate::errors::{Error, ErrorKind};
 use std::convert::TryFrom;
 use std::collections::HashMap;
 use super::*;
+use super::helper::*;
 
 use std::hash::{Hash, Hasher};
 use std::fmt::Formatter;
-
-impl Evaluate for FilterPart {
-    type Item = bool;
-
-    fn evaluate(&self, context: &Value, path: &Path, scope: &Scope) -> Result<Self::Item, Error> {
-        let map = match_map(context, path)?;
-        let cmp = match &self.value {
-            Some(VariableOrValue::Value(v)) => Some(v),
-            Some(VariableOrValue::Variable(var)) =>
-                return Err(Error::new(ErrorKind::NotComparable(
-                    format!("Currently we do not support interpolation of variables, VAR = {}", var)
-                ))),
-            None => None, // The parser already ensures that the right operator has the right arguments
-        };
-
-        return if let Some(value) = map.get(&self.name) {
-            let invert= |r:bool| if self.comparator.1 { !r } else { r };
-            match &self.comparator.0 {
-                CmpOperator::Exists => Ok(invert(true)),
-                CmpOperator::Empty  => {
-                    let list = match_list(value, path)?;
-                    Ok(invert(list.is_empty()))
-                },
-
-                CmpOperator::Lt => Ok(invert(compare_lt(value, cmp.unwrap())?)),
-                CmpOperator::Le => Ok(invert(compare_le(value, cmp.unwrap())?)),
-                CmpOperator::Gt => Ok(invert(compare_gt(value, cmp.unwrap())?)),
-                CmpOperator::Ge => Ok(invert(compare_ge(value, cmp.unwrap())?)),
-                CmpOperator::In => {
-                    let list = match_list(cmp.unwrap(), path)?;
-                    let result = 'outer_in: loop {
-                        for each in list {
-                            if compare_eq(value, each)? {
-                                break 'outer_in true
-                            }
-                        }
-                        break false
-                    };
-                    Ok(invert(result))
-                },
-                CmpOperator::Eq => Ok(invert(compare_eq(value, cmp.unwrap())?)),
-
-                CmpOperator::KeysEmpty => {
-                    let keys = match_map(value, path)?;
-                    Ok((invert(keys.is_empty())))
-                },
-
-                CmpOperator::KeysExists => {
-                    let keys = match_map(value, path)?;
-                    Ok((invert(!keys.is_empty())))
-                },
-
-                CmpOperator::KeysEq => {
-                    let keys = match_map(value, path)?;
-                    let result = 'outer_keys: loop {
-                        for each in keys.keys() {
-                            let val = Value::String(String::from(each));
-                            if !compare_eq(cmp.unwrap(), &val)? {
-                                break 'outer_keys false
-                            }
-                        }
-                        break true
-                    };
-                    Ok((invert(result)))
-                },
-
-                CmpOperator::KeysIn => {
-                    let keys = match_map(value, path)?;
-                    let result = 'outer_keys_in: loop {
-                        for each in keys.keys() {
-                            let val = Value::String(String::from(each));
-                            if compare_eq(cmp.unwrap(), &val)? {
-                                break 'outer_keys_in true
-                            }
-                        }
-                        break false
-                    };
-                    Ok(invert(result))
-                }
-
-            }
-        }
-        else {
-            Err(Error::new(ErrorKind::RetrievalError(
-                format!("Attempting to apply predicate filter for {} FAILED as NO KEY = {} was present", self, self.name)
-            )))
-        }
-    }
-}
-
-impl std::fmt::Display for FilterPart {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Key = {}, Comparison = {:?}", self.name, self.comparator.0))?;
-        Ok(())
-    }
-}
-
-fn match_list<'loc>(value: &'loc Value, path: &Path) -> Result<&'loc Vec<Value>, Error> {
-    return if let Value::List(list) = value {
-        Ok(list)
-    }
-    else {
-        Err(Error::new(ErrorKind::RetrievalError(
-            format!("Querying at path {} was not an array type {} to query", path, type_info(value))
-        )))
-    }
-}
-
-fn match_map<'loc>(value: &'loc Value, path: &Path) -> Result<&'loc indexmap::IndexMap<String, Value>, Error> {
-    return if let Value::Map(map) = value {
-        Ok(map)
-    }
-    else {
-        Err(Error::new(ErrorKind::RetrievalError(
-            format!("Querying at path {} was not a map type {}, to query", path, type_info(value))
-        )))
-    }
-}
-
-fn retrieve_key<'loc>(key: &str, value: &'loc Value, path: &Path, query: &[QueryPart]) -> Result<&'loc Value, Error> {
-    let map = match_map(value, path)?;
-    return if let Some(val) = map.get(key) {
-        Ok(val)
-    } else {
-        Err(Error::new(ErrorKind::RetrievalError(
-            format!("Querying {:?} at path {} was next key {} was not found", query, path, key)
-        )))
-    }
-}
-
-fn retrieve_index<'loc>(index: i32, value: &'loc Value, path: &Path, query: &[QueryPart]) -> Result<&'loc Value, Error> {
-    let list = match_list(value, path)?;
-    let check = if index >= 0 { index } else { -index };
-    return if check < list.len() as i32 {
-        Ok(&list[index as usize])
-    }
-    else {
-        Err(Error::new(ErrorKind::RetrievalError(
-            format!("Querying {:?} at path {} for index {} was not possible on array size {} to query",
-                    query, path, index, list.len())
-        )))
-    }
-}
 
 fn select(criteria: &Conjunctions<GuardClause>, value: &Value, path: &Path) -> Result<bool, Error> {
     let selected = 'outer: loop {
@@ -174,74 +32,120 @@ fn select(criteria: &Conjunctions<GuardClause>, value: &Value, path: &Path) -> R
     Ok(selected)
 }
 
-pub(super) fn query_value<'loc>(query: &'loc[QueryPart], value: &'loc Value, path: Path) -> Result<QueryResult<'loc>, Error> {
-    let mut result: HashMap<Path, Vec<&Value>> = HashMap::new();
+fn handle_array<'loc>(array: &'loc Vec<Value>,
+                      index: usize,
+                      path: Path,
+                      query: &[QueryPart<'_>],
+                      scope: &Scope<'_>) -> Result<ResolvedValues<'loc>, Error> {
+    let mut results = ResolvedValues::new();
+    for (each_idx, each_value) in array.iter().enumerate() {
+        let sub_path = path.clone().append(each_idx.to_string());
+        let sub_query = resolve_query(
+            &query[index+1..], each_value, scope, sub_path)?;
+        results.extend(sub_query);
+    }
+    Ok(results)
+}
+
+fn handle_map<'loc>(map: &'loc indexmap::IndexMap<String, Value>,
+                    index: usize,
+                    path: Path,
+                    query: &[QueryPart<'_>],
+                    scope: &Scope<'_>) -> Result<ResolvedValues<'loc>, Error> {
+
+    let mut results = ResolvedValues::new();
+    for (key, index_value) in map {
+        let sub_path = path.clone().append_str(key);
+        let sub_query = resolve_query(
+            &query[index+1..], index_value, scope, sub_path)?;
+        results.extend(sub_query);
+    }
+    Ok(results)
+}
+
+pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
+                                  value: &'loc Value,
+                                  variables: &Scope<'_>,
+                                  path: Path) -> Result<ResolvedValues<'loc>, Error> {
+
+    let mut results = ResolvedValues::new();
     let mut value_ref = value;
     let mut path_ref = path;
-    for (idx, part) in query.iter().enumerate() {
-        match part {
-            QueryPart::Key(key) => {
-                value_ref = retrieve_key(key, value_ref, &path_ref, query)?;
-                path_ref = path_ref.append_str(key);
-            }
 
-            QueryPart::Index(key, index) => {
-                value_ref = retrieve_key(key, value_ref, &path_ref, query)?;
-                path_ref = path_ref.append_str(key);
-                value_ref = retrieve_index(*index, value_ref, &path_ref, query)?;
-                path_ref = path_ref.append(index.to_string())
+    for (index, query_part) in query.iter().enumerate() {
+        match query_part {
+
+            QueryPart::Key(key) => {
+                //
+                // Support old format
+                //
+                match key.parse::<i32>() {
+                    Ok(idx) => {
+                        value_ref = retrieve_index(idx, value_ref, &path_ref)?;
+                        path_ref = path_ref.append(idx.to_string());
+                    },
+                    Err(_) => {
+                        value_ref = retrieve_key(key, value_ref, &path_ref)?;
+                        path_ref = path_ref.append_str(key);
+                    }
+                }
             },
 
-            QueryPart::Filter(name, parts) => {
-                if name == "*" {
-                    return if let Value::Map(current) = value_ref {
-                        for (key, value) in current.iter() {
-                            if select(parts, value, &path_ref)? {
-                                let sub_path = path_ref.clone().append_str(key);
-                                let sub_query = query_value(
-                                    &query[idx + 1..], value, sub_path)?;
-                                result.extend(sub_query.result());
-                            }
-                        }
-                        Ok(QueryResult::new(query,result))
+            QueryPart::Index(key, idx) => {
+                value_ref = retrieve_key(key, value_ref, &path_ref)?;
+                path_ref = path_ref.append_str(key);
+                value_ref = retrieve_index(*idx, value_ref, &path_ref)?;
+                path_ref = path_ref.append((*idx).to_string());
+            },
+
+            QueryPart::AllKeys => {
+                //
+                // Support old format
+                //
+                match match_list(value_ref, &path_ref) {
+                    Err(_) =>
+                        return handle_map(match_map(value_ref, &path_ref)?,
+                                          index, path_ref, query, variables),
+
+                    Ok(array) =>
+                        return handle_array(array, index,path_ref, query, variables),
+                }
+            },
+
+            QueryPart::AllIndices(key) => {
+                value_ref = retrieve_key(key, value_ref, &path_ref)?;
+                path_ref = path_ref.append_str(key);
+                return handle_array( match_list(value_ref, &path_ref)?,
+                    index, path_ref, query, variables)
+            },
+
+            QueryPart::Variable(variable) => {
+                let values = variables.get_resolutions_for_variable(variable)?;
+                for each in values {
+                    if let Value::String(key) = each {
+                        let current = retrieve_key(key, value_ref, &path_ref)?;
+                        let sub_path = path_ref.clone().append_str(key);
+                        let sub_query = resolve_query(
+                            &query[index+1..], current, variables, sub_path)?;
+                        results.extend(sub_query);
                     }
                     else {
-                        Err(Error::new(ErrorKind::RetrievalError(
-                            format!("Querying {:?} at path {} was not a map type {}, to query", query, path_ref, type_info(value))
+                        return Err(Error::new(ErrorKind::RetrievalError(
+                            format!("Resolved variable values is not a string {} for variable {}",
+                                    type_info(each), variable)
                         )))
                     }
                 }
-                value_ref = retrieve_key(name, value_ref, &path_ref, query)?;
-                path_ref = path_ref.append_str(name);
-                for (idx, value) in match_list(value_ref, &path_ref)?.iter().enumerate() {
-                    if select(parts, value, &path_ref)? {
-                        let sub_path = path_ref.clone().append(idx.to_string());
-                        let sub_query = query_value(
-                            &query[idx + 1..], value, sub_path)?;
-                        result.extend(sub_query.result());
-                    }
-                }
-                return Ok(QueryResult::new(query,result))
-            },
-
-            QueryPart::AllIndices(name) => {
-                value_ref = retrieve_key(name, value_ref, &path_ref, query)?;
-                path_ref = path_ref.append_str(name);
-                for (idx, value) in match_list(value_ref, &path_ref)?.iter().enumerate() {
-                    let sub_path = path_ref.clone().append(idx.to_string());
-                    let sub_query = query_value(
-                        &query[idx + 1..], value, sub_path)?;
-                    result.extend(sub_query.result());
-                }
-                return Ok(QueryResult::new(query,result))
+                return Ok(results)
             }
+
 
             _ => unimplemented!()
         }
     }
 
-    result.insert(path_ref, vec![value_ref]);
-    Ok(QueryResult::new(query,result))
+    results.push((path_ref, value_ref));
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -250,6 +154,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use crate::rules::parser2::{parse_value, from_str2};
+    use std::fs::File;
+    use crate::commands::files::{get_files, read_file_content};
 
     #[test]
     fn test_query_result_hash() {
@@ -286,55 +192,137 @@ mod tests {
         assert_eq!(set.insert(result3), true);
     }
 
+    fn create_from_json() -> Result<Value, Error> {
+        let file = File::open("assets/cfn-template.json")?;
+        let context = read_file_content(file)?;
+        Ok(parse_value(from_str2(&context))?.1)
+    }
+
     #[test]
-    fn test_filter_part() -> Result<(), Error> {
-        let value = parse_value(from_str2(r#"
-        {
-            prod-id: "prod-id",
-            app-id: "app-IDxer4543634",
-            env-id: "env-IDsdse34"
-        }
-        "#))?.1;
-
-        let template = std::fs::File::open("assets/cfn-sample.json")?;
-        let template = crate::commands::files::read_file_content(template)?;
-        let resources = parse_value(from_str2(&template))?.1;
-        println!("{:?}", resources);
-
-        let filters = [
-            FilterPart {
-                name: String::from("prod-id"),
-                comparator: (CmpOperator::Exists, false),
-                value: None
-            },
-
-            FilterPart {
-                name: String::from("prod-id"),
-                comparator: (CmpOperator::Eq, false),
-                value: Some(VariableOrValue::Value(Value::String(String::from("prod-id"))))
-            },
-
-            FilterPart {
-                name: String::from("prod-id"),
-                comparator: (CmpOperator::Eq, false),
-                value: Some(VariableOrValue::Value(Value::Regex(String::from("^prod")))),
-            },
-
-        ];
-
-        let expectations = [
-            true,
-            true,
-            true
-        ];
-
+    fn test_resolve_query() -> Result<(), Error> {
+        let scope = Scope::new();
+        let root = create_from_json()?;
         let path = Path::new(&["/"]);
+        let map = match_map(&root, &path)?;
 
-        for (idx, each) in filters.iter().enumerate() {
-            println!("Testing #{} = {}", idx, each);
-            //assert_eq!(each.evaluate(&value, &path)?, expectations[idx]);
+        //
+        // Test base empty query
+        //
+        let values = resolve_query(&[], &root, &scope, Path::new(&["/"]))?;
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], (Path::new(&["/"]), &root));
+
+        //
+        // Path = Resources
+        //
+        let query = AccessQuery::from([
+            QueryPart::Key(String::from("Resources"))
+        ]);
+        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        assert_eq!(values.len(), 1);
+        let (value_path, value) = &values[0];
+        assert_eq!(value_path, &Path::new(&["/", "Resources"]));
+        let from_root = map.get("Resources");
+        assert!(from_root == Some(*value)); // points to the same
+
+        let resources_root = match_map(from_root.unwrap(), &path)?;
+        //
+        // Path = Resources.*
+        //
+        let query = AccessQuery::from([
+            QueryPart::Key(String::from("Resources")),
+            QueryPart::AllKeys
+        ]);
+        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        assert_eq!(resources_root.len(), values.len());
+
+        let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str()]))
+            .collect::<Vec<Path>>();
+        let paths_values = values.iter().map(|(path, _value)| path.clone())
+            .collect::<Vec<Path>>();
+        assert_eq!(paths_values, paths);
+
+        //
+        // Path = Resources.*.Type
+        //
+        let query = AccessQuery::from([
+            QueryPart::Key(String::from("Resources")),
+            QueryPart::AllKeys,
+            QueryPart::Key(String::from("Type")),
+        ]);
+        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        assert_eq!(resources_root.len(), values.len());
+        let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
+            .collect::<Vec<Path>>();
+        let paths_values = values.iter().map(|(path, _value)| path.clone())
+            .collect::<Vec<Path>>();
+        assert_eq!(paths_values, paths);
+
+        let types = resources_root.values().map(|v|
+            if let Value::Map(m) = v {
+            m.get("Type").unwrap()
+        } else { unreachable!() }).collect::<Vec<&Value>>();
+
+        let types_values = values.iter().map(|(_path, value)| *value).collect::<Vec<&Value>>();
+        assert_eq!(types_values, types);
+
+        let mut scope = Scope::new();
+        let value_literals = vec![
+            Value::String(String::from("Type")),
+            Value::String(String::from("Properties"))
+        ];
+        let value_resolutions = ResolvedValues::from([
+            (path.clone(), &value_literals[0]),
+            (path.clone(), &value_literals[1]),
+        ]);
+        scope.add_variable_resolution("interested", value_resolutions);
+
+        //
+        // Path = Resources.*.%interested
+        //
+        let query = AccessQuery::from([
+            QueryPart::Key(String::from("Resources")),
+            QueryPart::AllKeys,
+            QueryPart::Variable(String::from("interested")),
+        ]);
+        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
+        let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
+            .collect::<Vec<Path>>();
+        let paths_properties = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Properties"]))
+            .collect::<Vec<Path>>();
+
+        let mut overall: Vec<Path> = Vec::with_capacity(paths.len() * 2);
+        for (first, second) in paths.iter().zip(paths_properties.iter()) {
+            overall.push(first.clone());
+            overall.push(second.clone());
         }
+
+        let paths = overall;
+        let paths_values = values.iter().map(|(path, _value)| path.clone())
+            .collect::<Vec<Path>>();
+        assert_eq!(paths_values, paths);
+
+        let types = resources_root.values().map(|v|
+            if let Value::Map(m) = v {
+                m.get("Type").unwrap()
+            } else { unreachable!() }).collect::<Vec<&Value>>();
+        let properties = resources_root.values().map(|v|
+            if let Value::Map(m) = v {
+                m.get("Properties").unwrap()
+            } else { unreachable!() }).collect::<Vec<&Value>>();
+
+        let mut combined: Vec<&Value> = Vec::with_capacity(types.len() * 2);
+        for (first, second) in types.iter().zip(properties.iter()) {
+            combined.push(first);
+            combined.push(second);
+        }
+
+        let types_values = values.iter().map(|(_path, value)| *value).collect::<Vec<&Value>>();
+        assert_eq!(types_values, combined);
+
 
         Ok(())
     }
+
 }

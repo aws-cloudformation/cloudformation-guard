@@ -197,7 +197,7 @@ impl Path {
         }
     }
 
-    pub(super) fn append_str(mut self, path: &str) -> Self {
+    pub(super) fn append_str(self, path: &str) -> Self {
         self.append(path.to_owned())
     }
 

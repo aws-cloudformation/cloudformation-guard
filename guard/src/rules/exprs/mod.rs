@@ -57,6 +57,7 @@ mod types;
 mod scope;
 mod evaluate;
 mod helper;
+mod query;
 
 pub(crate) use types::*;
 pub(crate) use scope::*;
