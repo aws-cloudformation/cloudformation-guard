@@ -1,7 +1,6 @@
 use crate::rules::values::*;
-use crate::errors::Error;
 
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
 use std::collections::HashMap;
 use std::fmt::Formatter;
 //use super::scope::Scope;
@@ -146,14 +145,7 @@ pub(crate) struct Path {
     pointers: Vec<String>
 }
 
-
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) struct QueryResult<'loc> {
-    results: HashMap<Path, Vec<&'loc Value>>,
-    query: &'loc[QueryPart<'loc>],
-}
-
-#[derive(Clone, PartialEq, Debug, Copy)]
+#[derive(Clone, PartialEq, Debug, Copy, Hash)]
 pub(crate) enum Status {
     SKIP,
     PASS,
@@ -165,6 +157,57 @@ pub(crate) struct ComparisonResult<'loc> {
     status: Status,
     from: Option<(&'loc Path, &'loc Value)>,
     with: Option<(&'loc Path, &'loc Value)>,
+}
+
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(super) struct Key<'loc> {
+    // pub(super) query_key: u64, // hash of query part
+    pub(super) query_key: &'loc[QueryPart<'loc>], // hash of query part
+    pub(super) context: &'loc Value
+}
+
+impl<'loc> Eq for Key<'loc> {}
+
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(super) struct ResolutionKey<'loc> {
+    pub(super) clause: &'loc GuardClause<'loc>
+}
+
+impl Eq for ResolutionKey<'_> {}
+
+pub(super) type ResolvedValues<'loc> = indexmap::IndexMap<Path, &'loc Value>;
+pub(super) type QueryCache<'loc> = HashMap<Key<'loc>, ResolvedValues<'loc>>;
+pub(super) type Resolutions<'loc> = indexmap::IndexMap<ResolutionKey<'loc>, EvalStatus<'loc>>;
+
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(super) enum EvalStatus<'c> {
+    Comparison(EvalResult<'c>),
+    Unary(Status),
+}
+
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(super) struct EvalResult<'c> {
+    pub(super) status: Status,
+    pub(super) from: (Path, &'c Value),
+    pub(super) to: (Path, &'c Value)
+}
+
+pub(super) struct EvalContext<'c> {
+    pub(super) query_cache: QueryCache<'c>,
+    pub(super) root: &'c Value,
+    pub(super) resolutions: Resolutions<'c>,
+    pub(super) rule_resolutions: HashMap<String, Status>,
+}
+
+impl<'c> EvalContext<'c> {
+    pub(super) fn new(root:&'c Value) -> Self {
+        EvalContext {
+            query_cache: QueryCache::new(),
+            root,
+            resolutions: Resolutions::new(),
+            rule_resolutions: HashMap::new(),
+        }
+    }
 }
 
 impl<'loc> ComparisonResult<'loc> {
@@ -213,31 +256,8 @@ impl Path {
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = self.pointers.join("/");
-        f.write_str(&str);
+        f.write_str(&str)?;
         Ok(())
     }
 }
-
-impl<'loc> QueryResult<'loc> {
-
-    pub(crate) fn new(query: &'loc [QueryPart<'loc>], results: HashMap<Path, Vec<&'loc Value>>) -> Self {
-        QueryResult {
-            query,
-            results,
-        }
-    }
-
-    pub(crate) fn result(self) -> HashMap<Path, Vec<&'loc Value>> {
-        self.results
-    }
-}
-
-impl<'loc> Hash for QueryResult<'loc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.query.hash(state);
-    }
-}
-
-impl<'loc> Eq for QueryResult<'loc> {}
-
 

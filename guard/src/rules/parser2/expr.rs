@@ -102,13 +102,12 @@
 // Extern crate dependencies
 //
 use nom::{FindSubstring, InputTake};
-use nom::branch::{alt, Alt};
-use nom::bytes::complete::{tag, take_while, take_while1, take_while_m_n};
-use nom::character::{is_digit, is_alphanumeric};
-use nom::character::complete::{alpha1, char, space1, one_of, newline, space0, multispace0, digit1};
+use nom::branch::{alt};
+use nom::bytes::complete::{tag, take_while};
+use nom::character::complete::{alpha1, char, space1, newline, space0, digit1};
 use nom::combinator::{cut, map, opt, value, peek, all_consuming};
 use nom::error::{ParseError, context};
-use nom::multi::{fold_many1, separated_nonempty_list, separated_list, fold_many_m_n, many_m_n};
+use nom::multi::{fold_many1, separated_nonempty_list, separated_list};
 use nom::sequence::{delimited, pair, preceded, tuple, terminated};
 
 use super::*;
@@ -116,8 +115,6 @@ use super::common::*;
 use super::super::values::*;
 use super::values::parse_value;
 use crate::rules::exprs::*;
-use crate::rules::parser::parse_int_value;
-use nom::number::complete::be_i32;
 use crate::errors::Error;
 
 //
@@ -804,14 +801,14 @@ fn rule_block_clause(input: Span2) -> IResult<Span2, RuleClause> {
 // rule block
 //
 fn rule_block(input: Span2) -> IResult<Span2, Rule> {
+    //
+    // rule is followed by space
+    //
     let (input, _rule_keyword) = tag("rule")(input)?;
+    let (input, _space) = one_or_more_ws_or_comment(input)?;
 
-    let (input, _space) = cut(one_or_more_ws_or_comment)(input)?;
-
-    let (input, rule_name) = var_name(input)?;
-
+    let (input, rule_name) = cut(var_name)(input)?;
     let (input, conditions) = opt(when_conditions(clauses))(input)?;
-
     let (input, (assignments, conjunctions)) =
         cut(block(rule_block_clause))(input)?;
 

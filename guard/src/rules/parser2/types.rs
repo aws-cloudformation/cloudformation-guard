@@ -1,5 +1,3 @@
-use std::fmt::Formatter;
-
 use nom::error::{ErrorKind, ParseError};
 use nom_locate::LocatedSpan;
 

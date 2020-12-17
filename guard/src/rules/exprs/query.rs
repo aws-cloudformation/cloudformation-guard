@@ -4,12 +4,10 @@
 
 use crate::rules::values::*;
 use crate::errors::{Error, ErrorKind};
-use std::convert::TryFrom;
 use std::collections::HashMap;
 use super::*;
 use super::helper::*;
 
-use std::hash::{Hash, Hasher};
 use std::fmt::Formatter;
 
 fn select(criteria: &Conjunctions<GuardClause>, value: &Value, path: &Path) -> Result<bool, Error> {
@@ -36,12 +34,13 @@ fn handle_array<'loc>(array: &'loc Vec<Value>,
                       index: usize,
                       path: Path,
                       query: &[QueryPart<'_>],
-                      scope: &Scope<'_>) -> Result<ResolvedValues<'loc>, Error> {
+                      scope: &Scope<'_>,
+                      cache: &mut EvalContext<'_>) -> Result<ResolvedValues<'loc>, Error> {
     let mut results = ResolvedValues::new();
     for (each_idx, each_value) in array.iter().enumerate() {
         let sub_path = path.clone().append(each_idx.to_string());
         let sub_query = resolve_query(
-            &query[index+1..], each_value, scope, sub_path)?;
+            &query[index+1..], each_value, scope, sub_path, cache)?;
         results.extend(sub_query);
     }
     Ok(results)
@@ -51,13 +50,14 @@ fn handle_map<'loc>(map: &'loc indexmap::IndexMap<String, Value>,
                     index: usize,
                     path: Path,
                     query: &[QueryPart<'_>],
-                    scope: &Scope<'_>) -> Result<ResolvedValues<'loc>, Error> {
+                    scope: &Scope<'_>,
+                    cache: &mut EvalContext<'_>) -> Result<ResolvedValues<'loc>, Error> {
 
-    let mut results = ResolvedValues::new();
+        let mut results = ResolvedValues::new();
     for (key, index_value) in map {
         let sub_path = path.clone().append_str(key);
         let sub_query = resolve_query(
-            &query[index+1..], index_value, scope, sub_path)?;
+            &query[index+1..], index_value, scope, sub_path, cache)?;
         results.extend(sub_query);
     }
     Ok(results)
@@ -66,7 +66,8 @@ fn handle_map<'loc>(map: &'loc indexmap::IndexMap<String, Value>,
 pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
                                   value: &'loc Value,
                                   variables: &Scope<'_>,
-                                  path: Path) -> Result<ResolvedValues<'loc>, Error> {
+                                  path: Path,
+                                  cache: &mut EvalContext<'_>) -> Result<ResolvedValues<'loc>, Error> {
 
     let mut results = ResolvedValues::new();
     let mut value_ref = value;
@@ -105,10 +106,10 @@ pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
                 match match_list(value_ref, &path_ref) {
                     Err(_) =>
                         return handle_map(match_map(value_ref, &path_ref)?,
-                                          index, path_ref, query, variables),
+                                          index, path_ref, query, variables, cache),
 
                     Ok(array) =>
-                        return handle_array(array, index,path_ref, query, variables),
+                        return handle_array(array, index,path_ref, query, variables, cache),
                 }
             },
 
@@ -116,7 +117,7 @@ pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
                 value_ref = retrieve_key(key, value_ref, &path_ref)?;
                 path_ref = path_ref.append_str(key);
                 return handle_array( match_list(value_ref, &path_ref)?,
-                    index, path_ref, query, variables)
+                    index, path_ref, query, variables, cache)
             },
 
             QueryPart::Variable(variable) => {
@@ -126,7 +127,7 @@ pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
                         let current = retrieve_key(key, value_ref, &path_ref)?;
                         let sub_path = path_ref.clone().append_str(key);
                         let sub_query = resolve_query(
-                            &query[index+1..], current, variables, sub_path)?;
+                            &query[index+1..], current, variables, sub_path, cache)?;
                         results.extend(sub_query);
                     }
                     else {
@@ -144,7 +145,7 @@ pub(super) fn resolve_query<'loc>(query: &[QueryPart<'_>],
         }
     }
 
-    results.push((path_ref, value_ref));
+    results.insert(path_ref, value_ref);
     Ok(results)
 }
 
@@ -156,41 +157,7 @@ mod tests {
     use crate::rules::parser2::{parse_value, from_str2};
     use std::fs::File;
     use crate::commands::files::{get_files, read_file_content};
-
-    #[test]
-    fn test_query_result_hash() {
-        let values = [
-            Value::String(String::from("value")),
-            Value::String(String::from("next")),
-            Value::String(String::from("this")),
-        ];
-        let path_values = [
-            (Path::new( &["resources", "a"]), vec![&values[0]]),
-            (Path::new( &["resources", "b"]), vec![&values[1]]),
-            (Path::new( &["resources", "c"]), vec![&values[2]]),
-        ].to_vec().into_iter().collect::<HashMap<Path, Vec<&Value>>>();
-
-        let query = [
-            QueryPart::Key(String::from("a")),
-            QueryPart::Key(String::from("b")),
-            QueryPart::Key(String::from("c")),
-        ];
-
-        let mut query2 = query.to_vec();
-        query2.push(QueryPart::AllIndices(String::from("tags")));
-
-
-        let result1 = QueryResult::new(&query, path_values.clone());
-        let result2 = QueryResult::new(&query, path_values.clone());
-        let result3 = QueryResult::new(&query, path_values);
-
-        assert_eq!(result1, result2);
-        assert_ne!(result1, result3);
-        let mut set = HashSet::with_capacity(2);
-        set.insert(result1);
-        assert_eq!(set.contains(&result2), true);
-        assert_eq!(set.insert(result3), true);
-    }
+    use crate::rules::exprs::QueryCache;
 
     fn create_from_json() -> Result<Value, Error> {
         let file = File::open("assets/cfn-template.json")?;
@@ -200,17 +167,18 @@ mod tests {
 
     #[test]
     fn test_resolve_query() -> Result<(), Error> {
-        let scope = Scope::new();
         let root = create_from_json()?;
+        let mut cache = EvalContext::new(&root);
+        let scope = Scope::new();
         let path = Path::new(&["/"]);
         let map = match_map(&root, &path)?;
 
         //
         // Test base empty query
         //
-        let values = resolve_query(&[], &root, &scope, Path::new(&["/"]))?;
+        let values = resolve_query(&[], &root, &scope, Path::new(&["/"]), &mut cache)?;
         assert_eq!(values.len(), 1);
-        assert_eq!(values[0], (Path::new(&["/"]), &root));
+        assert_eq!(values.get(&Path::new(&["/"])), Some(&&root));
 
         //
         // Path = Resources
@@ -218,12 +186,11 @@ mod tests {
         let query = AccessQuery::from([
             QueryPart::Key(String::from("Resources"))
         ]);
-        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        let values = resolve_query(&query, &root, &scope, path.clone(), &mut cache)?;
         assert_eq!(values.len(), 1);
-        let (value_path, value) = &values[0];
-        assert_eq!(value_path, &Path::new(&["/", "Resources"]));
+        assert_eq!(Some(values[&Path::new(&["/", "Resources"])]), map.get("Resources"));
         let from_root = map.get("Resources");
-        assert!(from_root == Some(*value)); // points to the same
+        assert!(values[&Path::new(&["/", "Resources"])] == map.get("Resources").unwrap());
 
         let resources_root = match_map(from_root.unwrap(), &path)?;
         //
@@ -233,7 +200,7 @@ mod tests {
             QueryPart::Key(String::from("Resources")),
             QueryPart::AllKeys
         ]);
-        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        let values = resolve_query(&query, &root, &scope, path.clone(), &mut cache)?;
         assert_eq!(resources_root.len(), values.len());
 
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str()]))
@@ -250,7 +217,7 @@ mod tests {
             QueryPart::AllKeys,
             QueryPart::Key(String::from("Type")),
         ]);
-        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        let values = resolve_query(&query, &root, &scope, path.clone(), &mut cache)?;
         assert_eq!(resources_root.len(), values.len());
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
             .collect::<Vec<Path>>();
@@ -271,11 +238,13 @@ mod tests {
             Value::String(String::from("Type")),
             Value::String(String::from("Properties"))
         ];
-        let value_resolutions = ResolvedValues::from([
+        let value_resolutions = vec![
             (path.clone(), &value_literals[0]),
-            (path.clone(), &value_literals[1]),
-        ]);
-        scope.add_variable_resolution("interested", value_resolutions);
+            (path.clone().append_str("/"), &value_literals[1]),
+        ];
+        let resolutions = value_resolutions.into_iter().collect::<ResolvedValues>();
+
+        scope.add_variable_resolution("interested", resolutions);
 
         //
         // Path = Resources.*.%interested
@@ -285,7 +254,7 @@ mod tests {
             QueryPart::AllKeys,
             QueryPart::Variable(String::from("interested")),
         ]);
-        let values = resolve_query(&query, &root, &scope, path.clone())?;
+        let values = resolve_query(&query, &root, &scope, path.clone(), &mut cache)?;
         assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
             .collect::<Vec<Path>>();

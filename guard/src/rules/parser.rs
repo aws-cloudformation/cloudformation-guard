@@ -97,7 +97,7 @@ use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
 use nom::character::complete::{alphanumeric1, char, digit1, one_of};
 use nom::character::complete::{anychar, multispace0, multispace1, space0, space1};
-use nom::combinator::{all_consuming, cut, map, map_res, opt, peek, rest, value};
+use nom::combinator::{all_consuming, cut, map, map_res, opt, peek, value};
 use nom::multi::{many0, many1, separated_list, separated_nonempty_list};
 use nom::number::complete::double;
 use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};

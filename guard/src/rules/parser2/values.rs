@@ -3,14 +3,13 @@
 //
 use nom::InputTake;
 use nom::branch::alt;
-use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
-use nom::character::complete::{alphanumeric1, char, digit1, one_of};
+use nom::bytes::complete::{is_not, tag, take_while, take_while1};
+use nom::character::complete::{char, digit1, one_of};
 use nom::character::complete::{anychar, space0};
 use nom::combinator::{ map, map_res, opt, value};
 use nom::multi::separated_list;
 use nom::number::complete::double;
 use nom::sequence::{delimited, preceded, separated_pair, tuple};
-use nom_locate::LocatedSpan;
 
 use crate::rules::parser2::common::zero_or_more_ws_or_comment;
 //

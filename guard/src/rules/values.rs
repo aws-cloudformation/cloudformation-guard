@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::str::FromStr;
 
 use std::cmp::Ordering;
 
@@ -7,7 +6,7 @@ use crate::errors::{Error, ErrorKind};
 use indexmap::map::IndexMap;
 use std::hash::{Hash, Hasher};
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
     Eq,
     In,

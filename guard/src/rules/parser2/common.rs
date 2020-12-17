@@ -2,13 +2,13 @@ use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{map, value};
-use nom::error::{context, ErrorKind};
+use nom::error::{ErrorKind};
 use nom::multi::{many0, many1};
-use nom::sequence::{delimited, preceded, tuple};
+use nom::sequence::{delimited, preceded};
 
 use super::*;
 use std::fmt::Formatter;
-use crate::rules::exprs::{AccessQuery, QueryPart, LetExpr, LetValue};
+use crate::rules::exprs::{AccessQuery, QueryPart, LetValue};
 use crate::rules::values::Value;
 
 impl<'a> ParserError<'a> {
@@ -59,7 +59,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
             "Error parsing file {} at line {} at column {}, when handling {}",
             self.span.extra, self.span.location_line(), self.span.get_utf8_column(),
             self.context);
-        f.write_str(&message);
+        f.write_str(&message)?;
         Ok(())
     }
 }
