@@ -486,6 +486,7 @@ fn rule_clause(input: Span2) -> IResult<Span2, GuardClause> {
     if let Ok((same, _ignored)) = peek(alt((
         preceded(space0, value((), newline)),
         preceded(space0, value((), comment2)),
+        preceded(space0, value((), char('{'))),
         value((), or_join),
     )))(remaining) {
         return

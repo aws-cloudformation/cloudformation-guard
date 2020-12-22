@@ -3,7 +3,8 @@ use crate::rules::values::*;
 use std::hash::{Hash};
 use std::collections::HashMap;
 use std::fmt::Formatter;
-//use super::scope::Scope;
+use super::scope::Scope;
+use crate::errors::Error;
 
 #[derive(PartialEq, Debug, Clone, Copy, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -152,13 +153,6 @@ pub(crate) enum Status {
     FAIL
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) struct ComparisonResult<'loc> {
-    status: Status,
-    from: Option<(&'loc Path, &'loc Value)>,
-    with: Option<(&'loc Path, &'loc Value)>,
-}
-
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(super) struct Key<'loc> {
     // pub(super) query_key: u64, // hash of query part
@@ -176,24 +170,75 @@ pub(super) struct ResolutionKey<'loc> {
 impl Eq for ResolutionKey<'_> {}
 
 pub(super) type ResolvedValues<'loc> = indexmap::IndexMap<Path, &'loc Value>;
-pub(super) type QueryCache<'loc> = HashMap<Key<'loc>, ResolvedValues<'loc>>;
-pub(super) type Resolutions<'loc> = indexmap::IndexMap<ResolutionKey<'loc>, EvalStatus<'loc>>;
+//pub(super) type QueryCache<'loc> = HashMap<Key<'loc>, ResolvedValues<'loc>>;
+pub(super) type Resolutions<'loc> = indexmap::IndexMap<ResolutionKey<'loc>, EvalStatus>;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) enum EvalStatus<'c> {
-    Comparison(EvalResult<'c>),
+pub(super) enum EvalStatus {
+    Comparison(EvalResult),
     Unary(Status),
 }
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) struct EvalResult<'c> {
+pub(super) struct EvalResult {
     pub(super) status: Status,
-    pub(super) from: (Path, &'c Value),
-    pub(super) to: (Path, &'c Value)
+    pub(super) from: Option<(Path, Value)>,
+    pub(super) to: Option<(Path, Value)>,
+}
+
+impl EvalResult {
+
+    pub(super) fn status(status: Status) -> Self {
+        EvalResult {
+            status,
+            from: None,
+            to: None
+        }
+    }
+
+    pub(super) fn status_with_lhs(status: Status,
+                                  from: (Path, &Value)) -> Self {
+        EvalResult {
+            status,
+            from: Some((from.0, from.1.clone())),
+            to: None,
+        }
+    }
+
+    pub(super) fn status_with_lhs_rhs(status: Status,
+                                      from: (Path, &Value),
+                                      to: (Path, &Value)) -> EvalResult {
+        EvalResult {
+            status,
+            from: Some((from.0, from.1.clone())),
+            to: Some((to.0, to.1.clone()))
+        }
+    }
+}
+
+pub(super) trait Resolver {
+    fn resolve_query<'r>(&self,
+                         evaluate: &dyn Evaluate<Item = EvalStatus>,
+                         query: &[QueryPart<'_>],
+                         value: &'r  Value,
+                         variables: &Scope<'_>,
+                         path: Path,
+                         eval: &EvalContext<'_>) -> Result<ResolvedValues<'r>, Error>;
+}
+
+pub(super) trait Evaluate {
+    type Item;
+
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval_context: &EvalContext<'_>) -> Result<Self::Item, Error>;
 }
 
 pub(super) struct EvalContext<'c> {
-    pub(super) query_cache: QueryCache<'c>,
+    //pub(super) query_cache: QueryCache<'c>,
     pub(super) root: &'c Value,
     pub(super) resolutions: Resolutions<'c>,
     pub(super) rule_resolutions: HashMap<String, Status>,
@@ -202,33 +247,11 @@ pub(super) struct EvalContext<'c> {
 impl<'c> EvalContext<'c> {
     pub(super) fn new(root:&'c Value) -> Self {
         EvalContext {
-            query_cache: QueryCache::new(),
+            //query_cache: QueryCache::new(),
             root,
             resolutions: Resolutions::new(),
             rule_resolutions: HashMap::new(),
         }
-    }
-}
-
-impl<'loc> ComparisonResult<'loc> {
-    pub(crate) fn new(status: Status,
-                      from: Option<(&'loc Path, &'loc Value)>,
-                      with: Option<(&'loc Path, &'loc Value)>) -> Self {
-        ComparisonResult {
-            status, from, with
-        }
-    }
-
-    pub(crate) fn status(&self) -> Status {
-        self.status
-    }
-
-    pub(crate) fn from(&self) -> Option<(&'loc Path, &'loc Value)> {
-        self.from
-    }
-
-    pub(crate) fn with(&self) -> Option<(&'loc Path, &'loc Value)> {
-        self.with
     }
 }
 
