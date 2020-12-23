@@ -406,7 +406,7 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
     // FIXME: clause ends up calling predicate_clause, which is fine, but we should
     // not expect the form *[ [ [] ] ]. We should dis-allows this.
     //
-    let (rest, keys) = opt(peek(keys))(input)?;
+    let (rest, keys) = opt(peek(keys))(rest)?;
 
     let (rest, (lhs, _ignored_space, cmp, _ignored)) =
         if keys.is_some() {
@@ -1487,22 +1487,22 @@ mod tests {
         let expectations = [
             Err(nom::Err::Error(ParserError { // 0
                 span: from_str2(""),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: nom::error::ErrorKind::Tag, // change as we use parse_string
                 context: "".to_string(),
             })),
             Err(nom::Err::Error(ParserError { // 1
                 span: from_str2("."),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: nom::error::ErrorKind::Tag,
                 context: "".to_string(),
             })),
             Err(nom::Err::Error(ParserError { // 2
                 span: from_str2(".engine"),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: nom::error::ErrorKind::Tag,
                 context: "".to_string(),
             })),
             Err(nom::Err::Error(ParserError { // 3
                 span: from_str2(" engine"),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: nom::error::ErrorKind::Tag,
                 context: "".to_string(),
             })),
             Ok(( // 4
@@ -1767,7 +1767,7 @@ mod tests {
             // " %engine", // 18 err
             Err(nom::Err::Error(ParserError { // 19
                 span: from_str2(" %engine"),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: nom::error::ErrorKind::Tag,
                 context: "".to_string(),
             })),
         ];
@@ -1775,6 +1775,7 @@ mod tests {
         for (idx, each) in examples.iter().enumerate() {
             let span = Span2::new_extra(*each, "");
             let result = access(span);
+            println!("Testing @{}, Result = {:?}", idx, result);
             assert_eq!(&result, &expectations[idx]);
         }
     }
@@ -2714,7 +2715,7 @@ mod tests {
         //
         assert_eq!(Err(nom::Err::Error(ParserError {
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Alpha,
+            kind: nom::error::ErrorKind::Tag,
             context: "".to_string(),
         })), clause(from_str2("")));
 
@@ -2723,7 +2724,7 @@ mod tests {
         //
         assert_eq!(Err(nom::Err::Error(ParserError {
             span: from_str2(" > 10"),
-            kind: nom::error::ErrorKind::Alpha,
+            kind: nom::error::ErrorKind::Tag,
             context: "".to_string(),
         })), clause(from_str2(" > 10")));
 
@@ -2744,7 +2745,7 @@ mod tests {
                             "",
                         )
                     },
-                    kind: nom::error::ErrorKind::Alpha, // this comes off access
+                    kind: nom::error::ErrorKind::Tag, // this comes off access
                     context: r#"expecting either a property access "engine.core" or value like "string" or ["this", "that"]"#.to_string(),
                 }));
                 assert_eq!(clause(from_str2(&access_pattern)), error);
@@ -3295,7 +3296,7 @@ mod tests {
                     )
                 },
                 context: "".to_string(),
-                kind: nom::error::ErrorKind::Alpha, // from access
+                kind: nom::error::ErrorKind::Tag, // from access with usage of parse_string
             })),
 
             // "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok

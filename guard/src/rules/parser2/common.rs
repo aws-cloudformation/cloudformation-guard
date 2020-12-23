@@ -56,9 +56,9 @@ impl<'a> nom::error::ParseError<Span2<'a>> for ParserError<'a> {
 impl<'a> std::fmt::Display for ParserError<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let message = format!(
-            "Error parsing file {} at line {} at column {}, when handling {}",
+            "Error parsing file {} at line {} at column {}, when handling {}, fragment {}",
             self.span.extra, self.span.location_line(), self.span.get_utf8_column(),
-            self.context);
+            self.context, *self.span.fragment());
         f.write_str(&message)?;
         Ok(())
     }
