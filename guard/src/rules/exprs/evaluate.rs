@@ -8,6 +8,7 @@ use crate::rules::values::*;
 use super::scope::Scope;
 use super::types::*;
 use regex::internal::Input;
+use crate::rules::exprs::helper::match_map;
 
 fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     let status = if clause_not { !r } else { r };
@@ -362,24 +363,23 @@ impl Evaluate for GuardClause<'_> {
                 path: Path,
                 eval_context: &EvalContext<'_>) -> Result<Self::Item, Error> {
         match self {
-            GuardClause::Clause(gac) => self.gac_evaluate(gac, resolver, scope, context, path, eval_context),
+            GuardClause::Clause(gac) => gac.evaluate(resolver, scope, context, path, eval_context),
             GuardClause::NamedRule(r) => named_evaluate(r, eval_context)
         }
     }
 }
 
-impl GuardClause<'_> {
+impl Evaluate for GuardAccessClause<'_> {
+    type Item = EvalStatus;
 
-    fn gac_evaluate(&self,
-                    gac: &GuardAccessClause<'_>,
-                    resolver: &dyn Resolver,
-                    scope: &Scope<'_>,
-                    context: &Value,
-                    path: Path,
-                    eval: &EvalContext<'_>) -> Result<EvalStatus, Error> {
-
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval: &EvalContext<'_>) -> Result<Self::Item, Error> {
         let lhs = match resolver.resolve_query(
-            self, &gac.access_clause.query, context, scope, path.clone(), eval) {
+            &self.access_clause.query, context, scope, path.clone(), eval) {
             Ok(r) => Some(r),
             Err(Error(ErrorKind::RetrievalError(_))) => None,
             Err(e) => return Err(e),
@@ -388,22 +388,22 @@ impl GuardClause<'_> {
         //
         // Special case EXISTS, !EXISTS,
         //
-        if CmpOperator::Exists == gac.access_clause.comparator.0 {
+        if CmpOperator::Exists == self.access_clause.comparator.0 {
             return Ok(EvalStatus::Unary(
                 negation_status(lhs.is_some(),
-                                gac.access_clause.comparator.1,
-                                gac.negation)));
+                                self.access_clause.comparator.1,
+                                self.negation)));
         }
 
         //
         // Special case == null or != null
         //
-        if let Some(LetValue::Value(Value::Null)) = &gac.access_clause.compare_with {
-            if CmpOperator::Eq == gac.access_clause.comparator.0 {
+        if let Some(LetValue::Value(Value::Null)) = &self.access_clause.compare_with {
+            if CmpOperator::Eq == self.access_clause.comparator.0 {
                 return Ok(EvalStatus::Unary(negation_status(
                     lhs.is_none(),
-                    gac.access_clause.comparator.1,
-                    gac.negation)))
+                    self.access_clause.comparator.1,
+                    self.negation)))
             }
         }
 
@@ -414,14 +414,14 @@ impl GuardClause<'_> {
             Some(v) => ValueType::Query(v),
             None => return Err(Error::new(ErrorKind::RetrievalError(
                 format!("When checking for {:?}, could for retrieve value for {:?}",
-                        gac.access_clause.comparator.0, gac.access_clause.query)
+                        self.access_clause.comparator.0, self.access_clause.query)
             )))
         };
 
         //
         // The 2 other unary operators
         //
-        match &gac.access_clause.comparator {
+        match &self.access_clause.comparator {
             (CmpOperator::Empty, negation) |
             (CmpOperator::KeysEmpty, negation) => {
                 let empty = match &lhs {
@@ -433,7 +433,7 @@ impl GuardClause<'_> {
                         )))
                 };
                 return Ok(EvalStatus::Unary(
-                    negation_status(empty, *negation, gac.negation)))
+                    negation_status(empty, *negation, self.negation)))
             }
 
             (_, _) => {}
@@ -448,19 +448,19 @@ impl GuardClause<'_> {
         //
         // Get RHS
         //
-        let gac_path = gac_path(gac);
-        let rhs = match &gac.access_clause.compare_with {
+        let self_path = gac_path(self);
+        let rhs = match &self.access_clause.compare_with {
             Some(l) => match l {
-                LetValue::Value(v) => ValueType::Single((gac_path, v)),
+                LetValue::Value(v) => ValueType::Single((self_path, v)),
                 LetValue::AccessClause(access) => {
                     let resolved= resolver.resolve_query(
-                        self, access, context, scope, gac_path.clone(), eval)?;
+                        access, context, scope, self_path.clone(), eval)?;
                     ValueType::Query(resolved)
                 }
             },
             None => return Err(Error::new(ErrorKind::MissingValue(
                 format!("When attempting to compare with {:?} RHS could not be resolved for query {:?}",
-                        gac.access_clause.comparator, gac.access_clause.query)
+                        self.access_clause.comparator, self.access_clause.query)
             )))
         };
 
@@ -474,7 +474,7 @@ impl GuardClause<'_> {
         //
         // Next comparison operations
         //
-        let ((success, lhs_idx, rhs_idx), clause_not) = match &gac.access_clause.comparator {
+        let ((success, lhs_idx, rhs_idx), clause_not) = match &self.access_clause.comparator {
             //
             // ==, !=
             //
@@ -511,18 +511,37 @@ impl GuardClause<'_> {
             (CmpOperator::In, negate) =>
                 (compare(&lhs_vec, &rhs_vec, compare_eq, true)?, negate),
 
+            (CmpOperator::KeysEq, negate) |
+            (CmpOperator::KeysIn, negate) => {
+                let mut lhs_vec_keys = Vec::with_capacity(lhs_vec.len());
+                for (path, each_lhs) in &lhs_vec {
+                    let map = match_map(*each_lhs, *path)?;
+                    for keys in map.keys() {
+                        lhs_vec_keys.push((*path, Value::String(keys.to_string())));
+                    }
+                }
+                let lhs_vec_ref = lhs_vec_keys.iter()
+                    .map(|(p, v)| (*p, v)).collect::<Vec<(&Path, &Value)>>();
+                if self.access_clause.comparator.0 == CmpOperator::KeysIn {
+                    (compare(&lhs_vec_ref, &rhs_vec, compare_eq, true)?, negate)
+                }
+                else {
+                    (compare(&lhs_vec_ref, &rhs_vec, compare_eq, false)?, negate)
+                }
+            }
+
 
             (_, _) => return Ok(EvalStatus::Comparison(EvalResult::status(Status::FAIL)))
         };
 
-        let status = negation_status(success, *clause_not, gac.negation);
+        let status = negation_status(success, *clause_not, self.negation);
         match status {
             Status::PASS | Status::SKIP =>
                 Ok(EvalStatus::Comparison(EvalResult::status(status))),
 
             Status::FAIL => {
                 let (lhs_path, lhs_value) = lhs_vec[lhs_idx];
-                let (rhs_path, rhs_value) = lhs_vec[rhs_idx];
+                let (rhs_path, rhs_value) = rhs_vec[rhs_idx];
                 Ok(EvalStatus::Comparison(
                     EvalResult::status_with_lhs_rhs(
                         Status::FAIL,
@@ -532,6 +551,107 @@ impl GuardClause<'_> {
                 ))
             }
         }
+    }
+}
+
+impl Evaluate for RuleClause<'_> {
+    type Item = EvalStatus;
+
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval_context: &EvalContext<'_>) -> Result<Self::Item, Error> {
+        match self {
+            RuleClause::Clause(gc) => gc.evaluate(resolver, scope, context, path, eval_context),
+            RuleClause::WhenBlock(conditions, block) =>
+                self.conditionally_evalute(
+                    resolver,
+                    scope,
+                    context,
+                    eval_context,
+                    path,
+                    Some(conditions),
+                    block),
+            RuleClause::TypeBlock(tb) =>
+                self.conditionally_evalute(
+                    resolver,
+                    scope,
+                    context,
+                    eval_context,
+                    path,
+                    if let Some(when) = &tb.conditions { Some(when) } else { None },
+                    &tb.block),
+        }
+    }
+
+}
+
+impl RuleClause<'_> {
+    fn conditionally_evalute(&self,
+                             resolver: &dyn Resolver,
+                             scope: &Scope<'_>,
+                             context: &Value,
+                             eval_context: &EvalContext<'_>,
+                             path: Path,
+                             conditions: Option<&Conjunctions<GuardClause<'_>>>,
+                             block: &Block<GuardClause<'_>>) -> Result<EvalStatus, Error> {
+        let (skip, from, to) = match conditions {
+            Some(when) => match when.evaluate(resolver, scope, context, path.clone(), eval_context)? {
+                EvalStatus::Comparison(EvalResult{status: Status::PASS, from, to}) => (false, from, to),
+                EvalStatus::Unary(Status::PASS) => (false, None, None),
+                EvalStatus::Comparison(EvalResult{ status: Status::FAIL, from, to}) => (true, from, to),
+                EvalStatus::Unary(Status::FAIL) => (true, None, None),
+                _ => unreachable!()
+            },
+
+            None =>  (false, None, None)
+        };
+
+        if !skip {
+            let mut block_scope = Scope::child(scope);
+            block_scope.assignments(&block.assignments, path.clone())?;
+            block_scope.assignment_queries(&block.assignments, path.clone(), context, resolver, eval_context)?;
+            block.conjunctions.evaluate(resolver, &block_scope, context, path, eval_context)
+        }
+        else {
+            Ok(EvalStatus::Comparison(EvalResult{ status: Status::SKIP, from, to}))
+        }
+    }
+
+}
+
+impl<T: Evaluate<Item=EvalStatus>> Evaluate for Conjunctions<T> {
+    type Item = EvalStatus;
+
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval: &EvalContext<'_>) -> Result<Self::Item, Error> {
+        'conjunction:
+        for conjunction in self {
+            for disjunction in conjunction {
+                match disjunction.evaluate(resolver, scope, context, path.clone(), eval)? {
+                    EvalStatus::Unary(Status::SKIP) => unreachable!(),
+                    EvalStatus::Comparison(EvalResult{ status: Status::SKIP, from, to}) =>
+                        unreachable!(), // these codes should not happen
+
+                    EvalStatus::Unary(Status::FAIL) => continue,
+                    EvalStatus::Comparison(EvalResult{ status: Status::FAIL, from, to}) =>
+                        continue, // try the next disjunction
+
+                    EvalStatus::Unary(status) => continue 'conjunction,
+                    EvalStatus::Comparison(r) => continue 'conjunction,
+                }
+            }
+            // We failed all disjunction Clauses
+            return Ok(EvalStatus::Comparison(EvalResult::status_with_lhs(
+                Status::FAIL, (path.clone(), context))))
+        }
+        Ok(EvalStatus::Comparison(EvalResult::status(Status::PASS)))
     }
 }
 
@@ -556,13 +676,14 @@ mod tests {
     }
 
     rule app_https {
-        input.servers[0].id == "app"
-        input.servers[0].protocols[0] == "https"
+        servers[0].id == "app"
+        servers[0].protocols[0] == "https"
     }
 
     rule k8s_exists {
         request EXISTS
-        request.apiVersion == /k8s\.io/
+        request.apiVersion == /k8s\.io/ # FAIL version
+        # request.apiVersion != /k8s\.io/
     }
 
     rule k8s_container_images when k8s_exists {
@@ -588,10 +709,20 @@ mod tests {
             assert_eq!(EvalStatus::Comparison(EvalResult::status(Status::PASS)), assessment);
         }
 
-        for idx in 0 as usize..2 as usize {
+        for idx in 0 as usize..3 as usize {
             let rule_clause = &rules.guard_rules[idx];
             for each in &rule_clause.block.conjunctions {
-                //for disjunction:
+                for disjunction in each {
+                    if let RuleClause::Clause(gac) = disjunction {
+                        let assessment = gac.evaluate(&resolvers, &scope, &opa_content, Path::new(&["/"]), &eval)?;
+                        println!("{:?}", assessment);
+                        match assessment {
+                            EvalStatus::Unary(status) => assert_eq!(status, Status::PASS),
+                            EvalStatus::Comparison(EvalResult{status, from, to}) =>
+                                if idx < 2 { assert_eq!(status, Status::PASS) } else { assert_eq!(status, Status::FAIL )}
+                        }
+                    }
+                }
             }
         }
         Ok(())

@@ -94,6 +94,43 @@ impl Hash for Value {
     }
 }
 
+impl Value {
+
+    pub(crate) fn traverse(&self, path: &str) -> Result<&Value, Error> {
+        let mut value = self;
+        for each in path.split(".") {
+            match each.parse::<i32>() {
+                Ok(index) => if let Value::List(list) = value {
+                    let index = if index < 0 { list.len() as i32 + index } else { index };
+                    if index < 0 || index >= list.len() as i32 {
+                        return Err(Error::new(ErrorKind::RetrievalError(
+                            format!("Querying for an out of band index = {}, list len = {}", index, list.len()))))
+                    }
+                    value = &list[index as usize];
+                } else {
+                    return Err(Error::new(ErrorKind::RetrievalError(
+                        format!("Querying for index = {}, value type is not list {}", index, type_info(value)))))
+                },
+
+                Err(_) => if let Value::Map(map) = value {
+                    if let Some(v) = map.get(each) {
+                        value = v;
+                    }
+                    else {
+                        return Err(Error::new(ErrorKind::RetrievalError(
+                            format!("Querying for key = {}, did not find in map {:?}", each, value))))
+                    }
+                } else {
+                    return Err(Error::new(ErrorKind::RetrievalError(
+                        format!("Querying for key = {}, value type is not map {}", each, type_info(value)))))
+
+                }
+            }
+        }
+        Ok(value)
+    }
+}
+
 //
 //    .X > 10
 //    .X <= 20

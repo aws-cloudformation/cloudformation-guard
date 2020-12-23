@@ -116,6 +116,7 @@ use super::super::values::*;
 use super::values::parse_value;
 use crate::rules::exprs::*;
 use crate::errors::Error;
+use crate::rules::parser2::parse_string;
 
 //
 // ABNF     =  1*CHAR [ 1*(CHAR / _) ]
@@ -334,7 +335,7 @@ fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
     fold_many1(
         preceded(char('.'), predicate_clause(
             alt((var_name_access_inclusive,
-                 var_name,
+                 property_name,
                  value("*".to_string(), char('*')),
                 map(digit1, |s: Span2| (*s.fragment()).to_string())
             )))
@@ -347,13 +348,20 @@ fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
     )(input)
 }
 
+fn property_name(input: Span2) -> IResult<Span2, String> {
+    alt(( var_name, map(parse_string, |v| match v {
+        Value::String(value) => value,
+        _ => unreachable!()
+    })))(input)
+}
+
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
-fn access(input: Span2) -> IResult<Span2, AccessQuery> {
+pub(crate) fn access(input: Span2) -> IResult<Span2, AccessQuery> {
     map(pair(
         predicate_clause(
-            alt((var_name_access_inclusive, var_name))),
+            alt((var_name_access_inclusive, property_name))),
         opt(dotted_access)), |(first, remainder)| {
         remainder.map(|mut query| {
             query.insert(0, first.clone());
@@ -389,16 +397,40 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
     };
 
     let (rest, not) = opt(not)(input)?;
-    let (rest, (lhs, _ignored_space, cmp, _ignored)) = tuple((
-        access,
-        // It is an error to not have a ws/comment following it
-        context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
-        // error if there is no value_cmp
-        context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
-                value_cmp),
-        // error if this isn't followed by space or comment or newline
-        context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
-    ))(rest)?;
+
+    //
+    // TODO find a better way to do this. Predicate clause uses this as well which can have
+    // the form *[ KEYS == ... ], where KEYS was the keyword. No other form of expression has
+    // this problem.
+    //
+    // FIXME: clause ends up calling predicate_clause, which is fine, but we should
+    // not expect the form *[ [ [] ] ]. We should dis-allows this.
+    //
+    let (rest, keys) = opt(peek(keys))(input)?;
+
+    let (rest, (lhs, _ignored_space, cmp, _ignored)) =
+        if keys.is_some() {
+            let (r, (space_ign, cmp, space_ign2)) = tuple((
+                      context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
+                      // error if there is no value_cmp
+                      context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                              value_cmp),
+                      // error if this isn't followed by space or comment or newline
+                      context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment)
+                  ))(rest)?;
+            (r, (AccessQuery::from([]), space_ign, cmp, space_ign2))
+        } else {
+            tuple((
+                access,
+                // It is an error to not have a ws/comment following it
+                context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+                // error if there is no value_cmp
+                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                        value_cmp),
+                // error if this isn't followed by space or comment or newline
+                context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+            ))(rest)?
+        };
 
     if !does_comparator_have_rhs(&cmp.0) {
         let (rest, custom_message) = cut(

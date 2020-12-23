@@ -218,7 +218,6 @@ impl EvalResult {
 
 pub(super) trait Resolver {
     fn resolve_query<'r>(&self,
-                         evaluate: &dyn Evaluate<Item = EvalStatus>,
                          query: &[QueryPart<'_>],
                          value: &'r  Value,
                          variables: &Scope<'_>,
@@ -269,6 +268,17 @@ impl Path {
 
     pub(super) fn append(mut self, path: String) -> Self {
         self.pointers.push(path);
+        Path {
+            pointers: self.pointers
+        }
+    }
+
+    pub(super) fn prepend_str(mut self, path: &str) -> Self {
+        self.prepend(path.to_string())
+    }
+
+    pub(super) fn prepend(mut self, path: String) -> Self {
+        self.pointers.insert(0, path);
         Path {
             pointers: self.pointers
         }

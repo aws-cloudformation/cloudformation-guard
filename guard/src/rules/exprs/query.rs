@@ -15,7 +15,6 @@ pub(super) struct QueryResolver {}
 
 impl Resolver for QueryResolver {
     fn resolve_query<'r>(&self,
-                         evaluate: &dyn Evaluate<Item=EvalStatus>,
                          query: &[QueryPart<'_>],
                          value: &'r Value,
                          variables: &Scope<'_>,
@@ -56,18 +55,18 @@ impl Resolver for QueryResolver {
                     //
                     match match_list(value_ref, &path_ref) {
                         Err(_) =>
-                            return self.handle_map(evaluate, match_map(value_ref, &path_ref)?,
+                            return self.handle_map(match_map(value_ref, &path_ref)?,
                                               index, path_ref, query, variables, eval),
 
                         Ok(array) =>
-                            return self.handle_array(evaluate, array, index, path_ref, query, variables, eval),
+                            return self.handle_array(array, index, path_ref, query, variables, eval),
                     }
                 },
 
                 QueryPart::AllIndices(key) => {
                     value_ref = retrieve_key(key, value_ref, &path_ref)?;
                     path_ref = path_ref.append_str(key);
-                    return self.handle_array(evaluate, match_list(value_ref, &path_ref)?,
+                    return self.handle_array(match_list(value_ref, &path_ref)?,
                                         index, path_ref, query, variables, eval)
                 },
 
@@ -78,7 +77,7 @@ impl Resolver for QueryResolver {
                             let current = retrieve_key(key, value_ref, &path_ref)?;
                             let sub_path = path_ref.clone().append_str(key);
                             let sub_query = self.resolve_query(
-                                evaluate, &query[index + 1..], current, variables, sub_path, eval)?;
+                                 &query[index + 1..], current, variables, sub_path, eval)?;
                             results.extend(sub_query);
                         } else {
                             return Err(Error::new(ErrorKind::RetrievalError(
@@ -104,7 +103,6 @@ impl Resolver for QueryResolver {
                         value_ref = retrieve_key(key, value_ref, &path_ref)?;
                         path_ref = path_ref.append_str(key);
                         let list = match_list(value_ref, &path_ref)?;
-                        let mut collected = Vec::with_capacity(list.len());
                         for (idx, each) in list.iter().enumerate() {
                             if self.select(criteria, each, variables, &path_ref, eval)? {
                                 collected.push((path_ref.clone().append(idx.to_string()), each));
@@ -114,7 +112,7 @@ impl Resolver for QueryResolver {
 
                     for (p, v) in collected {
                         let sub_query = self.resolve_query(
-                            evaluate, &query[index + 1..], v, variables, p, eval)?;
+                             &query[index + 1..], v, variables, p, eval)?;
                         results.extend(sub_query);
                     }
                     return Ok(results)
@@ -131,47 +129,22 @@ impl Resolver for QueryResolver {
 
 impl QueryResolver {
 
-    fn select<'x>(&self,
-                  criteria: &Conjunctions<GuardClause<'_>>,
-                  value: &Value,
-                  scope: &Scope<'_>,
-                  path: &Path,
-                  eval: &EvalContext<'_>) -> Result<bool, Error> {
-        let selected = 'outer: loop {
-            for each in criteria {
-                let disjunctions = 'disjunctions: loop {
-                    for each_or_clause in each {
-                        //if let GuardClause::Clause(gac) = each_or_clause {
-                            let eval = each_or_clause.evaluate(self, scope, value, path.clone(), eval)?;
-                            match eval {
-                                EvalStatus::Unary(Status::PASS) =>
-                                    break 'disjunctions true,
-
-                                EvalStatus::Comparison(EvalResult{ status: Status::PASS, from, to}) =>
-                                    break 'disjunctions true,
-                                _ => {}
-                            }
-//                        }
-//                        else {
-//                            return Err(Error::new(ErrorKind::IncompatibleError(
-//                                format!("Can not have rule clauses in predicated based selections")
-//                            )))
-//                        }
-
-                    }
-                    break false
-                };
-                if !disjunctions {
-                    break 'outer false
-                }
+    fn select(&self,
+              criteria: &Conjunctions<GuardClause<'_>>,
+              value: &Value,
+              scope: &Scope<'_>,
+              path: &Path,
+              eval: &EvalContext<'_>) -> Result<bool, Error> {
+        Ok(
+            match criteria.evaluate(self, scope, value, path.clone(), eval)? {
+                EvalStatus::Unary(Status::PASS) => true,
+                EvalStatus::Comparison(EvalResult{ status: Status::PASS, from, to}) => true,
+                _ => false
             }
-            break true
-        };
-        Ok(selected)
+        )
     }
 
     fn handle_array<'loc>(&self,
-                          evalute: &dyn Evaluate<Item = EvalStatus>,
                           array: &'loc Vec<Value>,
                           index: usize,
                           path: Path,
@@ -182,14 +155,13 @@ impl QueryResolver {
         for (each_idx, each_value) in array.iter().enumerate() {
             let sub_path = path.clone().append(each_idx.to_string());
             let sub_query = self.resolve_query(
-                evalute, &query[index+1..], each_value, scope, sub_path, eval)?;
+                 &query[index+1..], each_value, scope, sub_path, eval)?;
             results.extend(sub_query);
         }
         Ok(results)
     }
 
     fn handle_map<'loc>(&self,
-                        evalute: &dyn Evaluate<Item = EvalStatus>,
                         map: &'loc indexmap::IndexMap<String, Value>,
                         index: usize,
                         path: Path,
@@ -200,7 +172,7 @@ impl QueryResolver {
         for (key, index_value) in map {
             let sub_path = path.clone().append_str(key);
             let sub_query = self.resolve_query(
-                evalute, &query[index+1..], index_value, scope, sub_path, eval)?;
+                &query[index+1..], index_value, scope, sub_path, eval)?;
             results.extend(sub_query);
         }
         Ok(results)
@@ -214,7 +186,7 @@ mod tests {
 
     use super::*;
     use std::collections::HashSet;
-    use crate::rules::parser2::{parse_value, from_str2};
+    use crate::rules::parser2::{parse_value, from_str2, access};
     use std::fs::File;
     use crate::commands::files::{get_files, read_file_content};
 
@@ -253,7 +225,7 @@ mod tests {
         // Test base empty query
         //
         let values = resolver.resolve_query(
-            &evaluate, &[], &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+            &[], &root, &scope, Path::new(&["/"]), &eval_cxt)?;
         assert_eq!(values.len(), 1);
         assert_eq!(values.get(&Path::new(&["/"])), Some(&&root));
 
@@ -265,7 +237,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &evaluate, &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
         assert_eq!(values.len(), 1);
         assert_eq!(Some(values[&Path::new(&["/", "Resources"])]), map.get("Resources"));
         let from_root = map.get("Resources");
@@ -281,7 +253,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &evaluate, &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len(), values.len());
 
@@ -301,7 +273,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &evaluate, &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len(), values.len());
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
@@ -341,7 +313,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &evaluate, &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
@@ -410,7 +382,7 @@ mod tests {
         }
 
         let resolved = resolver.resolve_query(
-            &evaluate, &protocols, &root, &scope, Path::new(&["/"]), &eval)?;
+            &protocols, &root, &scope, Path::new(&["/"]), &eval)?;
         let mut expected = ResolvedValues::new();
         for (serv_idx, (prot_idx, val)) in protocols_flattened {
             let idx_string = prot_idx.to_string();
@@ -426,13 +398,114 @@ mod tests {
             QueryPart::Index(String::from("protocols"), 0),
         ]);
         let resolved = resolver.resolve_query(
-            &evaluate, &query, &root, &scope, Path::new(&["/"]), &eval)?;
+            &query, &root, &scope, Path::new(&["/"]), &eval)?;
         let mut expected = ResolvedValues::new();
         let first = servers.get(0).unwrap();
         let first = match_map(first, &root_path)?;
         let protocol = match_list(first.get("protocols").unwrap(), &root_path)?.get(0).unwrap();
         expected.insert(Path::new(&["/", "servers", "0", "protocols", "0"]), protocol);
         assert_eq!(expected, resolved);
+
+        Ok(())
+    }
+
+    const IAM_TEMPLATE: &str = r#"
+    { "Policy":
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "PrincipalPutObjectIfIpAddress",
+                "Effect": "Allow",
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::my-service-bucket/*",
+                "Condition": {
+                    "Bool": {"aws:ViaAWSService": "false"},
+                    "StringEquals": {"aws:SourceVpc": "vpc-12243sc"}
+                }
+            },
+            {
+                "Sid": "ServicePutObject",
+                "Effect": "Allow",
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::my-service-bucket/*",
+                "Condition": {
+                    "Bool": {"aws:ViaAWSService": "true"}
+                }
+            }
+        ]
+      }
+   }"#;
+
+    #[test]
+    fn test_iam_query() -> Result<(), Error> {
+        let iam_policy = parse_value(from_str2(IAM_TEMPLATE))?.1;
+
+        let mut scope = Scope::new();
+        let resolver = QueryResolver{};
+        let eval = EvalContext::new(&iam_policy);
+
+        let query = access(from_str2("Policy.Statement[*].Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]"))?.1;
+        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        assert_eq!(selected.is_empty(), false);
+        assert_eq!(selected.len(), 1);
+        let path = "Policy.Statement.0.Condition.StringEquals";
+        let expected = iam_policy.traverse(path)?;
+        let real_path = Path::new(&path.split(".").collect::<Vec<&str>>());
+        let real_path = real_path.prepend_str("/");
+        let matched = match selected.get(&real_path) {
+            Some(v) => *v,
+            None => unreachable!()
+        };
+        println!("expected = {:?}, expected_addr = {:p}, matched = {:?}, matched_addr = {:p}", expected, expected, matched, matched);
+        assert_eq!(expected, matched);
+        assert_eq!(std::ptr::eq(expected, matched), true);
+
+        let query = access(from_str2("Policy.Statement[*].Condition.*[ KEYS == /aws:ViaAWS/ ]"))?.1;
+        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        assert_eq!(selected.is_empty(), false);
+        assert_eq!(selected.len(), 2);
+        let path = [
+            "Policy.Statement.0.Condition.Bool",
+            "Policy.Statement.1.Condition.Bool",
+        ];
+
+        for each_path in &path {
+            let expected = iam_policy.traverse(*each_path)?;
+            let real_path = Path::new(&(*each_path).split(".").collect::<Vec<&str>>());
+            let real_path = real_path.prepend_str("/");
+            let matched = match selected.get(&real_path) {
+                Some(v) => *v,
+                None => unreachable!()
+            };
+            println!("expected = {:?}, expected_addr = {:p}, matched = {:?}, matched_addr = {:p}", expected, expected, matched, matched);
+            assert_eq!(expected, matched);
+            assert_eq!(std::ptr::eq(expected, matched), true);
+        }
+
+        let selection_query = r#"Policy.Statement[ Condition EXISTS
+                                                         Condition.Bool.'aws:ViaAWSService' EXISTS ]"#;
+        let query = access(from_str2(selection_query))?.1;
+        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        println!("Selected = {:?}", selected);
+        let path = [
+            "Policy.Statement.0",
+            "Policy.Statement.1"
+        ];
+
+        for each_path in &path {
+            let expected = iam_policy.traverse(*each_path)?;
+            let real_path = Path::new(&(*each_path).split(".").collect::<Vec<&str>>());
+            let real_path = real_path.prepend_str("/");
+            let matched = match selected.get(&real_path) {
+                Some(v) => *v,
+                None => unreachable!()
+            };
+            println!("expected = {:?}, expected_addr = {:p}, matched = {:?}, matched_addr = {:p}", expected, expected, matched, matched);
+            assert_eq!(expected, matched);
+            assert_eq!(std::ptr::eq(expected, matched), true);
+        }
+
 
         Ok(())
     }

@@ -40,7 +40,7 @@ pub(super) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     alt((positive, negative))(input)
 }
 
-fn parse_string(input: Span) -> IResult<Span, Value> {
+pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
     map(
         alt((
             delimited(

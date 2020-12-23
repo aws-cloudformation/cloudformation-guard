@@ -1,4 +1,4 @@
-use crate::rules::exprs::{QueryPart, Path};
+use crate::rules::exprs::{QueryPart, Path, LetExpr, Resolver, LetValue, Evaluate, EvalStatus, EvalContext};
 use std::collections::HashMap;
 use crate::rules::values::Value;
 use crate::errors::{Error, ErrorKind};
@@ -24,6 +24,43 @@ impl<'loc> Scope<'loc> {
             variable_cache: HashMap::new(),
             parent: std::ptr::null()
         }
+    }
+
+    pub(super) fn child<'p: 'loc>(parent: *const Scope<'p>) -> Self {
+        Scope {
+            variable_cache: HashMap::new(),
+            parent,
+        }
+    }
+
+    pub(super) fn assignments(&mut self,
+                              assignments: &'loc [LetExpr<'_>],
+                              path: Path) -> Result<(), Error> {
+        for assign in assignments {
+            if let LetValue::Value(v) = &assign.value {
+                let path = path.clone().append_str(&assign.var);
+                let mut values = ResolvedValues::new();
+                values.insert(path, v);
+                self.variable_cache.insert(assign.var.clone(), values);
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn assignment_queries(&mut self,
+                                     queries: &[LetExpr<'_>],
+                                     path: Path,
+                                     value: &'loc Value,
+                                     resolver: &dyn Resolver,
+                                     context: &EvalContext<'_>) -> Result<(), Error> {
+        for statement in queries {
+            if let LetValue::AccessClause(query) = &statement.value {
+                let resolved = resolver.resolve_query(
+                     query, value, self, path.clone(), context)?;
+                self.variable_cache.insert(statement.var.clone(), resolved);
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn get_resolutions_for_variable(&self, variable: &str) -> Result<Vec<&Value>, Error> {

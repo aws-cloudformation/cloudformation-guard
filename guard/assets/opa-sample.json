@@ -18,17 +18,24 @@
     {"id": "p3", "network": "net2"}
   ],
   "request": {
+    "apiVersion": "v1",
     "kind": {
-      "kind": "Pod"
+      "kind": "Pod",
+      "version": "v1"
     },
     "object": {
+      "metadata": {
+        "name": "myapp"
+      },
       "spec": {
         "containers": [
           {
-            "image": "hooli.com/nginx"
+            "image": "nginx",
+            "name": "nginx-frontend"
           },
           {
-            "image": "busybox"
+            "image": "mysql",
+            "name": "mysql-backend"
           }
         ]
       }
