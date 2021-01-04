@@ -1,10 +1,11 @@
 use crate::rules::values::*;
 
-use std::hash::{Hash};
+use std::hash::{Hash, Hasher};
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use super::scope::Scope;
 use crate::errors::Error;
+use std::collections::hash_map::DefaultHasher;
 
 #[derive(PartialEq, Debug, Clone, Copy, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -154,41 +155,41 @@ pub(crate) enum Status {
 }
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) struct Key<'loc> {
-    // pub(super) query_key: u64, // hash of query part
-    pub(super) query_key: &'loc[QueryPart<'loc>], // hash of query part
-    pub(super) context: &'loc Value
+pub(crate) struct Key<'loc> {
+    // pub(crate) query_key: u64, // hash of query part
+    pub(crate) query_key: &'loc[QueryPart<'loc>], // hash of query part
+    pub(crate) context: &'loc Value
 }
 
 impl<'loc> Eq for Key<'loc> {}
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) struct ResolutionKey<'loc> {
-    pub(super) clause: &'loc GuardClause<'loc>
+pub(crate) struct ResolutionKey<'loc> {
+    pub(crate) clause: &'loc GuardClause<'loc>
 }
 
 impl Eq for ResolutionKey<'_> {}
 
-pub(super) type ResolvedValues<'loc> = indexmap::IndexMap<Path, &'loc Value>;
-//pub(super) type QueryCache<'loc> = HashMap<Key<'loc>, ResolvedValues<'loc>>;
-pub(super) type Resolutions<'loc> = indexmap::IndexMap<ResolutionKey<'loc>, EvalStatus>;
+pub(crate) type ResolvedValues<'loc> = indexmap::IndexMap<Path, &'loc Value>;
+//pub(crate) type QueryCache<'loc> = HashMap<Key<'loc>, ResolvedValues<'loc>>;
+pub(crate) type Resolutions = indexmap::IndexMap<u64, EvalStatus>;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) enum EvalStatus {
+pub(crate) enum EvalStatus {
     Comparison(EvalResult),
     Unary(Status),
 }
 
 #[derive(PartialEq, Debug, Clone, Hash)]
-pub(super) struct EvalResult {
-    pub(super) status: Status,
-    pub(super) from: Option<(Path, Value)>,
-    pub(super) to: Option<(Path, Value)>,
+pub(crate) struct EvalResult {
+    pub(crate) status: Status,
+    pub(crate) from: Option<(Path, Value)>,
+    pub(crate) to: Option<(Path, Value)>,
 }
 
 impl EvalResult {
 
-    pub(super) fn status(status: Status) -> Self {
+    pub(crate) fn status(status: Status) -> Self {
         EvalResult {
             status,
             from: None,
@@ -196,7 +197,7 @@ impl EvalResult {
         }
     }
 
-    pub(super) fn status_with_lhs(status: Status,
+    pub(crate) fn status_with_lhs(status: Status,
                                   from: (Path, &Value)) -> Self {
         EvalResult {
             status,
@@ -205,7 +206,7 @@ impl EvalResult {
         }
     }
 
-    pub(super) fn status_with_lhs_rhs(status: Status,
+    pub(crate) fn status_with_lhs_rhs(status: Status,
                                       from: (Path, &Value),
                                       to: (Path, &Value)) -> EvalResult {
         EvalResult {
@@ -216,7 +217,7 @@ impl EvalResult {
     }
 }
 
-pub(super) trait Resolver {
+pub(crate) trait Resolver {
     fn resolve_query<'r>(&self,
                          query: &[QueryPart<'_>],
                          value: &'r  Value,
@@ -225,7 +226,7 @@ pub(super) trait Resolver {
                          eval: &EvalContext<'_>) -> Result<ResolvedValues<'r>, Error>;
 }
 
-pub(super) trait Evaluate {
+pub(crate) trait Evaluate {
     type Item;
 
     fn evaluate(&self,
@@ -236,20 +237,50 @@ pub(super) trait Evaluate {
                 eval_context: &EvalContext<'_>) -> Result<Self::Item, Error>;
 }
 
-pub(super) struct EvalContext<'c> {
-    //pub(super) query_cache: QueryCache<'c>,
-    pub(super) root: &'c Value,
-    pub(super) resolutions: Resolutions<'c>,
-    pub(super) rule_resolutions: HashMap<String, Status>,
+#[derive(PartialEq, Debug, Clone, Hash)]
+pub(crate) struct StdHasher {}
+
+impl StdHasher {
+    pub(crate) fn new() -> Self {
+        StdHasher {}
+    }
+
+    pub(crate) fn hash<T: Hash>(&self, to_hash: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        to_hash.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+
+
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) struct EvalContext<'c> {
+    //pub(crate) query_cache: QueryCache<'c>,
+    pub(crate) root: Value,
+    pub(crate) resolutions: std::cell::RefCell<Resolutions>,
+    pub(crate) rule_resolutions: std::cell::RefCell<HashMap<String, Status>>,
+    pub(crate) rules: &'c RulesFile<'c>,
+    pub(crate) rule_cache: HashMap<String, &'c Rule<'c>>,
+    pub(crate) hasher: StdHasher,
 }
 
 impl<'c> EvalContext<'c> {
-    pub(super) fn new(root:&'c Value) -> Self {
+    pub(crate) fn new(root: Value, rules: &'c RulesFile<'c>) -> Self {
+        let mut rule_cache = HashMap::with_capacity(rules.guard_rules.len());
+        for rule in &rules.guard_rules {
+            rule_cache.insert(rule.rule_name.to_string(), rule);
+        }
+
         EvalContext {
             //query_cache: QueryCache::new(),
             root,
-            resolutions: Resolutions::new(),
-            rule_resolutions: HashMap::new(),
+            rule_cache,
+            rules,
+            resolutions: std::cell::RefCell::new(Resolutions::new()),
+            rule_resolutions: std::cell::RefCell::new(HashMap::new()),
+            hasher: StdHasher::new(),
         }
     }
 }
@@ -262,22 +293,22 @@ impl Path {
         }
     }
 
-    pub(super) fn append_str(self, path: &str) -> Self {
+    pub(crate) fn append_str(self, path: &str) -> Self {
         self.append(path.to_owned())
     }
 
-    pub(super) fn append(mut self, path: String) -> Self {
+    pub(crate) fn append(mut self, path: String) -> Self {
         self.pointers.push(path);
         Path {
             pointers: self.pointers
         }
     }
 
-    pub(super) fn prepend_str(mut self, path: &str) -> Self {
+    pub(crate) fn prepend_str(mut self, path: &str) -> Self {
         self.prepend(path.to_string())
     }
 
-    pub(super) fn prepend(mut self, path: String) -> Self {
+    pub(crate) fn prepend(mut self, path: String) -> Self {
         self.pointers.insert(0, path);
         Path {
             pointers: self.pointers

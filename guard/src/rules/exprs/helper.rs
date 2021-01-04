@@ -1,6 +1,7 @@
 use crate::rules::values::{Value, type_info};
 use crate::errors::{Error, ErrorKind};
 use super::Path;
+use std::hash::Hasher;
 
 //
 // Helper functions

@@ -11,7 +11,7 @@ use super::helper::*;
 use std::fmt::Formatter;
 
 #[derive(Clone, Debug)]
-pub(super) struct QueryResolver {}
+pub(crate) struct QueryResolver {}
 
 impl Resolver for QueryResolver {
     fn resolve_query<'r>(&self,
@@ -216,8 +216,12 @@ mod tests {
         //let mut cache = EvalContext::new(&root);
         let scope = Scope::new();
         let path = Path::new(&["/"]);
-        let map = match_map(&root, &path)?;
-        let eval_cxt = EvalContext::new(&root);
+        let rules = RulesFile {
+            guard_rules: vec![],
+            assignments: vec![]
+        };
+        let eval_cxt = EvalContext::new(root, &rules);
+        let map = match_map(&eval_cxt.root, &path)?;
         let resolver = QueryResolver{};
         let evaluate = Eval{};
 
@@ -225,9 +229,9 @@ mod tests {
         // Test base empty query
         //
         let values = resolver.resolve_query(
-            &[], &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+            &[], &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
         assert_eq!(values.len(), 1);
-        assert_eq!(values.get(&Path::new(&["/"])), Some(&&root));
+        assert_eq!(values.get(&Path::new(&["/"])), Some(&&eval_cxt.root));
 
         //
         // Path = Resources
@@ -237,7 +241,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
         assert_eq!(values.len(), 1);
         assert_eq!(Some(values[&Path::new(&["/", "Resources"])]), map.get("Resources"));
         let from_root = map.get("Resources");
@@ -253,7 +257,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len(), values.len());
 
@@ -273,7 +277,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len(), values.len());
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
@@ -313,7 +317,7 @@ mod tests {
         ]);
         let values =
             resolver.resolve_query(
-                &query, &root, &scope, Path::new(&["/"]), &eval_cxt)?;
+                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
 
         assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
         let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
@@ -359,7 +363,11 @@ mod tests {
         let root = create_from_json("assets/opa-sample.json")?;
         let mut scope = Scope::new();
         let resolver = QueryResolver{};
-        let eval = EvalContext::new(&root);
+        let rules = RulesFile {
+            guard_rules: vec![],
+            assignments: vec![]
+        };
+        let eval = EvalContext::new(root, &rules);
 
         let evaluate = Eval{};
         let protocols = AccessQuery::from([
@@ -368,7 +376,7 @@ mod tests {
         ]);
 
         let root_path = Path::new(&[""]);
-        let servers = match_map(&root, &root_path)?;
+        let servers = match_map(&eval.root, &root_path)?;
         let mut protocols_flattened = Vec::with_capacity(servers.len());
         let servers = servers.get("servers").unwrap();
         let servers = match_list(servers, &root_path)?;
@@ -382,7 +390,7 @@ mod tests {
         }
 
         let resolved = resolver.resolve_query(
-            &protocols, &root, &scope, Path::new(&["/"]), &eval)?;
+            &protocols, &eval.root, &scope, Path::new(&["/"]), &eval)?;
         let mut expected = ResolvedValues::new();
         for (serv_idx, (prot_idx, val)) in protocols_flattened {
             let idx_string = prot_idx.to_string();
@@ -398,7 +406,7 @@ mod tests {
             QueryPart::Index(String::from("protocols"), 0),
         ]);
         let resolved = resolver.resolve_query(
-            &query, &root, &scope, Path::new(&["/"]), &eval)?;
+            &query, &eval.root, &scope, Path::new(&["/"]), &eval)?;
         let mut expected = ResolvedValues::new();
         let first = servers.get(0).unwrap();
         let first = match_map(first, &root_path)?;
@@ -443,14 +451,18 @@ mod tests {
 
         let mut scope = Scope::new();
         let resolver = QueryResolver{};
-        let eval = EvalContext::new(&iam_policy);
+        let rules = RulesFile {
+            guard_rules: vec![],
+            assignments: vec![]
+        };
+        let eval = EvalContext::new(iam_policy, &rules);
 
         let query = access(from_str2("Policy.Statement[*].Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]"))?.1;
-        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        let selected = resolver.resolve_query(&query, &eval.root, &scope, Path::new(&["/"]), &eval)?;
         assert_eq!(selected.is_empty(), false);
         assert_eq!(selected.len(), 1);
         let path = "Policy.Statement.0.Condition.StringEquals";
-        let expected = iam_policy.traverse(path)?;
+        let expected = eval.root.traverse(path)?;
         let real_path = Path::new(&path.split(".").collect::<Vec<&str>>());
         let real_path = real_path.prepend_str("/");
         let matched = match selected.get(&real_path) {
@@ -462,7 +474,7 @@ mod tests {
         assert_eq!(std::ptr::eq(expected, matched), true);
 
         let query = access(from_str2("Policy.Statement[*].Condition.*[ KEYS == /aws:ViaAWS/ ]"))?.1;
-        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        let selected = resolver.resolve_query(&query, &eval.root, &scope, Path::new(&["/"]), &eval)?;
         assert_eq!(selected.is_empty(), false);
         assert_eq!(selected.len(), 2);
         let path = [
@@ -471,7 +483,7 @@ mod tests {
         ];
 
         for each_path in &path {
-            let expected = iam_policy.traverse(*each_path)?;
+            let expected = eval.root.traverse(*each_path)?;
             let real_path = Path::new(&(*each_path).split(".").collect::<Vec<&str>>());
             let real_path = real_path.prepend_str("/");
             let matched = match selected.get(&real_path) {
@@ -486,7 +498,7 @@ mod tests {
         let selection_query = r#"Policy.Statement[ Condition EXISTS
                                                          Condition.Bool.'aws:ViaAWSService' EXISTS ]"#;
         let query = access(from_str2(selection_query))?.1;
-        let selected = resolver.resolve_query(&query, &iam_policy, &scope, Path::new(&["/"]), &eval)?;
+        let selected = resolver.resolve_query(&query, &eval.root, &scope, Path::new(&["/"]), &eval)?;
         println!("Selected = {:?}", selected);
         let path = [
             "Policy.Statement.0",
@@ -494,7 +506,7 @@ mod tests {
         ];
 
         for each_path in &path {
-            let expected = iam_policy.traverse(*each_path)?;
+            let expected = eval.root.traverse(*each_path)?;
             let real_path = Path::new(&(*each_path).split(".").collect::<Vec<&str>>());
             let real_path = real_path.prepend_str("/");
             let matched = match selected.get(&real_path) {

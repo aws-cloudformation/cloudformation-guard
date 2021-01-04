@@ -23,6 +23,10 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
             format!("Error parsing incoming JSON context {}", err)
         },
 
+        ErrorKind::YamlError(err) => {
+            format!("Error parsing incoming YAML context {}", err)
+        },
+
         ErrorKind::IoError(io) => {
             format!("I/O error when reading {}", io)
         },
@@ -88,6 +92,7 @@ impl Display for Error {
 #[derive(Debug)]
 pub enum ErrorKind {
     JsonError(serde_json::Error),
+    YamlError(serde_yaml::Error),
     IoError(std::io::Error),
     ParseError(String),
     RegexError(regex::Error),
@@ -107,6 +112,13 @@ impl From<serde_json::Error> for Error {
         Error(ErrorKind::JsonError(err))
     }
 }
+
+impl From<serde_yaml::Error> for Error {
+    fn from(err: serde_yaml::Error) -> Self {
+        Error(ErrorKind::YamlError(err))
+    }
+}
+
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {

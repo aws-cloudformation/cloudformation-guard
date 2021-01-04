@@ -33,168 +33,6 @@ enum ValueType<'c> {
     Query(ResolvedValues<'c>)
 }
 
-//pub(super) fn gac_evaluate(gac: &GuardAccessClause<'_>,
-//                           scope: &Scope<'_>,
-//                           context: &Value,
-//                           path: Path) -> Result<EvalStatus, Error> {
-//
-//    let lhs = match resolve_query(
-//        &gac.access_clause.query, context, scope, path.clone()) {
-//        Ok(r) => Some(r),
-//        Err(Error(ErrorKind::RetrievalError(_))) => None,
-//        Err(e) => return Err(e),
-//    };
-//
-//    //
-//    // Special case EXISTS, !EXISTS,
-//    //
-//    if CmpOperator::Exists == gac.access_clause.comparator.0 {
-//        return Ok(EvalStatus::Unary(
-//            negation_status(lhs.is_some(),
-//                             gac.access_clause.comparator.1,
-//                            gac.negation)));
-//    }
-//
-//    //
-//    // Special case == null or != null
-//    //
-//    if let Some(LetValue::Value(Value::Null)) = &gac.access_clause.compare_with {
-//        if CmpOperator::Eq == gac.access_clause.comparator.0 {
-//            return Ok(EvalStatus::Unary(negation_status(
-//                lhs.is_none(),
-//                gac.access_clause.comparator.1,
-//                gac.negation)))
-//        }
-//    }
-//
-//    //
-//    // FAIL if LHS wasn't there for all other comparisons
-//    //
-//    let lhs = match lhs {
-//        Some(v) => ValueType::Query(v),
-//        None => return Err(Error::new(ErrorKind::RetrievalError(
-//            format!("When checking for {:?}, could for retrieve value for {:?}",
-//                    gac.access_clause.comparator.0, gac.access_clause.query)
-//        )))
-//    };
-//
-//    //
-//    // The 2 other unary operators
-//    //
-//    match &gac.access_clause.comparator {
-//        (CmpOperator::Empty, negation) |
-//        (CmpOperator::KeysEmpty, negation) => {
-//            let empty = match &lhs {
-//                ValueType::Query(r) => r.is_empty(),
-//                ValueType::Single((_p, Value::List(l))) => l.is_empty(),
-//                ValueType::Single((_p, v)) =>
-//                    return Err(Error::new(ErrorKind::IncompatibleError(
-//                        format!("Expecting a list value from a resolved query or value, found value type {}", type_info(*v))
-//                    )))
-//            };
-//            return Ok(EvalStatus::Unary(
-//                negation_status(empty, *negation, gac.negation)))
-//        }
-//
-//        (_, _) => {}
-//    }
-//
-//    let lhs_vec = match &lhs {
-//        ValueType::Query(r) => r.iter().map(|(p, v)| (p, *v)).collect::<Vec<(&Path, &Value)>>(),
-//        ValueType::Single((p, Value::List(l))) => l.iter().map(|v| (p, v)).collect::<Vec<(&Path, &Value)>>(),
-//        ValueType::Single((p, v)) => vec![(p, *v)],
-//    };
-//
-//    //
-//    // Get RHS
-//    //
-//    let gac_path = gac_path(gac);
-//    let rhs = match &gac.access_clause.compare_with {
-//        Some(l) => match l {
-//            LetValue::Value(v) => ValueType::Single((gac_path, v)),
-//            LetValue::AccessClause(access) => {
-//                let resolved= resolve_query(
-//                    access, context, scope, gac_path.clone())?;
-//                ValueType::Query(resolved)
-//            }
-//        },
-//        None => return Err(Error::new(ErrorKind::MissingValue(
-//            format!("When attempting to compare with {:?} RHS could not be resolved for query {:?}",
-//                    gac.access_clause.comparator, gac.access_clause.query)
-//        )))
-//    };
-//
-//    let rhs_vec = match &rhs {
-//        ValueType::Query(r) => r.iter().map(|(p, v)| (p, *v)).collect::<Vec<(&Path, &Value)>>(),
-//        ValueType::Single((p, Value::List(l))) => l.iter().map(|v| (p, v)).collect::<Vec<(&Path, &Value)>>(),
-//        ValueType::Single((p, v)) => vec![(p, *v)],
-//    };
-//
-//
-//    //
-//    // Next comparison operations
-//    //
-//    let ((success, lhs_idx, rhs_idx), clause_not) = match &gac.access_clause.comparator {
-//        //
-//        // ==, !=
-//        //
-//        (CmpOperator::Eq, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_eq, false)?, negate),
-//
-//        //
-//        // >
-//        //
-//        (CmpOperator::Gt, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_gt, false)?, negate),
-//
-//        //
-//        // >=
-//        //
-//        (CmpOperator::Ge, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_ge, false)?, negate),
-//
-//        //
-//        // <
-//        //
-//        (CmpOperator::Lt, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_lt, false)?, negate),
-//
-//        //
-//        // <=
-//        //
-//        (CmpOperator::Le, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_le, false)?, negate),
-//
-//        //
-//        // IN, !IN
-//        //
-//        (CmpOperator::In, negate) =>
-//            (compare(&lhs_vec, &rhs_vec, compare_eq, true)?, negate),
-//
-//
-//        (_, _) => return Ok(EvalStatus::Comparison(EvalResult::status(Status::FAIL)))
-//    };
-//
-//    let status = negation_status(success, *clause_not, gac.negation);
-//    match status {
-//        Status::PASS | Status::SKIP =>
-//            Ok(EvalStatus::Comparison(EvalResult::status(status))),
-//
-//        Status::FAIL => {
-//            let (lhs_path, lhs_value) = lhs_vec[lhs_idx];
-//            let (rhs_path, rhs_value) = lhs_vec[rhs_idx];
-//            Ok(EvalStatus::Comparison(
-//                EvalResult::status_with_lhs_rhs(
-//                    Status::FAIL,
-//                    (lhs_path.clone(), lhs_value),
-//                    (rhs_path.clone(), rhs_value)
-//                )
-//            ))
-//        }
-//    }
-//}
-//
-
 fn compare<F>(lhs: &Vec<(&Path, &Value)>, rhs: &Vec<(&Path, &Value)>, compare: F, any: bool) -> Result<(bool, usize, usize), Error>
     where F: Fn(&Value, &Value) -> Result<bool, Error>
 {
@@ -222,7 +60,7 @@ fn gac_path(gac: &GuardAccessClause<'_>) -> Path {
 
 pub(super) fn named_evaluate(rule: &GuardNamedRuleClause<'_>,
                        eval_context: &EvalContext<'_>) -> Result<EvalStatus, Error> {
-    match eval_context.rule_resolutions.get(&rule.dependent_rule) {
+    match eval_context.rule_resolutions.borrow().get(&rule.dependent_rule) {
         Some(status) => Ok(
                 EvalStatus::Unary(invert_status(*status, rule.negation))),
         None => Err(Error::new(ErrorKind::MissingValue(
@@ -231,128 +69,45 @@ pub(super) fn named_evaluate(rule: &GuardNamedRuleClause<'_>,
     }
 }
 
-//pub(super) fn guard_clause_evaluate(gc: &GuardClause<'_>,
-//                                    scope: &Scope<'_>,
-//                                    context: &Value,
-//                                    path: Path,
-//                                    eval_context: &EvalContext<'_>) -> Result<EvalStatus, Error> {
-//
-//    match gc {
-//        GuardClause::Clause(clause) => gac_evaluate(clause, scope, context, path),
-//        GuardClause::NamedRule(named) => named_evaluate(named, eval_context)
-//    }
-//}
-//
-//fn conditionally_evaluate<C>(conditions: &Conjunctions<GuardClause<'_>>,
-//                             block: &Block<GuardClause<'_>>,
-//                             scope: &Scope<'_>,
-//                             context: &Value,
-//                             path: Path,
-//                             eval: &EvalContext<'_>,
-//                             compare: C) -> Result<EvalStatus, Error>
-//    where C: Fn(&GuardClause<'_>, &Scope<'_>, &Value, Path, &EvalContext<'_>) -> Result<EvalStatus, Error>
-//{
-//    match conjunction_of_clauses(
-//        conditions, scope, context, eval, path.clone(),
-//        guard_clause_evaluate)? {
-//        EvalStatus::Comparison(EvalResult{status, from, to}) =>
-//            return match status {
-//                //
-//                // TODO add the block level scope update  here
-//                //
-//                Status::PASS => {
-//                    conjunction_of_clauses(
-//                        &block.conjunctions,
-//                        scope,
-//                        context,
-//                        eval,
-//                        path.clone(),
-//                        guard_clause_evaluate
-//                    )
-//                },
-//
-//                Status::FAIL | Status::SKIP =>
-//                    Ok(EvalStatus::Comparison(EvalResult::status(Status::SKIP)))
-//            },
-//
-//        _ => unreachable!()
-//    }
-//
-//}
-//
-//pub(super) fn rule_clause_evaluate(rc: &RuleClause<'_>,
-//                                   scope: &Scope<'_>,
-//                                   context: &Value,
-//                                   path: Path,
-//                                   eval_context: &EvalContext<'_>) -> Result<EvalStatus, Error> {
-//    match rc {
-//        RuleClause::Clause(gc) => guard_clause_evaluate(gc, scope, context, path.clone(), eval_context),
-//        RuleClause::WhenBlock(conditions, clauses) => {
-//            conditionally_evaluate(conditions,
-//                                   clauses,
-//                                   scope,
-//                                   context,
-//                                   path,
-//                                   eval_context,
-//                                   guard_clause_evaluate)
-//        },
-//        RuleClause::TypeBlock(tc) => {
-//            match &tc.conditions {
-//                Some(conditions) =>
-//                    conditionally_evaluate(conditions,
-//                                           &tc.block,
-//                                           scope,
-//                                           context,
-//                                           path,
-//                                           eval_context,
-//                                           guard_clause_evaluate),
-//                None =>
-//                    conjunction_of_clauses(
-//                        &tc.block.conjunctions,
-//                        scope,
-//                        context,
-//                        eval_context,
-//                        path,
-//                        guard_clause_evaluate
-//                    )
-//            }
-//        }
-//    }
-//}
-//
-//pub(super) fn conjunction_of_clauses<T, C>(conjunctions: &Conjunctions<T>,
-//                                           scope: &Scope<'_>,
-//                                           value: &Value,
-//                                           context: &EvalContext<'_>,
-//                                           path: Path,
-//                                           compare: C) -> Result<EvalStatus, Error>
-//    where C: Fn(&T, &Scope<'_>, &Value, Path, &EvalContext<'_>) -> Result<EvalStatus, Error>
-//{
-//    'next: for disjunctions in conjunctions {
-//        for disjunction in disjunctions {
-//            match compare(
-//                disjunction, scope, value, path.clone(), context)? {
-//                EvalStatus::Unary(status) => match status {
-//                    Status::PASS | Status::SKIP => continue 'next,
-//                    Status::FAIL => continue
-//                },
-//
-//                EvalStatus::Comparison(
-//                    EvalResult{ status, from, to }) => match status {
-//                    Status::PASS | Status::SKIP => continue 'next,
-//                    Status::FAIL => continue
-//                },
-//            }
-//        }
-//        return Ok(EvalStatus::Comparison(EvalResult{
-//            status: Status::FAIL,
-//            from: Some((path.clone(), value.clone())),
-//            to: None
-//        }))
-//    }
-//    Ok(EvalStatus::Comparison(EvalResult::status(Status::PASS)))
-//}
-//
+impl Evaluate for GuardNamedRuleClause<'_> {
+    type Item = EvalStatus;
+
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval_context: &EvalContext<'_>) -> Result<Self::Item, Error> {
+        if eval_context.rule_resolutions.borrow().contains_key(&self.dependent_rule) {
+            match eval_context.rule_resolutions.borrow().get(&self.dependent_rule) {
+                Some(status) =>
+                    return Ok(EvalStatus::Unary(invert_status(*status, self.negation))),
+                None => unreachable!()
+            }
+        }
+
+        match eval_context.rule_cache.get(&self.dependent_rule) {
+            None => return Err(Error::new(ErrorKind::MissingValue(
+                format!("Attempting to resolved named rule = {}, but it does not exist. Rules = {:?}",
+                        self.dependent_rule, eval_context.rule_cache.keys().collect::<Vec<&String>>())
+            ))),
+
+            Some(rule) => {
+                match (*rule).evaluate(resolver, scope, context, path, eval_context) {
+                    Ok(r) => match r {
+                        EvalStatus::Unary(status) => Ok(
+                            EvalStatus::Unary(invert_status(status, self.negation))),
+                        EvalStatus::Comparison(EvalResult{status, from, to}) =>
+                            Ok(EvalStatus::Unary(invert_status(status, self.negation))),
+                    },
+
+                    other => other,
+                }
+            }
+        }
+    }
+}
+
 impl Evaluate for GuardClause<'_> {
     type Item = EvalStatus;
 
@@ -362,9 +117,16 @@ impl Evaluate for GuardClause<'_> {
                 context: &Value,
                 path: Path,
                 eval_context: &EvalContext<'_>) -> Result<Self::Item, Error> {
-        match self {
+        let resolution = match self {
             GuardClause::Clause(gac) => gac.evaluate(resolver, scope, context, path, eval_context),
-            GuardClause::NamedRule(r) => named_evaluate(r, eval_context)
+            GuardClause::NamedRule(r) => r.evaluate(resolver, scope, context, path, eval_context),
+        };
+        match resolution {
+            Ok(r) => {
+                eval_context.resolutions.borrow_mut().insert(eval_context.hasher.hash(self), r.clone());
+                Ok(r)
+            }
+            other => other,
         }
     }
 }
@@ -378,11 +140,39 @@ impl Evaluate for GuardAccessClause<'_> {
                 context: &Value,
                 path: Path,
                 eval: &EvalContext<'_>) -> Result<Self::Item, Error> {
-        let lhs = match resolver.resolve_query(
+        //
+        // FIXME need to address this better later. The underlying problem is Value objects
+        // can arise either from the rules file and be scoped to that or from the incoming
+        // context. To handle mixed scope references in here, we are not allowing anything to
+        // leak from here. We should think about a better model here. The issue arises and
+        // common practice in other languages were cross references are a common design pattern
+        // but in Rust we need to re-think that pattern. The query resolver needs the reference
+        // to scope/variable resolutions to support queries of the form x.y.%var.z,
+        //
+        // TODO link to issue
+        //
+        let lhs =
+            if self.access_clause.query.len() > 0 {
+            if let QueryPart::Variable(var) = &self.access_clause.query[0] {
+                let mut resolution = ResolvedValues::new();
+                for each_value in scope.get_resolutions_for_variable(var)? {
+                    resolution.extend(
+                        resolver.resolve_query(
+                            &self.access_clause.query[1..], each_value, scope, path.clone(), eval
+                        )?)
+                }
+                Some(resolution)
+            } else { None }
+        } else { None };
+
+        let lhs = match lhs {
+            None => match resolver.resolve_query(
             &self.access_clause.query, context, scope, path.clone(), eval) {
-            Ok(r) => Some(r),
-            Err(Error(ErrorKind::RetrievalError(_))) => None,
-            Err(e) => return Err(e),
+                Ok(r) => Some(r),
+                Err(Error(ErrorKind::RetrievalError(_))) => None,
+                Err(e) => return Err(e),
+            },
+            rest => rest
         };
 
         //
@@ -453,9 +243,30 @@ impl Evaluate for GuardAccessClause<'_> {
             Some(l) => match l {
                 LetValue::Value(v) => ValueType::Single((self_path, v)),
                 LetValue::AccessClause(access) => {
-                    let resolved= resolver.resolve_query(
-                        access, context, scope, self_path.clone(), eval)?;
-                    ValueType::Query(resolved)
+                    let inner = if access.len() > 0 {
+                        if let QueryPart::Variable(var) = &access[0] {
+                            let mut resolution = ResolvedValues::new();
+                            for each_value in scope.get_resolutions_for_variable(var)? {
+                                resolution.extend(
+                                    resolver.resolve_query(
+                                        &access[1..], each_value, scope, path.clone(), eval
+                                    )?)
+                            }
+                            Some(resolution)
+                        } else { None }
+                    } else { None };
+
+                    let resolved = match inner {
+                        None => match resolver.resolve_query(
+                            &self.access_clause.query, context, scope, path.clone(), eval) {
+                            Ok(r) => Some(r),
+                            Err(Error(ErrorKind::RetrievalError(_))) => None,
+                            Err(e) => return Err(e),
+                        },
+                        rest => rest
+                    };
+
+                    ValueType::Query(resolved.unwrap())
                 }
             },
             None => return Err(Error::new(ErrorKind::MissingValue(
@@ -566,7 +377,7 @@ impl Evaluate for RuleClause<'_> {
         match self {
             RuleClause::Clause(gc) => gc.evaluate(resolver, scope, context, path, eval_context),
             RuleClause::WhenBlock(conditions, block) =>
-                self.conditionally_evalute(
+                conditionally_evalute(
                     resolver,
                     scope,
                     context,
@@ -575,7 +386,7 @@ impl Evaluate for RuleClause<'_> {
                     Some(conditions),
                     block),
             RuleClause::TypeBlock(tb) =>
-                self.conditionally_evalute(
+                conditionally_evalute(
                     resolver,
                     scope,
                     context,
@@ -588,38 +399,67 @@ impl Evaluate for RuleClause<'_> {
 
 }
 
-impl RuleClause<'_> {
-    fn conditionally_evalute(&self,
-                             resolver: &dyn Resolver,
-                             scope: &Scope<'_>,
-                             context: &Value,
-                             eval_context: &EvalContext<'_>,
-                             path: Path,
-                             conditions: Option<&Conjunctions<GuardClause<'_>>>,
-                             block: &Block<GuardClause<'_>>) -> Result<EvalStatus, Error> {
-        let (skip, from, to) = match conditions {
-            Some(when) => match when.evaluate(resolver, scope, context, path.clone(), eval_context)? {
-                EvalStatus::Comparison(EvalResult{status: Status::PASS, from, to}) => (false, from, to),
-                EvalStatus::Unary(Status::PASS) => (false, None, None),
-                EvalStatus::Comparison(EvalResult{ status: Status::FAIL, from, to}) => (true, from, to),
-                EvalStatus::Unary(Status::FAIL) => (true, None, None),
-                _ => unreachable!()
+fn conditionally_evalute<T: Evaluate<Item=EvalStatus>>(resolver: &dyn Resolver,
+                         scope: &Scope<'_>,
+                         context: &Value,
+                         eval_context: &EvalContext<'_>,
+                         path: Path,
+                         conditions: Option<&Conjunctions<GuardClause<'_>>>,
+                         block: &Block<T>) -> Result<EvalStatus, Error> {
+    let (skip, from, to) = match conditions {
+        Some(when) => match when.evaluate(resolver, scope, context, path.clone(), eval_context)? {
+            EvalStatus::Comparison(EvalResult{status: Status::PASS, from, to}) => (false, from, to),
+            EvalStatus::Unary(Status::PASS) => (false, None, None),
+            EvalStatus::Comparison(EvalResult{ status: Status::FAIL, from, to}) => (true, from, to),
+            EvalStatus::Unary(Status::FAIL) => (true, None, None),
+            _ => unreachable!()
+        },
+
+        None =>  (false, None, None)
+    };
+
+    if !skip {
+        let mut block_scope = Scope::child(scope);
+        block_scope.assignments(&block.assignments, path.clone())?;
+        block_scope.assignment_queries(&block.assignments, path.clone(), context, resolver, eval_context)?;
+        block.conjunctions.evaluate(resolver, &block_scope, context, path, eval_context)
+    }
+    else {
+        Ok(EvalStatus::Comparison(EvalResult{ status: Status::SKIP, from, to}))
+    }
+}
+
+impl Evaluate for Rule<'_> {
+    type Item = EvalStatus;
+
+    fn evaluate(&self,
+                resolver: &dyn Resolver,
+                scope: &Scope<'_>,
+                context: &Value,
+                path: Path,
+                eval_context: &EvalContext<'_>) -> Result<Self::Item, Error> {
+        match conditionally_evalute(
+            resolver,
+            scope,
+            context,
+            eval_context,
+            path.clone(),
+            if let Some(conds) = &self.conditions { Some(conds) } else { None },
+            &self.block
+        ) {
+            Ok(r) => {
+                let status = r.clone();
+                let status = match status {
+                    EvalStatus::Unary(stat) => stat,
+                    EvalStatus::Comparison(EvalResult{status, from, to}) => status
+                };
+                eval_context.rule_resolutions.borrow_mut().insert(self.rule_name.to_string(), status);
+                Ok(r)
             },
 
-            None =>  (false, None, None)
-        };
-
-        if !skip {
-            let mut block_scope = Scope::child(scope);
-            block_scope.assignments(&block.assignments, path.clone())?;
-            block_scope.assignment_queries(&block.assignments, path.clone(), context, resolver, eval_context)?;
-            block.conjunctions.evaluate(resolver, &block_scope, context, path, eval_context)
-        }
-        else {
-            Ok(EvalStatus::Comparison(EvalResult{ status: Status::SKIP, from, to}))
+            other => other,
         }
     }
-
 }
 
 impl<T: Evaluate<Item=EvalStatus>> Evaluate for Conjunctions<T> {
@@ -690,7 +530,8 @@ mod tests {
         let images = request.object.spec.containers[*].image
 
         request.kind.kind == "Pod"
-        not %images == /^hooli.com/ <<images does not come from trusted registry>>
+        # not %images == /^hooli.com/ <<images does not come from trusted registry>> # PASS
+        %images == /^hooli.com/ <<images does not come from trusted registry>> # FAIL
     }
     "#;
 
@@ -700,11 +541,19 @@ mod tests {
         let rules = rules_file(from_str2(OPA_LIKE_RULES))?;
         let shell_rule = &rules.guard_rules[0];
         let opa_content = create_from_json("assets/opa-sample.json")?;
-        let eval = EvalContext::new(&opa_content);
+
+        //let eval = EvalContext::new(&opa_content);
+
+        let mut eval = EvalContext::new(opa_content, &rules);
+        //
+        // flag the when clause on dependent rule
+        //
+        //eval.rule_resolutions.borrow_mut().insert(String::from("k8s_exists"), Status::PASS);
+
         let resolvers = QueryResolver{};
         let rule_clause = &shell_rule.block.conjunctions[0][0];
         if let RuleClause::Clause(gac) = rule_clause {
-            let assessment = gac.evaluate(&resolvers, &scope, &opa_content, Path::new(&["/"]), &eval)?;
+            let assessment = gac.evaluate(&resolvers, &scope, &eval.root, Path::new(&["/"]), &eval)?;
             println!("{:?}", assessment);
             assert_eq!(EvalStatus::Comparison(EvalResult::status(Status::PASS)), assessment);
         }
@@ -714,7 +563,7 @@ mod tests {
             for each in &rule_clause.block.conjunctions {
                 for disjunction in each {
                     if let RuleClause::Clause(gac) = disjunction {
-                        let assessment = gac.evaluate(&resolvers, &scope, &opa_content, Path::new(&["/"]), &eval)?;
+                        let assessment = gac.evaluate(&resolvers, &scope, &eval.root, Path::new(&["/"]), &eval)?;
                         println!("{:?}", assessment);
                         match assessment {
                             EvalStatus::Unary(status) => assert_eq!(status, Status::PASS),
@@ -725,6 +574,14 @@ mod tests {
                 }
             }
         }
+
+        //
+        // Test everything for a rule clause
+        //
+        let rule_clause = &rules.guard_rules[3];
+        let result = rule_clause.evaluate(&resolvers, &scope, &eval.root, Path::new(&["/"]), &eval)?;
+
+
         Ok(())
     }
 }

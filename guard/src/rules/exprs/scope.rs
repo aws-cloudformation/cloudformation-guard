@@ -5,7 +5,7 @@ use crate::errors::{Error, ErrorKind};
 use super::{ResolvedValues};
 
 #[derive(PartialEq, Debug)]
-pub(super) struct Scope<'loc> {
+pub(crate) struct Scope<'loc> {
     variable_cache: HashMap<String, ResolvedValues<'loc>>,
     parent: *const Scope<'loc>,
 }
@@ -19,21 +19,21 @@ fn copy<'loc>(resolutions: &'loc ResolvedValues<'loc>) -> Vec<&'loc Value> {
 }
 
 impl<'loc> Scope<'loc> {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Scope {
             variable_cache: HashMap::new(),
             parent: std::ptr::null()
         }
     }
 
-    pub(super) fn child<'p: 'loc>(parent: *const Scope<'p>) -> Self {
+    pub(crate) fn child<'p: 'loc>(parent: *const Scope<'p>) -> Self {
         Scope {
             variable_cache: HashMap::new(),
             parent,
         }
     }
 
-    pub(super) fn assignments(&mut self,
+    pub(crate) fn assignments(&mut self,
                               assignments: &'loc [LetExpr<'_>],
                               path: Path) -> Result<(), Error> {
         for assign in assignments {
@@ -47,7 +47,7 @@ impl<'loc> Scope<'loc> {
         Ok(())
     }
 
-    pub(super) fn assignment_queries(&mut self,
+    pub(crate) fn assignment_queries(&mut self,
                                      queries: &[LetExpr<'_>],
                                      path: Path,
                                      value: &'loc Value,
@@ -63,7 +63,7 @@ impl<'loc> Scope<'loc> {
         Ok(())
     }
 
-    pub(super) fn get_resolutions_for_variable(&self, variable: &str) -> Result<Vec<&Value>, Error> {
+    pub(crate) fn get_resolutions_for_variable(&self, variable: &str) -> Result<Vec<&Value>, Error> {
         match self.variable_cache.get(variable) {
             Some(v) => Ok(copy(v)),
             None => {
@@ -78,7 +78,7 @@ impl<'loc> Scope<'loc> {
         }
     }
 
-    pub(super) fn add_variable_resolution(
+    pub(crate) fn add_variable_resolution(
         &mut self,
         variable: &str,
         resolutions: ResolvedValues<'loc>) {

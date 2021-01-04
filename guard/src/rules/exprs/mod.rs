@@ -62,4 +62,5 @@ mod query;
 pub(crate) use types::*;
 pub(crate) use scope::*;
 pub(crate) use evaluate::*;
+pub(crate) use query::*;
 
