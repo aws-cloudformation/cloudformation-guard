@@ -36,18 +36,29 @@ enum ValueType<'c> {
 fn compare<F>(lhs: &Vec<(&Path, &Value)>, rhs: &Vec<(&Path, &Value)>, compare: F, any: bool) -> Result<(bool, usize, usize), Error>
     where F: Fn(&Value, &Value) -> Result<bool, Error>
 {
-    for (lhs_idx, (lhs_path, lhs_value)) in lhs.iter().enumerate() {
-        for (rhs_idx, (rhs_path, rhs_value)) in rhs.iter().enumerate() {
-            let check = compare(*lhs_value, *rhs_value)?;
-            if any && check {
-                return Ok((true, lhs_idx, rhs_idx))
-            }
+    let result = loop {
+        'lhs:
+        for (lhs_idx, (lhs_path, lhs_value)) in lhs.iter().enumerate() {
+            for (rhs_idx, (rhs_path, rhs_value)) in rhs.iter().enumerate() {
+                let check = compare(*lhs_value, *rhs_value)?;
+                if any && check {
+                    continue 'lhs
+                }
 
-            if !any && !check {
-                return Ok((false, lhs_idx, rhs_idx))
+                if !any && !check {
+                    return Ok((false, lhs_idx, rhs_idx))
+                }
+            }
+            //
+            // We are only hear in the "all" case when all of them checked out. For the any case
+            // it would be a failure to be here
+            //
+            if any {
+                return Ok((false, lhs_idx, rhs.len()-1))
             }
         }
-    }
+        break;
+    };
     Ok((true, lhs.len(), rhs.len()))
 }
 

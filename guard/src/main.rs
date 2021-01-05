@@ -24,6 +24,7 @@ fn main() -> Result<(), errors::Error>{
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
     commands.push(Box::new(crate::commands::evaluate::EvaluateRules::new()));
+    commands.push(Box::new(crate::commands::evaluate2::EvaluateRules::new()));
     commands.push(Box::new(crate::commands::parse_tree::ParseTreeView::new()));
 
     let mappings = commands.iter()

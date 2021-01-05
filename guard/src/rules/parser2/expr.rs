@@ -235,6 +235,20 @@ fn other_operations(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
 
 
 fn value_cmp(input: Span2) -> IResult<Span2, (CmpOperator, bool)> {
+    //
+    // This is really crappy as the earlier version used << for custom message
+    // delimiter. '<' can be interpreted as Lt comparator.
+    // TODO revisit the custom message delimiter
+    //
+    let (input, is_custom_message_start) = peek(opt(value(true,tag("<<"))))(input)?;
+    if is_custom_message_start.is_some() {
+        return Err(nom::Err::Error(ParserError {
+            span: input,
+            context: "Custom message tag detected".to_string(),
+            kind: nom::error::ErrorKind::Tag
+        }))
+    }
+
     alt((
         //
         // Basic cmp checks. Order does matter, you always go from more specific to less
@@ -408,36 +422,35 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
     //
     let (rest, keys) = opt(peek(keys))(rest)?;
 
-    let (rest, (lhs, _ignored_space, cmp, _ignored)) =
+    let (rest, (lhs, cmp)) =
         if keys.is_some() {
-            let (r, (space_ign, cmp, space_ign2)) = tuple((
+            let (r, (_space_ign, cmp)) = tuple((
                       context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
                       // error if there is no value_cmp
                       context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
-                              value_cmp),
-                      // error if this isn't followed by space or comment or newline
-                      context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment)
+                              value_cmp)
                   ))(rest)?;
-            (r, (AccessQuery::from([]), space_ign, cmp, space_ign2))
+            (r, (AccessQuery::from([]), cmp))
         } else {
-            tuple((
+            let (r, (access, _ign_space, cmp)) = tuple((
                 access,
                 // It is an error to not have a ws/comment following it
                 context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
                 // error if there is no value_cmp
                 context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
-                        value_cmp),
-                // error if this isn't followed by space or comment or newline
-                context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
-            ))(rest)?
+                        value_cmp)
+            ))(rest)?;
+            (r, (access, cmp))
         };
 
     if !does_comparator_have_rhs(&cmp.0) {
-        let (rest, custom_message) = cut(
+        let remaining = rest.clone();
+        let (remaining, custom_message) = cut(
             map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
                 |msg| {
                     msg.map(String::from)
-                }))(rest)?;
+                }))(remaining)?;
+        let rest = if custom_message.is_none() { rest } else { remaining };
         Ok((rest,
             GuardClause::Clause(
                 GuardAccessClause {
@@ -463,7 +476,8 @@ fn clause(input: Span2) -> IResult<Span2, GuardClause> {
                                 (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
                             }),
                         map(tuple((
-                            access, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            preceded(zero_or_more_ws_or_comment, access),
+                            preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             |(rhs, msg)| {
                                 (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
                             }),
@@ -2687,29 +2701,6 @@ mod tests {
             }
         }
 
-        let lhs_separator = " ";
-        for each in lhs.iter() {
-            for (op, _) in comparators.iter() {
-                let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}{msg}",
-                                             lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator, msg = "<< message >>");
-                let offset = (*each).len() + (*op).len() + 1;
-                let fragment = format!("{sep}{rhs}{msg}", rhs = rhs, sep = rhs_separator, msg = "<< message >>");
-                let error = Err(nom::Err::Error(ParserError {
-                    span: unsafe {
-                        Span2::new_from_raw_offset(
-                            offset,
-                            1,
-                            &fragment,
-                            "",
-                        )
-                    },
-                    kind: nom::error::ErrorKind::Char,
-                    context: "expecting one or more WS or comment blocks".to_string(),
-                }));
-                assert_eq!(clause(from_str2(&access_pattern)), error);
-            }
-        }
-
         //
         // Testing for missing access part
         //
@@ -2735,13 +2726,13 @@ mod tests {
             for (op, _) in comparators.iter() {
                 let access_pattern = format!("{lhs} {op} << message >>", lhs = *each, op = *op);
                 println!("Testing for {}", access_pattern);
-                let offset = (*each).len() + (*op).len() + 2; // 2 is for 2 spaces
+                let offset = (*each).len() + (*op).len() + 1; // 2 is for 2 spaces
                 let error = Err(nom::Err::Failure(ParserError {
                     span: unsafe {
                         Span2::new_from_raw_offset(
                             offset,
                             1,
-                            "<< message >>",
+                            " << message >>",
                             "",
                         )
                     },
@@ -3871,6 +3862,15 @@ let latest := "ami-6458235"
         "###;
 
         let rules_files = rules_file(from_str2(s))?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_rule_block_clause() -> Result<(), Error> {
+        let s = "{ %select_lambda_service EMPTY or
+     %select_lambda_service.Action.* == /sts:AssumeRole/ }";
+        let span = from_str2(s);
+        let rule_block = block(rule_block_clause)(span)?;
         Ok(())
     }
 

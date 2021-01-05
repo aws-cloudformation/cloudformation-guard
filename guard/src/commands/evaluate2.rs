@@ -21,6 +21,12 @@ use std::convert::TryFrom;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct EvaluateRules {}
 
+impl EvaluateRules {
+    pub(crate) fn new() -> Self {
+        EvaluateRules{}
+    }
+}
+
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -47,7 +53,7 @@ impl<'loc> EvaluationResults<'loc> {
 
 impl Command for EvaluateRules {
     fn name(&self) -> &'static str {
-        "evaluate"
+        "evaluate2"
     }
 
 
