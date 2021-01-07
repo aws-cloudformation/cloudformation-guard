@@ -2,7 +2,7 @@
 
 Most bug fixes, doc enhancements, and small, incremental improvements for CloudFormation Guard can be surfaced and resolved via GitHub issues and pull requests. However, any suggestions for substantial changes to the ruleset langauge or tooling should be documented and actioned upon via a request for comments (RFC). This will provide a standardized process for discussion of major improvements to the tooling and ruleset language.  
 
-## Process
+## RFC Process
 This goes over the official process for creating, drafting, reviewing, and seeing an RFC to completion.
 
 ### Create an RFC
