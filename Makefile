@@ -1,8 +1,5 @@
 .PHONY: cfn-guard cfn-guard-rulegen
 
-default:
-	cargo build --release; cp target/release/cfn-guard ./bin
-
 cfn-guard:
 	cargo build --release; cp target/release/cfn-guard ./bin
 
