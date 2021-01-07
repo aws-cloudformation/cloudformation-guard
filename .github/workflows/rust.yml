@@ -18,14 +18,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose --release
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Test Makefiles
+    - name: Build and test makefiles
       run: |
         make
-        cd ./cfn-guard
-        make
-        cd ../cfn-guard-rulegen
-        make
+        make cfn-guard
+        make cfn-guard-rulegen
+    - name: Run tests
+      run: make test

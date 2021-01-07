@@ -1,10 +1,13 @@
 .PHONY: cfn-guard cfn-guard-rulegen
 
+default:
+	cargo build --verbose --release; cp target/release/cfn-guard ./bin
+
 cfn-guard:
-	cargo build --release; cp target/release/cfn-guard ./bin
+	cd cfn-guard; make
 
 cfn-guard-rulegen:
-	cargo build --release; cp target/release/cfn-guard-rulegen ./bin
+	cd cfn-guard-rulegen; make
 
 cfn-guard-lambda_install:
 	cd cfn-guard-lambda; make install
@@ -16,7 +19,7 @@ clean:
 	if test -f cloudformation-guard.tar.gz; then rm cloudformation-guard.tar.gz; fi
 
 test:
-	cargo test
+	cargo test --verbose
 
 release_with_binaries: clean cfn-guard cfn-guard-rulegen
 	tar czvf cloudformation-guard.tar.gz -X Exclude.txt .
