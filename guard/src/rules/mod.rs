@@ -178,6 +178,7 @@ pub(crate) mod parser;
 pub(crate) mod expr;
 pub(crate) mod parser2;
 pub(crate) mod exprs;
+pub(crate) mod evaluate;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum EvalStatus {

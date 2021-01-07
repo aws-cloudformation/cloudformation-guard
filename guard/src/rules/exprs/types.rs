@@ -41,8 +41,6 @@ pub(crate) struct LetExpr<'loc> {
 /// and it is expected to be map to a struct with type defined usually with `{` and `}`. Use the
 /// key to be '*' to indicate selecting all fields for an object. `*` returns an array and is therefore
 /// eligible for predicate based selection
-/// * Variable = %<String>, this maps to an assigned variable [LetExpr] that must resolve to a "string'
-/// when accessing a key in  struct or an index when accessing an array
 /// * Predicate query, which is used to select instances from an array of structure. If we need to
 /// select all entries in the array use the `[*]` syntax. To select specific elements in the array
 /// use the structural key matches. E.g. to select all resources from an CFN template that match the
@@ -51,14 +49,34 @@ pub(crate) struct LetExpr<'loc> {
 ///
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum QueryPart<'loc> {
-    Variable(String),
     Key(String),
     AllKeys,
-    AllIndices(String),
-    Index(String, i32),
-    Filter(String, Conjunctions<GuardClause<'loc>>),
+    AllIndices,
+    Index(i32),
+    Filter(Conjunctions<GuardClause<'loc>>),
 }
 
+impl<'loc> QueryPart<'loc> {
+    pub(crate) fn is_variable(&self) -> bool {
+        let name = match self {
+            QueryPart::Key(name) => name,
+            _ => return false,
+        };
+        name.starts_with('%')
+    }
+
+    pub(crate) fn variable(&self) -> Option<&str> {
+        let name = match self {
+            QueryPart::Key(name) => name,
+            _ => return None
+        };
+        if name.starts_with('%') {
+            name.strip_prefix('%')
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum VariableOrValue {

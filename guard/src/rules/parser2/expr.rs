@@ -117,6 +117,7 @@ use super::values::parse_value;
 use crate::rules::exprs::*;
 use crate::errors::Error;
 use crate::rules::parser2::parse_string;
+use serde_json::ser::CharEscape::Quote;
 
 //
 // ABNF     =  1*CHAR [ 1*(CHAR / _) ]
@@ -302,40 +303,37 @@ fn predicate_filter_clauses(input: Span2) -> IResult<Span2, Conjunctions<GuardCl
     Ok((input, filters))
 }
 
-fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>, QueryPart>
+fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2<'loc>, (QueryPart, Option<QueryPart>)>
     where F: Fn(Span2<'loc>) -> IResult<Span2<'loc>, String>
 {
     move |input: Span2| {
         let (input, first) = parser(input)?;
         let (input, is_filter) = opt(char('['))(input)?;
-        let (input, part) = if is_filter.is_some() {
+        let (input, filter_part) = if is_filter.is_none() { (input, None) } else {
             let (input, part) = cut(alt((
-                map(predicate_filter_clauses, |clauses| QueryPart::Filter(first.clone(), clauses)),
-                map( preceded(space0, char('*')), |_all| QueryPart::AllIndices(first.clone())),
+                map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses)),
+                value(QueryPart::AllIndices, preceded(space0, char('*'))),
                 map( preceded(space0, super::values::parse_int_value), |idx| {
                         let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
-                        QueryPart::Index(first.clone(), idx)
-                    }
-                ),
-            )))(input)?;
+                    QueryPart::Index(idx)
+                }),
+            ))
+            )(input)?;
             let (input, _ignored) = cut(terminated(zero_or_more_ws_or_comment, char(']')))(input)?;
-            (input, part)
-        }
-        else if first.starts_with("%") {
-            (input, QueryPart::Variable(first.replace("%", "")))
-        }
-        else if &first == "*" {
-            (input, QueryPart::AllKeys)
+            (input, Some(part))
+        };
+
+        if &first == "*" {
+            Ok((input, (QueryPart::AllKeys, filter_part)))
         }
         else {
-            (input, QueryPart::Key(first))
-        };
-        Ok((input, part))
+            Ok((input, (QueryPart::Key(first), filter_part)))
+        }
     }
 }
 
 //
-//  dotted_access              = "." (var_name / var_name_access / "*")
+//  dotted_access              = "." (var_name / "*")
 //
 // This combinator does not fail. It is the responsibility of the consumer to fail based
 // on error.
@@ -345,18 +343,18 @@ fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span2<'loc>) -> IResult<Span2
 //
 // see var_name, var_name_access for other error codes
 //
-fn dotted_access(input: Span2) -> IResult<Span2, AccessQuery> {
+fn dotted_access(input: Span2) -> IResult<Span2, Vec<QueryPart>> {
     fold_many1(
         preceded(char('.'), predicate_clause(
-            alt((var_name_access_inclusive,
-                 property_name,
+            alt((property_name,
                  value("*".to_string(), char('*')),
                 map(digit1, |s: Span2| (*s.fragment()).to_string())
             )))
         ),
-        AccessQuery::new(),
-        |mut acc: AccessQuery, part| {
-            acc.push(part);
+        Vec::new(),
+        |mut acc: Vec<QueryPart>, part| {
+            acc.push(part.0);
+            part.1.map(|p| acc.push(p));
             acc
         },
     )(input)
@@ -377,11 +375,24 @@ pub(crate) fn access(input: Span2) -> IResult<Span2, AccessQuery> {
         predicate_clause(
             alt((var_name_access_inclusive, property_name))),
         opt(dotted_access)), |(first, remainder)| {
-        remainder.map(|mut query| {
-            query.insert(0, first.clone());
-            query
-        })
-        .unwrap_or(vec![first.clone()])
+
+        match remainder {
+            Some(mut parts) => {
+                parts.insert(0, first.0);
+                if let Some(second) = first.1 {
+                    parts.insert(1, second);
+                }
+                parts
+            },
+
+            None => {
+                let mut parts = vec![first.0];
+                if let Some(second) = first.1 {
+                    parts.push(second);
+                }
+                parts
+            }
+        }
     })(input)
 }
 
@@ -1259,10 +1270,7 @@ mod tests {
     fn to_string_vec<'loc>(list: &[&str]) -> Vec<QueryPart<'loc>> {
         list.iter()
             .map(|part|
-                if (*part).starts_with("%") {
-                    QueryPart::Variable((*part).to_string().replace("%", ""))
-                }
-                else if *part == "*" {
+                if *part == "*" {
                     QueryPart::AllKeys
                 }
                 else {
@@ -1279,7 +1287,7 @@ mod tests {
             ".configuration.engine", // ok,
             ".config.engine.", // ok
             ".config.easy", // ok
-            ".%engine_map.%engine", // ok
+            //".%engine_map.%engine", // ok
             ".*.*.port", // ok
             ".port.*.ok", // ok
             ".first. second", // ok, why, as the firs part is valid, the remainder will be ". second"
@@ -1358,23 +1366,23 @@ mod tests {
             )),
 
             // ".%engine_map.%engine"
-            Ok((
-                unsafe {
-                    Span2::new_from_raw_offset(
-                        examples[5].len(),
-                        1,
-                        "",
-                        "",
-                    )
-                },
-                to_string_vec(&["%engine_map", "%engine"])
-            )),
+//            Ok((
+//                unsafe {
+//                    Span2::new_from_raw_offset(
+//                        examples[5].len(),
+//                        1,
+//                        "",
+//                        "",
+//                    )
+//                },
+//                to_string_vec(&["%engine_map", "%engine"])
+//            )),
 
             // ".*.*.port", // ok
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[6].len(),
+                        examples[5].len(),
                         1,
                         "",
                         "",
@@ -1387,7 +1395,7 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[7].len(),
+                        examples[6].len(),
                         1,
                         "",
                         "",
@@ -1412,7 +1420,7 @@ mod tests {
             //" .first.second", // err
             Err(nom::Err::Error(
                 ParserError {
-                    span: from_str2(examples[9]),
+                    span: from_str2(examples[8]),
                     kind: nom::error::ErrorKind::Many1,
                     context: "".to_string(),
                 }
@@ -1580,9 +1588,9 @@ mod tests {
             Ok(( // "engine.*.type.%var", // 8 ok
                  unsafe {
                      Span2::new_from_raw_offset(
-                         examples[8].len(),
+                         examples[8].len() - ".%var".len(),
                          1,
-                         "",
+                         ".%var",
                          "",
                      )
                  },
@@ -1590,7 +1598,6 @@ mod tests {
                      QueryPart::Key("engine".to_string()),
                      QueryPart::AllKeys,
                      QueryPart::Key("type".to_string()),
-                     QueryPart::Variable("var".to_string()),
                  ])
             )),
             Ok(( // "engine[0]", // 9 ok
@@ -1603,7 +1610,8 @@ mod tests {
                      )
                  },
                  AccessQuery::from([
-                     QueryPart::Index("engine".to_string(), 0)
+                     QueryPart::Key("engine".to_string()),
+                     QueryPart::Index(0),
                  ])
             )),
             Ok(( // 10 "engine [0]", // 10 ok engine will be property access part
@@ -1641,16 +1649,14 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[12].len(),
+                        examples[12].len() - ".%name.*".len(),
                         1,
-                        "",
+                        ".%name.*",
                         "",
                     )
                 },
                 AccessQuery::from([
                     QueryPart::Key("engine".to_string()),
-                    QueryPart::Variable("name".to_string()),
-                    QueryPart::AllKeys,
                 ])
             )),
 
@@ -1665,7 +1671,7 @@ mod tests {
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Key("%engine".to_string()),
                     QueryPart::Key("type".to_string()),
                 ])
             )),
@@ -1682,9 +1688,10 @@ mod tests {
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Key("%engine".to_string()),
                     QueryPart::AllKeys,
-                    QueryPart::Index("type".to_string(), 0),
+                    QueryPart::Key("type".to_string()),
+                    QueryPart::Index(0),
                 ])
             )),
 
@@ -1693,16 +1700,14 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[15].len(),
+                        examples[15].len() - ".%type.*".len(),
                         1,
-                        "",
+                        ".%type.*",
                         "",
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Variable("engine".to_string()),
-                    QueryPart::Variable("type".to_string()),
-                    QueryPart::AllKeys,
+                    QueryPart::Key("%engine".to_string()),
                 ])
             )),
 
@@ -1711,17 +1716,14 @@ mod tests {
             Ok((
                 unsafe {
                     Span2::new_from_raw_offset(
-                        examples[16].len(),
+                        examples[16].len() - ".%type.*.port".len(),
                         1,
-                        "",
+                        ".%type.*.port",
                         "",
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Variable("engine".to_string()),
-                    QueryPart::Variable("type".to_string()),
-                    QueryPart::AllKeys,
-                    QueryPart::Key("port".to_string()),
+                    QueryPart::Key("%engine".to_string()),
                 ])
             )),
 
@@ -1737,7 +1739,7 @@ mod tests {
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Variable("engine".to_string()),
+                    QueryPart::Key("%engine".to_string()),
                     QueryPart::AllKeys,
                 ])
             )),
@@ -1754,7 +1756,8 @@ mod tests {
                     )
                 },
                 AccessQuery::from([
-                    QueryPart::Filter("engine".to_string(), vec![
+                    QueryPart::Key("engine".to_string()),
+                    QueryPart::Filter(vec![
                         vec![GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
@@ -2399,7 +2402,7 @@ mod tests {
 
         let lhs = [
             "%engine.port",
-            "%engine.%port",
+            //"%engine.%port",
             "%engine.*.image"
         ];
 
@@ -2528,7 +2531,8 @@ mod tests {
             )},
                 AccessQuery::from([
                     QueryPart::Key("resources".to_string()),
-                    QueryPart::Filter("*".to_string(), Conjunctions::from([
+                    QueryPart::AllKeys,
+                    QueryPart::Filter(Conjunctions::from([
                         Disjunctions::from([
                             GuardClause::Clause(
                                 GuardAccessClause {
@@ -2562,7 +2566,8 @@ mod tests {
             )},
                 AccessQuery::from([
                     QueryPart::Key("resources".to_string()),
-                    QueryPart::Filter("*".to_string(), Conjunctions::from([
+                    QueryPart::AllKeys,
+                    QueryPart::Filter(Conjunctions::from([
                         Disjunctions::from([
                             GuardClause::Clause(
                                 GuardAccessClause {
@@ -3057,11 +3062,11 @@ mod tests {
                                     compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
                                     query: "configurations.containers[*].image".split(".").map( |part|
                                         if part.contains('[') {
-                                            QueryPart::AllIndices("containers".to_string())
+                                            vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices]
                                         } else {
-                                            QueryPart::Key(part.to_string())
+                                            vec![QueryPart::Key(part.to_string())]
                                         }
-                                    ).collect(),
+                                    ).into_iter().flatten().collect(),
                                     custom_message: None,
                                     comparator: (CmpOperator::Eq, false),
                                 },
@@ -3241,7 +3246,7 @@ mod tests {
                 LetExpr {
                     var: String::from("engines"),
                     value: LetValue::AccessClause(AccessQuery::from([
-                        QueryPart::Variable(String::from("engines"))]))
+                        QueryPart::Key(String::from("%engines"))]))
                 }
             )),
 
@@ -3305,7 +3310,8 @@ mod tests {
                     value: LetValue::AccessClause(
                         AccessQuery::from([
                             QueryPart::Key(String::from("resources")),
-                            QueryPart::Filter(String::from("*"), Conjunctions::from(
+                            QueryPart::AllKeys,
+                            QueryPart::Filter(Conjunctions::from(
                                 [
                                     Disjunctions::from([
                                         GuardClause::Clause(
@@ -3392,7 +3398,7 @@ mod tests {
                                     GuardAccessClause {
                                         access_clause: AccessClause {
                                             query: AccessQuery::from([
-                                                QueryPart::Variable(String::from("keyName"))
+                                                QueryPart::Key(String::from("%keyName"))
                                             ]),
                                             comparator: (CmpOperator::In, false),
                                             custom_message: None,
@@ -3418,7 +3424,7 @@ mod tests {
                                     GuardAccessClause {
                                         access_clause: AccessClause {
                                             query: AccessQuery::from([
-                                                QueryPart::Variable(String::from("keyName"))
+                                                QueryPart::Key(String::from("%keyName"))
                                             ]),
                                             comparator: (CmpOperator::In, true),
                                             custom_message: None,
@@ -3656,7 +3662,7 @@ mod tests {
                                                             custom_message: None,
                                                             query: access_from(&["InstanceType"]),
                                                             compare_with: Some(LetValue::AccessClause(AccessQuery::from([
-                                                                QueryPart::Variable("ec2_instance_types".to_string())
+                                                                QueryPart::Key("%ec2_instance_types".to_string())
                                                             ]))),
                                                             location: FileLocation {
                                                                 file_name: "",
@@ -3694,7 +3700,7 @@ mod tests {
                                                     GuardAccessClause {
                                                         access_clause: AccessClause {
                                                             query: AccessQuery::from([
-                                                                QueryPart::Variable("volumes".to_string()),
+                                                                QueryPart::Key("%volumes".to_string()),
                                                                 QueryPart::AllKeys,
                                                                 QueryPart::Key("Ebs".to_string())
                                                             ]),
@@ -3716,7 +3722,7 @@ mod tests {
                                                     GuardAccessClause {
                                                         access_clause: AccessClause {
                                                             query: AccessQuery::from([
-                                                                QueryPart::Variable("volumes".to_string()),
+                                                                QueryPart::Key("%volumes".to_string()),
                                                                 QueryPart::AllKeys,
                                                                 QueryPart::Key("device_name".to_string())
                                                             ]),
@@ -3738,7 +3744,7 @@ mod tests {
                                                     GuardAccessClause {
                                                         access_clause: AccessClause {
                                                             query: AccessQuery::from([
-                                                                QueryPart::Variable("volumes".to_string()),
+                                                                QueryPart::Key("%volumes".to_string()),
                                                                 QueryPart::AllKeys,
                                                                 QueryPart::Key("Ebs".to_string()),
                                                                 QueryPart::Key("encrypted".to_string())
@@ -3761,7 +3767,7 @@ mod tests {
                                                     GuardAccessClause {
                                                         access_clause: AccessClause {
                                                             query: AccessQuery::from([
-                                                                QueryPart::Variable("volumes".to_string()),
+                                                                QueryPart::Key("%volumes".to_string()),
                                                                 QueryPart::AllKeys,
                                                                 QueryPart::Key("Ebs".to_string()),
                                                                 QueryPart::Key("delete_on_termination".to_string())

@@ -164,7 +164,7 @@ impl Evaluate for GuardAccessClause<'_> {
         //
         let lhs =
             if self.access_clause.query.len() > 0 {
-            if let QueryPart::Variable(var) = &self.access_clause.query[0] {
+            if let Some(var) = self.access_clause.query[0].variable() {
                 let mut resolution = ResolvedValues::new();
                 for each_value in scope.get_resolutions_for_variable(var)? {
                     resolution.extend(
@@ -255,7 +255,7 @@ impl Evaluate for GuardAccessClause<'_> {
                 LetValue::Value(v) => ValueType::Single((self_path, v)),
                 LetValue::AccessClause(access) => {
                     let inner = if access.len() > 0 {
-                        if let QueryPart::Variable(var) = &access[0] {
+                        if let Some(var) = access[0].variable() {
                             let mut resolution = ResolvedValues::new();
                             for each_value in scope.get_resolutions_for_variable(var)? {
                                 resolution.extend(

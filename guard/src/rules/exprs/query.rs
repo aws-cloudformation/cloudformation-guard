@@ -25,6 +25,11 @@ impl Resolver for QueryResolver {
         let mut path_ref = path;
 
         for (index, query_part) in query.iter().enumerate() {
+            if query_part.is_variable() {
+                return Err(Error::new(ErrorKind::IncompatibleError(
+                    "Do not support variable interpolation inside a query".to_string()
+                )))
+            }
             match query_part {
                 QueryPart::Key(key) => {
                     //
@@ -42,12 +47,17 @@ impl Resolver for QueryResolver {
                     }
                 },
 
-                QueryPart::Index(key, idx) => {
-                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
-                    path_ref = path_ref.append_str(key);
+                QueryPart::Index(idx) => {
                     value_ref = retrieve_index(*idx, value_ref, &path_ref)?;
                     path_ref = path_ref.append((*idx).to_string());
                 },
+
+//                QueryPart::Index(key, idx) => {
+//                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
+//                    path_ref = path_ref.append_str(key);
+//                    value_ref = retrieve_index(*idx, value_ref, &path_ref)?;
+//                    path_ref = path_ref.append((*idx).to_string());
+//                },
 
                 QueryPart::AllKeys => {
                     //
@@ -63,60 +73,46 @@ impl Resolver for QueryResolver {
                     }
                 },
 
-                QueryPart::AllIndices(key) => {
-                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
-                    path_ref = path_ref.append_str(key);
+                QueryPart::AllIndices => {
                     return self.handle_array(match_list(value_ref, &path_ref)?,
                                         index, path_ref, query, variables, eval)
                 },
 
-                QueryPart::Variable(variable) => {
-                    let values = variables.get_resolutions_for_variable(variable)?;
-                    for each in values {
-                        if let Value::String(key) = each {
-                            let current = retrieve_key(key, value_ref, &path_ref)?;
-                            let sub_path = path_ref.clone().append_str(key);
-                            let sub_query = self.resolve_query(
-                                 &query[index + 1..], current, variables, sub_path, eval)?;
-                            results.extend(sub_query);
-                        } else {
-                            return Err(Error::new(ErrorKind::RetrievalError(
-                                format!("Resolved variable values is not a string {} for variable {}",
-                                        type_info(each), variable)
-                            )))
-                        }
-                    }
-                    return Ok(results)
-                },
+//                QueryPart::AllIndices(key) => {
+//                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
+//                    path_ref = path_ref.append_str(key);
+//                    return self.handle_array(match_list(value_ref, &path_ref)?,
+//                                        index, path_ref, query, variables, eval)
+//                },
 
-                QueryPart::Filter(key, criteria) => {
-                    let mut collected = Vec::new();
-                    if key == "*" {
-                        let map = match_map(value_ref, &path_ref)?;
-                        for (k, v) in map {
-                            let sub_path = path_ref.clone().append_str(k.as_str());
-                            if self.select(criteria, v, variables, &path_ref, eval)? {
-                                collected.push((sub_path, v));
-                            }
-                        }
-                    } else {
-                        value_ref = retrieve_key(key, value_ref, &path_ref)?;
-                        path_ref = path_ref.append_str(key);
-                        let list = match_list(value_ref, &path_ref)?;
-                        for (idx, each) in list.iter().enumerate() {
-                            if self.select(criteria, each, variables, &path_ref, eval)? {
-                                collected.push((path_ref.clone().append(idx.to_string()), each));
-                            }
-                        }
-                    }
-
-                    for (p, v) in collected {
-                        let sub_query = self.resolve_query(
-                             &query[index + 1..], v, variables, p, eval)?;
-                        results.extend(sub_query);
-                    }
-                    return Ok(results)
-                }
+//                QueryPart::Filter(key, criteria) => {
+//                    let mut collected = Vec::new();
+//                    if key == "*" {
+//                        let map = match_map(value_ref, &path_ref)?;
+//                        for (k, v) in map {
+//                            let sub_path = path_ref.clone().append_str(k.as_str());
+//                            if self.select(criteria, v, variables, &path_ref, eval)? {
+//                                collected.push((sub_path, v));
+//                            }
+//                        }
+//                    } else {
+//                        value_ref = retrieve_key(key, value_ref, &path_ref)?;
+//                        path_ref = path_ref.append_str(key);
+//                        let list = match_list(value_ref, &path_ref)?;
+//                        for (idx, each) in list.iter().enumerate() {
+//                            if self.select(criteria, each, variables, &path_ref, eval)? {
+//                                collected.push((path_ref.clone().append(idx.to_string()), each));
+//                            }
+//                        }
+//                    }
+//
+//                    for (p, v) in collected {
+//                        let sub_query = self.resolve_query(
+//                             &query[index + 1..], v, variables, p, eval)?;
+//                        results.extend(sub_query);
+//                    }
+//                    return Ok(results)
+//                }
 
                 _ => unimplemented!()
             }
@@ -294,66 +290,66 @@ mod tests {
         let types_values = values.iter().map(|(_path, value)| *value).collect::<Vec<&Value>>();
         assert_eq!(types_values, types);
 
-        let mut scope = Scope::new();
-        let value_literals = vec![
-            Value::String(String::from("Type")),
-            Value::String(String::from("Properties"))
-        ];
-        let value_resolutions = vec![
-            (path.clone(), &value_literals[0]),
-            (path.clone().append_str("/"), &value_literals[1]),
-        ];
-        let resolutions = value_resolutions.into_iter().collect::<ResolvedValues>();
-
-        scope.add_variable_resolution("interested", resolutions);
-
-        //
-        // Path = Resources.*.%interested
-        //
-        let query = AccessQuery::from([
-            QueryPart::Key(String::from("Resources")),
-            QueryPart::AllKeys,
-            QueryPart::Variable(String::from("interested")),
-        ]);
-        let values =
-            resolver.resolve_query(
-                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
-
-        assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
-        let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
-            .collect::<Vec<Path>>();
-        let paths_properties = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Properties"]))
-            .collect::<Vec<Path>>();
-
-        let mut overall: Vec<Path> = Vec::with_capacity(paths.len() * 2);
-        for (first, second) in paths.iter().zip(paths_properties.iter()) {
-            overall.push(first.clone());
-            overall.push(second.clone());
-        }
-
-        let paths = overall;
-        let paths_values = values.iter().map(|(path, _value)| path.clone())
-            .collect::<Vec<Path>>();
-        assert_eq!(paths_values, paths);
-
-        let types = resources_root.values().map(|v|
-            if let Value::Map(m) = v {
-                m.get("Type").unwrap()
-            } else { unreachable!() }).collect::<Vec<&Value>>();
-        let properties = resources_root.values().map(|v|
-            if let Value::Map(m) = v {
-                m.get("Properties").unwrap()
-            } else { unreachable!() }).collect::<Vec<&Value>>();
-
-        let mut combined: Vec<&Value> = Vec::with_capacity(types.len() * 2);
-        for (first, second) in types.iter().zip(properties.iter()) {
-            combined.push(first);
-            combined.push(second);
-        }
-
-        let types_values = values.iter().map(|(_path, value)| *value).collect::<Vec<&Value>>();
-        assert_eq!(types_values, combined);
-
+//        let mut scope = Scope::new();
+//        let value_literals = vec![
+//            Value::String(String::from("Type")),
+//            Value::String(String::from("Properties"))
+//        ];
+//        let value_resolutions = vec![
+//            (path.clone(), &value_literals[0]),
+//            (path.clone().append_str("/"), &value_literals[1]),
+//        ];
+//        let resolutions = value_resolutions.into_iter().collect::<ResolvedValues>();
+//
+//        scope.add_variable_resolution("interested", resolutions);
+//
+//        //
+//        // Path = Resources.*.%interested
+//        //
+//        let query = AccessQuery::from([
+//            QueryPart::Key(String::from("Resources")),
+//            QueryPart::AllKeys,
+//            QueryPart::Key(String::from("%interested")),
+//        ]);
+//        let values =
+//            resolver.resolve_query(
+//                &query, &eval_cxt.root, &scope, Path::new(&["/"]), &eval_cxt)?;
+//
+//        assert_eq!(resources_root.len() * 2, values.len()); // one for types and the other for properties
+//        let paths = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Type"]))
+//            .collect::<Vec<Path>>();
+//        let paths_properties = resources_root.keys().map(|s: &String| Path::new(&["/", "Resources", s.as_str(), "Properties"]))
+//            .collect::<Vec<Path>>();
+//
+//        let mut overall: Vec<Path> = Vec::with_capacity(paths.len() * 2);
+//        for (first, second) in paths.iter().zip(paths_properties.iter()) {
+//            overall.push(first.clone());
+//            overall.push(second.clone());
+//        }
+//
+//        let paths = overall;
+//        let paths_values = values.iter().map(|(path, _value)| path.clone())
+//            .collect::<Vec<Path>>();
+//        assert_eq!(paths_values, paths);
+//
+//        let types = resources_root.values().map(|v|
+//            if let Value::Map(m) = v {
+//                m.get("Type").unwrap()
+//            } else { unreachable!() }).collect::<Vec<&Value>>();
+//        let properties = resources_root.values().map(|v|
+//            if let Value::Map(m) = v {
+//                m.get("Properties").unwrap()
+//            } else { unreachable!() }).collect::<Vec<&Value>>();
+//
+//        let mut combined: Vec<&Value> = Vec::with_capacity(types.len() * 2);
+//        for (first, second) in types.iter().zip(properties.iter()) {
+//            combined.push(first);
+//            combined.push(second);
+//        }
+//
+//        let types_values = values.iter().map(|(_path, value)| *value).collect::<Vec<&Value>>();
+//        assert_eq!(types_values, combined);
+//
 
         Ok(())
     }
@@ -371,8 +367,10 @@ mod tests {
 
         let evaluate = Eval{};
         let protocols = AccessQuery::from([
-            QueryPart::AllIndices(String::from("servers")),
-            QueryPart::AllIndices(String::from("protocols"))
+            QueryPart::Key(String::from("servers")),
+            QueryPart::AllIndices,
+            QueryPart::Key(String::from("protocols")),
+            QueryPart::AllIndices
         ]);
 
         let root_path = Path::new(&[""]);
@@ -402,8 +400,10 @@ mod tests {
         assert_eq!(expected, resolved);
 
         let query = AccessQuery::from([
-            QueryPart::Index(String::from("servers"), 0),
-            QueryPart::Index(String::from("protocols"), 0),
+            QueryPart::Key(String::from("servers")),
+            QueryPart::Index(0),
+            QueryPart::Key(String::from("protocols")),
+            QueryPart::Index(0),
         ]);
         let resolved = resolver.resolve_query(
             &query, &eval.root, &scope, Path::new(&["/"]), &eval)?;
