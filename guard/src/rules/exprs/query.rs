@@ -52,13 +52,6 @@ impl Resolver for QueryResolver {
                     path_ref = path_ref.append((*idx).to_string());
                 },
 
-//                QueryPart::Index(key, idx) => {
-//                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
-//                    path_ref = path_ref.append_str(key);
-//                    value_ref = retrieve_index(*idx, value_ref, &path_ref)?;
-//                    path_ref = path_ref.append((*idx).to_string());
-//                },
-
                 QueryPart::AllKeys => {
                     //
                     // Support old format
@@ -78,41 +71,35 @@ impl Resolver for QueryResolver {
                                         index, path_ref, query, variables, eval)
                 },
 
-//                QueryPart::AllIndices(key) => {
-//                    value_ref = retrieve_key(key, value_ref, &path_ref)?;
-//                    path_ref = path_ref.append_str(key);
-//                    return self.handle_array(match_list(value_ref, &path_ref)?,
-//                                        index, path_ref, query, variables, eval)
-//                },
+                QueryPart::Filter(criteria) => {
+                    if let Value::List(list) = value_ref {
+                        let mut collected = Vec::with_capacity(list.len());
+                        for (idx, each) in list.iter().enumerate() {
+                            if self.select(criteria, each, variables, &path_ref, &eval)? {
+                                collected.push((path_ref.clone().append(idx.to_string()), each));
+                            }
+                        }
 
-//                QueryPart::Filter(key, criteria) => {
-//                    let mut collected = Vec::new();
-//                    if key == "*" {
-//                        let map = match_map(value_ref, &path_ref)?;
-//                        for (k, v) in map {
-//                            let sub_path = path_ref.clone().append_str(k.as_str());
-//                            if self.select(criteria, v, variables, &path_ref, eval)? {
-//                                collected.push((sub_path, v));
-//                            }
-//                        }
-//                    } else {
-//                        value_ref = retrieve_key(key, value_ref, &path_ref)?;
-//                        path_ref = path_ref.append_str(key);
-//                        let list = match_list(value_ref, &path_ref)?;
-//                        for (idx, each) in list.iter().enumerate() {
-//                            if self.select(criteria, each, variables, &path_ref, eval)? {
-//                                collected.push((path_ref.clone().append(idx.to_string()), each));
-//                            }
-//                        }
-//                    }
-//
-//                    for (p, v) in collected {
-//                        let sub_query = self.resolve_query(
-//                             &query[index + 1..], v, variables, p, eval)?;
-//                        results.extend(sub_query);
-//                    }
-//                    return Ok(results)
-//                }
+                        for (p, v) in collected {
+                            let sub_query = self.resolve_query(
+                                &query[index + 1..], v, variables, p, eval)?;
+                            results.extend(sub_query);
+                        }
+                        return Ok(results)
+                    }
+
+                    //
+                    // If not we are part of handle_map
+                    //
+                    if self.select(criteria, value_ref, variables, &path_ref, &eval)? {
+                        continue;
+                    }
+
+                    //
+                    // Else return empty as this is not selected
+                    //
+                    return Ok(results)
+                }
 
                 _ => unimplemented!()
             }
