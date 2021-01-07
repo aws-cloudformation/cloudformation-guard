@@ -1,4 +1,4 @@
-# [PREVIEW] CloudFormation Guard Rulegen as a Lambda
+# CloudFormation Guard Rulegen as a Lambda
 ## Table of Contents
 * [Installation](#installation)
 * [Build and run post-install](#to-build-and-run-post-install)
