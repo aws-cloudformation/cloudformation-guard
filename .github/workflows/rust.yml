@@ -24,9 +24,8 @@ jobs:
       run: cargo test --verbose
     - name: Test Makefiles
       run: |
-      make
-      cd ./cfn-guard
-      make
-      cd ../cfn-guard-rulegen
-      make
-
+        make
+        cd ./cfn-guard
+        make
+        cd ../cfn-guard-rulegen
+        make
