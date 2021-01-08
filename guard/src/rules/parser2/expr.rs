@@ -998,12 +998,13 @@ impl<'a> TryFrom<&'a str> for GuardClause<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a str> for Conjunctions<GuardClause<'a>> {
+pub(crate) struct ConjunctionsWrapper<'a>(pub(crate) Conjunctions<GuardClause<'a>>);
+impl<'a> TryFrom<&'a str> for ConjunctionsWrapper<'a> {
     type Error = Error;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
-        Ok(clauses(span)?.1)
+        Ok(ConjunctionsWrapper(clauses(span)?.1))
     }
 }
 
@@ -1022,6 +1023,15 @@ impl<'a> TryFrom<&'a str> for RuleClause<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         Ok(preceded(zero_or_more_ws_or_comment, rule_block_clause)(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for RulesFile<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(rules_file(span)?.1)
     }
 }
 

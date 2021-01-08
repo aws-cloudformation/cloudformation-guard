@@ -2906,3 +2906,77 @@ fn test_try_from_access() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn test_try_from_rule_block() -> Result<(), Error> {
+    let rule = r###"
+    rule s3_secure_exception {
+        s3_secure or
+        AWS::S3::Bucket tags.*.key in ["ExternalS3Approved"]
+    }
+    "###;
+    let rule_statement = Rule::try_from(rule)?;
+    let expected = Rule {
+        rule_name: String::from("s3_secure_exception"),
+        conditions: None,
+        block: Block {
+            assignments: vec![],
+            conjunctions: Conjunctions::from([
+                Disjunctions::from([
+                    RuleClause::Clause(
+                        GuardClause::NamedRule(GuardNamedRuleClause {
+                            negation: false,
+                            dependent_rule: String::from("s3_secure"),
+                            location: FileLocation {
+                                file_name: "",
+                                line: 3,
+                                column: 9,
+                            },
+                            comment: None
+                        })
+                    ),
+
+                    RuleClause::TypeBlock(
+                        TypeBlock {
+                            type_name: String::from("AWS::S3::Bucket"),
+                            conditions: None,
+                            block: Block {
+                                assignments: vec![],
+                                conjunctions: Conjunctions::from([
+                                    Disjunctions::from([
+                                        GuardClause::Clause(
+                                            GuardAccessClause {
+                                                negation: false,
+                                                access_clause: AccessClause {
+                                                    query: AccessQuery::from([
+                                                        QueryPart::Key(String::from("tags")),
+                                                        QueryPart::AllValues,
+                                                        QueryPart::Key(String::from("key"))
+                                                    ]),
+                                                    comparator: (CmpOperator::In, false),
+                                                    compare_with: Some(LetValue::Value(
+                                                        Value::List(
+                                                            vec![Value::String(String::from("ExternalS3Approved"))]
+                                                        )
+                                                    )),
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 4,
+                                                        column: 25
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    ])
+                                ])
+                            }
+                        }
+                    )
+                ])
+            ])
+        }
+    };
+    assert_eq!(rule_statement, expected);
+    Ok(())
+}
+
