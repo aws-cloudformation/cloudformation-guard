@@ -5,6 +5,8 @@ use std::cmp::Ordering;
 use crate::errors::{Error, ErrorKind};
 use indexmap::map::IndexMap;
 use std::hash::{Hash, Hasher};
+use crate::rules::exprs::{QueryPart, SliceDisplay};
+use crate::rules::evaluate::{Resolver, Result, Status, Evaluate};
 
 #[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
@@ -96,7 +98,7 @@ impl Hash for Value {
 
 impl Value {
 
-    pub(crate) fn traverse(&self, path: &str) -> Result<&Value, Error> {
+    pub(crate) fn traverse(&self, path: &str) -> Result<&Value> {
         let mut value = self;
         for each in path.split(".") {
             match each.parse::<i32>() {
@@ -128,6 +130,146 @@ impl Value {
             }
         }
         Ok(value)
+    }
+
+    pub(crate) fn query(&self,
+                        index: usize,
+                        query: &[QueryPart<'_>],
+                        var_resolver: &dyn Resolver) -> Result<Vec<&Value>> {
+        if index < query.len() {
+            let part = &query[index];
+            if part.is_variable() {
+                return Err(Error::new(ErrorKind::IncompatibleError(
+                    "Do not support variable interpolation inside a query".to_string()
+                )))
+            }
+            match part {
+                QueryPart::Key(key) => {
+                    return match key.parse::<i32>() {
+                        Ok(array_idx) =>
+                            self.retrieve_index(array_idx, part, &query)?
+                                .query(index + 1, query, var_resolver),
+
+                        Err(_) =>
+                            self.retrieve_key(key.as_str(), part, query)?
+                                .query(index + 1, query, var_resolver),
+                    }
+                },
+
+                QueryPart::Index(array_idx) =>
+                    return self.retrieve_index(*array_idx, part, query)?
+                        .query(index + 1, query, var_resolver),
+
+                QueryPart::AllIndices => return self.all_indices(index + 1, part, query, var_resolver),
+
+                QueryPart::AllValues =>
+                    return match self.all_indices(index + 1, part, query, var_resolver) {
+                        Ok(v) => Ok(v),
+                        Err(Error(ErrorKind::IncompatibleError(_))) => self.all_map_values(index + 1, part, query, var_resolver),
+                        Err(err) => Err(err)
+                    },
+
+                QueryPart::Filter(conjunctions) => {
+                    //
+                    // There are two possibilities here, either this was a directly a list value
+                    // of structs and we need filter, OR we are part of all_map_values
+                    //
+                    if let Value::List(l) = self {
+                        let mut collected = Vec::with_capacity(l.len());
+                        for each in l {
+                            if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
+                                collected.extend(each.query(index + 1, query, var_resolver)?)
+                            }
+                        }
+                    }
+                }
+
+                _ => unimplemented!()
+            }
+        }
+        let mut collected = Vec::new();
+        collected.push(self);
+        Ok(collected)
+    }
+
+    fn all_indices(&self,
+                   index: usize,
+                   part: &QueryPart<'_>,
+                   query: &[QueryPart<'_>],
+                   var_resolver: &dyn Resolver) -> Result<Vec<&Value>> {
+        let list = self.match_list(part, query)?;
+        let mut collected = Vec::with_capacity(list.len());
+        for each in list {
+            collected.extend(each.query(index, query, var_resolver)?)
+        }
+        return Ok(collected)
+    }
+
+    fn all_map_values(&self,
+                      index: usize,
+                      part: &QueryPart<'_>,
+                      query: &[QueryPart<'_>],
+                      var_resolver: &dyn Resolver) -> Result<Vec<&Value>> {
+            let index_map = self.match_map(part, query)?;
+        let mut collected = Vec::with_capacity(index_map.len());
+        for each in index_map.values() {
+            collected.extend(each.query(index, query, var_resolver)?)
+        }
+        Ok(collected)
+    }
+
+    fn match_list(&self, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Vec<Value>> {
+        return if let Value::List(list) = self {
+            Ok(list)
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::IncompatibleError(
+                    format!("Current value type is not a list, Type = {}, Value = {:?}, part = {}, remaining query = {}",
+                            type_info(self), self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn match_map(&self, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&indexmap::IndexMap<String, Value>> {
+        return if let Value::Map(map) = self {
+            Ok(map)
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::IncompatibleError(
+                    format!("Current self type is not a Map, Type = {}, Value = {:?}, part = {}, remaining query = {}",
+                            type_info(self), self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn retrieve_key(&self, key: &str, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Value> {
+        let map = self.match_map(part, remaining)?;
+        return if let Some(val) = map.get(key) {
+            Ok(val)
+        } else {
+            Err(Error::new(
+                ErrorKind::RetrievalError(
+                    format!("Could not locate Key = {} inside Value Map = {:?} part = {}, remaining query = {}",
+                            key, self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn retrieve_index(&self, index: i32, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Value> {
+        let list = self.match_list(part, remaining)?;
+        let check = if index >= 0 { index } else { -index } as usize;
+        return if check < list.len() {
+            Ok(&list[check])
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::RetrievalError(
+                    format!("Could not locate Index = {} inside Value List = {:?} part = {}, remaining query = {}",
+                            index, self, part, SliceDisplay(remaining))
+                )))
+        }
     }
 }
 
@@ -196,7 +338,7 @@ pub fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
 impl <'a> TryFrom<&'a serde_json::Value> for Value {
     type Error = crate::errors::Error;
 
-    fn try_from(value: &'a serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a serde_json::Value) -> std::result::Result<Self, Self::Error> {
         match value {
             serde_json::Value::String(s) => Ok(Value::String(s.to_owned())),
             serde_json::Value::Number(num) => {
@@ -237,7 +379,7 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
 impl TryFrom<serde_json::Value> for Value {
     type Error = crate::errors::Error;
 
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: serde_json::Value) -> std::result::Result<Self, Self::Error> {
         Value::try_from(&value)
     }
 }
@@ -245,7 +387,7 @@ impl TryFrom<serde_json::Value> for Value {
 impl <'a> TryFrom<&'a str> for Value {
     type Error = crate::errors::Error;
 
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a str) -> std::result::Result<Self, Self::Error> {
         Ok(super::parser::parse_value(super::parser::Span::new_extra(value, ""))?.1)
     }
 }
@@ -268,7 +410,7 @@ pub(crate) fn type_info(type_: &Value) -> &'static str {
     }
 }
 
-fn compare_values(first: &Value, other: &Value) -> Result<Ordering, Error> {
+fn compare_values(first: &Value, other: &Value) -> Result<Ordering> {
     match (first, other) {
         //
         // scalar values
@@ -288,7 +430,7 @@ fn compare_values(first: &Value, other: &Value) -> Result<Ordering, Error> {
     }
 }
 
-pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool> {
     let (reg, s) = match (first, second) {
         (Value::String(s), Value::Regex(r)) => (regex::Regex::new(r.as_str())?, s.as_str()),
         (Value::Regex(r), Value::String(s)) => (regex::Regex::new(r.as_str())?, s.as_str()),
@@ -297,7 +439,7 @@ pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool, Error> {
     Ok(reg.is_match(s))
 }
 
-pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Equal | Ordering::Greater => Ok(false),
@@ -307,7 +449,7 @@ pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(false),
@@ -317,7 +459,7 @@ pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(true),
@@ -327,7 +469,7 @@ pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater | Ordering::Equal => Ok(true),
@@ -346,7 +488,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_convert_from_to_value() -> Result<(), errors::Error> {
+    fn test_convert_from_to_value() -> Result<()> {
         let val = r#"
         {
             "first": {
@@ -390,7 +532,7 @@ mod test {
     }
 
     #[test]
-    fn test_convert_into_json() -> Result<(), errors::Error> {
+    fn test_convert_into_json() -> Result<()> {
         let value = r#"
         {
              first: {

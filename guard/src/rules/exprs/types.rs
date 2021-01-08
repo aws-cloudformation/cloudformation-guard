@@ -14,6 +14,13 @@ pub(crate) struct FileLocation<'loc> {
     pub(crate) file_name: &'loc str,
 }
 
+impl<'loc> std::fmt::Display for FileLocation<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("location[file={}#{}@{}]", self.file_name, self.line, self.column))?;
+        Ok(())
+    }
+}
+
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum LetValue<'loc> {
     Value(Value),
@@ -50,7 +57,7 @@ pub(crate) struct LetExpr<'loc> {
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) enum QueryPart<'loc> {
     Key(String),
-    AllKeys,
+    AllValues,
     AllIndices,
     Index(i32),
     Filter(Conjunctions<GuardClause<'loc>>),
@@ -75,6 +82,34 @@ impl<'loc> QueryPart<'loc> {
         } else {
             None
         }
+    }
+}
+
+impl<'loc> std::fmt::Display for QueryPart<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryPart::Key(s) => {
+                f.write_str(s.as_str())?;
+            },
+
+            QueryPart::AllIndices => {
+                f.write_str("[*]")?;
+            }
+
+            QueryPart::AllValues => {
+                f.write_str("*")?;
+            },
+
+            QueryPart::Index(idx) => {
+                write!(f, "{}", idx.to_string())?;
+            },
+
+            QueryPart::Filter(_c) => {
+                f.write_str("(filter-clauses)")?;
+            }
+
+        }
+        Ok(())
     }
 }
 
@@ -270,7 +305,21 @@ impl StdHasher {
     }
 }
 
-
+pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
+impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let mut first = true;
+        for item in self.0 {
+            if !first {
+                write!(f, ", {}", item)?;
+            } else {
+                write!(f, "{}", item)?;
+            }
+            first = false;
+        }
+        Ok(())
+    }
+}
 
 
 #[derive(PartialEq, Debug, Clone)]

@@ -52,7 +52,7 @@ impl Resolver for QueryResolver {
                     path_ref = path_ref.append((*idx).to_string());
                 },
 
-                QueryPart::AllKeys => {
+                QueryPart::AllValues => {
                     //
                     // Support old format
                     //
@@ -236,7 +236,7 @@ mod tests {
         //
         let query = AccessQuery::from([
             QueryPart::Key(String::from("Resources")),
-            QueryPart::AllKeys
+            QueryPart::AllValues
         ]);
         let values =
             resolver.resolve_query(
@@ -255,7 +255,7 @@ mod tests {
         //
         let query = AccessQuery::from([
             QueryPart::Key(String::from("Resources")),
-            QueryPart::AllKeys,
+            QueryPart::AllValues,
             QueryPart::Key(String::from("Type")),
         ]);
         let values =
