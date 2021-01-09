@@ -1,6 +1,12 @@
-use crate::rules::values::Value;
-use crate::rules::exprs::QueryPart;
-use crate::errors::Error;
+mod exprs;
+mod types;
+mod errors;
+mod values;
+mod evaluate;
+mod parser;
+
+pub(crate) use errors::*;
+pub(crate) use values::*;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -18,14 +24,6 @@ pub(crate) trait EvaluationContext {
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
     fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {}
-}
-
-pub(crate) trait QueryResolver  {
-    fn resolve<'r>(&self,
-                   index: usize,
-                   query: &[QueryPart<'_>],
-                   var_resolver: &dyn EvaluationContext,
-                   context: &'r Value) -> Result<Vec<&'r Value>>;
 }
 
 pub(crate) trait Evaluate {

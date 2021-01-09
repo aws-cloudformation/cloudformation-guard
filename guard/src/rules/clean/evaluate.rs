@@ -1,18 +1,17 @@
-use super::traits::*;
-
 use std::collections::{
     HashMap,
     hash_map::Entry
 };
-use crate::rules::{
+use super::{
+    Evaluate, EvaluationContext, Result, Status,
     values::*,
     exprs::{RulesFile, LetExpr, LetValue, Block, Rule, QueryPart, AccessQuery, GuardAccessClause, Conjunctions, SliceDisplay}
 };
 
-use crate::errors::{Error, ErrorKind};
+use super::errors::{Error, ErrorKind};
 use std::fmt::Formatter;
-use crate::rules::exprs::{GuardNamedRuleClause, GuardClause, TypeBlock, RuleClause};
-use crate::rules::parser2::AccessQueryWrapper;
+use super::exprs::{GuardNamedRuleClause, GuardClause, TypeBlock, RuleClause};
+use super::parser::AccessQueryWrapper;
 use std::convert::TryFrom;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -25,7 +24,6 @@ fn resolve_variable<'s, 'loc>(variable: &str,
                               queries: &HashMap<&'s str, &'s AccessQuery<'loc>>,
                               cache: &mut HashMap<&'s str, Vec<&'s Value>>,
                               context: &'s Value,
-                              resolver: &dyn QueryResolver,
                               var_resolver: &dyn EvaluationContext) -> Result<Vec<&'s Value>> {
 
     return if let Some((key, query)) = queries.get_key_value(variable) {
@@ -483,5 +481,5 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 }
 
 #[cfg(test)]
-#[path = "guards_tests.rs"]
-mod guards_tests;
+#[path = "evaluate_tests.rs"]
+mod evaluate_tests;
