@@ -9,8 +9,7 @@ use colored::*;
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
 use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
-use crate::errors;
-use crate::errors::Error;
+use crate::rules::clean::errors::{Error, ErrorKind};
 use crate::rules;
 use crate::rules::EvalStatus;
 use crate::rules::expr::*;
@@ -132,25 +131,26 @@ impl Command for EvaluateRules {
 
 
 fn evaluate_rules(file_name: &str, content: &str, files: &Vec<PathBuf>)
-                  -> Result<HashMap<String, Result<rules::expr::Resolutions, errors::Error>>, errors::Error> {
+                  -> Result<HashMap<String, Result<rules::expr::Resolutions, Error>>, Error> {
 
-    let result = super::parse_tree::parse_rule_file(content, file_name)?;
-    let mut per_ruleset = HashMap::with_capacity(files.len());
-    for each in files {
-        let opened = File::open(each);
-        if let Ok(file) = opened {
-            let reader = BufReader::new(file);
-            let context: serde_json::Value = serde_json::from_reader(reader)?;
-            let resolutions = result.evaluate(&context);
-            per_ruleset.insert(each.to_str().unwrap().to_string(), resolutions);
-        }
-        else {
-            let error = opened.map_err(|e| errors::Error::from(e))
-                .err().unwrap();
-            per_ruleset.insert(each.to_str().unwrap().to_string(), Err(error));
-        }
-    }
-    Ok(per_ruleset)
+//    let result = super::parse_tree::parse_rule_file(content, file_name)?;
+//    let mut per_ruleset = HashMap::with_capacity(files.len());
+//    for each in files {
+//        let opened = File::open(each);
+//        if let Ok(file) = opened {
+//            let reader = BufReader::new(file);
+//            let context: serde_json::Value = serde_json::from_reader(reader)?;
+//            let resolutions = result.evaluate(&context);
+//            per_ruleset.insert(each.to_str().unwrap().to_string(), resolutions);
+//        }
+//        else {
+//            let error = opened.map_err(|e| Error::from(e))
+//                .err().unwrap();
+//            per_ruleset.insert(each.to_str().unwrap().to_string(), Err(error));
+//        }
+//    }
+//    Ok(per_ruleset)
+    Ok(HashMap::new())
 }
 
 

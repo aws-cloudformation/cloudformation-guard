@@ -2235,10 +2235,10 @@ fn test_clause_failures() {
     let lhs_separator = "";
     let rhs_separator = "";
     let comparators = [
-        (">", ValueOperator::Cmp(CmpOperator::Gt)),
-        ("<", ValueOperator::Cmp(CmpOperator::Lt)),
-        ("==", ValueOperator::Cmp(CmpOperator::Eq)),
-        ("!=", ValueOperator::Not(CmpOperator::Eq)),
+        (">", (CmpOperator::Gt, false)),
+        ("<", (CmpOperator::Lt, false)),
+        ("==", (CmpOperator::Eq, false)),
+        ("!=", (CmpOperator::Eq, true)),
     ];
 
     for each in lhs.iter() {
@@ -2261,7 +2261,7 @@ fn test_clause_failures() {
                 context: "expecting one or more WS or comment blocks".to_string(),
             }));
             println!("Testing : {}", access_pattern);
-            assert_eq!(clause(from_str2(&access_pattern)), error);
+            assert_eq!(clause(super::from_str2(&access_pattern)), error);
         }
     }
 

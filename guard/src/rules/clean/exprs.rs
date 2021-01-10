@@ -186,7 +186,7 @@ impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
         let mut first = true;
         for item in self.0 {
             if !first {
-                write!(f, ", {}", item)?;
+                write!(f, ".{}", item)?;
             } else {
                 write!(f, "{}", item)?;
             }

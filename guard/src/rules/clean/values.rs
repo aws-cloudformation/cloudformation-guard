@@ -7,6 +7,7 @@ use indexmap::map::IndexMap;
 use std::hash::{Hash, Hasher};
 use super::exprs::{QueryPart, SliceDisplay};
 use super::{EvaluationContext, Result, Status, Evaluate};
+use nom::lib::std::fmt::Formatter;
 
 #[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
@@ -24,12 +25,22 @@ pub enum CmpOperator {
     KeysEmpty,
 }
 
-#[derive(PartialEq, Debug, Clone)]
-pub enum ValueOperator {
-    Not(CmpOperator),
-    Cmp(CmpOperator),
+impl std::fmt::Display for CmpOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Eq => f.write_str("EQUALS")?,
+            In => f.write_str("IN")?,
+            Gt=> f.write_str("GREATER THAN")?,
+            Lt=> f.write_str("LESS THAN")?,
+            Ge => f.write_str("GREATER THAN EQUALS")?,
+            Le => f.write_str("LESS THAN EQUALS")?,
+            Exists => f.write_str("EXISTS")?,
+            Empty => f.write_str("EMPTY")?,
+            _ => {}
+        }
+        Ok(())
+    }
 }
-
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Value {
@@ -107,75 +118,73 @@ impl Value {
                         index: usize,
                         query: &[QueryPart<'_>],
                         var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
-        'included: loop {
-            if index < query.len() {
-                let part = &query[index];
-                if part.is_variable() {
-                    return Err(Error::new(ErrorKind::IncompatibleError(
-                        "Do not support variable interpolation inside a query".to_string()
-                    )))
-                }
-                match part {
-                    QueryPart::Key(key) => {
-                        return match key.parse::<i32>() {
-                            Ok(array_idx) =>
-                                self.retrieve_index(array_idx, part, &query)?
-                                    .query(index + 1, query, var_resolver),
-
-                            Err(_) =>
-                                self.retrieve_key(key.as_str(), part, query)?
-                                    .query(index + 1, query, var_resolver),
-                        }
-                    },
-
-                    QueryPart::Index(array_idx) =>
-                        return self.retrieve_index(*array_idx, part, query)?
-                            .query(index + 1, query, var_resolver),
-
-                    QueryPart::AllIndices => return self.all_indices(index + 1, part, query, var_resolver),
-
-                    QueryPart::AllValues =>
-                        return match self.all_indices(index + 1, part, query, var_resolver) {
-                            Ok(v) => Ok(v),
-                            Err(Error(ErrorKind::IncompatibleError(_))) => self.all_map_values(index + 1, part, query, var_resolver),
-                            Err(err) => Err(err)
-                        },
-
-                    QueryPart::Filter(conjunctions) => {
-                        //
-                        // There are two possibilities here, either this was a directly a list value
-                        // of structs and we need filter, OR we are part of all_map_values.
-                        //
-                        // TODO: this is special cased here as the parser today treat 'tags[*]' as
-                        // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
-                        // the collection itself. It should technically translate to 'AllValues', 'Filter'
-                        //
-                        if let Value::List(l) = self {
-                            let mut collected = Vec::with_capacity(l.len());
-                            for each in l {
-                                if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
-                                    collected.extend(each.query(index + 1, query, var_resolver)?)
-                                }
-                            }
-                            return Ok(collected)
-                        }
-
-                        //
-                        // Being called from all_map_values
-                        //
-                        if Status::PASS == conjunctions.evaluate(self, var_resolver)? {
-                            break 'included
-                        }
-
-                        //
-                        // else not selected
-                        //
-                        return Ok(vec![])
-                    },
-                    _ => unimplemented!()
-                }
+        if index < query.len() {
+            let part = &query[index];
+            if part.is_variable() {
+                return Err(Error::new(ErrorKind::IncompatibleError(
+                    "Do not support variable interpolation inside a query".to_string()
+                )))
             }
-            break;
+            match part {
+                QueryPart::Key(key) => {
+                    return match key.parse::<i32>() {
+                        Ok(array_idx) =>
+                            self.retrieve_index(array_idx, part, &query)?
+                                .query(index + 1, query, var_resolver),
+
+                        Err(_) =>
+                            self.retrieve_key(key.as_str(), part, query)?
+                                .query(index + 1, query, var_resolver),
+                    }
+                },
+
+                QueryPart::Index(array_idx) =>
+                    return self.retrieve_index(*array_idx, part, query)?
+                        .query(index + 1, query, var_resolver),
+
+                QueryPart::AllIndices => return self.all_indices(index + 1, part, query, var_resolver),
+
+                QueryPart::AllValues =>
+                    return match self.all_indices(index + 1, part, query, var_resolver) {
+                        Ok(v) => Ok(v),
+                        Err(Error(ErrorKind::IncompatibleError(_))) => self.all_map_values(index + 1, part, query, var_resolver),
+                        Err(err) => Err(err)
+                    },
+
+                QueryPart::Filter(conjunctions) => {
+                    //
+                    // There are two possibilities here, either this was a directly a list value
+                    // of structs and we need filter, OR we are part of all_map_values.
+                    //
+                    // TODO: this is special cased here as the parser today treat 'tags[*]' as
+                    // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
+                    // the collection itself. It should technically translate to 'AllValues', 'Filter'
+                    //
+                    if let Value::List(l) = self {
+                        let mut collected = Vec::with_capacity(l.len());
+                        for each in l {
+                            if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
+                                collected.extend(each.query(index + 1, query, var_resolver)?)
+                            }
+                        }
+                        return Ok(collected)
+                    }
+
+                    //
+                    // Being called from all_map_values
+                    //
+                    if Status::PASS == conjunctions.evaluate(self, var_resolver)? {
+                        return self.query(index+1, query, var_resolver)
+                    }
+
+                    //
+                    // else not selected
+                    //
+                    return Ok(vec![])
+                },
+
+                _ => unimplemented!()
+            }
         }
         let mut collected = Vec::new();
         collected.push(self);

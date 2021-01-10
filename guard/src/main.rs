@@ -26,6 +26,7 @@ fn main() -> Result<(), errors::Error>{
     commands.push(Box::new(crate::commands::evaluate::EvaluateRules::new()));
     commands.push(Box::new(crate::commands::evaluate2::EvaluateRules::new()));
     commands.push(Box::new(crate::commands::parse_tree::ParseTreeView::new()));
+    commands.push(Box::new(crate::commands::validate::Validate::new()));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(

@@ -13,6 +13,7 @@ use std::fmt::Formatter;
 use super::exprs::{GuardNamedRuleClause, GuardClause, TypeBlock, RuleClause};
 use super::parser::AccessQueryWrapper;
 use std::convert::TryFrom;
+use colored::Colorize;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -131,7 +132,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         };
 
         if let Some(r) = result {
-            return Ok(negation_status(r, clause.access_clause.comparator.1, clause.negation));
+            let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
+            let message = format!("Guard@{}", self.access_clause.location);
+            var_resolver.report_status(message, None, None, status);
+            return Ok(status)
         }
 
         let lhs = match lhs {
@@ -237,7 +241,21 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         };
 
-        return Ok(negation_status(result.0, clause.access_clause.comparator.1, clause.negation));
+        let status = negation_status(result.0, clause.access_clause.comparator.1, clause.negation);
+        let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
+            match status {
+                Status::PASS => "PASS".green(),
+                Status::FAIL => "FAIL".red(),
+                Status::SKIP => "SKIP".yellow()
+            },
+            SliceDisplay(&clause.access_clause.query),
+            match &clause.access_clause.custom_message {
+                Some(msg) => msg,
+                None => "(default completed evaluation)"
+            }
+        );
+        var_resolver.report_status(message, result.1, result.2, status);
+        Ok(status)
     }
 }
 
@@ -331,7 +349,14 @@ impl<'loc> Evaluate for Rule<'loc> {
         }
 
         let block_scope = BlockScope::new(&self.block, context, var_resolver);
-        self.block.conjunctions.evaluate(context, &block_scope)
+        match self.block.conjunctions.evaluate(context, &block_scope) {
+            Ok(status) => {
+                let message = format!("Rule@{}, Status = {:?}", self.rule_name, status);
+                var_resolver.report_status(message, None, None, status);
+                return Ok(status)
+            },
+            other => other
+        }
     }
 }
 
@@ -433,6 +458,8 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             format!("Attempting to resolve rule_status for rule = {}, rule not found", rule_name)
         )))
     }
+
+    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {}
 }
 
 pub(crate) struct BlockScope<'s, T> {
@@ -477,6 +504,10 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 
     fn rule_status(&self, rule_name: &str) -> Result<Status> {
         self.parent.rule_status(rule_name)
+    }
+
+    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+        self.parent.report_status(msg, from, to, status)
     }
 }
 

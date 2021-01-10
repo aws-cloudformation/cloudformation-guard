@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use walkdir::WalkDir;
+use crate::rules::clean::errors::{Error, ErrorKind};
 
 use crate::errors;
 
@@ -15,7 +16,7 @@ pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     Ok(file_content)
 }
 
-pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, errors::Error>
+pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
     where F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static
 {
     let path = PathBuf::from_str(file)?;

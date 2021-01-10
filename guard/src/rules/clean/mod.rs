@@ -1,9 +1,9 @@
-mod exprs;
-mod types;
-mod errors;
-mod values;
-mod evaluate;
-mod parser;
+pub(crate) mod exprs;
+pub(crate) mod types;
+pub(crate) mod errors;
+pub(crate) mod values;
+pub(crate) mod evaluate;
+pub(crate) mod parser;
 
 pub(crate) use errors::*;
 pub(crate) use values::*;
@@ -23,7 +23,7 @@ pub(crate) trait EvaluationContext {
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
-    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {}
+    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status);
 }
 
 pub(crate) trait Evaluate {

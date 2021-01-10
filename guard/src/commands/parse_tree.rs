@@ -6,12 +6,11 @@ use colored::*;
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
 use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
-use crate::errors;
-use crate::errors::Error;
 use crate::rules;
 use crate::rules::dependency;
 use crate::rules::expr::*;
 use crate::rules::parser::Span;
+use crate::rules::clean::errors::{Error, ErrorKind};
 
 use super::files;
 
@@ -65,38 +64,38 @@ impl Command for ParseTreeView {
 
 }
 
-pub(super) fn parse_rule_file<'a>(content: &'a str, file_name: &'a str) -> Result<Rules<'a>, errors::Error> {
+pub(super) fn parse_rule_file<'a>(content: &'a str, file_name: &'a str) -> Result<Rules<'a>, Error> {
     let (_span, rules) = rules::parser::parse_rules(Span::new_extra(content, file_name))?;
     Ok(rules)
 }
 
-fn print_expr_tree(rules: &Rules) -> Result<(), errors::Error>{
-    let mut non_default = Vec::with_capacity(rules.len());
-    let mut defaults = Vec::with_capacity(rules.len());
-    for each in rules {
-        if let Expr::NamedRule(rule) = each {
-            if rule.rule_name == "default" {
-                defaults.push(each);
-            } else {
-                non_default.push(each);
-            }
-        }
-    }
-
-    let non_defaults_size = non_default.len();
-    let dependency_order = dependency::rules_execution_order_itr(non_default)?;
-    let summary = "Basic Summary Stats".yellow().underline();
-    println!("{}", summary);
-    println!("Total Number of Statements = {}", rules.len());
-    println!("Number of {} rules = {}", "Default".bright_yellow(), defaults.len());
-    println!("Number of {} rules = {}", "Named".bright_blue(), non_defaults_size);
-    println!("{}{}", "             ".underline(), "\n");
-
-    let order = dependency_order.iter().fold(String::new(), |mut str, entry| {
-        str.push_str((*entry).0);
-        str
-    });
-    println!("Order of execution of rules {}", order.truecolor(241, 250, 238));
+fn print_expr_tree(rules: &Rules) -> Result<(), Error>{
+//    let mut non_default = Vec::with_capacity(rules.len());
+//    let mut defaults = Vec::with_capacity(rules.len());
+//    for each in rules {
+//        if let Expr::NamedRule(rule) = each {
+//            if rule.rule_name == "default" {
+//                defaults.push(each);
+//            } else {
+//                non_default.push(each);
+//            }
+//        }
+//    }
+//
+//    let non_defaults_size = non_default.len();
+//    let dependency_order = dependency::rules_execution_order_itr(non_default)?;
+//    let summary = "Basic Summary Stats".yellow().underline();
+//    println!("{}", summary);
+//    println!("Total Number of Statements = {}", rules.len());
+//    println!("Number of {} rules = {}", "Default".bright_yellow(), defaults.len());
+//    println!("Number of {} rules = {}", "Named".bright_blue(), non_defaults_size);
+//    println!("{}{}", "             ".underline(), "\n");
+//
+//    let order = dependency_order.iter().fold(String::new(), |mut str, entry| {
+//        str.push_str((*entry).0);
+//        str
+//    });
+//    println!("Order of execution of rules {}", order.truecolor(241, 250, 238));
     Ok(())
 }
 

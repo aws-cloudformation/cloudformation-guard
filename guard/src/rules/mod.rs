@@ -169,7 +169,7 @@
 ///
 ///
 ///
-mod clean;
+pub(crate) mod clean;
 mod common;
 mod scope;
 

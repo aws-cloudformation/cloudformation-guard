@@ -3,8 +3,6 @@ use colored::*;
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED, RULES};
 use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
-use crate::errors;
-use crate::errors::{Error, ErrorKind};
 use crate::rules;
 use crate::rules::EvalStatus;
 use crate::rules::expr::*;
@@ -14,9 +12,10 @@ use std::fs::{File, read};
 use std::path::PathBuf;
 use std::io::BufReader;
 use crate::rules::exprs::{EvalContext, RulesFile, QueryResolver, Scope, Path, Resolver, Evaluate, Status};
-use crate::rules::values::Value;
 use crate::rules::parser2::{from_str2, Span2, rules_file};
 use std::convert::TryFrom;
+use crate::rules::clean::errors::{Error, ErrorKind};
+use crate::rules::clean::values::{Value};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct EvaluateRules {}
@@ -138,7 +137,8 @@ fn handle_rules_file(file: PathBuf) -> Result<(String, String)> {
 }
 
 fn parse_rules<'r>(content: &'r str, file_name: &'r str) -> Result<RulesFile<'r>> {
-    crate::rules::parser2::rules_file(Span2::new_extra(content, file_name))
+    //crate::rules::parser2::rules_file(Span2::new_extra(content, file_name))
+    unimplemented!()
 }
 
 fn open_file(path: &PathBuf) -> Result<(String, std::fs::File)> {
@@ -159,30 +159,30 @@ fn evaluate_rules<'a>(
     data: Value,
     root_path: Path) -> Result<EvalContext<'a>> {
 
-    let mut eval = EvalContext::new(data, rules);
+    //let mut eval = EvalContext::new(data, rules);
     let mut file_scope = Scope::child(root);
-    file_scope.assignment_queries(
-        &rules.assignments,
-        root_path.clone(),
-        &eval.root,
-        resolver,
-        &eval
-    )?;
+//    file_scope.assignment_queries(
+//        &rules.assignments,
+//        root_path.clone(),
+//        &eval.root,
+//        resolver,
+//        &eval
+//    )?;
+//
+//    for rule in &rules.guard_rules {
+//        match rule.evaluate(
+//            resolver,
+//            &file_scope,
+//            &eval.root,
+//            root_path.clone(),
+//            &eval
+//        ) {
+//            Ok(r) => {},
+//            Err(e) => return Err(e)
+//        }
+//    }
+    unimplemented!()
 
-    for rule in &rules.guard_rules {
-        match rule.evaluate(
-            resolver,
-            &file_scope,
-            &eval.root,
-            root_path.clone(),
-            &eval
-        ) {
-            Ok(r) => {},
-            Err(e) => return Err(e)
-        }
-    }
-
-    Ok(eval)
 }
 
 fn read_data(file: File) -> Result<Value> {
