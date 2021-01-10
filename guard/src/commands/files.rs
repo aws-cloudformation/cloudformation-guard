@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use walkdir::WalkDir;
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 
 pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     let mut file_content = String::new();

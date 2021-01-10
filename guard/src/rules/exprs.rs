@@ -1,10 +1,7 @@
 use crate::rules::values::*;
 
-use std::hash::{Hash, Hasher};
-use std::collections::HashMap;
+use std::hash::Hash;
 use std::fmt::Formatter;
-use crate::rules::errors::Error;
-use std::collections::hash_map::DefaultHasher;
 
 #[derive(PartialEq, Debug, Clone, Copy, Hash)]
 pub(crate) struct FileLocation<'loc> {

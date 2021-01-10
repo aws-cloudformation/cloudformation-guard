@@ -30,15 +30,18 @@ pub enum CmpOperator {
 impl std::fmt::Display for CmpOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Eq => f.write_str("EQUALS")?,
-            In => f.write_str("IN")?,
-            Gt=> f.write_str("GREATER THAN")?,
-            Lt=> f.write_str("LESS THAN")?,
-            Ge => f.write_str("GREATER THAN EQUALS")?,
-            Le => f.write_str("LESS THAN EQUALS")?,
-            Exists => f.write_str("EXISTS")?,
-            Empty => f.write_str("EMPTY")?,
-            _ => {}
+            CmpOperator::Eq => f.write_str("EQUALS")?,
+            CmpOperator::In => f.write_str("IN")?,
+            CmpOperator::Gt=> f.write_str("GREATER THAN")?,
+            CmpOperator::Lt=> f.write_str("LESS THAN")?,
+            CmpOperator::Ge => f.write_str("GREATER THAN EQUALS")?,
+            CmpOperator::Le => f.write_str("LESS THAN EQUALS")?,
+            CmpOperator::Exists => f.write_str("EXISTS")?,
+            CmpOperator::Empty => f.write_str("EMPTY")?,
+            CmpOperator::KeysEmpty => f.write_str("KEYS EMPTY")?,
+            CmpOperator::KeysEq => f.write_str("KEYS EQUALS")?,
+            CmpOperator::KeysExists => f.write_str("KEYS EXISTS")?,
+            CmpOperator::KeysIn => f.write_str("KEYS IN")?,
         }
         Ok(())
     }
@@ -55,7 +58,6 @@ pub enum Value {
     Char(char),
     List(Vec<Value>),
     Map(IndexMap<String, Value>),
-    Variable(String),
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
     RangeChar(RangeType<char>),
@@ -65,7 +67,6 @@ impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             Value::String(s)        |
-            Value::Variable(s)      |
             Value::Regex(s)        => { s.hash(state); },
 
             Value::Char(c)          => { c.hash(state); },
@@ -185,7 +186,6 @@ impl Value {
                     return Ok(vec![])
                 },
 
-                _ => unimplemented!()
             }
         }
         let mut collected = Vec::new();
@@ -379,14 +379,6 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
-pub fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
-    where
-        I: IntoIterator<Item = (&'a str, Value)>,
-{
-    values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
-}
-
-
 impl <'a> TryFrom<&'a serde_json::Value> for Value {
     type Error = Error;
 
@@ -453,7 +445,6 @@ pub(crate) fn type_info(type_: &Value) -> &'static str {
         Value::Float(_f)        => "float",
         Value::String(_s)       => "string",
         Value::Int(_i)          => "int",
-        Value::Variable(_v)     => "var",
         Value::RangeInt(_r)     => "range(int, int)",
         Value::RangeFloat(_f)   => "range(float, float)",
         Value::RangeChar(_r)    => "range(char, char)",

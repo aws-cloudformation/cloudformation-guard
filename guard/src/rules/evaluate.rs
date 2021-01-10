@@ -1,16 +1,13 @@
 use std::collections::{
-    hash_map::Entry,
     HashMap
 };
 use std::convert::TryFrom;
-use std::fmt::Formatter;
-
 use colored::Colorize;
 
 use crate::rules::{Evaluate, EvaluationContext, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock};
-use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, QueryPart, Rule, RulesFile, SliceDisplay};
+use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::parser::AccessQueryWrapper;
 use crate::rules::values::*;
 
@@ -19,23 +16,6 @@ use crate::rules::values::*;
 //  Implementation for Guard Evaluations                                                        //
 //                                                                                              //
 //////////////////////////////////////////////////////////////////////////////////////////////////
-
-fn resolve_variable<'s, 'loc>(variable: &str,
-                              queries: &HashMap<&'s str, &'s AccessQuery<'loc>>,
-                              cache: &mut HashMap<&'s str, Vec<&'s Value>>,
-                              context: &'s Value,
-                              var_resolver: &dyn EvaluationContext) -> Result<Vec<&'s Value>> {
-
-    return if let Some((key, query)) = queries.get_key_value(variable) {
-        let values = context.query(0, *query, var_resolver)?;
-        cache.insert(*key, values.clone());
-        Ok(values)
-    } else {
-        Err(Error::new(ErrorKind::MissingVariable(
-            format!("Could not resolve variable {}", variable)
-        )))
-    }
-}
 
 fn resolve_query<'s, 'loc>(query: &'s AccessQuery<'loc>,
                            context: &'s Value,
@@ -260,7 +240,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
 impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
     fn evaluate(&self,
-                context: &Value,
+                _context: &Value,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         Ok(invert_status(
             var_resolver.rule_status(&self.dependent_rule)?,
@@ -458,7 +438,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
         )))
     }
 
-    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {}
+    fn report_status(&self, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {}
 }
 
 pub(crate) struct BlockScope<'s, T> {

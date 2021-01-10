@@ -1,4 +1,4 @@
-use nom::error::{ErrorKind, ParseError};
+use nom::error::ErrorKind;
 use nom_locate::LocatedSpan;
 
 use nom::branch::alt;
@@ -64,7 +64,7 @@ impl<'a> nom::error::ParseError<Span<'a>> for ParserError<'a> {
         }
     }
 
-    fn append(_input: Span<'a>, kind: ErrorKind, other: Self) -> Self {
+    fn append(_input: Span<'a>, _kind: ErrorKind, other: Self) -> Self {
         other
     }
 
@@ -101,29 +101,6 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 //                         HELPER METHODS                                                         //
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-pub(crate) fn access_from<'loc>(keys: &[&str]) -> AccessQuery<'loc> {
-    keys.iter().map(|s|QueryPart::Key((*s).to_owned())).collect::<Vec<QueryPart<'loc>>>()
-}
-
-pub(crate) fn let_value_from<'loc>(value: &str) -> LetValue<'loc> {
-    LetValue::Value(Value::String(value.to_owned()))
-}
-
-pub(crate) fn let_regex_value_from<'loc>(value: &str) -> LetValue<'loc> {
-    LetValue::Value(Value::Regex(value.to_owned()))
-}
-
-pub(crate) fn let_list_value_from<'loc>(value: &[&str]) -> LetValue<'loc> {
-    LetValue::Value(Value::List(
-        value.iter().map(|s| Value::String((*s).to_owned())).collect::<Vec<Value>>()))
-}
-
-pub(crate) fn let_regex_list_value_from<'loc>(value: &[&str]) -> LetValue<'loc> {
-    LetValue::Value(Value::List(
-        value.iter().map(|s| Value::Regex((*s).to_owned())).collect::<Vec<Value>>()))
-}
-
 
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
     delimited(char('#'), take_till(|c| c == '\n'), char('\n'))(input)

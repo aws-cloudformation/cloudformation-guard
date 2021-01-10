@@ -138,13 +138,13 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
                     },
 
                     Err(e) => {
-                        println!("Unable to process data file = {}", name.underline())
+                        println!("Unable to process data file = {}, Error = {}", name.underline(), e);
                     }
                 }
             },
 
             Err(e) => {
-                println!("Unable to open data file = {}", each.display())
+                println!("Unable to open data file = {}, Error = {}", each.display(), e);
             }
         }
 
