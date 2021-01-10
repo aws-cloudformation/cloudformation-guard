@@ -7,8 +7,6 @@ use std::str::FromStr;
 use walkdir::WalkDir;
 use crate::rules::clean::errors::{Error, ErrorKind};
 
-use crate::errors;
-
 pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     let mut file_content = String::new();
     let mut buf_reader = BufReader::new(file);

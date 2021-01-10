@@ -1,17 +1,15 @@
 use clap::App;
 use std::collections::HashMap;
 
-use rules::expr::Rules;
-use rules::parser::Span;
-
-use crate::command::Command;
 
 mod rules;
 mod commands;
-pub mod errors;
-pub mod command;
+mod command;
 
-fn main() -> Result<(), errors::Error>{
+use crate::command::Command;
+use crate::rules::clean::errors::Error;
+
+fn main() -> Result<(), Error>{
     let mut app =
         App::new("cfn-guard")
             .version("1.1")
@@ -23,9 +21,6 @@ fn main() -> Result<(), errors::Error>{
              the rules specified."#);
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(Box::new(crate::commands::evaluate::EvaluateRules::new()));
-    commands.push(Box::new(crate::commands::evaluate2::EvaluateRules::new()));
-    commands.push(Box::new(crate::commands::parse_tree::ParseTreeView::new()));
     commands.push(Box::new(crate::commands::validate::Validate::new()));
 
     let mappings = commands.iter()
