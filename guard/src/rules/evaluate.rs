@@ -1,19 +1,18 @@
 use std::collections::{
-    HashMap,
-    hash_map::Entry
+    hash_map::Entry,
+    HashMap
 };
-use super::{
-    Evaluate, EvaluationContext, Result, Status,
-    values::*,
-    exprs::{RulesFile, LetExpr, LetValue, Block, Rule, QueryPart, AccessQuery, GuardAccessClause, Conjunctions, SliceDisplay}
-};
-
-use super::errors::{Error, ErrorKind};
-use std::fmt::Formatter;
-use super::exprs::{GuardNamedRuleClause, GuardClause, TypeBlock, RuleClause};
-use super::parser::AccessQueryWrapper;
 use std::convert::TryFrom;
+use std::fmt::Formatter;
+
 use colored::Colorize;
+
+use crate::rules::{Evaluate, EvaluationContext, Result, Status};
+use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock};
+use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, QueryPart, Rule, RulesFile, SliceDisplay};
+use crate::rules::parser::AccessQueryWrapper;
+use crate::rules::values::*;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //

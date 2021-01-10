@@ -19,9 +19,9 @@ use nom::error::context;
 use nom::multi::{fold_many1, separated_nonempty_list, separated_list};
 use nom::sequence::{pair, terminated};
 
-use super::exprs::*;
-use super::values::*;
-use super::errors::Error;
+use crate::rules::exprs::*;
+use crate::rules::values::*;
+use crate::rules::errors::Error;
 use std::fmt::Formatter;
 use indexmap::map::IndexMap;
 use std::convert::TryFrom;
@@ -125,7 +125,7 @@ pub(crate) fn let_regex_list_value_from<'loc>(value: &[&str]) -> LetValue<'loc> 
 }
 
 
-pub(super) fn comment2(input: Span) -> IResult<Span, Span> {
+pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
     delimited(char('#'), take_till(|c| c == '\n'), char('\n'))(input)
 }
 //
@@ -137,7 +137,7 @@ pub(super) fn comment2(input: Span) -> IResult<Span, Span> {
 // Expected error codes: (remember alt returns the error from the last one)
 //    nom::error::ErrorKind::Char => if the comment does not start with '#'
 //
-pub(super) fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
+pub(in crate::rules) fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
     value((), alt((
         multispace1,
         comment2
@@ -149,7 +149,7 @@ pub(super) fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
 // failure when this isn't the case. Consumers of this combinator must use
 // cut or handle it as a failure if that is the right outcome
 //
-pub(super) fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+pub(in crate::rules) fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
     value((), many1(white_space_or_comment))(input)
 }
 
@@ -157,23 +157,23 @@ pub(super) fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
 // This provides extract for *(LWSP / comment), same as above but this one never
 // errors out
 //
-pub(super) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+pub(in crate::rules) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
     value((), many0(white_space_or_comment))(input)
 }
 
-pub(super) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(in crate::rules) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     move |input: Span| preceded(multispace0, char(ch))(input)
 }
 
-pub(super) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(in crate::rules) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
-pub(super) fn separated_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(in crate::rules) fn separated_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
-pub(super) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(in crate::rules) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
@@ -186,7 +186,7 @@ pub(super) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-pub(super) fn parse_int_value(input: Span) -> IResult<Span, Value> {
+pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-1 * i))
     });

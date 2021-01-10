@@ -1,6 +1,6 @@
 use clap::{App, ArgMatches};
 
-use crate::rules::clean::errors::Error;
+use crate::rules::errors::Error;
 
 pub(crate) trait Command {
     fn name(&self) -> &'static str;

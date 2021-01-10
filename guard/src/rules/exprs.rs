@@ -1,9 +1,9 @@
-use super::values::*;
+use crate::rules::values::*;
 
 use std::hash::{Hash, Hasher};
 use std::collections::HashMap;
 use std::fmt::Formatter;
-use super::errors::Error;
+use crate::rules::errors::Error;
 use std::collections::hash_map::DefaultHasher;
 
 #[derive(PartialEq, Debug, Clone, Copy, Hash)]

@@ -1,17 +1,18 @@
-use crate::command::Command;
-use clap::{App, Arg, ArgMatches};
-use crate::rules::clean::errors::{Error, ErrorKind};
-use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, last_modified, regular_ordering, get_files, read_file_content};
-use std::path::PathBuf;
+use std::convert::TryFrom;
 use std::fs::File;
+use std::path::PathBuf;
 
+use clap::{App, Arg, ArgMatches};
 use colored::*;
 
-use crate::rules::clean::{EvaluationContext, Status, Value, Result, Evaluate};
-use crate::rules::clean::evaluate::RootScope;
-use crate::rules::clean::exprs::RulesFile;
-use std::convert::TryFrom;
+use crate::command::Command;
+use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
+use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
+use crate::rules::{Evaluate, EvaluationContext, Result, Status};
+use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::evaluate::RootScope;
+use crate::rules::exprs::RulesFile;
+use crate::rules::values::Value;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -62,8 +63,8 @@ impl Command for Validate {
                 Ok((rule_file_name, file)) => {
                     match read_file_content(file) {
                         Ok(file_content) => {
-                            let span = crate::rules::clean::parser::Span::new_extra(&file_content, &rule_file_name);
-                            match crate::rules::clean::parser::rules_file(span) {
+                            let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
+                            match crate::rules::parser::rules_file(span) {
                                 Err(e) => {
                                     println!("Parsing error handling rule file = {}, Error = {}",
                                              rule_file_name.underline(), e);

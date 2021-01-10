@@ -135,7 +135,7 @@ impl From<std::convert::Infallible> for Error {
     }
 }
 
-use super::parser::{Span, ParserError};
+use crate::rules::parser::{Span, ParserError};
 
 impl <'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     fn from(err: nom::Err<(Span<'a>, nom::error::ErrorKind)>) -> Self {

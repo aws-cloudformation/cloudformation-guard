@@ -4,11 +4,11 @@ use crate::errors;
 
 use super::*;
 use std::fs::read_to_string;
-use super::super::parser::AccessQueryWrapper;
-use super::super::exprs::{GuardClause, GuardNamedRuleClause};
+use crate::rules::parser::AccessQueryWrapper;
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause};
 use std::collections::HashMap;
-use super::super::exprs::{TypeBlock, Rule};
-use super::super::evaluate::{RootScope, BlockScope};
+use crate::rules::exprs::{TypeBlock, Rule};
+use crate::rules::evaluate::{RootScope, BlockScope};
 
 #[test]
 fn test_convert_from_to_value() -> Result<()> {

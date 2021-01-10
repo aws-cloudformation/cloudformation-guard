@@ -1,13 +1,15 @@
-use std::convert::TryFrom;
-
 use std::cmp::Ordering;
-
-use super::errors::{Error, ErrorKind};
-use indexmap::map::IndexMap;
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
-use super::exprs::{QueryPart, SliceDisplay};
-use super::{EvaluationContext, Result, Status, Evaluate};
+
+use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
+
+use crate::rules::{EvaluationContext, parser, Result, Status};
+use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::Evaluate;
+use crate::rules::exprs::{QueryPart, SliceDisplay};
+use crate::rules::parser::Span;
 
 #[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
@@ -386,7 +388,7 @@ pub fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
 
 
 impl <'a> TryFrom<&'a serde_json::Value> for Value {
-    type Error = super::errors::Error;
+    type Error = Error;
 
     fn try_from(value: &'a serde_json::Value) -> std::result::Result<Self, Self::Error> {
         match value {
@@ -427,7 +429,7 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
 }
 
 impl TryFrom<serde_json::Value> for Value {
-    type Error = super::errors::Error;
+    type Error = Error;
 
     fn try_from(value: serde_json::Value) -> std::result::Result<Self, Self::Error> {
         Value::try_from(&value)
@@ -435,10 +437,10 @@ impl TryFrom<serde_json::Value> for Value {
 }
 
 impl <'a> TryFrom<&'a str> for Value {
-    type Error = super::errors::Error;
+    type Error = Error;
 
     fn try_from(value: &'a str) -> std::result::Result<Self, Self::Error> {
-        Ok(super::parser::parse_value(super::parser::Span::new_extra(value, ""))?.1)
+        Ok(parser::parse_value(Span::new_extra(value, ""))?.1)
     }
 }
 

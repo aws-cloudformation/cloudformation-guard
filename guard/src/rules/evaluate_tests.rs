@@ -1,5 +1,5 @@
 use super::*;
-use super::super::parser::{rules_file, from_str2, Span};
+use crate::rules::parser::{rules_file, from_str2, Span};
 use crate::commands::files::read_file_content;
 use std::fs::File;
 use std::convert::TryFrom;

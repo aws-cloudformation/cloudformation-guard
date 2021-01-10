@@ -1,8 +1,8 @@
 use super::*;
 use std::convert::TryInto;
 
-use super::super::values::make_linked_hashmap;
-use super::super::values::WithinRange;
+use crate::rules::values::make_linked_hashmap;
+use crate::rules::values::WithinRange;
 
 use super::*;
 

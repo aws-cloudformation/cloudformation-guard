@@ -7,7 +7,7 @@ mod commands;
 mod command;
 
 use crate::command::Command;
-use crate::rules::clean::errors::Error;
+use rules::errors::Error;
 
 fn main() -> Result<(), Error>{
     let mut app =
