@@ -1,7 +1,6 @@
 use super::*;
 use std::convert::TryInto;
 
-use crate::rules::values::make_linked_hashmap;
 use crate::rules::values::WithinRange;
 
 use super::*;
@@ -3172,8 +3171,10 @@ fn test_rule_block() {
                             GuardAccessClause {
                                 access_clause: AccessClause{
                                     custom_message: None,
-                                    query: access_from(&["stage"]),
-                                    compare_with: Some(let_value_from("prod")),
+                                    query: AccessQuery::from([
+                                        QueryPart::Key("stage".to_string())
+                                    ]),
+                                    compare_with: Some(LetValue::Value(Value::String("prod".to_string()))),
                                     location: FileLocation {
                                         file_name: "",
                                         line: 1,
@@ -3189,7 +3190,12 @@ fn test_rule_block() {
                     assignments: vec![
                         LetExpr {
                             var: String::from("ec2_instance_types"),
-                            value: let_regex_list_value_from(&["^t*", "^m*"])
+                            value: LetValue::Value(
+                                Value::List(vec![
+                                    Value::Regex("^t*".to_string()),
+                                    Value::Regex("^m*".to_string())
+                                ])
+                            )
                         }
                     ],
                     conjunctions: Conjunctions::from([
@@ -3219,7 +3225,9 @@ fn test_rule_block() {
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
                                                         custom_message: None,
-                                                        query: access_from(&["InstanceType"]),
+                                                        query: AccessQuery::from([
+                                                            QueryPart::Key("InstanceType".to_string())
+                                                        ]),
                                                         compare_with: Some(LetValue::AccessClause(AccessQuery::from([
                                                             QueryPart::Key("%ec2_instance_types".to_string())
                                                         ]))),
@@ -3246,7 +3254,9 @@ fn test_rule_block() {
                                     assignments: vec![
                                         LetExpr {
                                             var: "volumes".to_string(),
-                                            value: LetValue::AccessClause(access_from(&["block_device_mappings"]))
+                                            value: LetValue::AccessClause(AccessQuery::from([
+                                                QueryPart::Key("block_device_mappings".to_string()),
+                                            ]))
                                         }
                                     ],
                                     // %volumes.*.Ebs EXISTS

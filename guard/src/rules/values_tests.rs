@@ -1,7 +1,5 @@
 use std::convert::{TryInto, TryFrom};
 
-use crate::errors;
-
 use super::*;
 use std::fs::read_to_string;
 use crate::rules::parser::AccessQueryWrapper;
@@ -135,6 +133,9 @@ fn test_query_on_value() -> Result<()> {
         fn rule_status(&self, rule_name: &str) -> Result<Status> {
             unimplemented!()
         }
+
+        fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+        }
     }
     let mut dummy = DummyResolver{
         cache: HashMap::new()
@@ -218,6 +219,9 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
 
         fn rule_status(&self, rule_name: &str) -> Result<Status> {
             unimplemented!()
+        }
+
+        fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
         }
     }
     let dummy = DummyResolver{};

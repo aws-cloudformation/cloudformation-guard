@@ -522,6 +522,15 @@ pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool> {
     }
 }
 
+pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
+    where
+        I: IntoIterator<Item = (&'a str, Value)>,
+{
+    values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
+}
+
+
+
 #[cfg(test)]
 #[path = "values_tests.rs"]
 mod values_tests;
