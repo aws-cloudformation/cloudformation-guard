@@ -8,7 +8,7 @@ use colored::*;
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
 use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
-use crate::rules::{Evaluate, EvaluationContext, Result, Status};
+use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
@@ -99,9 +99,28 @@ impl Command for Validate {
     }
 }
 
-struct Reporter<'r,'loc>{
-    root_context: &'r RootScope<'r, 'loc>
+
+struct StackContext {
+    eval_type: EvaluationType,
+    context: String,
+    indent: usize,
 }
+
+struct Reporter<'r,'loc>{
+    root_context: &'r RootScope<'r, 'loc>,
+    stack: std::cell::RefCell<Vec<StackContext>>,
+}
+
+impl<'r, 'loc> Reporter<'r, 'loc> {
+    fn new(root: &'r RootScope<'r, 'loc>) -> Self {
+        Reporter {
+            root_context: root,
+            stack: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+const INDENT: &str = "    ";
 
 impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
     fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
@@ -112,9 +131,45 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
         self.root_context.rule_status(rule_name)
     }
 
-    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
-        println!("Report {}, when comparing {:?}, {:?}", msg, from, to);
-        self.root_context.report_status(msg, from, to, status)
+    fn end_evaluation(&self,
+                      eval_type: EvaluationType,
+                      context: &str,
+                      msg: String,
+                      from: Option<Value>,
+                      to: Option<Value>,
+                      status: Status) {
+        let stack = self.stack.borrow_mut().pop();
+        match stack {
+            Some(stack) => {
+                if &stack.context == context && eval_type == stack.eval_type {
+                    for idx in 0..stack.indent {
+                        print!("{}", INDENT)
+                    }
+                    println!("{}[{}] Status = {}, Message = {}", eval_type, context.underline(), status, msg);
+                    if let Some(value) = from {
+                        print!(" Comparing [{:?}]", value);
+                    }
+                    if let Some(value) = to {
+                        print!(" with [{:?}]", value);
+                    }
+                    print!("\n");
+                }
+            },
+            None => {}
+        }
+    }
+
+    fn start_evaluation(&self,
+                        eval_type: EvaluationType,
+                        context: &str) {
+        let indent= self.stack.borrow().len();
+        self.stack.borrow_mut().push(StackContext {
+            eval_type, context: context.to_string(), indent: indent+1
+        });
+        for idx in 0..indent {
+            print!("{}", INDENT)
+        }
+        println!("Evaluating {}[{}]", eval_type, context)
     }
 }
 
@@ -133,7 +188,7 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
                         };
 
                         let root_context = RootScope::new(rules, &root);
-                        let reporter = Reporter{ root_context: &root_context };
+                        let reporter = Reporter{ root_context: &root_context, stack: std::cell::RefCell::new(Vec::new()) };
                         rules.evaluate(&root, &reporter)?;
                     },
 

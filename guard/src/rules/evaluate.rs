@@ -4,7 +4,7 @@ use std::collections::{
 use std::convert::TryFrom;
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, Result, Status};
+use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
@@ -85,6 +85,9 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate(&self,
                 context: &Value,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
+        let guard_loc = format!("Clause@[loc = {}, query= {}]", self.access_clause.location,
+                                SliceDisplay(&self.access_clause.query));
+        var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
         let lhs = match resolve_query(
@@ -113,7 +116,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         if let Some(r) = result {
             let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
             let message = format!("Guard@{}", self.access_clause.location);
-            var_resolver.report_status(message, None, None, status);
+            var_resolver.end_evaluation(
+                EvaluationType::Clause, &guard_loc, message, None, None, status);
             return Ok(status)
         }
 
@@ -233,7 +237,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        var_resolver.report_status(message, result.1, result.2, status);
+        var_resolver.end_evaluation(EvaluationType::Clause, &guard_loc, message, result.1, result.2, status);
         Ok(status)
     }
 }
@@ -278,10 +282,24 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
 
 impl<'loc> Evaluate for TypeBlock<'loc> {
     fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+        let type_context = format!("Type[{}]", self.type_name);
+        let mut type_report = AutoReport::new(
+            EvaluationType::Type,
+            var_resolver,
+                &type_context
+        );
+
         if let Some(conditions) = &self.conditions {
-            match conditions.evaluate(context, var_resolver)? {
+            let mut type_conds = AutoReport::new(
+                EvaluationType::Condition,
+                var_resolver,
+                ""
+            );
+            match type_conds.status(conditions.evaluate(context, var_resolver)?).get_status() {
                 Status::PASS => {},
-                _ => return Ok(Status::SKIP)
+                _ => {
+                    return Ok(type_report.status(Status::SKIP).get_status())
+                }
             }
         }
 
@@ -294,10 +312,10 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         for each in values {
             let block_scope = BlockScope::new(&self.block, each, var_resolver);
             if Status::FAIL == self.block.conjunctions.evaluate(each, &block_scope)? {
-                return Ok(Status::FAIL)
+                return Ok(type_report.status(Status::FAIL).get_status())
             }
         }
-        Ok(Status::PASS)
+        Ok(type_report.status(Status::PASS).get_status())
     }
 }
 
@@ -306,24 +324,45 @@ impl<'loc> Evaluate for RuleClause<'loc> {
         match self {
             RuleClause::Clause(gc) => gc.evaluate(context, var_resolver),
             RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver),
-            RuleClause::WhenBlock(conditions, block) =>
-                match conditions.evaluate(context, var_resolver)? {
+            RuleClause::WhenBlock(conditions, block) => {
+                let mut auto_cond = AutoReport::new(
+                    EvaluationType::Condition, var_resolver, "");
+                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
                     Status::PASS => {
+                        let mut auto_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
                         let block_scope = BlockScope::new(block, context, var_resolver);
-                        block.conjunctions.evaluate(context, &block_scope)
+                        Ok(auto_block.status(block.conjunctions.evaluate(context, &block_scope)?).get_status())
                     },
-                    _ => Ok(Status::SKIP)
+                    _ => {
+                        let mut skip_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
+                        Ok(skip_block.status(Status::SKIP).get_status())
+                    }
                 }
+            }
         }
     }
 }
 
 impl<'loc> Evaluate for Rule<'loc> {
     fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+        let rule_context = format!("Rule[name = {}]", self.rule_name);
+        let mut auto = AutoReport::new(
+            EvaluationType::Rule, var_resolver, &rule_context);
         if let Some(conds) = &self.conditions {
-            match conds.evaluate(context, var_resolver)? {
+            let mut cond = AutoReport::new(
+                EvaluationType::Condition, var_resolver, &rule_context
+            );
+            match cond.status(conds.evaluate(context, var_resolver)?).get_status() {
                 Status::PASS => {},
-                _ => return Ok(Status::SKIP)
+                _ => return Ok(auto.status(Status::SKIP).get_status())
             }
         }
 
@@ -331,7 +370,7 @@ impl<'loc> Evaluate for Rule<'loc> {
         match self.block.conjunctions.evaluate(context, &block_scope) {
             Ok(status) => {
                 let message = format!("Rule@{}, Status = {:?}", self.rule_name, status);
-                var_resolver.report_status(message, None, None, status);
+                auto.status(status).message(message);
                 return Ok(status)
             },
             other => other
@@ -342,11 +381,14 @@ impl<'loc> Evaluate for Rule<'loc> {
 impl<'loc> Evaluate for RulesFile<'loc> {
     fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let mut overall = Status::PASS;
+        let mut auto_report = AutoReport::new(
+            EvaluationType::File, var_resolver, "");
         for rule in &self.guard_rules {
             if Status::FAIL == rule.evaluate(context, var_resolver)? {
                 overall = Status::FAIL
             }
         }
+        auto_report.status(overall);
         Ok(overall)
     }
 }
@@ -364,7 +406,12 @@ fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
     for each in expressions {
         match &each.value {
             LetValue::Value(v) => {
-                vars.insert(&each.var, vec![v]);
+                if let Value::List(l) = v {
+                    vars.insert(&each.var, l.iter().collect::<Vec<&Value>>());
+                }
+                else {
+                    vars.insert(&each.var, vec![v]);
+                }
             },
 
             LetValue::AccessClause(query) => {
@@ -438,7 +485,17 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
         )))
     }
 
-    fn report_status(&self, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {}
+    fn end_evaluation(&self,
+                      _eval_type: EvaluationType,
+                      _context: &str,
+                      _msg: String,
+                      _from: Option<Value>,
+                      _to: Option<Value>,
+                      _status: Status) {
+    }
+
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
+    }
 }
 
 pub(crate) struct BlockScope<'s, T> {
@@ -485,8 +542,78 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
         self.parent.rule_status(rule_name)
     }
 
-    fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
-        self.parent.report_status(msg, from, to, status)
+
+
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+        self.parent.end_evaluation(eval_type, context, msg, from, to, status)
+    }
+
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        self.parent.start_evaluation(eval_type, context);
+    }
+}
+
+pub(super) struct AutoReport<'s> {
+    context: &'s dyn EvaluationContext,
+    type_context: &'s str,
+    eval_type: EvaluationType,
+    status: Option<Status>,
+    from: Option<Value>,
+    to: Option<Value>,
+    message: Option<String>
+}
+
+impl<'s> AutoReport<'s> {
+    pub(super) fn new(eval_type: EvaluationType,
+           context : &'s dyn EvaluationContext,
+           type_context: &'s str) -> Self {
+        context.start_evaluation(eval_type, type_context);
+        AutoReport {
+            eval_type,
+            type_context,
+            context,
+            status: None,
+            from: None,
+            to: None,
+            message: None,
+        }
+    }
+
+    pub(super) fn status(&mut self, status: Status) -> &mut Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub(super) fn comparison(&mut self, status: Status, from: Option<Value>, to: Option<Value>) -> &mut Self {
+        self.status = Some(status);
+        self.from = from;
+        self.to = to;
+        self
+    }
+
+    pub(super) fn message(&mut self, msg: String) -> &mut Self {
+        self.message = Some(msg);
+        self
+    }
+
+    pub(super) fn get_status(&self) -> Status {
+        self.status.unwrap()
+    }
+}
+
+impl<'s> Drop for AutoReport<'s> {
+    fn drop(&mut self) {
+        match self.status {
+            Some(status) => {
+                self.context.end_evaluation(
+                    self.eval_type, self.type_context,
+                    match &self.message {
+                        Some(msg) => msg.clone(),
+                        None => String::from("")
+                    }, self.from.clone(), self.to.clone(), status);
+            },
+            None => {}
+        }
     }
 }
 

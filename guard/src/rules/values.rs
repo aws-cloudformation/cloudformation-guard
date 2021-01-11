@@ -5,11 +5,12 @@ use std::hash::{Hash, Hasher};
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
-use crate::rules::{EvaluationContext, parser, Result, Status};
+use crate::rules::{EvaluationContext, parser, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::Evaluate;
 use crate::rules::exprs::{QueryPart, SliceDisplay};
 use crate::rules::parser::Span;
+use crate::rules::evaluate::AutoReport;
 
 #[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
@@ -163,6 +164,8 @@ impl Value {
                     // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
                     // the collection itself. It should technically translate to 'AllValues', 'Filter'
                     //
+                    let mut filter_report = AutoReport::new(EvaluationType::Filter, var_resolver, "");
+                    filter_report.status(Status::PASS);
                     if let Value::List(l) = self {
                         let mut collected = Vec::with_capacity(l.len());
                         for each in l {

@@ -7,6 +7,7 @@ use crate::rules::exprs::{GuardClause, GuardNamedRuleClause};
 use std::collections::HashMap;
 use crate::rules::exprs::{TypeBlock, Rule};
 use crate::rules::evaluate::{RootScope, BlockScope};
+use crate::rules::EvaluationType;
 
 #[test]
 fn test_convert_from_to_value() -> Result<()> {
@@ -134,7 +135,10 @@ fn test_query_on_value() -> Result<()> {
             unimplemented!()
         }
 
-        fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {
+        }
+
+        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
         }
     }
     let mut dummy = DummyResolver{
@@ -221,7 +225,10 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
             unimplemented!()
         }
 
-        fn report_status(&self, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {
+        }
+
+        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
         }
     }
     let dummy = DummyResolver{};
