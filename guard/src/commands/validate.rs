@@ -146,10 +146,10 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
                         print!("{}", INDENT)
                     }
                     println!("{}[{}] Status = {}, Message = {}", eval_type, context.underline(), status, msg);
-                    if let Some(value) = from {
+                    if let Some(value) = &from {
                         print!(" Comparing [{:?}]", value);
                     }
-                    if let Some(value) = to {
+                    if let Some(value) = &to {
                         print!(" with [{:?}]", value);
                     }
                     print!("\n");
@@ -157,6 +157,7 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
             },
             None => {}
         }
+        self.root_context.end_evaluation(eval_type, context, msg, from, to, status);
     }
 
     fn start_evaluation(&self,
@@ -169,7 +170,8 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
         for idx in 0..indent {
             print!("{}", INDENT)
         }
-        println!("Evaluating {}[{}]", eval_type, context)
+        println!("Evaluating {}[{}]", eval_type, context);
+        self.root_context.start_evaluation(eval_type, context);
     }
 }
 

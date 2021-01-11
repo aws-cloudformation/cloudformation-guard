@@ -3532,3 +3532,35 @@ fn test_try_from_rule_block() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn parse_list_of_map() -> Result<(), Error> {
+    let s = r###"let allowlist = [
+     {
+         "serviceAccount": "analytics",
+         "images": ["banzaicloud/allspark:0.1.2", "banzaicloud/istio-proxyv2:1.7.0-bzc"],
+         # possible nodeSelector combinations we allow, the pod can have more nodeSelectors of course
+         "nodeSelector": [{"failure-domain.beta.kubernetes.io/region": "europe-west1"}]
+         # "nodeSelector": [],
+     }
+ ]
+
+  "###;
+
+    let value = assignment(from_str2(s))?.1;
+    println!("{:?}", value);
+    Ok(())
+}
+
+#[test]
+fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
+    let r = r###"
+    rule is_service_account_operation_valid {
+     request.kind.kind == "Pod"
+     request.operation == "CREATE"
+     let service_name = request.object.spec.serviceAccountName
+     %allowlist[ serviceAccount == %service_name ] !EMPTY
+ }"###;
+    let rule = Rule::try_from(r)?;
+    println!("{:?}", rule);
+    Ok(())
+}

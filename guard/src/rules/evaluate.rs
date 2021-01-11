@@ -10,6 +10,7 @@ use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlo
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::parser::AccessQueryWrapper;
 use crate::rules::values::*;
+use std::fmt::Formatter;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -282,11 +283,10 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
 
 impl<'loc> Evaluate for TypeBlock<'loc> {
     fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
-        let type_context = format!("Type[{}]", self.type_name);
         let mut type_report = AutoReport::new(
             EvaluationType::Type,
             var_resolver,
-                &type_context
+                &self.type_name
         );
 
         if let Some(conditions) = &self.conditions {
@@ -353,12 +353,11 @@ impl<'loc> Evaluate for RuleClause<'loc> {
 
 impl<'loc> Evaluate for Rule<'loc> {
     fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
-        let rule_context = format!("Rule[name = {}]", self.rule_name);
         let mut auto = AutoReport::new(
-            EvaluationType::Rule, var_resolver, &rule_context);
+            EvaluationType::Rule, var_resolver, &self.rule_name);
         if let Some(conds) = &self.conditions {
             let mut cond = AutoReport::new(
-                EvaluationType::Condition, var_resolver, &rule_context
+                EvaluationType::Condition, var_resolver, &self.rule_name
             );
             match cond.status(conds.evaluate(context, var_resolver)?).get_status() {
                 Status::PASS => {},
@@ -370,8 +369,8 @@ impl<'loc> Evaluate for Rule<'loc> {
         match self.block.conjunctions.evaluate(context, &block_scope) {
             Ok(status) => {
                 let message = format!("Rule@{}, Status = {:?}", self.rule_name, status);
-                auto.status(status).message(message);
-                return Ok(status)
+
+                return Ok(auto.status(status).message(message).get_status())
             },
             other => other
         }
@@ -406,12 +405,7 @@ fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
     for each in expressions {
         match &each.value {
             LetValue::Value(v) => {
-                if let Value::List(l) = v {
-                    vars.insert(&each.var, l.iter().collect::<Vec<&Value>>());
-                }
-                else {
-                    vars.insert(&each.var, vec![v]);
-                }
+                vars.insert(&each.var, vec![v]);
             },
 
             LetValue::AccessClause(query) => {
@@ -486,12 +480,16 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
     }
 
     fn end_evaluation(&self,
-                      _eval_type: EvaluationType,
-                      _context: &str,
+                      eval_type: EvaluationType,
+                      context: &str,
                       _msg: String,
                       _from: Option<Value>,
                       _to: Option<Value>,
-                      _status: Status) {
+                      status: Status) {
+        if EvaluationType::Rule == eval_type {
+            let (name, _rule) = self.rule_by_name.get_key_value(context).unwrap();
+            self.rule_statues.borrow_mut().insert(*name, status);
+        }
     }
 
     fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
@@ -553,6 +551,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct AutoReport<'s> {
     context: &'s dyn EvaluationContext,
     type_context: &'s str,
@@ -561,6 +560,14 @@ pub(super) struct AutoReport<'s> {
     from: Option<Value>,
     to: Option<Value>,
     message: Option<String>
+}
+
+impl<'s> std::fmt::Debug for AutoReport<'s> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Context = {}, Type = {}, Status = {:?}",
+                                 self.type_context, self.eval_type, self.status))?;
+        Ok(())
+    }
 }
 
 impl<'s> AutoReport<'s> {

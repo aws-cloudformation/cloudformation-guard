@@ -139,7 +139,7 @@ pub(in crate::rules) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span,
 }
 
 pub(in crate::rules) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
-    move |input: Span| preceded(multispace0, char(ch))(input)
+    move |input: Span| preceded(zero_or_more_ws_or_comment, char(ch))(input)
 }
 
 pub(in crate::rules) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
@@ -980,6 +980,24 @@ fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool)
     }
 }
 
+fn disjunction_clauses<'loc, E, F>(input: Span<'loc>, parser: F, non_empty: bool) -> IResult<Span<'loc>, Disjunctions<E>>
+    where F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
+          E: Clone + 'loc,
+{
+    if non_empty {
+        separated_nonempty_list(
+            or_join,
+            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)))(input)
+    }
+    else {
+        separated_list(
+            or_join,
+            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)),
+        )(input)
+
+    }
+}
+
 fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
     cnf_clauses(
         input,
@@ -1093,13 +1111,14 @@ fn block<'loc, T, P>(clause_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'l
         let (input, _start_block) = preceded(zero_or_more_ws_or_comment, char('{'))
             (input)?;
 
+        let mut conjunctions: Conjunctions<T> = Conjunctions::new();
         let (input, results) =
             fold_many1(
                 alt((
                     map(preceded(zero_or_more_ws_or_comment, assignment), |s| (Some(s), None)),
                     map(
-                        |i: Span| cnf_clauses(i, |i: Span| clause_parser(i), std::convert::identity, true),
-                        |c: Conjunctions<T>| (None, Some(c)))
+                        |i: Span| disjunction_clauses(i, |i: Span| clause_parser(i), true),
+                        |c: Disjunctions<T>| (None, Some(c)))
                 )),
                 Vec::new(),
                 |mut acc, pair| {
@@ -1109,14 +1128,13 @@ fn block<'loc, T, P>(clause_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'l
             )(input)?;
 
         let mut assignments = vec![];
-        let mut conjunctions: Conjunctions<T> = Conjunctions::new();
         for each in results {
             match each {
                 (Some(let_expr), None) => {
                     assignments.push(let_expr);
                 },
                 (None, Some(v)) => {
-                    conjunctions.extend(v)
+                    conjunctions.push(v)
                 },
                 (_, _) => unreachable!(),
             }
