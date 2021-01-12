@@ -181,14 +181,17 @@ pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
 impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut first = true;
+        let mut query = String::new();
         for item in self.0 {
             if !first {
-                write!(f, ".{}", item)?;
+                query = format!("{}.{}", query, item);
             } else {
-                write!(f, "{}", item)?;
+                query = format!("{}", item);
             }
             first = false;
         }
+        let query = query.replace(".[", "[");
+        f.write_str(&query)?;
         Ok(())
     }
 }

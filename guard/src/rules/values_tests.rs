@@ -323,3 +323,11 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_parse_string_with_colon() -> Result<()> {
+    // let s = r#"'aws:AssumeRole'"#;
+    let s = r#""aws:AssumeRole""#;
+    let value = Value::try_from(s)?;
+    Ok(())
+}

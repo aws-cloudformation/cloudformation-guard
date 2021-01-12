@@ -1067,22 +1067,22 @@ fn test_access() {
     let expectations = [
         Err(nom::Err::Error(ParserError { // 0
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Tag, // change as we use parse_string
+            kind: nom::error::ErrorKind::Char, // change as we use parse_string
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 1
             span: from_str2("."),
-            kind: nom::error::ErrorKind::Tag,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 2
             span: from_str2(".engine"),
-            kind: nom::error::ErrorKind::Tag,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 3
             span: from_str2(" engine"),
-            kind: nom::error::ErrorKind::Tag,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
         Ok(( // 4
@@ -1342,7 +1342,7 @@ fn test_access() {
         // " %engine", // 18 err
         Err(nom::Err::Error(ParserError { // 19
             span: from_str2(" %engine"),
-            kind: nom::error::ErrorKind::Tag,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
     ];
@@ -2269,7 +2269,7 @@ fn test_clause_failures() {
     //
     assert_eq!(Err(nom::Err::Error(ParserError {
         span: from_str2(""),
-        kind: nom::error::ErrorKind::Tag,
+        kind: nom::error::ErrorKind::Char,
         context: "".to_string(),
     })), clause(from_str2("")));
 
@@ -2278,7 +2278,7 @@ fn test_clause_failures() {
     //
     assert_eq!(Err(nom::Err::Error(ParserError {
         span: from_str2(" > 10"),
-        kind: nom::error::ErrorKind::Tag,
+        kind: nom::error::ErrorKind::Char,
         context: "".to_string(),
     })), clause(from_str2(" > 10")));
 
@@ -2299,7 +2299,7 @@ fn test_clause_failures() {
                         "",
                     )
                 },
-                kind: nom::error::ErrorKind::Tag, // this comes off access
+                kind: nom::error::ErrorKind::Char, // this comes off access
                 context: r#"expecting either a property access "engine.core" or value like "string" or ["this", "that"]"#.to_string(),
             }));
             assert_eq!(clause(from_str2(&access_pattern)), error);
@@ -2850,7 +2850,7 @@ fn test_assignments() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag, // from access with usage of parse_string
+            kind: nom::error::ErrorKind::Char, // from access with usage of parse_string
         })),
 
         // "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
@@ -3562,5 +3562,24 @@ fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
  }"###;
     let rule = Rule::try_from(r)?;
     println!("{:?}", rule);
+
+    let r = r###"
+    rule check_all_resources_have_tags_present {
+    let all_resources = Resources.*.Properties
+
+    %all_resources.Tags EXISTS
+    %all_resources.Tags !EMPTY
+}
+    "###;
+    let rule = Rule::try_from(r)?;
+    Ok(())
+}
+
+#[test]
+fn parse_regex_tests() -> Result<(), Error> {
+    let inner = r#"(\d{4})-(\d{2})-(\d{2})"#;
+    let regex = format!("/{}/", inner);
+    let value = Value::try_from(regex.as_str())?;
+    assert_eq!(Value::Regex(inner.to_string()), value);
     Ok(())
 }

@@ -177,13 +177,13 @@ pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
     map(
         alt((
             delimited(
-                tag("\""),
+                char('"'),
                 take_while(|c| c != '"'),
-                tag("\"")),
+                char('"')),
             delimited(
-                tag(from_str2("'")),
+                char('\''),
                 take_while(|c| c != '\''),
-                tag(from_str2("'"))),
+                char('\'')),
         )),
         |s: Span| Value::String((*s.fragment()).to_string()),
     )(input)

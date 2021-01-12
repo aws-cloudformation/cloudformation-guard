@@ -192,6 +192,7 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
                         let root_context = RootScope::new(rules, &root);
                         let reporter = Reporter{ root_context: &root_context, stack: std::cell::RefCell::new(Vec::new()) };
                         rules.evaluate(&root, &reporter)?;
+                        root_context.summary_report();
                     },
 
                     Err(e) => {

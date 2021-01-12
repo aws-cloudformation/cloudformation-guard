@@ -1,0 +1,12 @@
+rule iam_role_exists {
+    Resources.*[ Type == "AWS::IAM::Role" ] EXISTS
+}
+
+rule iam_role_lambda_compliance when iam_role_exists {
+    # let roles = Resources.*[ Type == "AWS::IAM::Role" ]
+    let select_lambda_service = Resources.*[ Type == "AWS::IAM::Role" ].Properties.AssumeRolePolicyDocument.Statement[ Principal.Service EXISTS
+                                                                                      Principal.Service.* == /^lambda/ ]
+
+    %select_lambda_service EMPTY <<check LAMBDA empty>> or
+    %select_lambda_service.Action.* == /sts:AssumeRole/
+}

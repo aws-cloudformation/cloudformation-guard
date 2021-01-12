@@ -1,0 +1,6 @@
+rule check_all_resources_have_tags_present {
+    let all_resources = Resources.*.Properties
+
+    %all_resources.Tags EXISTS
+    %all_resources.Tags !EMPTY
+}

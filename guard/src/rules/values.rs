@@ -118,6 +118,30 @@ impl Hash for Value {
 /////////////////////////////////////////////////////////////////////////////////////////////
 impl Value {
 
+    pub(crate) fn is_list(&self) -> bool {
+        if let Value::List(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_map(&self) -> bool {
+        if let Value::Map(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_scalar(&self) -> bool {
+        match self {
+            Value::String(_) |
+            Value::Regex(_) |
+            Value::Bool(_) |
+            Value::Int(_) |
+            Value::Float(_) |
+            Value::Char(_) |
+            Value::RangeInt(_) |
+            Value::RangeFloat(_) |
+            Value::RangeChar(_) => true,
+            _ => false
+        }
+    }
+
+
     pub(crate) fn query(&self,
                         index: usize,
                         query: &[QueryPart<'_>],
@@ -170,7 +194,7 @@ impl Value {
                         let mut collected = Vec::with_capacity(l.len());
                         for each in l {
                             if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
-                                collected.extend(each.query(index + 1, query, var_resolver)?)
+                                collected.extend(each.query(index+1, query, var_resolver)?);
                             }
                         }
                         return Ok(collected)
@@ -271,9 +295,10 @@ impl Value {
             Err(Error::new(
                 ErrorKind::RetrievalError(
                     format!("Could not locate Index = {} inside Value List = {:?} part = {}, remaining query = {}",
-                            index, self, part, SliceDisplay(remaining))
+                            index, list, part, SliceDisplay(remaining))
                 )))
         }
+
     }
 }
 

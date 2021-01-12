@@ -6,7 +6,7 @@ use colored::Colorize;
 
 use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock, QueryPart};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::parser::AccessQueryWrapper;
 use crate::rules::values::*;
@@ -52,10 +52,8 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-
-fn compare<F>(lhs: &Vec<&Value>, rhs: &Vec<&Value>, compare: F, any: bool) -> Result<(bool, Option<Value>, Option<Value>)>
-    where F: Fn(&Value, &Value) -> Result<bool>
-{
+fn compare_loop<F>(lhs: &Vec<&Value>, rhs: &Vec<&Value>, compare: F, any: bool) -> Result<(bool, Option<Value>, Option<Value>)>
+    where F: Fn(&Value, &Value) -> Result<bool> {
     loop {
         'lhs:
         for lhs_value in lhs {
@@ -80,6 +78,95 @@ fn compare<F>(lhs: &Vec<&Value>, rhs: &Vec<&Value>, compare: F, any: bool) -> Re
         break;
     };
     Ok((true, None, None))
+}
+
+fn elevate_inner<'a>(list_of_list: &'a Vec<&Value>) -> Result<Vec<Vec<&'a Value>>> {
+    let mut elevated = Vec::with_capacity(list_of_list.len());
+    for each_list_elem in list_of_list {
+        match *each_list_elem {
+            Value::List(list) => {
+                let inner_lhs = list.iter().collect::<Vec<&Value>>();
+                elevated.push(inner_lhs);
+            },
+
+            _ => return Err(Error::new(
+                ErrorKind::IncompatibleError(
+                    format!("Expecting the RHS query to return a List<List>, found {}, {:?}",
+                            type_info(*each_list_elem), *each_list_elem)
+                )
+            ))
+        }
+    }
+    Ok(elevated)
+}
+
+fn compare<F>(lhs: &Vec<&Value>,
+              lhs_query: &[QueryPart<'_>],
+              rhs: &Vec<&Value>,
+              rhs_query: Option<&[QueryPart<'_>]>,
+              compare: F,
+              any: bool) -> Result<(bool, Option<Value>, Option<Value>)>
+    where F: Fn(&Value, &Value) -> Result<bool>
+{
+    if lhs.is_empty() || rhs.is_empty() {
+        return Err(Error::new(
+            ErrorKind::NotComparable(
+                format!("Expecting comparisons but have either LHS or RHS empty, LHS Query = {}, RHS Query = {}",
+                    SliceDisplay(lhs_query),
+                    match rhs_query {
+                        Some(q) => format!("{}", SliceDisplay(q)),
+                        None => "No Query".to_string()
+                    }
+                )
+            )
+        ))
+    }
+
+    let lhs_elem = lhs[0];
+    let rhs_elem = rhs[0];
+
+    //
+    // What are possible comparisons
+    //
+    if !lhs_elem.is_list() && !rhs_elem.is_list() {
+        compare_loop(lhs, rhs, compare, any)
+    }
+    else if lhs_elem.is_list() && !rhs_elem.is_list() {
+        for elevated in elevate_inner(lhs)? {
+            if let Ok((cmp, from, to)) = compare_loop(
+                &elevated, rhs, |f, s| compare(f, s), any) {
+                if !cmp {
+                    return Ok((cmp, from, to))
+                }
+            }
+        }
+        Ok((true, None, None))
+    }
+    else if !lhs_elem.is_list() && rhs_elem.is_list() {
+        for elevated in elevate_inner(rhs)? {
+            if let Ok((cmp, from, to)) = compare_loop(
+                lhs, &elevated, |f, s| compare(f, s), any) {
+                if !cmp {
+                    return Ok((cmp, from, to))
+                }
+            }
+        }
+        Ok((true, None, None))
+    }
+    else {
+        for elevated_lhs in elevate_inner(lhs)? {
+            for elevated_rhs in elevate_inner(rhs)? {
+                if let Ok((cmp, from, to)) = compare_loop(
+                    &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any) {
+                    if !cmp {
+                        return Ok((cmp, from, to))
+                    }
+                }
+
+            }
+        }
+        Ok((true, None, None))
+    }
 }
 
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
@@ -132,7 +219,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(l) => l,
         };
 
-        let rhs = match &clause.access_clause.compare_with {
+        let (rhs, rhs_query) = match &clause.access_clause.compare_with {
             None => return Err(Error::new(ErrorKind::IncompatibleError(
                 format!("Expecting a RHS for comparison and did not find one, clause@{}",
                         clause.access_clause.location)
@@ -141,14 +228,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(expr) => {
                 match expr {
                     LetValue::Value(v) => {
-                        if let Value::List(l) = v {
-                            l.iter().collect()
-                        } else {
-                            vec![v]
-                        }
+                        (vec![v], None)
                     },
                     LetValue::AccessClause(query) =>
-                        resolve_query(query, context, var_resolver)?,
+                        (resolve_query(query, context, var_resolver)?, Some(query.as_slice()))
                 }
             }
         };
@@ -158,37 +241,37 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             // ==, !=
             //
             CmpOperator::Eq =>
-                compare(&lhs, &rhs, compare_eq, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?,
 
             //
             // >
             //
             CmpOperator::Gt =>
-                compare(&lhs, &rhs, compare_gt, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_gt, false)?,
 
             //
             // >=
             //
             CmpOperator::Ge =>
-                compare(&lhs, &rhs, compare_ge, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_ge, false)?,
 
             //
             // <
             //
             CmpOperator::Lt =>
-                compare(&lhs, &rhs, compare_lt, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_lt, false)?,
 
             //
             // <=
             //
             CmpOperator::Le =>
-                compare(&lhs, &rhs, compare_le, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_le, false)?,
 
             //
             // IN, !IN
             //
             CmpOperator::In =>
-                compare(&lhs, &rhs, compare_eq, true)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?,
 
             CmpOperator::KeysEq |
             CmpOperator::KeysIn => {
@@ -214,10 +297,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                     .map(|v| v).collect::<Vec<&Value>>();
 
                 if clause.access_clause.comparator.0 == CmpOperator::KeysIn {
-                    compare(&lhs_vec_ref, &rhs, compare_eq, true)?
+                    compare(&lhs_vec_ref, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?
                 }
                 else {
-                    compare(&lhs_vec_ref, &rhs, compare_eq, false)?
+                    compare(&lhs_vec_ref, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?
                 }
             }
 
@@ -271,8 +354,9 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
         'conjunction:
         for conjunction in self {
             for disjunction in conjunction {
-                if Status::PASS == disjunction.evaluate(context, var_resolver)? {
-                    continue 'conjunction;
+                match disjunction.evaluate(context, var_resolver)? {
+                    Status::PASS | Status::SKIP => continue 'conjunction,
+                    Status::FAIL => continue,
                 }
             }
             return Ok(Status::FAIL);
@@ -443,6 +527,18 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
             variables: std::cell::RefCell::new(literals),
             rule_by_name: lookup_cache,
             rule_statues: std::cell::RefCell::new(HashMap::with_capacity(rules.guard_rules.len())),
+        }
+    }
+
+    pub(crate) fn summary_report(&self) {
+        println!("{}", "Summary Report".underline());
+        for each in self.rule_statues.borrow().iter() {
+            let status = match *each.1 {
+                Status::PASS => "PASS".green(),
+                Status::FAIL => "FAIL".red(),
+                Status::SKIP => "SKIP".yellow(),
+            };
+            println!("{}\t\t\t\t\t\t\t{}", *each.0, status);
         }
     }
 }
