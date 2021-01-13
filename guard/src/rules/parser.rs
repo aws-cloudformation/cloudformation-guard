@@ -806,7 +806,7 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                 context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                         value_cmp)
             ))(rest)?;
-            (r, (AccessQuery::from([]), cmp))
+            (r, (AccessQuery::from([QueryPart::MapKeys]), cmp))
         } else {
             let (r, (access, _ign_space, cmp)) = tuple((
                 access,
@@ -939,45 +939,72 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
 //
 // clauses
 //
-fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool) -> IResult<Span<'loc>, Vec<T>>
+fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool) -> IResult<Span<'loc>, Conjunctions<E>>
     where F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
           M: Fn(Vec<E>) -> T,
           E: Clone + 'loc,
           T: 'loc
 {
-    let mut result: Vec<T> = Vec::new();
-    let mut remaining = input;
-    let mut first = true;
+    let mut conjunctions = Conjunctions::new();
+    let mut rest = input;
     loop {
-        let (rest, set) = if non_empty {
-            match separated_nonempty_list(
-                or_join,
-                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
-            )(remaining.clone()) {
-                Err(nom::Err::Error(e)) => if first {
-                    return Err(nom::Err::Error(e))
-                } else {
-                    return Ok((remaining, result))
-                },
-                Ok((r, s)) => (r, s),
-                Err(e) => return Err(e),
+        match disjunction_clauses(rest.clone(), |i: Span| f(i), true) {
+            Err(nom::Err::Error(e)) => {
+                if conjunctions.is_empty() {
+                    return Err(nom::Err::Failure(
+                        ParserError {
+                            span: input,
+                            context: format!("There were no clauses present {}#{}@{}",
+                                             input.extra, input.location_line(), input.get_utf8_column()),
+                            kind: nom::error::ErrorKind::Many1
+                        }
+                    ))
+                }
+                return Ok((rest, conjunctions))
             }
-        }  else {
-            separated_list(
-                or_join,
-                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
-            )(remaining)?
 
-        };
+            Ok((left, disjunctions)) => {
+                rest = left;
+                conjunctions.push(disjunctions);
+            },
 
-        first = false;
-        remaining = rest;
+            Err(e) => return Err(e),
 
-        match set.len() {
-            0 => return Ok((remaining, result)),
-            _ => result.push(m(set)),
         }
     }
+//    let mut result: Vec<T> = Vec::new();
+//    let mut remaining = input;
+//    let mut first = true;
+//    loop {
+//        let (rest, set) = if non_empty {
+//            match separated_nonempty_list(
+//                or_join,
+//                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
+//            )(remaining.clone()) {
+//                Err(nom::Err::Error(e)) => if first {
+//                    return Err(nom::Err::Error(e))
+//                } else {
+//                    return Ok((remaining, result))
+//                },
+//                Ok((r, s)) => (r, s),
+//                Err(e) => return Err(e),
+//            }
+//        }  else {
+//            separated_list(
+//                or_join,
+//                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
+//            )(remaining)?
+//
+//        };
+//
+//        first = false;
+//        remaining = rest;
+//
+//        match set.len() {
+//            0 => return Ok((remaining, result)),
+//            _ => result.push(m(set)),
+//        }
+//    }
 }
 
 fn disjunction_clauses<'loc, E, F>(input: Span<'loc>, parser: F, non_empty: bool) -> IResult<Span<'loc>, Disjunctions<E>>

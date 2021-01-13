@@ -3583,3 +3583,16 @@ fn parse_regex_tests() -> Result<(), Error> {
     assert_eq!(Value::Regex(inner.to_string()), value);
     Ok(())
 }
+
+#[test]
+fn test_complex_predicate_clauses() -> Result<(), Error> {
+    let clause = "Statement[ Condition EXISTS ].Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY";
+    // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
+    let parsed = GuardClause::try_from(clause)?;
+
+    let clause = r#"Statement[ Condition EXISTS
+                                     Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
+    "#;
+    let parsed = GuardClause::try_from(clause)?;
+    Ok(())
+}

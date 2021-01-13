@@ -178,11 +178,33 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
-        let lhs = match resolve_query(
+        let lhs_map_keys = if let QueryPart::MapKeys = &clause.access_clause.query[0] {
+            match context {
+                Value::Map(index) => {
+                    index.keys().map(|s| Value::String(s.to_string())).collect::<Vec<Value>>()
+                },
+                _ => return Err(Error::new(
+                    ErrorKind::IncompatibleError(
+                        format!("Attempting to access KEYS, but value type is not a map {}, Value = {:?}",
+                            type_info(context),
+                            context
+                        )
+                    )
+                )),
+            }
+        } else {
+           vec![]
+        };
+
+        let lhs = if lhs_map_keys.is_empty() {
+            match resolve_query(
             &clause.access_clause.query,  context, var_resolver) {
-            Ok(values) => Some(values),
-            Err(Error(ErrorKind::RetrievalError(_))) => None,
-            Err(e) => return Err(e),
+                Ok(values) => Some(values),
+                Err(Error(ErrorKind::RetrievalError(_))) => None,
+                Err(e) => return Err(e),
+            }
+        } else {
+            Some(lhs_map_keys.iter().collect::<Vec<&Value>>())
         };
 
         let result = match &clause.access_clause.comparator.0 {
@@ -275,32 +297,11 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
             CmpOperator::KeysEq |
             CmpOperator::KeysIn => {
-                let mut lhs_vec_keys = Vec::with_capacity(lhs.len());
-                for lhs_value in lhs {
-                    if let Value::Map(index) = lhs_value {
-                        for keys in index.keys() {
-                            lhs_vec_keys.push(Value::String(keys.to_string()));
-                        }
-                    }
-                    else {
-                        return Err(Error::new(ErrorKind::IncompatibleError(
-                            format!("Attempting to resolve Clause@{} for query {}, expecting map-type for KEYS comparator found {}",
-                                    clause.access_clause.location,
-                                    SliceDisplay(&clause.access_clause.query),
-                                    type_info(lhs_value)
-                            )
-                        )))
-                    }
-                }
-
-                let lhs_vec_ref = lhs_vec_keys.iter()
-                    .map(|v| v).collect::<Vec<&Value>>();
-
                 if clause.access_clause.comparator.0 == CmpOperator::KeysIn {
-                    compare(&lhs_vec_ref, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?
+                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?
                 }
                 else {
-                    compare(&lhs_vec_ref, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?
+                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?
                 }
             }
 
@@ -390,7 +391,12 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         let query = format!("Resources.*[ Type == \"{}\" ]", self.type_name);
         let cfn_query = AccessQueryWrapper::try_from(query.as_str())?.0;
         let values = match context.query(0, &cfn_query, var_resolver) {
-            Ok(v) => if v.is_empty() { vec![context] } else { v }
+            Ok(v) => if v.is_empty() {
+                // vec![context]
+                return Ok(type_report.message(format!("There are no {} types present in context", self.type_name))
+                                                  .status(Status::SKIP).get_status())
+
+            } else { v }
             Err(_) => vec![context]
         };
         for each in values {

@@ -166,6 +166,8 @@ impl Value {
                     }
                 },
 
+                QueryPart::MapKeys => unreachable!(),
+
                 QueryPart::Index(array_idx) =>
                     return self.retrieve_index(*array_idx, part, query)?
                         .query(index + 1, query, var_resolver),
