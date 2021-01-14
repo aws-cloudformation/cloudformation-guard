@@ -229,6 +229,13 @@ impl Value {
                    var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
         let list = self.match_list(part, query)?;
         let mut collected = Vec::with_capacity(list.len());
+        if list.is_empty() && index < query.len() {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Extended query left index = {}, query = {}, left = {}",
+                    index, SliceDisplay(query), SliceDisplay(&query[index..])
+                )
+            )))
+        }
         for each in list {
             collected.extend(each.query(index, query, var_resolver)?)
         }
@@ -242,6 +249,13 @@ impl Value {
                       var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
         let index_map = self.match_map(part, query)?;
         let mut collected = Vec::with_capacity(index_map.len());
+        if index_map.is_empty() && index < query.len() {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Extended query left index = {}, query = {}, left = {}",
+                        index, SliceDisplay(query), SliceDisplay(&query[index..])
+                )
+            )))
+        }
         for each in index_map.values() {
             collected.extend(each.query(index, query, var_resolver)?)
         }

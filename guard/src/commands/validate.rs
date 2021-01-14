@@ -106,14 +106,14 @@ struct StackContext {
     indent: usize,
 }
 
-struct Reporter<'r,'loc>{
+struct ConsoleReporter<'r,'loc>{
     root_context: &'r RootScope<'r, 'loc>,
     stack: std::cell::RefCell<Vec<StackContext>>,
 }
 
-impl<'r, 'loc> Reporter<'r, 'loc> {
+impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
     fn new(root: &'r RootScope<'r, 'loc>) -> Self {
-        Reporter {
+        ConsoleReporter {
             root_context: root,
             stack: std::cell::RefCell::new(Vec::new()),
         }
@@ -122,7 +122,7 @@ impl<'r, 'loc> Reporter<'r, 'loc> {
 
 const INDENT: &str = "    ";
 
-impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
+impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
     fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
         self.root_context.resolve_variable(variable)
     }
@@ -137,7 +137,7 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
                       msg: String,
                       from: Option<Value>,
                       to: Option<Value>,
-                      status: Status) {
+                      status: Option<Status>) {
         let stack = self.stack.borrow_mut().pop();
         match stack {
             Some(stack) => {
@@ -145,7 +145,7 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
                     for idx in 0..stack.indent {
                         print!("{}", INDENT)
                     }
-                    println!("{}[{}] Status = {}, Message = {}", eval_type, context.underline(), status, msg);
+                    println!("{}[{}] Status = {:?}, Message = {}", eval_type, context.underline(), status, msg);
                     if let Some(value) = &from {
                         print!(" Comparing [{:?}]", value);
                     }
@@ -170,10 +170,27 @@ impl<'r, 'loc> EvaluationContext for Reporter<'r, 'loc> {
         for idx in 0..indent {
             print!("{}", INDENT)
         }
-        println!("Evaluating {}[{}]", eval_type, context);
+        Self::colorized(eval_type, context);
         self.root_context.start_evaluation(eval_type, context);
     }
+
 }
+
+impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
+    fn colorized(eval_type: EvaluationType, context: &str) {
+        match eval_type {
+            EvaluationType::Rule => println!("{}", format!("{} = {}", eval_type, context).truecolor(200, 170, 217).underline()),
+            EvaluationType::Type => println!("{}", format!("{} = {}", eval_type, context).truecolor(192, 80, 47).underline()),
+            EvaluationType::Condition => println!("{}", format!("when@{}", context).truecolor(183, 178, 79).underline()),
+            EvaluationType::Filter => println!("{}", "Filter".truecolor(109, 104, 15).underline()),
+            EvaluationType::Clause => println!("{}", format!("Clause = {}", context).truecolor(63, 147, 63).underline()),
+            _ => println!("{}/{}", eval_type, context)
+        }
+    }
+
+}
+
+
 
 fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) -> Result<()> {
     for each in data_files {
@@ -190,7 +207,7 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
                         };
 
                         let root_context = RootScope::new(rules, &root);
-                        let reporter = Reporter{ root_context: &root_context, stack: std::cell::RefCell::new(Vec::new()) };
+                        let reporter = ConsoleReporter { root_context: &root_context, stack: std::cell::RefCell::new(Vec::new()) };
                         rules.evaluate(&root, &reporter)?;
                         root_context.summary_report();
                     },

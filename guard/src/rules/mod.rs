@@ -62,7 +62,7 @@ pub(crate) trait EvaluationContext {
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Status);
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>);
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }

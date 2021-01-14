@@ -676,12 +676,12 @@ fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span<'loc>) -> IResult<Span<'
         let (input, is_filter) = opt(char('['))(input)?;
         let (input, filter_part) = if is_filter.is_none() { (input, None) } else {
             let (input, part) = cut(alt((
-                map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses)),
                 value(QueryPart::AllIndices, preceded(space0, char('*'))),
                 map( preceded(space0, parse_int_value), |idx| {
                     let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
                     QueryPart::Index(idx)
                 }),
+                map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses)),
             ))
             )(input)?;
             let (input, _ignored) = cut(terminated(zero_or_more_ws_or_comment, char(']')))(input)?;
@@ -710,7 +710,7 @@ fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span<'loc>) -> IResult<Span<'
 //
 fn dotted_access(input: Span) -> IResult<Span, Vec<QueryPart>> {
     fold_many1(
-        preceded(char('.'), predicate_clause(
+        preceded(preceded(zero_or_more_ws_or_comment, char('.')), predicate_clause(
             alt((property_name,
                  value("*".to_string(), char('*')),
                  map(digit1, |s: Span| (*s.fragment()).to_string())

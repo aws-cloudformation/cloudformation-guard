@@ -135,7 +135,7 @@ fn test_query_on_value() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Option<Status>) {
         }
 
         fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
@@ -225,7 +225,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Status) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<Value>, _to: Option<Value>, _status: Option<Status>) {
         }
 
         fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {

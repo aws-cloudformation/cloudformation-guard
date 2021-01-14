@@ -110,7 +110,7 @@ fn compare<F>(lhs: &Vec<&Value>,
 {
     if lhs.is_empty() || rhs.is_empty() {
         return Err(Error::new(
-            ErrorKind::NotComparable(
+            ErrorKind::RetrievalError(
                 format!("Expecting comparisons but have either LHS or RHS empty, LHS Query = {}, RHS Query = {}",
                     SliceDisplay(lhs_query),
                     match rhs_query {
@@ -200,7 +200,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             match resolve_query(
             &clause.access_clause.query,  context, var_resolver) {
                 Ok(values) => Some(values),
-                Err(Error(ErrorKind::RetrievalError(_))) => None,
+                // Err(Error(ErrorKind::RetrievalError(_))) => None,
                 Err(e) => return Err(e),
             }
         } else {
@@ -227,7 +227,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
             let message = format!("Guard@{}", self.access_clause.location);
             var_resolver.end_evaluation(
-                EvaluationType::Clause, &guard_loc, message, None, None, status);
+                EvaluationType::Clause, &guard_loc, message, None, None, Some(status));
             return Ok(status)
         }
 
@@ -322,7 +322,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        var_resolver.end_evaluation(EvaluationType::Clause, &guard_loc, message, result.1, result.2, status);
+        var_resolver.end_evaluation(EvaluationType::Clause, &guard_loc, message, result.1, result.2, Some(status));
         Ok(status)
     }
 }
@@ -352,17 +352,40 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
     fn evaluate(&self,
                 context: &Value,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
+        let mut aleast_one_disjunction_passed = false;
         'conjunction:
         for conjunction in self {
+            let mut all_skips = true;
             for disjunction in conjunction {
-                match disjunction.evaluate(context, var_resolver)? {
-                    Status::PASS | Status::SKIP => continue 'conjunction,
-                    Status::FAIL => continue,
+                match disjunction.evaluate(context, var_resolver) {
+                    Ok(status) => {
+                        match status {
+                            Status::PASS => {
+                                aleast_one_disjunction_passed = true;
+                                continue 'conjunction
+                            },
+                            Status::SKIP => continue,
+                            Status::FAIL => {
+                                all_skips = false
+                            }
+                        }
+                    },
+
+                    Err(Error(ErrorKind::RetrievalError(_))) => continue,
+
+                    Err(e) => return Err(e)
                 }
             }
-            return Ok(Status::FAIL);
+            if !all_skips {
+                return Ok(Status::FAIL)
+            }
         }
-        Ok(Status::PASS)
+        if aleast_one_disjunction_passed {
+            Ok(Status::PASS)
+        }
+        else {
+            Ok(Status::SKIP)
+        }
     }
 }
 
@@ -587,10 +610,12 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
                       _msg: String,
                       _from: Option<Value>,
                       _to: Option<Value>,
-                      status: Status) {
+                      status: Option<Status>) {
         if EvaluationType::Rule == eval_type {
             let (name, _rule) = self.rule_by_name.get_key_value(context).unwrap();
-            self.rule_statues.borrow_mut().insert(*name, status);
+            if let Some(status) = status {
+                self.rule_statues.borrow_mut().insert(*name, status);
+            }
         }
     }
 
@@ -644,7 +669,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 
 
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
         self.parent.end_evaluation(eval_type, context, msg, from, to, status)
     }
 
@@ -712,17 +737,21 @@ impl<'s> AutoReport<'s> {
 
 impl<'s> Drop for AutoReport<'s> {
     fn drop(&mut self) {
-        match self.status {
-            Some(status) => {
-                self.context.end_evaluation(
-                    self.eval_type, self.type_context,
-                    match &self.message {
-                        Some(msg) => msg.clone(),
-                        None => String::from("")
-                    }, self.from.clone(), self.to.clone(), status);
+        let status = match self.status {
+            Some(status) => status,
+            None => Status::SKIP
+        };
+        self.context.end_evaluation(
+            self.eval_type,
+            self.type_context,
+            match &self.message {
+                Some(message) => message.clone(),
+                None => format!("DEFAULT MESSAGE({})", status)
             },
-            None => {}
-        }
+            self.from.clone(),
+            self.to.clone(),
+            Some(status)
+        )
     }
 }
 

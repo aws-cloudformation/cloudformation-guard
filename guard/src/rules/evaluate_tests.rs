@@ -53,7 +53,7 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -148,8 +148,8 @@ impl<'r> EvaluationContext for Reporter<'r> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Status) {
-        println!("{} {} {}", eval_type, context, status);
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+        println!("{} {} {:?}", eval_type, context, status);
         self.0.end_evaluation(
             eval_type, context, msg, from, to, status
         )
@@ -210,6 +210,31 @@ rule iam_basic_checks when iam_resources_exists {
     Ok(())
 }
 
+const SAMPLE: &str = r###"
+    {
+        "Statement": [
+            {
+                "Sid": "PrincipalPutObjectIfIpAddress",
+                "Effect": "Allow",
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::my-service-bucket/*",
+                "Condition": {
+                    "Bool": {"aws:ViaAWSService": "false"}
+                }
+            },
+            {
+                "Sid": "ServicePutObject",
+                "Effect": "Allow",
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::my-service-bucket/*",
+                "Condition": {
+                    "Bool": {"aws:ViaAWSService": "true"}
+                }
+            }
+        ]
+    }
+    "###;
+
 #[test]
 fn test_iam_statement_clauses() -> Result<()> {
     let sample = r###"
@@ -257,31 +282,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     println!("Status {:?}", status);
     assert_eq!(Status::PASS, status);
 
-    let sample = r###"
-    {
-        "Statement": [
-            {
-                "Sid": "PrincipalPutObjectIfIpAddress",
-                "Effect": "Allow",
-                "Action": "s3:PutObject",
-                "Resource": "arn:aws:s3:::my-service-bucket/*",
-                "Condition": {
-                    "Bool": {"aws:ViaAWSService": "false"}
-                }
-            },
-            {
-                "Sid": "ServicePutObject",
-                "Effect": "Allow",
-                "Action": "s3:PutObject",
-                "Resource": "arn:aws:s3:::my-service-bucket/*",
-                "Condition": {
-                    "Bool": {"aws:ViaAWSService": "true"}
-                }
-            }
-        ]
-    }
-    "###;
-    let value = Value::try_from(sample)?;
+    let value = Value::try_from(SAMPLE)?;
     let parsed = GuardClause::try_from(clause)?;
     let status = parsed.evaluate(&value, &reporter)?;
     println!("Status {:?}", status);
@@ -296,10 +297,10 @@ fn test_api_gateway() -> Result<()> {
 rule check_rest_api_private {
   AWS::ApiGateway::RestApi {
     # Endpoint configuration must only be private
-    Properties.EndpointConfiguration.Types == ["PRIVATE"]
+    Properties.EndpointConfiguration == ["PRIVATE"]
 
     # At least one statement in the resource policy must contain a condition with the key of "aws:sourceVpc" or "aws:sourceVpce"
-    Properties.Policy.Statement[ Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] ] !EMPTY
+    Properties.Policy.Statement[ Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] !EMPTY
   }
 }
     "###;
@@ -336,12 +337,11 @@ rule check_rest_api_private {
                             }
                         ]
                     },
-                    "EndpointConfiguration"; ["PRIVATE"]
+                    "EndpointConfiguration": ["PRIVATE"]
                 }
             }
         }
-    }
-    "###;
+    }"###;
 
     let value = Value::try_from(resources)?;
     let dummy = DummyEval{};
@@ -349,5 +349,206 @@ rule check_rest_api_private {
     let status = rule.evaluate(&value, &reporter)?;
     println!("{}", status);
     Ok(())
+}
+
+#[test]
+fn testing_IAM_role_prov_serve() -> Result<()> {
+    let resources = r###"
+    {
+        "Resources": {
+            "CounterTaskDefExecutionRole5959CB2D": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "AssumeRolePolicyDocument": {
+                        "Statement": [
+                        {
+                            "Action": "sts:AssumeRole",
+                            "Effect": "Allow",
+                            "Principal": {
+                            "Service": "ecs-tasks.amazonaws.com"
+                            }
+                        }],
+                        "Version": "2012-10-17"
+                    },
+                    "PermissionBoundary": {"Fn::Sub" : "arn::aws::iam::${AWS::AccountId}:policy/my-permission-boundary"},
+                    "Tags": [{ "Key": "TestRole", "Value": ""}]
+                },
+                "Metadata": {
+                    "aws:cdk:path": "foo/Counter/TaskDef/ExecutionRole/Resource"
+                }
+            }
+        }
+    }
+    "###;
+
+    let rules = r###"
+let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
+let ecs_tasks = Resources.*[ Type == "AWS::ECS::TaskDefinition" ]
+
+rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
+    # atleast one Tags contains a Key "TestRole"
+    %iam_roles.Properties.Tags[ Key == "TestRole" ] NOT EMPTY
+    %iam_roles.Properties.PermissionBoundary !EXISTS
+}
+
+rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
+    let task_role = %ecs_tasks.Properties.TaskRoleArn
+
+    when %task_role.'Fn::GetAtt' EXISTS {
+        let role_name = %task_role.'Fn::GetAtt'[0]
+        let iam_roles_by_name = Resources.*[ KEYS == %role_name ]
+        %iam_roles_by_name !EMPTY
+        iam_roles_by_name.Properties.Tags !EMPTY
+    } or
+    %task_role == /aws:arn/ # either a direct string or
+}
+    "###;
+
+    let rules_file = RulesFile::try_from(rules)?;
+    let value = Value::try_from(resources)?;
+
+    // let dummy = DummyEval{};
+    let root_context = RootScope::new(&rules_file, &value);
+    let reporter = Reporter(&root_context);
+    let status = rules_file.evaluate(&value, &reporter)?;
+    println!("{}", status);
+    Ok(())
+}
+
+#[test]
+fn testing_sg_rules_pro_serve() -> Result<()> {
+    let sgs = r###"
+    [{
+    "Resources": {
+    "CounterServiceSecurityGroupF41A3908": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "foo/Counter/Service/SecurityGroup",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all outbound traffic by default",
+            "IpProtocol": "-1"
+          }
+        ],
+        "VpcId": {
+          "Ref": "Vpc8378EB38"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/Counter/Service/SecurityGroup/Resource"
+      }
+    }
+    }
+},
+    {
+    "Resources": {
+    "CounterServiceSecurityGroupF41A3908": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "foo/Counter/Service/SecurityGroup",
+        "SecurityGroupEgress": [
+          {
+            "CidrIpv6": "::/0",
+            "Description": "Allow all outbound traffic by default",
+            "IpProtocol": "-1"
+          }
+        ],
+        "VpcId": {
+          "Ref": "Vpc8378EB38"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/Counter/Service/SecurityGroup/Resource"
+      }
+    }
+    }
+}, {
+    "Resources": {
+    "CounterServiceSecurityGroupF41A3908": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "foo/Counter/Service/SecurityGroup",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "10.0.0.0/16",
+            "Description": "",
+            "IpProtocol": "-1"
+          }
+        ],
+        "VpcId": {
+          "Ref": "Vpc8378EB38"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/Counter/Service/SecurityGroup/Resource"
+      }
+    }
+    }
+},
+{    "Resources": {
+    "CounterServiceSecurityGroupF41A3908": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "foo/Counter/Service/SecurityGroup",
+        "VpcId": {
+          "Ref": "Vpc8378EB38"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/Counter/Service/SecurityGroup/Resource"
+      }
+    }
+    }
+}]
+
+    "###;
+
+    let rules = r###"
+let sgs = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule deny_egress when %sgs NOT EMPTY {
+    # Ensure that none of the security group contain a rule
+    # that has Cidr Ip set to any
+    %sgs.Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
+                                         CidrIpv6 == "::/0" ] EMPTY
+}
+
+    "###;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let values = Value::try_from(sgs)?;
+    let samples = match values {
+        Value::List(v) => v,
+        _ => unreachable!()
+    };
+
+    for (index, each) in samples.iter().enumerate() {
+        let root_context = RootScope::new(&rules_file, each);
+        let reporter = Reporter(&root_context);
+        let status = rules_file.evaluate(each, &reporter)?;
+        println!("{}", format!("Status {} = {}", index, status).underline());
+    }
+
+    let sample = r#"{ "Resources": {} }"#;
+    let value = Value::try_from(sample)?;
+    let rule = r###"
+rule deny_egress {
+    # Ensure that none of the security group contain a rule
+    # that has Cidr Ip set to any
+    Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+        .Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
+                                         CidrIpv6 == "::/0" ] EMPTY
+}
+    "###;
+
+    let dummy = DummyEval{};
+    let rule_parsed = Rule::try_from(rule)?;
+    let status = rule_parsed.evaluate(&value, &dummy)?;
+    println!("Status {:?}", status);
+
+    Ok(())
+
 }
 
