@@ -8,9 +8,10 @@ use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock, QueryPart};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
-use crate::rules::parser::AccessQueryWrapper;
+use crate::rules::parser::{AccessQueryWrapper, rules_file};
 use crate::rules::values::*;
 use std::fmt::Formatter;
+use std::cell::Ref;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -456,11 +457,17 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
                 },
 
                 Status::SKIP => {
+                    each_type_report.message(
+                        format!("All Clauses WERE SKIPPED. This is usually an ERROR specifying them. Maybe we need EXISTS or !EXISTS")
+                    );
                     continue;
                 }
             }
         }
-        Ok(type_report.status(overall).get_status())
+        Ok(if !atleast_one_type_failed_or_passed {
+            type_report.status(Status::SKIP).message(
+                format!("ALL Clauses for all types {} was SKIPPED. This can be an error", self.type_name)).get_status()
+        } else { type_report.status(overall).get_status() })
     }
 }
 
@@ -591,15 +598,34 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
         }
     }
 
+    pub(crate) fn rule_statues<F>(&self, mut f: F)
+        where F: FnMut(&str, &Status) -> ()
+    {
+        for (name, status) in self.rule_statues.borrow().iter() {
+            f(*name, status)
+        }
+    }
+
     pub(crate) fn summary_report(&self) {
         println!("{}", "Summary Report".underline());
+        let mut longest = 0;
+        for name in self.rule_statues.borrow().keys() {
+            if (*name).len() > longest {
+                longest = (*name).len();
+            }
+        }
+
         for each in self.rule_statues.borrow().iter() {
             let status = match *each.1 {
                 Status::PASS => "PASS".green(),
                 Status::FAIL => "FAIL".red(),
                 Status::SKIP => "SKIP".yellow(),
             };
-            println!("{}\t\t\t\t\t\t\t{}", *each.0, status);
+            print!("{}", *each.0);
+            for _idx in 0..(longest + 2 - (*each.0).len()) {
+                print!("{}", "    ");
+            }
+            println!("{}", status);
         }
     }
 }

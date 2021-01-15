@@ -551,7 +551,8 @@ rule deny_egress {
 #[test]
 fn test_s3_bucket_pro_serv() -> Result<()> {
     let values = r###"
-    [{
+    [
+{
     "Resources": {
         "S3Bucket": {
             "Type": "AWS::S3::Bucket",

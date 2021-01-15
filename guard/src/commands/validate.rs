@@ -13,6 +13,7 @@ use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::values::Value;
+use nom::lib::std::collections::HashMap;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -43,6 +44,8 @@ impl Command for Validate {
             .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))
             .arg(Arg::with_name("last-modified").short("-m").required(false).conflicts_with("alphabetical")
                 .help("sort by last modified times within a directory"))
+            .arg(Arg::with_name("verbose").long("verbose").short("v").required(false)
+                .help("verbose logging"))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
@@ -55,6 +58,14 @@ impl Command for Validate {
         } else {
             regular_ordering
         };
+
+        let verbose = if app.is_present("verbose") {
+            true
+        } else {
+            false
+        };
+
+
         let files = get_files(file, cmp)?;
         let data_files = get_files(data, cmp)?;
 
@@ -72,7 +83,7 @@ impl Command for Validate {
                                 },
 
                                 Ok(rules) => {
-                                    evaluate_against_data_files(&data_files, &rules)?
+                                    evaluate_against_data_files(&data_files, &rules, verbose)?
                                 }
                             }
                         },
@@ -109,13 +120,15 @@ struct StackContext {
 struct ConsoleReporter<'r,'loc>{
     root_context: &'r RootScope<'r, 'loc>,
     stack: std::cell::RefCell<Vec<StackContext>>,
+    verbose: bool
 }
 
 impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
-    fn new(root: &'r RootScope<'r, 'loc>) -> Self {
+    fn new(root: &'r RootScope<'r, 'loc>, verbose: bool) -> Self {
         ConsoleReporter {
             root_context: root,
             stack: std::cell::RefCell::new(Vec::new()),
+            verbose,
         }
     }
 }
@@ -141,18 +154,20 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
         let stack = self.stack.borrow_mut().pop();
         match stack {
             Some(stack) => {
-                if &stack.context == context && eval_type == stack.eval_type {
-                    for idx in 0..stack.indent {
-                        print!("{}", INDENT)
+                if self.verbose {
+                    if &stack.context == context && eval_type == stack.eval_type {
+                        for idx in 0..stack.indent {
+                            print!("{}", INDENT)
+                        }
+                        println!("{}[{}] Status = {:?}, Message = {}", eval_type, context.underline(), status, msg);
+                        if let Some(value) = &from {
+                            print!(" Comparing [{:?}]", value);
+                        }
+                        if let Some(value) = &to {
+                            print!(" with [{:?}]", value);
+                        }
+                        print!("\n");
                     }
-                    println!("{}[{}] Status = {:?}, Message = {}", eval_type, context.underline(), status, msg);
-                    if let Some(value) = &from {
-                        print!(" Comparing [{:?}]", value);
-                    }
-                    if let Some(value) = &to {
-                        print!(" with [{:?}]", value);
-                    }
-                    print!("\n");
                 }
             },
             None => {}
@@ -167,10 +182,12 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
         self.stack.borrow_mut().push(StackContext {
             eval_type, context: context.to_string(), indent: indent+1
         });
-        for idx in 0..indent {
-            print!("{}", INDENT)
+        if self.verbose {
+            for idx in 0..indent {
+                print!("{}", INDENT)
+            }
+            Self::colorized(eval_type, context);
         }
-        Self::colorized(eval_type, context);
         self.root_context.start_evaluation(eval_type, context);
     }
 
@@ -192,7 +209,7 @@ impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
 
 
 
-fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) -> Result<()> {
+fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<()> {
     for each in data_files {
         match open_file(each) {
             Ok((name, file)) => {
@@ -207,9 +224,10 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
                         };
 
                         let root_context = RootScope::new(rules, &root);
-                        let reporter = ConsoleReporter { root_context: &root_context, stack: std::cell::RefCell::new(Vec::new()) };
+                        let reporter = ConsoleReporter::new(&root_context, verbose);
                         rules.evaluate(&root, &reporter)?;
-                        root_context.summary_report();
+                        summary_report(&root_context);
+                        //root_context.summary_report();
                     },
 
                     Err(e) => {
@@ -226,6 +244,44 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>) ->
     }
     Ok(())
 }
+
+fn summary_report(root_scope: &RootScope<'_, '_>) {
+    println!("{}", "Summary Report".underline());
+    let mut longest = 0;
+    let mut find_longest = |name: &str, _status: &Status| {
+        if name.len() > longest {
+            longest = name.len()
+        }
+    };
+    root_scope.rule_statues(find_longest);
+    let output = |name: &str, status: &Status| {
+        let status = match status {
+            Status::PASS => "PASS".green(),
+            Status::FAIL => "FAIL".red(),
+            Status::SKIP => "SKIP".yellow(),
+        };
+        print!("{}", name);
+        for _idx in 0..(longest + 2 - name.len()) {
+            print!("{}", "    ");
+        }
+        println!("{}", status);
+    };
+    root_scope.rule_statues(output);
+
+//    for each in rule_statues.iter() {
+//        let status = match *each.1 {
+//            Status::PASS => "PASS".green(),
+//            Status::FAIL => "FAIL".red(),
+//            Status::SKIP => "SKIP".yellow(),
+//        };
+//        print!("{}", *each.0);
+//        for _idx in 0..(longest + 2 - (*each.0).len()) {
+//            print!("{}", "    ");
+//        }
+//        println!("{}", status);
+//    }
+}
+
 
 fn open_file(path: &PathBuf) -> Result<(String, std::fs::File)> {
     if let Some(file_name) = path.file_name() {
