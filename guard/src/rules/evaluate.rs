@@ -202,6 +202,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             &clause.access_clause.query,  context, var_resolver) {
                 Ok(values) => Some(values),
                 // Err(Error(ErrorKind::RetrievalError(_))) => None,
+                Err(Error(ErrorKind::RetrievalError(e))) => {
+                    let r = match &clause.access_clause.comparator.0 {
+                        CmpOperator::Exists => false,
+                        CmpOperator::Eq => match &clause.access_clause.compare_with {
+                            Some(LetValue::Value(Value::Null)) => true,
+                            _ => return Err(Error::new(ErrorKind::RetrievalError(e)))
+                        }
+                        _ => return Err(Error::new(ErrorKind::RetrievalError(e)))
+                    };
+                    let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
+                    return Ok(auto_reporter.status(status).message(e).get_status())
+                }
                 Err(e) => return Err(e),
             }
         } else {

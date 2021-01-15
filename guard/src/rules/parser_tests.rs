@@ -975,15 +975,18 @@ fn test_dotted_access() {
             to_string_vec(&["first"])
         )),
 
-        //" .first.second", // err
-        Err(nom::Err::Error(
-            ParserError {
-                span: from_str2(examples[8]),
-                kind: nom::error::ErrorKind::Many1,
-                context: "".to_string(),
-            }
+        //" .first.second", // Ok
+        Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    examples[8].len(),
+                    1,
+                    "",
+                    "",
+                )
+            },
+            to_string_vec(&["first", "second"]),
         )),
-
 
         //".first.0.path ", // ok
         Ok((
@@ -2192,7 +2195,7 @@ fn test_predicate_clause_success() {
                     ""
                 )
             },
-            context: "".to_string(),
+            context: "There were no clauses present #1@13".to_string(),
             kind: nom::error::ErrorKind::Many1, // for negative number in parse_int_value
         })),
 
@@ -2482,17 +2485,18 @@ fn test_clauses() {
     let expectations = [
 
         // "", // err 0
-        Ok((
-            unsafe {
+        Err(nom::Err::Failure(ParserError {
+            span: unsafe {
                 Span::new_from_raw_offset(
-                    examples[0].len(),
+                    0,
                     1,
                     "",
-                    "",
+                    ""
                 )
             },
-            vec![],
-        )),
+            context: "There were no clauses present #1@1".to_string(),
+            kind: nom::error::ErrorKind::Many1, // for negative number in parse_int_value
+        })),
 
         // "secure\n", // Ok 1
         Ok((

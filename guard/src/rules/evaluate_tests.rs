@@ -126,12 +126,8 @@ fn rule_clause_tests() -> Result<()> {
   AWS::IAM::Role {
     Properties.AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
     Properties.PermissionsBoundary == /arn:aws:iam::(\d{12}):policy/
-    when Properties.Tags EXISTS
-         Properties.Tags !EMPTY {
-
-        Properties.Tags.Value == /[a-zA-Z0-9]+/
-        Properties.Tags.Key   == /[a-zA-Z0-9]+/
-    }
+    Properties.Tags[*].Value == /[a-zA-Z0-9]+/
+    Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
   }
 }"###;
     let rule = Rule::try_from(r)?;
@@ -715,15 +711,13 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     rule deny_s3_public_bucket {
     AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
         Properties.BlockPublicAcls NOT EXISTS or
-        Properties.BlockPublicAcls == false or
-
         Properties.BlockPublicPolicy NOT EXISTS or
-        Properties.BlockPublicPolicy == false or
-
         Properties.IgnorePublicAcls NOT EXISTS or
-        Properties.IgnorePublicAcls == false or
-
         Properties.RestrictPublicBuckets NOT EXISTS or
+
+        Properties.BlockPublicAcls == false or
+        Properties.BlockPublicPolicy == false or
+        Properties.IgnorePublicAcls == false or
         Properties.RestrictPublicBuckets == false
     }
 }
