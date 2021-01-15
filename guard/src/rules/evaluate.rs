@@ -175,7 +175,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let guard_loc = format!("Clause@[loc = {}, query= {}]", self.access_clause.location,
                                 SliceDisplay(&self.access_clause.query));
-        var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
+        let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
+        //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
         let lhs_map_keys = if let QueryPart::MapKeys = &clause.access_clause.query[0] {
@@ -226,8 +227,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         if let Some(r) = result {
             let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
             let message = format!("Guard@{}", self.access_clause.location);
-            var_resolver.end_evaluation(
-                EvaluationType::Clause, &guard_loc, message, None, None, Some(status));
+            auto_reporter.status(status).message(message);
             return Ok(status)
         }
 
@@ -312,9 +312,9 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let status = negation_status(result.0, clause.access_clause.comparator.1, clause.negation);
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
             match status {
-                Status::PASS => "PASS".green(),
-                Status::FAIL => "FAIL".red(),
-                Status::SKIP => "SKIP".yellow()
+                Status::PASS => "PASS",
+                Status::FAIL => "FAIL",
+                Status::SKIP => "SKIP",
             },
             SliceDisplay(&clause.access_clause.query),
             match &clause.access_clause.custom_message {
@@ -322,7 +322,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        var_resolver.end_evaluation(EvaluationType::Clause, &guard_loc, message, result.1, result.2, Some(status));
+        auto_reporter.status(status).message(message);
         Ok(status)
     }
 }

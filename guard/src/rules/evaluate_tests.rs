@@ -552,3 +552,192 @@ rule deny_egress {
 
 }
 
+#[test]
+fn test_s3_bucket_pro_serv() -> Result<()> {
+    let values = r###"
+    [{
+    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : true,
+                "BlockPublicPolicy" : true,
+                "IgnorePublicAcls" : true,
+                "RestrictPublicBuckets" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : false,
+                "BlockPublicPolicy" : true,
+                "IgnorePublicAcls" : true,
+                "RestrictPublicBuckets" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : true,
+                "BlockPublicPolicy" : false,
+                "IgnorePublicAcls" : true,
+                "RestrictPublicBuckets" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : true,
+                "BlockPublicPolicy" : true,
+                "IgnorePublicAcls" : false,
+                "RestrictPublicBuckets" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : true,
+                "BlockPublicPolicy" : true,
+                "IgnorePublicAcls" : true,
+                "RestrictPublicBuckets" : false
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BlockPublicAcls" : false,
+                "BlockPublicPolicy" : false,
+                "IgnorePublicAcls" : false,
+                "RestrictPublicBuckets" : false
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+            "BlockPublicAcls" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+            "BlockPublicAcls" : true,
+            "BlockPublicPolicy" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+},
+
+{    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+            "BlockPublicAcls" : true,
+            "BlockPublicPolicy" : true,
+            "RestrictPublicBuckets" : true
+            },
+            "Metadata": {
+             "aws:cdk:path": "foo/Counter/S3/Resource"
+            }
+        }
+    }
+}]
+
+    "###;
+
+    let parsed_values = match Value::try_from(values)? {
+        Value::List(v) => v,
+        _ => unreachable!()
+    };
+
+    let rule = r###"
+    rule deny_s3_public_bucket {
+    AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
+        Properties.BlockPublicAcls NOT EXISTS or
+        Properties.BlockPublicAcls == false or
+
+        Properties.BlockPublicPolicy NOT EXISTS or
+        Properties.BlockPublicPolicy == false or
+
+        Properties.IgnorePublicAcls NOT EXISTS or
+        Properties.IgnorePublicAcls == false or
+
+        Properties.RestrictPublicBuckets NOT EXISTS or
+        Properties.RestrictPublicBuckets == false
+    }
+}
+
+    "###;
+
+    let s3_rule = Rule::try_from(rule)?;
+    let dummy = DummyEval{};
+    let reported = Reporter(&dummy);
+    for (idx, each) in parsed_values.iter().enumerate() {
+        let status = s3_rule.evaluate(each, &reported)?;
+        println!("Status#{} = {}", idx, status);
+    }
+    Ok(())
+}
+
+

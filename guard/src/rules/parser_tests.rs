@@ -2193,7 +2193,7 @@ fn test_predicate_clause_success() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag, // for negative number in parse_int_value
+            kind: nom::error::ErrorKind::Many1, // for negative number in parse_int_value
         })),
 
         // "resources.*[type == /AWS::RDS/", // 5 err
