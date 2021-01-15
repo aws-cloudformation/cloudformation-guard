@@ -734,4 +734,314 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn ecs_iam_role_relationship_assetions() -> Result<()> {
+    let template = r###"
+    # deny_task_role_no_permission_boundary is expected to be false so negate it to pass test
+{    "Resources": {
+    "CounterTaskDef1468734E": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "COUNTER_TABLE_NAME",
+                "Value": {
+                  "Ref": "CounterTableFE2C0268"
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": {
+              "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-${AWS::AccountId}-${AWS::Region}:9a4832ed07fabf889e6df624dc8a8170008880d8db629312f85dba129920e0b1"
+            },
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "CounterTaskDefwebLogGroup437F46A3"
+                },
+                "awslogs-stream-prefix": "Counter",
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            },
+            "Name": "web",
+            "PortMappings": [
+              {
+                "ContainerPort": 8080,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "CounterTaskDefExecutionRole5959CB2D",
+            "Arn"
+          ]
+        },
+        "Family": "fooCounterTaskDef49BA9021",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "CounterTaskRole71EBC3F8",
+            "Arn"
+          ]
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/Counter/TaskDef/Resource"
+      }
+    },
+    "CounterTaskRole71EBC3F8": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Tags": [{"Key": "TestRole", "Value": ""}],
+        "PermissionBoundary": "arn:aws:iam...",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "dynamodb:BatchGet*",
+                    "dynamodb:DescribeStream",
+                    "dynamodb:DescribeTable",
+                    "dynamodb:Get*",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:BatchWrite*",
+                    "dynamodb:CreateTable",
+                    "dynamodb:Delete*",
+                    "dynamodb:Update*",
+                    "dynamodb:PutItem"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CounterTableFE2C0268",
+                      "Arn"
+                    ]
+                  }
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "DynamoDBTableRWAccess"
+          }
+        ]
+      },
+      "Metadata": {
+        "aws:cdk:path": "foo/CounterTaskRole/Default/Resource"
+      }
+    }
+    }
+}
+    "###;
+    Ok(())
+}
+
+struct VariableResolver<'a, 'b>(&'a dyn EvaluationContext, HashMap<String, Vec<&'b Value>>);
+
+impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+        if let Some(value) = self.1.get(variable) {
+            Ok(value.clone())
+        }
+        else {
+            self.0.resolve_variable(variable)
+        }
+    }
+
+    fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        self.0.rule_status(rule_name)
+    }
+
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+        self.0.end_evaluation(eval_type, context, msg, from, to, status);
+    }
+
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        self.0.start_evaluation(eval_type, context);
+    }
+}
+
+#[test]
+fn test_iam_subselections() -> Result<()> {
+    let template = r###"
+    {
+        Resources: {
+            # NOT SELECTED
+            one: {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [
+                      {
+                        Key: "TestRole",
+                        Value: ""
+                      }
+                    ],
+                    PermissionsBoundary: "aws:arn"
+                }
+            },
+            # SELECTED
+            two:
+            {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [
+                      {
+                        Key: "TestRole",
+                        Value: ""
+                      }
+                    ]
+                }
+            },
+            # NOT SELECTED
+            three: {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [],
+                    PermissionsBoundary: "aws:arn"
+                }
+            },
+            # NOT SELECTED #1, SELECTED #2
+            four:
+            {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [
+                      {
+                        Key: "Prod",
+                        Value: ""
+                      }
+                    ]
+                }
+            }
+        }
+    }
+    "###;
+
+    let value = Value::try_from(template)?;
+    let query = AccessQueryWrapper::try_from(
+        r#"Resources.*[
+                    Type == "AWS::IAM::Role"
+                    Properties.Tags[ Key == "TestRole" ] !EMPTY
+                    Properties.PermissionsBoundary !EXISTS
+                 ]"#
+    )?.0;
+    let dummy = DummyEval{};
+    let selected = value.query(0, &query, &dummy)?;
+    println!("Selected {:?}", selected);
+    assert_eq!(selected.len(), 1);
+    let expected = Value::try_from(r#"
+            {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [
+                      {
+                        Key: "TestRole",
+                        Value: ""
+                      }
+                    ]
+                }
+            }
+    "#)?;
+    assert_eq!(selected[0], &expected);
+
+    let query = AccessQueryWrapper::try_from(
+        r#"Resources.*[
+                    Type == "AWS::IAM::Role"
+                    Properties.Tags[ Key == "TestRole" or Key == "Prod" ] !EMPTY
+                    Properties.PermissionsBoundary !EXISTS
+                 ]"#
+    )?.0;
+    let selected = value.query(0, &query, &dummy)?;
+    println!("Selected {:?}", selected);
+    assert_eq!(selected.len(), 2);
+    let expected2 = Value::try_from(
+        r#"
+            {
+                Type: "AWS::IAM::Role",
+                Properties: {
+                    Tags: [
+                      {
+                        Key: "Prod",
+                        Value: ""
+                      }
+                    ]
+                }
+            }
+        "#
+    )?;
+    assert_eq!(selected[0], &expected);
+    assert_eq!(selected[1], &expected2);
+
+
+    let rules_file = r###"
+let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
+
+rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
+    # atleast one Tags contains a Key "TestRole"
+    %iam_roles[
+        # Properties.Tags !EMPTY
+        Properties.Tags[ Key == "TestRole" ] !EMPTY
+        Properties.PermissionsBoundary !EXISTS
+    ] !EMPTY
+}
+    "###;
+
+    let rules = RulesFile::try_from(rules_file)?;
+    let root_scope = RootScope::new(&rules, &value);
+    let reporter = Reporter(&root_scope);
+    let status = rules.evaluate(&value, &reporter)?;
+    println!("Status = {}", status);
+    assert_eq!(status, Status::PASS);
+    let fail_value= Value::try_from(
+        r#"
+            { Resources: {
+                one: {
+                    Type: "AWS::IAM::Role",
+                    Properties: {
+                        Tags: [
+                          {
+                            Key: "Prod",
+                            Value: ""
+                          }
+                        ]
+                    }
+                }
+                }
+            }
+        "#
+    )?;
+    let root_scope = RootScope::new(&rules, &fail_value);
+    let reporter = Reporter(&root_scope);
+    let status = rules.evaluate(&fail_value, &reporter)?;
+    println!("Status = {}", status);
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
 

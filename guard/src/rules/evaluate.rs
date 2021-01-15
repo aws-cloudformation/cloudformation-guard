@@ -434,13 +434,33 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
             } else { v }
             Err(_) => vec![context]
         };
-        for each in values {
-            let block_scope = BlockScope::new(&self.block, each, var_resolver);
-            if Status::FAIL == self.block.conjunctions.evaluate(each, &block_scope)? {
-                return Ok(type_report.status(Status::FAIL).get_status())
+
+        let mut overall = Status::PASS;
+        let mut atleast_one_type_failed_or_passed = false;
+        for (index, each) in values.iter().enumerate() {
+            let type_context = format!("{}#{}", self.type_name, index);
+            let mut each_type_report = AutoReport::new(
+                EvaluationType::Type,
+                var_resolver,
+                &type_context
+            );
+            let block_scope = BlockScope::new(&self.block, *each, var_resolver);
+            match each_type_report.status(self.block.conjunctions.evaluate(*each, &block_scope)? ).get_status() {
+                Status::PASS => {
+                    atleast_one_type_failed_or_passed = true;
+                },
+
+                Status::FAIL => {
+                    atleast_one_type_failed_or_passed = true;
+                    overall = Status::FAIL
+                },
+
+                Status::SKIP => {
+                    continue;
+                }
             }
         }
-        Ok(type_report.status(Status::PASS).get_status())
+        Ok(type_report.status(overall).get_status())
     }
 }
 
