@@ -1,10 +1,16 @@
-use std::convert::TryFrom;
-
 use std::cmp::Ordering;
-
-use crate::errors::{Error, ErrorKind};
-use indexmap::map::IndexMap;
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
+
+use indexmap::map::IndexMap;
+use nom::lib::std::fmt::Formatter;
+
+use crate::rules::{EvaluationContext, parser, Result, Status, EvaluationType};
+use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::Evaluate;
+use crate::rules::exprs::{QueryPart, SliceDisplay};
+use crate::rules::parser::Span;
+use crate::rules::evaluate::AutoReport;
 
 #[derive(PartialEq, Debug, Clone, Hash, Copy)]
 pub enum CmpOperator {
@@ -22,12 +28,25 @@ pub enum CmpOperator {
     KeysEmpty,
 }
 
-#[derive(PartialEq, Debug, Clone)]
-pub enum ValueOperator {
-    Not(CmpOperator),
-    Cmp(CmpOperator),
+impl std::fmt::Display for CmpOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CmpOperator::Eq => f.write_str("EQUALS")?,
+            CmpOperator::In => f.write_str("IN")?,
+            CmpOperator::Gt=> f.write_str("GREATER THAN")?,
+            CmpOperator::Lt=> f.write_str("LESS THAN")?,
+            CmpOperator::Ge => f.write_str("GREATER THAN EQUALS")?,
+            CmpOperator::Le => f.write_str("LESS THAN EQUALS")?,
+            CmpOperator::Exists => f.write_str("EXISTS")?,
+            CmpOperator::Empty => f.write_str("EMPTY")?,
+            CmpOperator::KeysEmpty => f.write_str("KEYS EMPTY")?,
+            CmpOperator::KeysEq => f.write_str("KEYS EQUALS")?,
+            CmpOperator::KeysExists => f.write_str("KEYS EXISTS")?,
+            CmpOperator::KeysIn => f.write_str("KEYS IN")?,
+        }
+        Ok(())
+    }
 }
-
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Value {
@@ -40,7 +59,6 @@ pub enum Value {
     Char(char),
     List(Vec<Value>),
     Map(IndexMap<String, Value>),
-    Variable(String),
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
     RangeChar(RangeType<char>),
@@ -50,7 +68,6 @@ impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             Value::String(s)        |
-            Value::Variable(s)      |
             Value::Regex(s)        => { s.hash(state); },
 
             Value::Char(c)          => { c.hash(state); },
@@ -94,9 +111,229 @@ impl Hash for Value {
     }
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                         //
+//   Value Query Support for projecting views over the given value object                  //
+//                                                                                         //
+/////////////////////////////////////////////////////////////////////////////////////////////
 impl Value {
 
-    pub(crate) fn traverse(&self, path: &str) -> Result<&Value, Error> {
+    pub(crate) fn is_list(&self) -> bool {
+        if let Value::List(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_map(&self) -> bool {
+        if let Value::Map(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_scalar(&self) -> bool {
+        match self {
+            Value::String(_) |
+            Value::Regex(_) |
+            Value::Bool(_) |
+            Value::Int(_) |
+            Value::Float(_) |
+            Value::Char(_) |
+            Value::RangeInt(_) |
+            Value::RangeFloat(_) |
+            Value::RangeChar(_) => true,
+            _ => false
+        }
+    }
+
+
+    pub(crate) fn query(&self,
+                        index: usize,
+                        query: &[QueryPart<'_>],
+                        var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
+        if index < query.len() {
+            let part = &query[index];
+            if part.is_variable() {
+                return Err(Error::new(ErrorKind::IncompatibleError(
+                    "Do not support variable interpolation inside a query".to_string()
+                )))
+            }
+            match part {
+                QueryPart::Key(key) => {
+                    return match key.parse::<i32>() {
+                        Ok(array_idx) =>
+                            self.retrieve_index(array_idx, part, &query)?
+                                .query(index + 1, query, var_resolver),
+
+                        Err(_) =>
+                            self.retrieve_key(key.as_str(), part, query)?
+                                .query(index + 1, query, var_resolver),
+                    }
+                },
+
+                QueryPart::MapKeys => unreachable!(),
+
+                QueryPart::Index(array_idx) =>
+                    return self.retrieve_index(*array_idx, part, query)?
+                        .query(index + 1, query, var_resolver),
+
+                QueryPart::AllIndices => return self.all_indices(index + 1, part, query, var_resolver),
+
+                QueryPart::AllValues =>
+                    return match self.all_indices(index + 1, part, query, var_resolver) {
+                        Ok(v) => Ok(v),
+                        Err(Error(ErrorKind::IncompatibleError(_))) => self.all_map_values(index + 1, part, query, var_resolver),
+                        Err(err) => Err(err)
+                    },
+
+                QueryPart::Filter(conjunctions) => {
+                    //
+                    // There are two possibilities here, either this was a directly a list value
+                    // of structs and we need filter, OR we are part of all_map_values.
+                    //
+                    // TODO: this is special cased here as the parser today treat 'tags[*]' as
+                    // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
+                    // the collection itself. It should technically translate to 'AllValues', 'Filter'
+                    //
+                    let mut filter_report = AutoReport::new(EvaluationType::Filter, var_resolver, "");
+                    filter_report.status(Status::PASS);
+                    if let Value::List(l) = self {
+                        let mut collected = Vec::with_capacity(l.len());
+                        for each in l {
+                            if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
+                                collected.extend(each.query(index+1, query, var_resolver)?);
+                            }
+                        }
+                        return Ok(collected)
+                    }
+
+                    //
+                    // Being called from all_map_values
+                    //
+                    if Status::PASS == conjunctions.evaluate(self, var_resolver)? {
+                        return self.query(index+1, query, var_resolver)
+                    }
+
+                    //
+                    // else not selected
+                    //
+                    return Ok(vec![])
+                },
+
+            }
+        }
+        let mut collected = Vec::new();
+        collected.push(self);
+        Ok(collected)
+    }
+
+    fn all_indices(&self,
+                   index: usize,
+                   part: &QueryPart<'_>,
+                   query: &[QueryPart<'_>],
+                   var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
+        let list = self.match_list(part, query)?;
+        let mut collected = Vec::with_capacity(list.len());
+        if list.is_empty() && index < query.len() {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Extended query left index = {}, query = {}, left = {}",
+                    index, SliceDisplay(query), SliceDisplay(&query[index..])
+                )
+            )))
+        }
+        for each in list {
+            collected.extend(each.query(index, query, var_resolver)?)
+        }
+        return Ok(collected)
+    }
+
+    fn all_map_values(&self,
+                      index: usize,
+                      part: &QueryPart<'_>,
+                      query: &[QueryPart<'_>],
+                      var_resolver: &dyn EvaluationContext) -> Result<Vec<&Value>> {
+        let index_map = self.match_map(part, query)?;
+        let mut collected = Vec::with_capacity(index_map.len());
+        if index_map.is_empty() && index < query.len() {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Extended query left index = {}, query = {}, left = {}",
+                        index, SliceDisplay(query), SliceDisplay(&query[index..])
+                )
+            )))
+        }
+        for each in index_map.values() {
+            collected.extend(each.query(index, query, var_resolver)?)
+        }
+        Ok(collected)
+    }
+
+    fn match_list(&self, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Vec<Value>> {
+        return if let Value::List(list) = self {
+            Ok(list)
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::IncompatibleError(
+                    format!("Current value type is not a list, Type = {}, Value = {:?}, part = {}, remaining query = {}",
+                            type_info(self), self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn match_map(&self, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&indexmap::IndexMap<String, Value>> {
+        return if let Value::Map(map) = self {
+            Ok(map)
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::IncompatibleError(
+                    format!("Current self type is not a Map, Type = {}, Value = {:?}, part = {}, remaining query = {}",
+                            type_info(self), self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn retrieve_key(&self, key: &str, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Value> {
+        let map = self.match_map(part, remaining)?;
+        return if let Some(val) = map.get(key) {
+            Ok(val)
+        } else {
+            Err(Error::new(
+                ErrorKind::RetrievalError(
+                    format!("Could not locate Key = {} inside Value Map = {:?} part = {}, remaining query = {}",
+                            key, self, part, SliceDisplay(remaining))
+                )))
+        }
+    }
+
+    fn retrieve_index(&self, index: i32, part:&QueryPart<'_>, remaining: &[QueryPart<'_>]) -> Result<&Value> {
+        let list = self.match_list(part, remaining)?;
+        let check = if index >= 0 { index } else { -index } as usize;
+        return if check < list.len() {
+            Ok(&list[check])
+        }
+        else {
+            Err(Error::new(
+                ErrorKind::RetrievalError(
+                    format!("Could not locate Index = {} inside Value List = {:?} part = {}, remaining query = {}",
+                            index, list, part, SliceDisplay(remaining))
+                )))
+        }
+
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                //
+//  Useful function to perform quick traversal for testing. Recommend using the query API instead //
+//                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//
+// ```
+//    let query = AccessQueryWrapper::try_from(
+//        "Resource.*[ Type == "AWS::EC2::Instance" ].Volumes")?.0
+//    let views = values.query(....)
+// ```
+//
+impl Value {
+
+    pub(crate) fn traverse(&self, path: &str) -> Result<&Value> {
         let mut value = self;
         for each in path.split(".") {
             match each.parse::<i32>() {
@@ -129,6 +366,7 @@ impl Value {
         }
         Ok(value)
     }
+
 }
 
 //
@@ -185,18 +423,10 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
-pub fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
-    where
-        I: IntoIterator<Item = (&'a str, Value)>,
-{
-    values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
-}
-
-
 impl <'a> TryFrom<&'a serde_json::Value> for Value {
-    type Error = crate::errors::Error;
+    type Error = Error;
 
-    fn try_from(value: &'a serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a serde_json::Value) -> std::result::Result<Self, Self::Error> {
         match value {
             serde_json::Value::String(s) => Ok(Value::String(s.to_owned())),
             serde_json::Value::Number(num) => {
@@ -235,18 +465,18 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
 }
 
 impl TryFrom<serde_json::Value> for Value {
-    type Error = crate::errors::Error;
+    type Error = Error;
 
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: serde_json::Value) -> std::result::Result<Self, Self::Error> {
         Value::try_from(&value)
     }
 }
 
 impl <'a> TryFrom<&'a str> for Value {
-    type Error = crate::errors::Error;
+    type Error = Error;
 
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        Ok(super::parser::parse_value(super::parser::Span::new_extra(value, ""))?.1)
+    fn try_from(value: &'a str) -> std::result::Result<Self, Self::Error> {
+        Ok(parser::parse_value(Span::new_extra(value, ""))?.1)
     }
 }
 
@@ -259,7 +489,6 @@ pub(crate) fn type_info(type_: &Value) -> &'static str {
         Value::Float(_f)        => "float",
         Value::String(_s)       => "string",
         Value::Int(_i)          => "int",
-        Value::Variable(_v)     => "var",
         Value::RangeInt(_r)     => "range(int, int)",
         Value::RangeFloat(_f)   => "range(float, float)",
         Value::RangeChar(_r)    => "range(char, char)",
@@ -268,7 +497,7 @@ pub(crate) fn type_info(type_: &Value) -> &'static str {
     }
 }
 
-fn compare_values(first: &Value, other: &Value) -> Result<Ordering, Error> {
+fn compare_values(first: &Value, other: &Value) -> Result<Ordering> {
     match (first, other) {
         //
         // scalar values
@@ -288,7 +517,7 @@ fn compare_values(first: &Value, other: &Value) -> Result<Ordering, Error> {
     }
 }
 
-pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool> {
     let (reg, s) = match (first, second) {
         (Value::String(s), Value::Regex(r)) => (regex::Regex::new(r.as_str())?, s.as_str()),
         (Value::Regex(r), Value::String(s)) => (regex::Regex::new(r.as_str())?, s.as_str()),
@@ -297,7 +526,7 @@ pub(crate) fn compare_eq(first: &Value, second: &Value) -> Result<bool, Error> {
     Ok(reg.is_match(s))
 }
 
-pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Equal | Ordering::Greater => Ok(false),
@@ -307,7 +536,7 @@ pub(crate) fn compare_lt(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(false),
@@ -317,7 +546,7 @@ pub(crate) fn compare_le(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(true),
@@ -327,7 +556,7 @@ pub(crate) fn compare_gt(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool, Error> {
+pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater | Ordering::Equal => Ok(true),
@@ -337,117 +566,15 @@ pub(crate) fn compare_ge(first: &Value, other: &Value) -> Result<bool, Error> {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::convert::TryInto;
-
-    use crate::errors;
-
-    use super::*;
-
-    #[test]
-    fn test_convert_from_to_value() -> Result<(), errors::Error> {
-        let val = r#"
-        {
-            "first": {
-                "block": [{
-                    "number": 10,
-                    "hi": "there"
-                }, {
-                    "number": 20,
-                    "hi": "hello"
-                }],
-                "simple": "desserts"
-            },
-            "second": 50
-        }
-        "#;
-        let json: serde_json::Value = serde_json::from_str(val)?;
-        let value = Value::try_from(&json)?;
-        //
-        // serde_json uses a BTree for the value which preserves alphabetical
-        // order for the keys
-        //
-        assert_eq!(value, Value::Map(
-            make_linked_hashmap(vec![
-                ("first", Value::Map(make_linked_hashmap(vec![
-                    ("block", Value::List(vec![
-                        Value::Map(make_linked_hashmap(vec![
-                            ("hi", Value::String("there".to_string())),
-                            ("number", Value::Int(10)),
-                        ])),
-                        Value::Map(make_linked_hashmap(vec![
-                            ("hi", Value::String("hello".to_string())),
-                            ("number", Value::Int(20)),
-                        ]))
-                    ])),
-                    ("simple", Value::String("desserts".to_string())),
-                ]))),
-                ("second", Value::Int(50))
-            ])
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_convert_into_json() -> Result<(), errors::Error> {
-        let value = r#"
-        {
-             first: {
-                 block: [{
-                     hi: "there",
-                     number: 10
-                 }, {
-                     hi: "hello",
-                     # comments in here for the value
-                     number: 20
-                 }],
-                 simple: "desserts"
-             }, # now for second value
-             second: 50
-        }
-        "#;
-
-        let value_str = r#"
-        {
-            "first": {
-                "block": [{
-                    "number": 10,
-                    "hi": "there"
-                }, {
-                    "number": 20,
-                    "hi": "hello"
-                }],
-                "simple": "desserts"
-            },
-            "second": 50
-        }
-        "#;
-
-        let json: serde_json::Value = serde_json::from_str(value_str)?;
-        let type_value = Value::try_from(value)?;
-        assert_eq!(type_value, Value::Map(
-            make_linked_hashmap(vec![
-                ("first", Value::Map(make_linked_hashmap(vec![
-                    ("block", Value::List(vec![
-                        Value::Map(make_linked_hashmap(vec![
-                            ("hi", Value::String("there".to_string())),
-                            ("number", Value::Int(10)),
-                        ])),
-                        Value::Map(make_linked_hashmap(vec![
-                            ("hi", Value::String("hello".to_string())),
-                            ("number", Value::Int(20)),
-                        ]))
-                    ])),
-                    ("simple", Value::String("desserts".to_string())),
-                ]))),
-                ("second", Value::Int(50))
-            ])
-        ));
-
-        let converted: Value = (&json).try_into()?;
-        assert_eq!(converted, type_value);
-        Ok(())
-    }
+pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
+    where
+        I: IntoIterator<Item = (&'a str, Value)>,
+{
+    values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
 }
 
+
+
+#[cfg(test)]
+#[path = "values_tests.rs"]
+mod values_tests;

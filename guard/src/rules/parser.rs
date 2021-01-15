@@ -1,3 +1,389 @@
+use nom::error::ErrorKind;
+use nom_locate::LocatedSpan;
+
+use nom::branch::alt;
+use nom::bytes::complete::{tag, take_till};
+use nom::character::complete::{char, multispace0, multispace1, space0};
+use nom::combinator::{map, value};
+use nom::multi::{many0, many1};
+use nom::sequence::{delimited, preceded};
+use nom::bytes::complete::{is_not, take_while, take_while1};
+use nom::character::complete::{digit1, one_of, anychar};
+use nom::combinator::{map_res, opt};
+use nom::number::complete::double;
+use nom::sequence::{separated_pair, tuple};
+use nom::{FindSubstring, InputTake};
+use nom::character::complete::{alpha1, space1, newline};
+use nom::combinator::{cut, peek, all_consuming};
+use nom::error::context;
+use nom::multi::{fold_many1, separated_nonempty_list, separated_list};
+use nom::sequence::{pair, terminated};
+
+use crate::rules::exprs::*;
+use crate::rules::values::*;
+use crate::rules::errors::Error;
+use std::fmt::Formatter;
+use indexmap::map::IndexMap;
+use std::convert::TryFrom;
+
+pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
+
+pub(crate) fn from_str2(in_str: &str) -> Span {
+    Span::new_extra(in_str, "")
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct ParserError<'a> {
+    pub(crate) context: String,
+    pub(crate) span: Span<'a>,
+    pub(crate) kind: nom::error::ErrorKind,
+}
+
+pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
+
+impl<'a> ParserError<'a> {
+    pub(crate) fn context(&self) -> &str {
+        &self.context
+    }
+
+    pub(crate) fn span(&self) -> &Span<'a> {
+        &self.span
+    }
+
+    pub(crate) fn kind(&self) -> nom::error::ErrorKind {
+        self.kind
+    }
+}
+
+impl<'a> nom::error::ParseError<Span<'a>> for ParserError<'a> {
+    fn from_error_kind(input: Span<'a>, kind: ErrorKind) -> Self {
+        ParserError {
+            context: "".to_string(),
+            span: input,
+            kind,
+        }
+    }
+
+    fn append(_input: Span<'a>, _kind: ErrorKind, other: Self) -> Self {
+        other
+    }
+
+    fn add_context(input: Span<'a>, ctx: &'static str, other: Self) -> Self {
+        let context = if other.context.is_empty() {
+            format!("{}", ctx)
+        } else {
+            format!("{}/{}", ctx, other.context)
+        };
+
+        ParserError {
+            context,
+            span: input,
+            kind: other.kind,
+        }
+    }
+}
+
+impl<'a> std::fmt::Display for ParserError<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let message = format!(
+            "Error parsing file {} at line {} at column {}, when handling {}, fragment {}",
+            self.span.extra, self.span.location_line(), self.span.get_utf8_column(),
+            self.context, *self.span.fragment());
+        f.write_str(&message)?;
+        Ok(())
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                //
+//                                                                                                //
+//                         HELPER METHODS                                                         //
+//                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
+    delimited(char('#'), take_till(|c| c == '\n'), char('\n'))(input)
+}
+//
+// This function extracts either white-space-CRLF or a comment
+// and discards them
+//
+// (LWSP / comment)
+//
+// Expected error codes: (remember alt returns the error from the last one)
+//    nom::error::ErrorKind::Char => if the comment does not start with '#'
+//
+pub(in crate::rules) fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
+    value((), alt((
+        multispace1,
+        comment2
+    )))(input)
+}
+
+//
+// This provides extract for 1*(LWSP / commment). It does not indicate
+// failure when this isn't the case. Consumers of this combinator must use
+// cut or handle it as a failure if that is the right outcome
+//
+pub(in crate::rules) fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+    value((), many1(white_space_or_comment))(input)
+}
+
+//
+// This provides extract for *(LWSP / comment), same as above but this one never
+// errors out
+//
+pub(in crate::rules) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+    value((), many0(white_space_or_comment))(input)
+}
+
+pub(in crate::rules) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+    move |input: Span| preceded(zero_or_more_ws_or_comment, char(ch))(input)
+}
+
+pub(in crate::rules) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+    white_space(ch)
+}
+
+pub(in crate::rules) fn separated_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+    white_space(ch)
+}
+
+pub(in crate::rules) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+    white_space(ch)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                //
+//                                                                                                //
+//                          Value Type Parsing Routines                                           //
+//                                                                                                //
+//                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
+    let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
+        s.fragment().parse::<i64>().map(|i| Value::Int(-1 * i))
+    });
+    let positive = map_res(digit1, |s: Span| {
+        s.fragment().parse::<i64>().map(Value::Int)
+    });
+    alt((positive, negative))(input)
+}
+
+pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
+    map(
+        alt((
+            delimited(
+                char('"'),
+                take_while(|c| c != '"'),
+                char('"')),
+            delimited(
+                char('\''),
+                take_while(|c| c != '\''),
+                char('\'')),
+        )),
+        |s: Span| Value::String((*s.fragment()).to_string()),
+    )(input)
+}
+
+fn parse_bool(input: Span) -> IResult<Span, Value> {
+    let true_parser = value(Value::Bool(true), alt((tag("true"), tag("True"))));
+    let false_parser = value(Value::Bool(false), alt((tag("false"), tag("False"))));
+    alt((true_parser, false_parser))(input)
+}
+
+fn parse_float(input: Span) -> IResult<Span, Value> {
+    let whole = digit1(input.clone())?;
+    let fraction = opt(preceded(char('.'), digit1))(whole.0)?;
+    let exponent = opt(tuple((one_of("eE"), one_of("+-"), digit1)))(fraction.0)?;
+    if (fraction.1).is_some() || (exponent.1).is_some() {
+        let r = double(input)?;
+        return Ok((r.0, Value::Float(r.1)));
+    }
+    Err(nom::Err::Error(ParserError {
+        context: format!("Could not parse floating number"),
+        kind: nom::error::ErrorKind::Float,
+        span: input
+    }))
+}
+
+fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
+    let mut regex = String::new();
+    let parser = is_not("/");
+    let mut span = input;
+    loop {
+        let (remainder, content) = parser(span)?;
+        let fragment = *content.fragment();
+        //
+        // if the last one has an escape, then we need to continue
+        //
+        if fragment.len() > 0 && fragment.ends_with("\\") {
+            regex.push_str(&fragment[0..fragment.len()-1]);
+            regex.push('/');
+            span = remainder.take_split(1).0;
+            continue;
+        }
+        regex.push_str(fragment);
+        return Ok((remainder, Value::Regex(regex)));
+    }
+}
+
+fn parse_regex(input: Span) -> IResult<Span, Value> {
+    delimited(char('/'), parse_regex_inner, char('/'))(input)
+}
+
+fn parse_char(input: Span) -> IResult<Span, Value> {
+    map(anychar, Value::Char)(input)
+}
+
+fn range_value(input: Span) -> IResult<Span, Value> {
+    delimited(
+        space0,
+        alt((parse_float, parse_int_value, parse_char)),
+        space0,
+    )(input)
+}
+
+fn parse_range(input: Span) -> IResult<Span, Value> {
+    let parsed = preceded(
+        char('r'),
+        tuple((
+            one_of("(["),
+            separated_pair(range_value, char(','), range_value),
+            one_of(")]"),
+        )),
+    )(input)?;
+    let (open, (start, end), close) = parsed.1;
+    let mut inclusive: u8 = if open == '[' { LOWER_INCLUSIVE } else { 0u8 };
+    inclusive |= if close == ']' { UPPER_INCLUSIVE } else { 0u8 };
+    let val = match (start, end) {
+        (Value::Int(s), Value::Int(e)) => Value::RangeInt(RangeType {
+            upper: e,
+            lower: s,
+            inclusive,
+        }),
+
+        (Value::Float(s), Value::Float(e)) => Value::RangeFloat(RangeType {
+            upper: e,
+            lower: s,
+            inclusive,
+        }),
+
+        (Value::Char(s), Value::Char(e)) => Value::RangeChar(RangeType {
+            upper: e,
+            lower: s,
+            inclusive,
+        }),
+
+        _ => return Err(nom::Err::Failure(ParserError {
+            span: parsed.0,
+            kind: nom::error::ErrorKind::IsNot,
+            context: format!("Could not parse range")
+        }))
+    };
+    Ok((parsed.0, val))
+}
+
+//
+// Adding the parser to return scalar values
+//
+fn parse_scalar_value(input: Span) -> IResult<Span, Value> {
+    //
+    // IMP: order does matter
+    // parse_float is before parse_int. the later can parse only the whole part of the float
+    // to match.
+    alt((
+        parse_string,
+        parse_float,
+        parse_int_value,
+        parse_bool,
+        parse_regex,
+    ))(input)
+}
+
+///
+/// List Values
+///
+
+fn parse_list(input: Span) -> IResult<Span, Value> {
+    map(
+        delimited(
+            preceded_by('['),
+            separated_list(separated_by(','), parse_value),
+            followed_by(']'),
+        ),
+        |l| Value::List(l),
+    )(input)
+}
+
+fn key_part(input: Span) -> IResult<Span, String> {
+    alt((
+        map(take_while1(|c:char| c.is_alphanumeric() || c == '-' || c == '_'),
+            |s: Span| (*s.fragment()).to_string()),
+        map(parse_string, |v| {
+            if let Value::String(s) = v {
+                s
+            }
+            else {
+                unreachable!()
+            }
+        })))(input)
+}
+
+fn key_value(input: Span) -> IResult<Span, (String, Value)> {
+    separated_pair(
+        preceded(zero_or_more_ws_or_comment, key_part),
+        followed_by(':'),
+        parse_value,
+    )(input)
+}
+
+fn parse_map(input: Span) -> IResult<Span, Value> {
+    let result = delimited(
+        char('{'),
+        separated_list(separated_by(','), key_value),
+        followed_by('}'),
+    )(input)?;
+    Ok((
+        result.0,
+        Value::Map(
+            result
+                .1
+                .into_iter()
+                .collect::<IndexMap<String, Value>>(),
+        ),
+    ))
+}
+
+fn parse_null(input: Span) -> IResult<Span, Value> {
+    value(Value::Null, alt((tag("null"), tag("NULL"))))(input)
+}
+
+pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
+    preceded(
+        zero_or_more_ws_or_comment,
+        alt((
+            parse_null,
+            parse_scalar_value,
+            parse_range,
+            parse_list,
+            parse_map,
+        )),
+    )(input)
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                //
+//                                                                                                //
+//                          Expressions Parsing Routines                                          //
+//                                                                                                //
+//                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 ///
 /// Parser Grammar for the CFN Guard rule syntax. Any enhancements to the grammar
 /// **MUST** be reflected in this doc section.
@@ -39,31 +425,33 @@
 ///
 ///  or_term                    = "or" / "OR" / "|OR|"
 ///
-///  var_name                   = CHAR 1*(CHAR/_)
+///  var_name                   = 1*CHAR [ 1*(CHAR/ALPHA/_) ]
 ///  var_name_access            = "%" var_name
 ///
-///  dotted_access              = "." (var_name / var_name_access)
+///  dotted_access              = "." (var_name / var_name_access / "*")
 ///
-///  property_access            = var_name *(dotted_access)
-///  variable_access            = var_name_access *(dotted_access)
+///  property_access            = var_name [ dotted_access ]
+///  variable_access            = var_name_access [ dotted_access ]
 ///
 ///  access                     = variable_access /
 ///                               property_access
 ///
-///  not_keyword                = "NOT" / "not"
+///  not_keyword                = "NOT" / "not" / "!"
 ///  basic_cmp                  = "==" / ">=" / "<=" / ">" / "<"
-///  other_operators            = "IN" / "EXISTS"
+///  other_operators            = "IN" / "EXISTS" / "EMPTY"
 ///  not_other_operators        = not_keyword 1*SP other_operators
 ///  not_cmp                    = "!=" / not_other_operators / "NOT_IN"
-///  special_operators          = "KEYS" 1*SP (other_operators / not_other_operators)
+///  special_operators          = "KEYS" 1*SP ("==" / other_operators / not_other_operators)
 ///
 ///  cmp                        = basic_cmp / other_operators / not_cmp / special_operators
 ///
-///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) (access/value)
-///  disjunction_clauses        = clause 1*(or_term 1*(LWSP/comment) clause)
+///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
+///  rule_clause                = rule_name / not_keyword rule_name / clause
+///  rule_disjunction_clauses   = rule_clause 1*(or_term 1*(LWSP/comment) rule_clause)
+///  rule_conjunction_clauses   = rule_clause 1*( (LSWP/comment) rule_clause )
 ///
 ///  type_clause                = type_name 1*SP clause
-///  type_block                 = type_name *SP "{" *(LWSP/comment) 1*clause "}"
+///  type_block                 = type_name *SP [when] "{" *(LWSP/comment) 1*clause "}"
 ///
 ///  type_expr                  = type_clause / type_block
 ///
@@ -76,415 +464,183 @@
 ///  key_part                   = string / var_name
 ///  value                      = primitives / map_type / list_type
 ///
-///  assignment                 = "let" 1*SP var_name ("=" / ":=") 1*SP value
+///  string                     = DQUOTE <any char not DQUOTE> DQUOTE /
+///                               "'" <any char not '> "'"
+///  regex                      = "/" <any char not / or escaped by \/> "/"
+///
+///  comment                    =  "#" *CHAR (LF/CR)
+///  assignment                 = "let" one_or_more_ws  var_name zero_or_more_ws
+///                                     ("=" / ":=") zero_or_more_ws (access/value)
+///
+///  when_type                  = when 1*( (LWSP/comment) clause (LWSP/comment) )
+///  when_rule                  = when 1*( (LWSP/comment) rule_clause (LWSP/comment) )
 ///  named_rule                 = "rule" 1*SP var_name "{"
+///                                   assignment 1*(LWPS/comment)   /
+///                                   (type_expr 1*(LWPS/comment))  /
+///                                   (disjunctions_type_expr) *(LWSP/comment) "}"
 ///
-///
-///
-///
+///  expressions                = 1*( (assignment / named_rule / type_expr / disjunctions_type_expr / comment) (LWPS/comment) )
 ///  ```
 ///
 ///
-///
-
-
 
 //
-// Extern crate dependencies
+// ABNF     =  1*CHAR [ 1*(CHAR / _) ]
 //
-use nom::{FindSubstring, InputTake, IResult};
-use nom::branch::alt;
-use nom::bytes::complete::{is_a, is_not, tag, take_while, take_while1};
-use nom::character::complete::{alphanumeric1, char, digit1, one_of};
-use nom::character::complete::{anychar, multispace0, multispace1, space0, space1};
-use nom::combinator::{all_consuming, cut, map, map_res, opt, peek, value};
-use nom::multi::{many0, many1, separated_list, separated_nonempty_list};
-use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
-use nom_locate::LocatedSpan;
-
-use crate::rules::common::*;
+// All names start with an alphabet and then can have _ intermixed with it. This
+// combinator does not fail, it the responsibility of the consumer to fail based on
+// the error
 //
-// Local crate
+// Expected error codes:
+//    nom::error::ErrorKind::Alpha => if the input does not start with a char
 //
-use crate::rules::values::{LOWER_INCLUSIVE, RangeType, UPPER_INCLUSIVE, Value};
-
-use super::expr::*;
-use super::values::*;
-use indexmap::map::IndexMap;
-
-pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
-
-pub(crate) fn from_str(in_str: &str) -> Span {
-    Span::new_extra(in_str, "")
+fn var_name(input: Span) -> IResult<Span, String> {
+    let (remainder, first_part) = alpha1(input)?;
+    let (remainder, next_part) = take_while(|c: char| c.is_alphanumeric() || c == '_')(remainder)?;
+    let mut var_name = (*first_part.fragment()).to_string();
+    var_name.push_str(*next_part.fragment());
+    Ok((remainder, var_name))
 }
 
 //
-// Rust std crate
+//  var_name_access            = "%" var_name
 //
-
-///
-/// Scalar Values string, bool, int, f64
-///
-
-pub(super) fn parse_int_value(input: Span) -> IResult<Span, Value> {
-    let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
-        s.fragment().parse::<i64>().map(|i| Value::Int(-1 * i))
-    });
-    let positive = map_res(digit1, |s: Span| {
-        s.fragment().parse::<i64>().map(Value::Int)
-    });
-    alt((positive, negative))(input)
-}
-
-pub(super) fn parse_string(input: Span) -> IResult<Span, Value> {
-    map(
-        alt((
-               delimited(
-            tag("\""),
-            take_while(|c| c != '"'),
-            tag("\"")),
-               delimited(
-                   tag(from_str("'")),
-                   take_while(|c| c != '\''),
-                   tag(from_str("'"))),
-        )),
-        |s: Span| Value::String((*s.fragment()).to_string()),
-    )(input)
-}
-
-pub(super) fn parse_bool(input: Span) -> IResult<Span, Value> {
-    let true_parser = value(Value::Bool(true), alt((tag("true"), tag("True"))));
-    let false_parser = value(Value::Bool(false), alt((tag("false"), tag("False"))));
-    alt((true_parser, false_parser))(input)
-}
-
-pub(super) fn parse_float(input: Span) -> IResult<Span, Value> {
-    let whole = digit1(input.clone())?;
-    let fraction = opt(preceded(char('.'), digit1))(whole.0)?;
-    let exponent = opt(tuple((one_of("eE"), one_of("+-"), digit1)))(fraction.0)?;
-    if (fraction.1).is_some() || (exponent.1).is_some() {
-        let r = double(input)?;
-        return Ok((r.0, Value::Float(r.1)));
-    }
-    Err(nom::Err::Error((input, nom::error::ErrorKind::Float)))
-}
-
-fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
-    let mut regex = String::new();
-    let parser = is_not("/");
-    let mut span = input;
-    loop {
-        let (remainder, content) = parser(span)?;
-        let fragment = *content.fragment();
-        //
-        // if the last one has an escape, then we need to continue
-        //
-        if fragment.len() > 0 && fragment.ends_with("\\") {
-            regex.push_str(&fragment[0..fragment.len()-1]);
-            regex.push('/');
-            span = remainder.take_split(1).0;
-            continue;
-        }
-        regex.push_str(fragment);
-        return Ok((remainder, Value::Regex(regex)));
-    }
-}
-
-pub(super) fn parse_regex(input: Span) -> IResult<Span, Value> {
-    delimited(char('/'), parse_regex_inner, char('/'))(input)
-}
-
-pub(super) fn parse_char(input: Span) -> IResult<Span, Value> {
-    map(anychar, Value::Char)(input)
-}
-
-pub(super) fn range_value(input: Span) -> IResult<Span, Value> {
-    delimited(
-        space0,
-        alt((parse_float, parse_int_value, parse_char)),
-        space0,
-    )(input)
-}
-
-pub(super) fn parse_range(input: Span) -> IResult<Span, Value> {
-    let parsed = preceded(
-        char('r'),
-        tuple((
-            one_of("(["),
-            separated_pair(range_value, char(','), range_value),
-            one_of(")]"),
-        )),
-    )(input)?;
-    let (open, (start, end), close) = parsed.1;
-    let mut inclusive: u8 = if open == '[' { LOWER_INCLUSIVE } else { 0u8 };
-    inclusive |= if close == ']' { UPPER_INCLUSIVE } else { 0u8 };
-    let val = match (start, end) {
-        (Value::Int(s), Value::Int(e)) => Value::RangeInt(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
-
-        (Value::Float(s), Value::Float(e)) => Value::RangeFloat(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
-
-        (Value::Char(s), Value::Char(e)) => Value::RangeChar(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
-
-        _ => return Err(nom::Err::Failure((parsed.0, nom::error::ErrorKind::IsNot))),
-    };
-    Ok((parsed.0, val))
-}
-
+//  This combinator does not fail, it is the responsibility of the consumer to fail based
+//  on the error.
 //
-// Adding the parser to return scalar values
+//  Expected error types:
+//     nom::error::ErrorKind::Char => if if does not start with '%'
 //
-pub(super) fn parse_scalar_value(input: Span) -> IResult<Span, Value> {
-    //
-    // IMP: order does matter
-    // parse_float is before parse_int. the later can parse only the whole part of the float
-    // to match.
-    alt((
-        parse_string,
-        parse_float,
-        parse_int_value,
-        parse_bool,
-        parse_regex,
-    ))(input)
-}
-
-///
-/// List Values
-///
-
-pub(super) fn parse_list(input: Span) -> IResult<Span, Value> {
-    map(
-        delimited(
-            preceded_by('['),
-            separated_list(separated_by(','), parse_value),
-            followed_by(']'),
-        ),
-        |l| Value::List(l),
-    )(input)
-}
-
-fn key_part(input: Span) -> IResult<Span, String> {
-    alt((
-        map(alphanumeric1,
-            |s: Span| (*s.fragment()).to_string()),
-        map(parse_string, |v| {
-            if let Value::String(s) = v {
-                s
-            }
-            else {
-                unreachable!()
-            }
-        })))(input)
-}
-
-pub(super) fn key_value(input: Span) -> IResult<Span, (String, Value)> {
-    separated_pair(
-        preceded(take_while_ws_or_comment, key_part),
-        followed_by(':'),
-        parse_value,
-    )(input)
-}
-
-pub(super) fn parse_map(input: Span) -> IResult<Span, Value> {
-    let result = delimited(
-        char('{'),
-        separated_list(separated_by(','), key_value),
-        followed_by('}'),
-    )(input)?;
-    Ok((
-        result.0,
-        Value::Map(
-            result
-                .1
-                .into_iter()
-                .collect::<IndexMap<String, Value>>(),
-        ),
-    ))
-}
-
-pub(super) fn parse_null(input: Span) -> IResult<Span, Value> {
-    value(Value::Null, alt((tag("null"), tag("NULL"))))(input)
-}
-
-pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
-    preceded(
-        take_while_ws_or_comment,
-        alt((
-            parse_null,
-            parse_scalar_value,
-            parse_range,
-            parse_list,
-            parse_map,
-        )),
-    )(input)
-}
-
-///
-/// variable name for an assignment
-///
-/// var_name    ::=   [a-zA-Z0-9_]+
-///
-pub(crate) fn var_name(input: Span) -> IResult<Span, &str> {
-    map(
-        take_while1(|c: char| (c.is_alphanumeric() || c == '_') && c != ':'),
-        |c: Span| *c.fragment(),
-    )(input)
-}
-
-pub(crate) fn value_or_access(input: Span) -> IResult<Span, LetValue> {
-    alt((
-        map(parse_value, LetValue::Value),
-        map(property_access, LetValue::PropertyAccess),
-    ))(input)
-}
-
-fn var_terminated(input: Span) -> IResult<Span, ()> {
-    //
-    // It must either terminate by a newline or it must
-    // be followed with a comment. We use the peek aspect
-    // to not consume the '#' char if it is a comment
-    //
-    match is_a::<_, Span, (Span, nom::error::ErrorKind)>("\r\n")(input.clone()) {
-        Ok((remainder, _ign)) => Ok((remainder, ())),
-        Err(_) => match preceded::<Span, _, _, (Span, nom::error::ErrorKind), _, _>(space0, peek(char('#')))(input.clone()) {
-            Ok((remainder, _ign)) => Ok((remainder, ())),
-            Err(_) => Err(nom::Err::Failure((input, nom::error::ErrorKind::CrLf)))
-        }
-    }
-}
-
-///
-/// variable assignment
-///
-/// var_assignment    ::=  ('let' sp+)? var_name sp1 ':=' sp* (value|%var_name)
-///
-pub(crate) fn var_assignment(input: Span) -> IResult<Span, LetExpr> {
-    //
-    //  Expressions can be of the form
-    //      let var = <value>\n
-    //      let var = a.b.c\n
-    //      var := <value> #comment \n
-    //
-//    let x= preceded(tag("let"), space1);
+//  see var_name for other error codes
 //
-//    let (input, var) =
-//        delimited(space0, var_name,
-//                  (preceded(space0,
-//                               alt((tag(":="), tag("="))))))(input)?;
-//
-//    //
-//    // If the above to parts passed when parsing then the remainder must succeed
-//    //
-//    let (input, value) =
-//        cut(preceded(take_while_ws_or_comment, value_or_access))(input)?;
-//
-//    let terminated = |i: Span| -> IResult<Span, ()> {
-//        Ok((i, ()))
-//    };
-//
-//    //
-//    // If must end in a \n or \r or # dfdfdfd \n or \r
-//    //
-//    let (input, _ignored_ws) = var_terminated(input)?;
-//    Ok((input, LetExpr { var: var.to_string(), value }))
-
-      map(
-          tuple((
-              preceded(tag("let"), space1),  // optional let keyword
-              var_name, // var_name
-              cut(preceded(space1, alt((tag(":="), tag("="))))), // followed by := or =
-              cut(preceded(take_while_ws_or_comment, value_or_access)), // value access
-              var_terminated, // already throws nom::Err::Failure(...) // terminated with newline or comment
-          )),
-          |(_let, var, _ign_assign_sign, value, _end)| LetExpr { var: var.to_string(), value },
-      )(input)
-}
-
-///
-/// variable access
-///
-/// var_access   ::=   '%' var_name
-///
-pub(crate) fn var_access(input: Span) -> IResult<Span, &str> {
+fn var_name_access(input: Span) -> IResult<Span, String> {
     preceded(char('%'), var_name)(input)
 }
 
-pub(crate) fn property_name(input: Span) -> IResult<Span, &str> {
-    map(take_while1(|c: char| c.is_alphanumeric()), |s: Span| {
-        *s.fragment()
-    })(input)
+//
+// This version is the same as var_name_access
+//
+fn var_name_access_inclusive(input: Span) -> IResult<Span, String> {
+    map(var_name_access, |s| format!("%{}", s))(input)
 }
 
-pub(crate) fn property_or_wildcard(input: Span) -> IResult<Span, &str> {
-    alt((var_name, map(char('*'), |_c: char| "*")))(input)
+//
+// Comparison operators
+//
+fn in_keyword(input: Span) -> IResult<Span, CmpOperator> {
+    value(CmpOperator::In, alt((
+        tag("in"),
+        tag("IN")
+    )))(input)
 }
 
-pub(crate) fn map_property_access(
-    var: Option<String>,
-    prop: &str,
-    remain: Vec<&str>,
-) -> PropertyAccess {
-    let mut all: Vec<String> = remain.iter().map(|s| (*s).to_string()).collect();
-    all.insert(0, prop.to_string());
-    PropertyAccess {
-        var_access: var,
-        property_dotted_notation: all,
+fn not(input: Span) -> IResult<Span, ()> {
+    match alt((
+        preceded(tag("not"), space1),
+        preceded(tag("NOT"), space1)))(input) {
+        Ok((remainder, _not)) => Ok((remainder, ())),
+
+        Err(nom::Err::Error(_)) => {
+            let (input, _bang_char) = char('!')(input)?;
+            Ok((input, ()))
+        }
+
+        Err(e) => Err(e)
     }
 }
 
-pub(crate) fn property_dotted_notation(input: Span) -> IResult<Span, PropertyAccess> {
-    map(
-        tuple((
-            var_name,
-            many0(preceded(char('.'), property_or_wildcard)),
-        )),
-        |(name, remain)| map_property_access(None, name, remain),
-    )(input)
-}
-
-pub(crate) fn var_property_dotted_notation(input: Span) -> IResult<Span, PropertyAccess> {
-    map(
-        tuple((var_access, many1(preceded(char('.'), property_or_wildcard)))),
-        |(var, prop)| PropertyAccess {
-            var_access: Some(var.to_string()),
-            property_dotted_notation: prop.iter().map(|s| (*s).to_string()).collect(),
-        },
-    )(input)
-}
-
-///
-/// Property access
-///
-/// property_access    ::=   var_access |
-///                          var_access.property_name[.property_name|.\\*]* |
-///                          property_name[.property_name|\\.*]*
-///
-pub(crate) fn property_access(input: Span) -> IResult<Span, PropertyAccess> {
+fn eq(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     alt((
-        property_dotted_notation,
-        var_property_dotted_notation,
-        map(var_access, |var| PropertyAccess {
-            var_access: Some(var.to_string()),
-            property_dotted_notation: vec![],
-        }),
+        value((CmpOperator::Eq, false), tag("==")),
+        value((CmpOperator::Eq, true), tag("!=")),
     ))(input)
 }
 
-pub(crate) fn extract_message(input: Span) -> IResult<Span, &str> {
+fn keys(input: Span) -> IResult<Span, ()> {
+    value((), preceded(
+        alt((
+            tag("KEYS"),
+            tag("keys"))), space1))(input)
+}
+
+fn keys_keyword(input: Span) -> IResult<Span, (CmpOperator, bool)> {
+    let (input, _keys_word) = keys(input)?;
+    let (input, (comparator, inverse)) = alt((
+        eq,
+        other_operations,
+    ))(input)?;
+
+    let comparator = match comparator {
+        CmpOperator::Eq => CmpOperator::KeysEq,
+        CmpOperator::In => CmpOperator::KeysIn,
+        CmpOperator::Exists => CmpOperator::KeysExists,
+        CmpOperator::Empty => CmpOperator::KeysEmpty,
+        _ => unreachable!(),
+    };
+
+    Ok((input, (comparator, inverse)))
+}
+
+fn exists(input: Span) -> IResult<Span, CmpOperator> {
+    value(CmpOperator::Exists, alt((tag("EXISTS"), tag("exists"))))(input)
+}
+
+fn empty(input: Span) -> IResult<Span, CmpOperator> {
+    value(CmpOperator::Empty, alt((tag("EMPTY"), tag("empty"))))(input)
+}
+
+fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
+    let (input, not) = opt(not)(input)?;
+    let (input, operation) = alt((
+        in_keyword,
+        exists,
+        empty
+    ))(input)?;
+    Ok((input, (operation, not.is_some())))
+}
+
+
+fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
+    //
+    // This is really crappy as the earlier version used << for custom message
+    // delimiter. '<' can be interpreted as Lt comparator.
+    // TODO revisit the custom message delimiter
+    //
+    let (input, is_custom_message_start) = peek(opt(value(true,tag("<<"))))(input)?;
+    if is_custom_message_start.is_some() {
+        return Err(nom::Err::Error(ParserError {
+            span: input,
+            context: "Custom message tag detected".to_string(),
+            kind: nom::error::ErrorKind::Tag
+        }))
+    }
+
+    alt((
+        //
+        // Basic cmp checks. Order does matter, you always go from more specific to less
+        // specific. '>=' before '>' to ensure that we do not compare '>' first and conclude
+        //
+        eq,
+        value((CmpOperator::Ge, false), tag(">=")),
+        value((CmpOperator::Le, false), tag("<=")),
+        value((CmpOperator::Gt, false), char('>')),
+        value((CmpOperator::Lt, false), char('<')),
+
+        //
+        // Other operations
+        //
+        keys_keyword,
+        other_operations,
+    ))(input)
+}
+
+fn extract_message(input: Span) -> IResult<Span, &str> {
     match input.find_substring(">>") {
-        None => Err(nom::Err::Failure((input, nom::error::ErrorKind::Tag))),
+        None => Err(nom::Err::Failure(ParserError {
+            span: input,
+            kind: nom::error::ErrorKind::Tag,
+            context: format!("Unable to find a closing >> tag for message"),
+        })),
         Some(v) => {
             let split = input.take_split(v);
             Ok((split.0, *split.1.fragment()))
@@ -492,2233 +648,813 @@ pub(crate) fn extract_message(input: Span) -> IResult<Span, &str> {
     }
 }
 
-pub(crate) fn custom_message(input: Span) -> IResult<Span, &str> {
+fn custom_message(input: Span) -> IResult<Span, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
-pub(crate) fn tag_in(input: Span) -> IResult<Span, Span> {
-    alt((tag("IN"), tag("in")))(input)
+pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
+    match op {
+        CmpOperator::KeysExists |
+        CmpOperator::KeysEmpty |
+        CmpOperator::Empty |
+        CmpOperator::Exists => false,
+        _ => true
+    }
 }
 
-pub(crate) fn tag_not(input: Span) -> IResult<Span, Span> {
-    alt((tag("not"), tag("NOT")))(input)
+fn predicate_filter_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
+    let (input, filters) = cnf_clauses(
+        input, clause, std::convert::identity, true)?;
+    Ok((input, filters))
 }
 
-pub(crate) fn tag_or(input: Span) -> IResult<Span, Span> {
-    alt((tag("or"), tag("|OR|")))(input)
+fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, (QueryPart, Option<QueryPart>)>
+    where F: Fn(Span<'loc>) -> IResult<Span<'loc>, String>
+{
+    move |input: Span| {
+        let (input, first) = parser(input)?;
+        let (input, is_filter) = opt(char('['))(input)?;
+        let (input, filter_part) = if is_filter.is_none() { (input, None) } else {
+            let (input, part) = cut(alt((
+                value(QueryPart::AllIndices, preceded(space0, char('*'))),
+                map( preceded(space0, parse_int_value), |idx| {
+                    let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+                    QueryPart::Index(idx)
+                }),
+                map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses)),
+            ))
+            )(input)?;
+            let (input, _ignored) = cut(terminated(zero_or_more_ws_or_comment, char(']')))(input)?;
+            (input, Some(part))
+        };
+
+        if &first == "*" {
+            Ok((input, (QueryPart::AllValues, filter_part)))
+        }
+        else {
+            Ok((input, (QueryPart::Key(first), filter_part)))
+        }
+    }
 }
+
 //
-// not_in  = !IN | not in | NOT_IN
+//  dotted_access              = "." (var_name / "*")
 //
-pub(crate) fn not_in(input: Span) -> IResult<Span, Span> {
-   alt((
-            preceded(char('!'), tag_in),
-            preceded(tag_not, preceded(space1, tag_in)),
-            tag("NOT_IN")
-        ))(input)
+// This combinator does not fail. It is the responsibility of the consumer to fail based
+// on error.
+//
+// Expected error types:
+//    nom::error::ErrorKind::Char => if the start is not '.'
+//
+// see var_name, var_name_access for other error codes
+//
+fn dotted_access(input: Span) -> IResult<Span, Vec<QueryPart>> {
+    fold_many1(
+        preceded(preceded(zero_or_more_ws_or_comment, char('.')), predicate_clause(
+            alt((property_name,
+                 value("*".to_string(), char('*')),
+                 map(digit1, |s: Span| (*s.fragment()).to_string())
+            )))
+        ),
+        Vec::new(),
+        |mut acc: Vec<QueryPart>, part| {
+            acc.push(part.0);
+            part.1.map(|p| acc.push(p));
+            acc
+        },
+    )(input)
 }
 
-pub(crate) fn value_cmp(input: Span) -> IResult<Span, ValueOperator> {
-    alt((
-        value(ValueOperator::Cmp(CmpOperator::Eq), tag("==")),
-        value(ValueOperator::Cmp(CmpOperator::Ge), tag(">=")),
-        value(ValueOperator::Cmp(CmpOperator::Le), tag("<=")),
-        value(ValueOperator::Cmp(CmpOperator::Gt), char('>')),
-        value(ValueOperator::Cmp(CmpOperator::Lt), char('<')),
-        value(ValueOperator::Not(CmpOperator::Eq), tag("!=")),
-        value(ValueOperator::Cmp(CmpOperator::In), tag_in),
-        value(ValueOperator::Not(CmpOperator::In), not_in),
-    ))(input)
+fn property_name(input: Span) -> IResult<Span, String> {
+    alt(( var_name, map(parse_string, |v| match v {
+        Value::String(value) => value,
+        _ => unreachable!()
+    })))(input)
 }
 
-///
-/// clause     ::=
-///
-pub(crate) fn property_clause(input: Span) -> IResult<Span, Clause> {
-    let location = Location {
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-        file_name: input.extra
-    };
-    map(
-        tuple((
-            property_access,
-            preceded(multispace1, value_cmp),
-            opt(preceded(multispace1, value_or_access)),
-            opt(preceded(space0, custom_message)),
-        )),
-        move |(access, comparator, compare_with, custom_message)| Clause {
-            access,
-            comparator,
-            compare_with,
-            custom_message: match custom_message {
-                Some(s) => Some(s.to_string()),
-                None => None
+//
+//   access     =   (var_name / var_name_access) [dotted_access]
+//
+pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
+    map(pair(
+        predicate_clause(
+            alt((var_name_access_inclusive, property_name))),
+        opt(dotted_access)), |(first, remainder)| {
+
+        match remainder {
+            Some(mut parts) => {
+                parts.insert(0, first.0);
+                if let Some(second) = first.1 {
+                    parts.insert(1, second);
+                }
+                parts
             },
-            location
-        },
-    )(input)
-}
 
-pub(crate) fn type_name(input: Span) -> IResult<Span, &str> {
-    map(
-        take_while1(|c: char| c.is_alphanumeric() || c == ':'),
-        |s: Span| *s.fragment(),
-    )(input)
-}
-
-pub(crate) fn disjunction_property_clauses_internal(input: Span) -> IResult<Span, PropertyClause> {
-    map(
-        separated_nonempty_list(
-            delimited(space1, tag_or, take_while_ws_or_comment),
-            property_clause,
-        ),
-        |cls| {
-            if cls.len() > 1 {
-                PropertyClause::Disjunction(cls)
-            } else {
-                PropertyClause::Clause(cls[0].clone())
+            None => {
+                let mut parts = vec![first.0];
+                if let Some(second) = first.1 {
+                    parts.push(second);
+                }
+                parts
             }
-        },
-    )(input)
-}
-
-pub(crate) fn disjunction_property_clauses(input: Span) -> IResult<Span, PropertyClause> {
-    map(
-        separated_nonempty_list(
-            delimited(space1, tag_or, take_while_ws_or_comment),
-            property_clause,
-        ),
-        |cls| {
-            if cls.len() > 1 {
-                PropertyClause::Disjunction(cls)
-            } else {
-                PropertyClause::Clause(cls[0].clone())
-            }
-        },
-    )(input)
-}
-
-pub(crate) fn type_property_clause(input: Span) -> IResult<Span, TypeClauseExpr> {
-    map(
-        tuple((
-            preceded(take_while_ws_or_comment, type_name),
-            preceded(space1, property_clause),
-        )),
-        |(name, clause)| TypeClauseExpr {
-            type_name: name.to_string(),
-            type_clauses: vec![PropertyClause::Clause(clause)],
-        },
-    )(input)
-}
-
-pub(crate) fn type_block_var_property_clause(input: Span) -> IResult<Span, PropertyClause> {
-    map(var_assignment, |assignment| {
-        PropertyClause::Variable(assignment)
-    })(input)
-}
-
-pub(crate) fn type_block_var_and_property_clauses(input: Span) -> IResult<Span, Vec<PropertyClause>> {
-    many1(preceded(
-        take_while_ws_or_comment,
-        alt((type_block_var_property_clause, disjunction_property_clauses)),
-    ))(input)
-}
-
-pub(crate) fn type_block_property_clause(input: Span) -> IResult<Span, TypeClauseExpr> {
-    map(
-        tuple((
-            preceded(take_while_ws_or_comment, type_name),
-            preceded(multispace0, char('{')),
-            cut(type_block_var_and_property_clauses),
-            cut(terminated(take_while_ws_or_comment, char('}'))),
-        )),
-        |(type_name, _, type_clauses, _)| TypeClauseExpr {
-            type_name: type_name.to_string(),
-            type_clauses,
-        },
-    )(input)
-}
-
-pub(crate) fn default_rule_type_clauses(input: Span) -> IResult<Span, Vec<TypeClauseExpr>> {
-    preceded(
-        multispace0,
-        many1(terminated(type_property_clause, multispace0)),
-    )(input)
-}
-
-pub(crate) fn default_rule_block_clauses(input: Span) -> IResult<Span, NamedRuleBlockExpr> {
-    let location = Location {
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-        file_name: input.extra
-    };
-    map(default_rule_type_clauses, move |clauses| {
-        let named_block = clauses
-            .into_iter()
-            .clone()
-            .map(move |c| NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(c)))
-            .collect();
-        NamedRuleBlockExpr {
-            rule_name: "default".to_string(),
-            rule_clauses: named_block,
-            location
         }
     })(input)
 }
 
 //
-// Rules related
+//  simple_unary               = "EXISTS" / "EMPTY"
+//  keys_unary                 = "KEYS" 1*SP simple_unary
+//  keys_not_unary             = "KEYS" 1*SP not_keyword 1*SP unary_operators
+//  unary_operators            = simple_unary / keys_unary / not_keyword simple_unary / keys_not_unary
 //
-
-pub(crate) fn type_rule_clause_expr(input: Span) -> IResult<Span, NamedRuleClauseExpr> {
-    alt((
-        map(type_block_property_clause, |cls| {
-            NamedRuleClauseExpr::TypeClause(cls)
-        }),
-        map(type_property_clause, |type_cls| {
-            NamedRuleClauseExpr::TypeClause(type_cls)
-        })
-    ))(input)
-}
-
-pub(crate) fn type_named_rule_clause_expr(input: Span) -> IResult<Span, NamedRuleClauseExpr> {
-    //
-    // Order does matter, we attempt block type, single type or rule name
-    //
-    alt((
-        type_rule_clause_expr,
-        map(var_name, |name| NamedRuleClauseExpr::NamedRule(name.to_string())),
-        map(terminated(tag_not, var_name), |name| {
-            NamedRuleClauseExpr::NotNamedRule(name.to_string())
-        }),
-    ))(input)
-}
-
-pub(crate) fn var_assign_or_disjunction(input: Span) -> IResult<Span, NamedRuleExpr> {
-    //
-    // Order does matter here. There are 2 possibilities here, a variable assignment
-    // or just a rule name. If we delegate to the other parser it might interpret the
-    // first part of the assignment as a rule name. Yes there are ways to deal with it
-    // to be super perfect, but the ordering naturally delegates without the complexity
-    //
-    alt((
-        map(var_assignment, NamedRuleExpr::Variable),
-        disjunction_rule_block_expr,
-    ))(input)
-}
-
-pub(crate) fn disjunction_rule_expr(input: Span) -> IResult<Span, NamedRuleExpr> {
-    map(
-        separated_nonempty_list(
-            delimited(
-                take_while_ws_or_comment,
-                tag_or,
-                take_while_ws_or_comment,
-            ),
-            type_rule_clause_expr,
-        ),
-        |cls| {
-            if cls.len() > 1 {
-                NamedRuleExpr::DisjunctionRuleClause(cls)
-            } else {
-                NamedRuleExpr::RuleClause(cls[0].clone())
-            }
-        },
-    )(input)
-
-}
-
-pub(crate) fn disjunction_rule_block_expr(input: Span) -> IResult<Span, NamedRuleExpr> {
-    map(
-        separated_nonempty_list(
-            delimited(
-                take_while_ws_or_comment,
-                tag_or,
-                take_while_ws_or_comment,
-            ),
-            type_named_rule_clause_expr,
-        ),
-        |cls| {
-            if cls.len() > 1 {
-                NamedRuleExpr::DisjunctionRuleClause(cls)
-            } else {
-                NamedRuleExpr::RuleClause(cls[0].clone())
-            }
-        },
-    )(input)
-
-    //    if result.1.is_empty() {
-    //        Err(nom::Err::Error((input, nom::error::ErrorKind::SeparatedList)))
-    //    } else {
-    //        Ok((
-    //            result.0,
-    //            if result.1.len() > 1 {
-    //                NamedRuleExpr::DisjunctionRuleClause(result.1)
-    //            } else {
-    //                NamedRuleExpr::RuleClause(result.1[0].clone())
-    //            }
-    //        ))
-    //    }
-}
-
-pub(crate) fn named_rule_block_expr(input: Span) -> IResult<Span, NamedRuleBlockExpr> {
-    let input = take_while_ws_or_comment(input)?.0;
-    let location = Location {
+//
+//  clause                     = access 1*SP unary_operators *(LWSP/comment) custom_message /
+//                               access 1*SP binary_operators 1*(LWSP/comment) (access/value) *(LWSP/comment) custom_message
+//
+// Errors:
+//     nom::error::ErrorKind::Alpha, if var_name_access / var_name does not work out
+//     nom::error::ErrorKind::Char, if whitespace / comment does not work out for needed spaces
+//
+// Failures:
+//     nom::error::ErrorKind::Char  if access / parse_value does not work out
+//
+//
+fn clause(input: Span) -> IResult<Span, GuardClause> {
+    let location = FileLocation {
+        file_name: input.extra,
         line: input.location_line(),
         column: input.get_utf8_column() as u32,
-        file_name: input.extra
     };
-    map(
-        tuple((
-            tag("rule"),
-            cut(preceded(space1, var_name)), // this has to exist
-            cut(preceded(take_while_ws_or_comment, char('{'))),
-            many1(preceded(
-                take_while_ws_or_comment,
-                var_assign_or_disjunction,
-            )),
-            cut(preceded(take_while_ws_or_comment, char('}'))),
-        )),
-        move |(_, name, _, exprs, _)| NamedRuleBlockExpr {
-            rule_name: name.to_string(),
-            rule_clauses: exprs,
+
+    let (rest, not) = opt(not)(input)?;
+
+    //
+    // TODO find a better way to do this. Predicate clause uses this as well which can have
+    // the form *[ KEYS == ... ], where KEYS was the keyword. No other form of expression has
+    // this problem.
+    //
+    // FIXME: clause ends up calling predicate_clause, which is fine, but we should
+    // not expect the form *[ [ [] ] ]. We should dis-allows this.
+    //
+    let (rest, keys) = opt(peek(keys))(rest)?;
+
+    let (rest, (lhs, cmp)) =
+        if keys.is_some() {
+            let (r, (_space_ign, cmp)) = tuple((
+                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
+                // error if there is no value_cmp
+                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                        value_cmp)
+            ))(rest)?;
+            (r, (AccessQuery::from([QueryPart::MapKeys]), cmp))
+        } else {
+            let (r, (access, _ign_space, cmp)) = tuple((
+                access,
+                // It is an error to not have a ws/comment following it
+                context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+                // error if there is no value_cmp
+                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                        value_cmp)
+            ))(rest)?;
+            (r, (access, cmp))
+        };
+
+    if !does_comparator_have_rhs(&cmp.0) {
+        let remaining = rest.clone();
+        let (remaining, custom_message) = cut(
+            map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
+                |msg| {
+                    msg.map(String::from)
+                }))(remaining)?;
+        let rest = if custom_message.is_none() { rest } else { remaining };
+        Ok((rest,
+            GuardClause::Clause(
+                GuardAccessClause {
+                    access_clause: AccessClause {
+                        query: lhs,
+                        comparator: cmp,
+                        compare_with: None,
+                        custom_message,
+                        location,
+                    },
+                    negation: not.is_some() }
+            )))
+    } else {
+        let (rest, (compare_with, custom_message)) =
+            context("expecting either a property access \"engine.core\" or value like \"string\" or [\"this\", \"that\"]",
+                    cut(alt((
+                        //
+                        // Order does matter here as true/false and other values can be interpreted as access
+                        //
+                        map(tuple((
+                            parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            move |(rhs, msg)| {
+                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
+                            }),
+                        map(tuple((
+                            preceded(zero_or_more_ws_or_comment, access),
+                            preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            |(rhs, msg)| {
+                                (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
+                            }),
+                    ))))(rest)?;
+        Ok((rest,
+            GuardClause::Clause(
+                GuardAccessClause {
+                    access_clause: AccessClause {
+                        query: lhs,
+                        comparator: cmp,
+                        compare_with,
+                        custom_message,
+                        location,
+                    },
+                    negation: not.is_some()
+                })
+        ))
+    }
+}
+
+//
+//  rule_clause   =   (var_name (LWSP/comment)) /
+//                    (var_name [1*SP << anychar >>] (LWSP/comment)
+//
+//
+//  rule_clause get to be the most pesky of them all. It has the least
+//  form and thereby can interpret partials of other forms as a rule_clause
+//  To ensure we don't do that we need to peek ahead after a rule name
+//  parsing to see which of these forms is present for the rule clause
+//  to succeed
+//
+//      rule_name[ \t]*\n
+//      rule_name[ \t\n]+or[ \t\n]+
+//      rule_name(#[^\n]+)
+//
+//      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
+//
+fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
+    let location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
+
+    let (remaining, not) = opt(not)(input)?;
+    let (remaining, ct_type) = var_name(remaining)?;
+
+    //
+    // we peek to preserve the input, if it is or, space+newline or comment
+    // we return
+    //
+    if let Ok((same, _ignored)) = peek(alt((
+        preceded(space0, value((), newline)),
+        preceded(space0, value((), comment2)),
+        preceded(space0, value((), char('{'))),
+        value((), or_join),
+    )))(remaining) {
+        return
+            Ok((same, GuardClause::NamedRule(
+                GuardNamedRuleClause {
+                    dependent_rule: ct_type,
+                    location,
+                    negation: not.is_some(),
+                    comment: None
+                })
+            ))
+    }
+
+    //
+    // Else it must have a custom message
+    //
+    let (remaining, message) = cut(preceded(space0, custom_message))(remaining)?;
+    Ok((remaining, GuardClause::NamedRule(
+        GuardNamedRuleClause {
+            dependent_rule: ct_type,
             location,
+            negation: not.is_some(),
+            comment: Some(message.to_string()),
+        })
+    ))
+}
+
+//
+// clauses
+//
+fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool) -> IResult<Span<'loc>, Conjunctions<E>>
+    where F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
+          M: Fn(Vec<E>) -> T,
+          E: Clone + 'loc,
+          T: 'loc
+{
+    let mut conjunctions = Conjunctions::new();
+    let mut rest = input;
+    loop {
+        match disjunction_clauses(rest.clone(), |i: Span| f(i), true) {
+            Err(nom::Err::Error(e)) => {
+                if conjunctions.is_empty() {
+                    return Err(nom::Err::Failure(
+                        ParserError {
+                            span: input,
+                            context: format!("There were no clauses present {}#{}@{}",
+                                             input.extra, input.location_line(), input.get_utf8_column()),
+                            kind: nom::error::ErrorKind::Many1
+                        }
+                    ))
+                }
+                return Ok((rest, conjunctions))
+            }
+
+            Ok((left, disjunctions)) => {
+                rest = left;
+                conjunctions.push(disjunctions);
+            },
+
+            Err(e) => return Err(e),
+
+        }
+    }
+//    let mut result: Vec<T> = Vec::new();
+//    let mut remaining = input;
+//    let mut first = true;
+//    loop {
+//        let (rest, set) = if non_empty {
+//            match separated_nonempty_list(
+//                or_join,
+//                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
+//            )(remaining.clone()) {
+//                Err(nom::Err::Error(e)) => if first {
+//                    return Err(nom::Err::Error(e))
+//                } else {
+//                    return Ok((remaining, result))
+//                },
+//                Ok((r, s)) => (r, s),
+//                Err(e) => return Err(e),
+//            }
+//        }  else {
+//            separated_list(
+//                or_join,
+//                preceded(zero_or_more_ws_or_comment, |i: Span| f(i)),
+//            )(remaining)?
+//
+//        };
+//
+//        first = false;
+//        remaining = rest;
+//
+//        match set.len() {
+//            0 => return Ok((remaining, result)),
+//            _ => result.push(m(set)),
+//        }
+//    }
+}
+
+fn disjunction_clauses<'loc, E, F>(input: Span<'loc>, parser: F, non_empty: bool) -> IResult<Span<'loc>, Disjunctions<E>>
+    where F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
+          E: Clone + 'loc,
+{
+    if non_empty {
+        separated_nonempty_list(
+            or_join,
+            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)))(input)
+    }
+    else {
+        separated_list(
+            or_join,
+            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)),
+        )(input)
+
+    }
+}
+
+fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
+    cnf_clauses(
+        input,
+        //
+        // Order does matter here. Both rule_clause and access clause have the same syntax
+        // for the first part e.g
+        //
+        // s3_encrypted_bucket  or configuration.containers.*.port == 80
+        //
+        // the first part is a rule clause and the second part is access clause. Consider
+        // this example
+        //
+        // s3_encrypted_bucket or bucket_encryption EXISTS
+        //
+        // The first part if rule clause and second part is access. if we use the rule_clause
+        // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
+        // we are using the alt form to first parse to see if it is clause and then try rules_clause
+        //
+        alt((clause, rule_clause)),
+
+        //
+        // Mapping the GuardClause
+        //
+        std::convert::identity, false)
+}
+
+fn assignment(input: Span) -> IResult<Span, LetExpr> {
+    let (input, _let_keyword) = tag("let")(input)?;
+    let (input, (var_name, _eq_sign)) = tuple((
+        //
+        // if we have a pattern like "letproperty" that can be an access keyword
+        // then there is no space in between. This will error out.
+        //
+        preceded(one_or_more_ws_or_comment, var_name),
+        //
+        // if we succeed in reading the form "let <var_name>", it must be be
+        // followed with an assignment sign "=" or ":="
+        //
+        cut(
+            preceded(
+                zero_or_more_ws_or_comment,
+                alt((tag("="), tag(":=")))
+            )
+        ),
+    ))(input)?;
+
+    match parse_value(input) {
+        Ok((input, value)) => Ok((input, LetExpr {
+            var: var_name,
+            value: LetValue::Value(value)
+        })),
+
+        Err(nom::Err::Error(_)) => {
+            //
+            // if we did not succeed in parsing a value object, then
+            // if must be an access pattern, else it is a failure
+            //
+            let (input, access) = cut(
+                preceded(
+                    zero_or_more_ws_or_comment,
+                    access
+                )
+            )(input)?;
+
+            Ok((input, LetExpr {
+                var: var_name,
+                value: LetValue::AccessClause(access),
+            }))
         },
+
+        Err(e) => Err(e)
+    }
+}
+
+//
+// when keyword
+//
+fn when(input: Span) -> IResult<Span, ()> {
+    value((), alt((tag("when"), tag("WHEN"))))(input)
+}
+
+fn when_conditions<'loc, P>(condition_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<GuardClause<'loc>>>
+    where P: Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<GuardClause<'loc>>>
+{
+    move |input: Span| {
+        //
+        // see if there is a "when" keyword
+        //
+        let (input, _when_keyword) = preceded(zero_or_more_ws_or_comment, when)(input)?;
+
+        //
+        // If there is "when" then parse conditions. It is an error not to have
+        // clauses following it
+        //
+        cut(
+            //
+            // when keyword must be followed by a space and then clauses. Fail if that
+            // is not the case
+            //
+            preceded(
+                one_or_more_ws_or_comment,
+                |s| condition_parser(s)))(input)
+    }
+}
+
+fn block<'loc, T, P>(clause_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, (Vec<LetExpr<'loc>>, Conjunctions<T>)>
+    where P: Fn(Span<'loc>) -> IResult<Span<'loc>, T>,
+          T: Clone + 'loc
+{
+    move |input: Span| {
+        let (input, _start_block) = preceded(zero_or_more_ws_or_comment, char('{'))
+            (input)?;
+
+        let mut conjunctions: Conjunctions<T> = Conjunctions::new();
+        let (input, results) =
+            fold_many1(
+                alt((
+                    map(preceded(zero_or_more_ws_or_comment, assignment), |s| (Some(s), None)),
+                    map(
+                        |i: Span| disjunction_clauses(i, |i: Span| clause_parser(i), true),
+                        |c: Disjunctions<T>| (None, Some(c)))
+                )),
+                Vec::new(),
+                |mut acc, pair| {
+                    acc.push(pair);
+                    acc
+                }
+            )(input)?;
+
+        let mut assignments = vec![];
+        for each in results {
+            match each {
+                (Some(let_expr), None) => {
+                    assignments.push(let_expr);
+                },
+                (None, Some(v)) => {
+                    conjunctions.push(v)
+                },
+                (_, _) => unreachable!(),
+            }
+        }
+
+        let (input, _end_block) = cut(preceded(zero_or_more_ws_or_comment, char('}')))
+            (input)?;
+
+
+        Ok((input, (assignments, conjunctions)))
+    }
+}
+
+fn type_name(input: Span) -> IResult<Span, String> {
+    let (input, parts) = tuple((
+        terminated(var_name, tag("::")),
+        terminated(var_name, tag("::")),
+        var_name,
+    ))(input)?;
+
+    let (input, _skip_module) = opt(tag("::MODULE"))(input)?;
+
+    Ok((input, format!("{}::{}::{}", parts.0, parts.1, parts.2)))
+}
+
+//
+// Type block
+//
+fn type_block(input: Span) -> IResult<Span, TypeBlock> {
+    //
+    // Start must be a type name like "AWS::SQS::Queue"
+    //
+    let (input, name) = type_name(input)?;
+
+    //
+    // There has to be a space following type name, else it is a failure
+    //
+    let (input, _space) = cut(one_or_more_ws_or_comment)(input)?;
+
+    let (input, when_conditions) = opt(
+        when_conditions(|i: Span| cnf_clauses(i,
+                                               preceded(zero_or_more_ws_or_comment, clause),
+                                               std::convert::identity, true)))
+        (input)?;
+
+    let (input, (assignments, clauses)) =
+        if when_conditions.is_some() {
+            cut(block(clause))(input)?
+        } else {
+            match block(clause)(input) {
+                Ok((input, result)) => (input, result),
+                Err(nom::Err::Error(_)) => {
+                    let (input, conjs)  = cut(preceded(
+                        zero_or_more_ws_or_comment,
+                        map(clause, |s| vec![s])
+                    ))(input)?;
+                    (input, (Vec::new(), vec![conjs]))
+                },
+                Err(e) => return Err(e),
+            }
+        };
+
+    Ok((input, TypeBlock {
+        conditions: when_conditions,
+        type_name: name,
+        block: Block {
+            assignments: assignments,
+            conjunctions: clauses,
+        }
+    }))
+}
+
+fn when_block<'loc, C, B, M, T, R>(conditions: C, block_fn: B, mapper: M) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
+    where C: Fn(Span<'loc>) -> IResult<Span, Conjunctions<GuardClause<'loc>>>,
+          B: Fn(Span<'loc>) -> IResult<Span<'loc>, T>,
+          T: Clone + 'loc,
+          R: 'loc,
+          M: Fn(Conjunctions<GuardClause<'loc>>, (Vec<LetExpr<'loc>>, Conjunctions<T>)) -> R
+{
+    move |input: Span| {
+        map(preceded(zero_or_more_ws_or_comment,
+                     pair(
+                         when_conditions(|p| conditions(p)),
+                         block(|p| block_fn(p))
+                     )), |(w, b)| mapper(w, b))(input)
+    }
+}
+
+fn rule_block_clause(input: Span) -> IResult<Span, RuleClause> {
+    alt((
+        map(preceded(zero_or_more_ws_or_comment, type_block), RuleClause::TypeBlock),
+        map(preceded(zero_or_more_ws_or_comment,
+                     pair(
+                         when_conditions(clauses),
+                         block(alt((clause, rule_clause)))
+                     )),
+            |(conditions, block)| {
+                RuleClause::WhenBlock(conditions, Block{ assignments: block.0, conjunctions: block.1 })
+            }),
+        map(preceded(zero_or_more_ws_or_comment, alt((clause, rule_clause))), RuleClause::Clause)
+    ))(input)
+}
+
+//
+// rule block
+//
+fn rule_block(input: Span) -> IResult<Span, Rule> {
+    //
+    // rule is followed by space
+    //
+    let (input, _rule_keyword) = preceded(zero_or_more_ws_or_comment, tag("rule"))(input)?;
+    let (input, _space) = one_or_more_ws_or_comment(input)?;
+
+    let (input, rule_name) = cut(var_name)(input)?;
+    let (input, conditions) = opt(when_conditions(clauses))(input)?;
+    let (input, (assignments, conjunctions)) =
+        cut(block(rule_block_clause))(input)?;
+
+    Ok((input, Rule {
+        rule_name,
+        conditions,
+        block: Block {
+            assignments,
+            conjunctions,
+        }
+    }))
+}
+
+fn remove_whitespace_comments<'loc, P, R>(parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
+    where P: Fn(Span<'loc>) -> IResult<Span<'loc>, R>
+{
+    move |input: Span| {
+        delimited(
+            zero_or_more_ws_or_comment,
+            |s| parser(s),
+            zero_or_more_ws_or_comment
+        )(input)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum Exprs<'loc> {
+    Assignment(LetExpr<'loc>),
+    DefaultTypeBlock(TypeBlock<'loc>),
+
+    // WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
+    DefaultWhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
+    DefaultClause(GuardClause<'loc>),
+    Rule(Rule<'loc>),
+}
+
+//
+// Rules File
+//
+pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
+    let exprs = all_consuming(fold_many1(
+        remove_whitespace_comments(
+            alt((
+                map(assignment, Exprs::Assignment),
+                map(rule_block, Exprs::Rule),
+                map(type_block, Exprs::DefaultTypeBlock),
+                when_block(clauses, alt((clause, rule_clause)), |c, b|
+                    Exprs::DefaultWhenBlock(c, Block { assignments: b.0, conjunctions: b.1 })),
+                map(clause, Exprs::DefaultClause),
+            ))
+        ),
+        Vec::new(),
+        |mut acc, expr| {
+            acc.push(expr);
+            acc
+        }
+    ))(input)?.1;
+
+    let mut global_assignments = Vec::with_capacity(exprs.len());
+    let mut default_rule_clauses = Vec::with_capacity(exprs.len());
+    let mut named_rules = Vec::with_capacity(exprs.len());
+
+    for each in exprs {
+        match each {
+            Exprs::Rule(r) => named_rules.push(r),
+            Exprs::Assignment(l) => global_assignments.push(l),
+            Exprs::DefaultClause(c) => default_rule_clauses.push(RuleClause::Clause(c)),
+            Exprs::DefaultTypeBlock(t) => default_rule_clauses.push(RuleClause::TypeBlock(t)),
+            Exprs::DefaultWhenBlock(w, b) => default_rule_clauses.push(RuleClause::WhenBlock(w, b)),
+        }
+    }
+
+    if !default_rule_clauses.is_empty(){
+        let default_rule = Rule {
+            conditions: None,
+            rule_name: "default".to_string(),
+            block: Block {
+                assignments: vec![],
+                conjunctions: vec![default_rule_clauses]
+            }
+        };
+        named_rules.insert(0, default_rule);
+    }
+
+    Ok(RulesFile {
+        assignments: global_assignments,
+        guard_rules: named_rules
+    })
+
+}
+
+//
+//  ABNF        = "or" / "OR" / "|OR|"
+//
+fn or_term(input: Span) -> IResult<Span, Span> {
+    alt((
+        tag("or"),
+        tag("OR"),
+        tag("|OR|")
+    ))(input)
+}
+
+fn or_join(input: Span) -> IResult<Span, Span> {
+    delimited(
+        zero_or_more_ws_or_comment,
+        or_term,
+        one_or_more_ws_or_comment
     )(input)
 }
 
-pub(crate) fn rules_file_parse(input: Span) -> IResult<Span, Expr> {
-    let line =  input.location_line();
-    let column = input.get_utf8_column() as u32;
-    //let file_name: input.extra
-    alt((
-        map(
-            preceded(take_while_ws_or_comment,named_rule_block_expr),
-            Expr::NamedRule
-        ),
-        map(
-            preceded( take_while_ws_or_comment, disjunction_rule_expr),
-            move |expr| {
-                Expr::NamedRule(NamedRuleBlockExpr {
-                    rule_name: "default".to_string(),
-                    rule_clauses: vec![expr],
-                    location: Location {
-                        line,
-                        column,
-                        file_name: input.extra
-                    }
-                })
-            },
-        ),
-        map(
-            preceded(take_while_ws_or_comment, var_assignment),
-            Expr::Assignment,
-        )
-    ))(input)
+pub(crate) struct AccessQueryWrapper<'a>(pub(crate) AccessQuery<'a>);
+impl<'a> TryFrom<&'a str> for AccessQueryWrapper<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        let access = access(span)?.1;
+        Ok(AccessQueryWrapper(access))
+    }
 }
 
-pub(crate) fn parse_rules(input: Span) -> IResult<Span, Rules> {
-    all_consuming(many1(delimited(
-        take_while_ws_or_comment,
-        rules_file_parse,
-        take_while_ws_or_comment)
-    ))(input)
+impl<'a> TryFrom<&'a str> for GuardClause<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(clause(span)?.1)
+    }
+}
+
+pub(crate) struct ConjunctionsWrapper<'a>(pub(crate) Conjunctions<GuardClause<'a>>);
+impl<'a> TryFrom<&'a str> for ConjunctionsWrapper<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(ConjunctionsWrapper(clauses(span)?.1))
+    }
+}
+
+impl<'a> TryFrom<&'a str> for TypeBlock<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(preceded(zero_or_more_ws_or_comment, type_block)(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for Rule<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(rule_block(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for RuleClause<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(preceded(zero_or_more_ws_or_comment, rule_block_clause)(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for RulesFile<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(rules_file(span)?)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::rules::values::make_linked_hashmap;
-    use crate::rules::values::WithinRange;
+#[path = "parser_tests.rs"]
+mod parser_tests;
 
-    use super::*;
 
-    #[test]
-    fn test_int_parse() {
-        let s = "-124";
-        let span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_int_value(Span::new_extra(s, "")),
-            Ok((span, Value::Int(-124i64)))
-        );
-    }
-
-    #[test]
-    fn test_int_parse_pos() {
-        let s = "12670090";
-        let span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_int_value(from_str(s)),
-            Ok((span, Value::Int(12670090)))
-        )
-    }
-
-    #[test]
-    fn test_parse_string() {
-        let s = "\"Hi there\"";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_string(from_str(s)),
-            Ok((cmp, Value::String("Hi there".to_string())))
-        );
-
-        // Testing embedded quotes using '' for the string
-        let s = r#"'"Hi there"'"#;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_string(from_str(s)),
-            Ok((cmp, Value::String("\"Hi there\"".to_string())))
-        );
-
-        let s = r#"'Hi there'"#;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_string(from_str(s)),
-            Ok((cmp, Value::String("Hi there".to_string())))
-        );
-    }
-
-    #[test]
-    fn test_parse_string_rest() {
-        let hi = "\"Hi there\"";
-        let s = hi.to_owned() + " 1234";
-        let cmp = unsafe { Span::new_from_raw_offset(hi.len(), 1, " 1234", "") };
-        assert_eq!(
-            parse_string(from_str(&s)),
-            Ok((cmp, Value::String("Hi there".to_string())))
-        );
-    }
-
-    #[test]
-    fn test_parse_string_from_scalar() {
-        let hi = "\"Hi there\"";
-        let s = hi.to_owned() + " 1234";
-        let cmp = unsafe { Span::new_from_raw_offset(hi.len(), 1, " 1234", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(&s)),
-            Ok((cmp, Value::String("Hi there".to_string())))
-        );
-    }
-
-    /*
-    #[test]
-    fn test_parse_string_to_fix() {
-        let s = "\"Hi \\\"embedded\\\" there\"";
-        assert_eq!(parse_string(s), Ok(("", Value::String(String::from("Hi \"embedded\" there".to_owned())))))
-    }
-     */
-
-    #[test]
-    fn test_parse_bool() {
-        let s = "True";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_bool(from_str(s)),
-            Ok((cmp.clone(), Value::Bool(true)))
-        );
-        let s = "true";
-        assert_eq!(
-            parse_bool(from_str(s)),
-            Ok((cmp.clone(), Value::Bool(true)))
-        );
-        let s = "False";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_bool(from_str(s)),
-            Ok((cmp.clone(), Value::Bool(false)))
-        );
-        let s = "false";
-        assert_eq!(
-            parse_bool(from_str(s)),
-            Ok((cmp, Value::Bool(false)))
-        );
-        let s = "1234";
-        let cmp = unsafe { Span::new_from_raw_offset(0, 1, "1234", "") };
-        assert_eq!(
-            parse_bool(from_str(s)),
-            Err(nom::Err::Error((cmp, nom::error::ErrorKind::Tag)))
-        );
-        let s = "true1234";
-        let cmp = unsafe { Span::new_from_raw_offset(4, 1, "1234", "") };
-        assert_eq!(parse_bool(from_str(s)), Ok((cmp, Value::Bool(true))));
-    }
-
-    #[test]
-    fn test_parse_float() {
-        let s = "12.0";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_float(from_str(s)),
-            Ok((cmp, Value::Float(12.0)))
-        );
-        let s = "12e+2";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_float(from_str(s)),
-            Ok((cmp, Value::Float(12e+2)))
-        );
-        let s = "error";
-        let cmp = unsafe { Span::new_from_raw_offset(0, 1, "error", "") };
-        assert_eq!(
-            parse_float(from_str(s)),
-            Err(nom::Err::Error((cmp, nom::error::ErrorKind::Digit)))
-        );
-    }
-
-    #[test]
-    fn test_parse_regex() {
-        let s = "/.*PROD.*/";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_regex(from_str(s)),
-            Ok((cmp, Value::Regex(".*PROD.*".to_string())))
-        );
-
-        let s = "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
-        let cmp = unsafe {
-            Span::new_from_raw_offset(11, 1, ",.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/", "") };
-        assert_eq!(
-            parse_regex(from_str(s)),
-            Ok((cmp, Value::Regex("arn:[\\w+=".to_string())))
-        );
-
-        let s = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_regex(from_str(s)),
-            Ok((cmp, Value::Regex("arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*".to_string())))
-        );
-    }
-
-    #[test]
-    fn test_parse_scalar() {
-        let s = "1234";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(s)),
-            Ok((cmp, Value::Int(1234)))
-        );
-        let s = "12.089";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(s)),
-            Ok((cmp, Value::Float(12.089)))
-        );
-        let s = "\"String in here\"";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(s)),
-            Ok((cmp, Value::String("String in here".to_string())))
-        );
-        let s = "true";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(s)),
-            Ok((cmp, Value::Bool(true)))
-        );
-        let s = "false";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_scalar_value(from_str(s)),
-            Ok((cmp, Value::Bool(false)))
-        );
-    }
-
-    #[test]
-    fn test_lists_success() {
-        let s = "[]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((cmp, Value::List(vec![])))
-        );
-        let s = "[1, 2]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((cmp, Value::List(vec![Value::Int(1), Value::Int(2)])))
-        );
-        let s = "[\"hi\", \"there\"]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((
-                cmp,
-                Value::List(vec![Value::String("hi".to_string()), Value::String("there".to_string())])
-            ))
-        );
-        let s = "[1,       \"hi\",\n\n3]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 3, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((
-                cmp,
-                Value::List(vec![Value::Int(1), Value::String("hi".to_string()), Value::Int(3)])
-            ))
-        );
-
-        let s = "[[1, 2], [3, 4]]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((
-                cmp,
-                Value::List(vec![
-                    Value::List(vec![Value::Int(1), Value::Int(2)]),
-                    Value::List(vec![Value::Int(3), Value::Int(4)])
-                ])
-            ))
-        );
-    }
-
-    #[test]
-    fn test_broken_lists() {
-        let s = "[";
-        let cmp = unsafe { Span::new_from_raw_offset(1, 1, "", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Err(nom::Err::Error((cmp, nom::error::ErrorKind::Char)))
-        );
-        let s = "[]]";
-        let cmp = unsafe { Span::new_from_raw_offset(2, 1, "]", "") };
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((cmp, Value::List(vec![])))
-        )
-    }
-
-    #[test]
-    fn test_map_key_part() {
-        let s = "keyword";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            key_part(from_str(s)),
-            Ok((cmp, "keyword".to_string()))
-        );
-
-        let s = r#"'keyword'"#;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            key_part(from_str(s)),
-            Ok((cmp, "keyword".to_string()))
-        );
-
-        let s = r#""keyword""#;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            key_part(from_str(s)),
-            Ok((cmp, "keyword".to_string()))
-        );
-
-    }
-
-    #[test]
-    fn test_map_success() {
-        let s = "{ key: 1, value: \"there\"}";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        let map = make_linked_hashmap(vec![
-            ("key", Value::Int(1)),
-            ("value", Value::String("there".to_string())),
-        ]);
-
-        assert_eq!(parse_map(from_str(s)), Ok((cmp, Value::Map(map))));
-        let s = "{}";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_map(from_str(s)),
-            Ok((cmp, Value::Map(IndexMap::new())))
-        );
-        let s = "{ key:\n 1}";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        let map = make_linked_hashmap(vec![("key", Value::Int(1))]);
-        assert_eq!(
-            parse_map(from_str(s)),
-            Ok((cmp, Value::Map(map.clone())))
-        );
-        let s = "{\n\n\nkey:\n\n\n1\n\t   }";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 8, "", "") };
-        assert_eq!(parse_map(from_str(s)), Ok((cmp, Value::Map(map))));
-        let s = "{ list: [{a: 1}, {b: 2}], c: 1, d: \"String\"}";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        let map = make_linked_hashmap(vec![
-            (
-                "list",
-                Value::List(vec![
-                    Value::Map(make_linked_hashmap(vec![("a", Value::Int(1))])),
-                    Value::Map(make_linked_hashmap(vec![("b", Value::Int(2))])),
-                ]),
-            ),
-            ("c", Value::Int(1)),
-            ("d", Value::String("String".to_string())),
-        ]);
-        assert_eq!(
-            parse_map(from_str(s)),
-            Ok((cmp.clone(), Value::Map(map.clone())))
-        );
-        assert_eq!(parse_value(from_str(s)), Ok((cmp, Value::Map(map))));
-
-        let s = r#"{
-    'postgres':      ["postgresql", "upgrade"],
-    'mariadb':       ["audit", "error", "general", "slowquery"],
-    'mysql':         ["audit", "error", "general", "slowquery"],
-    'oracle-ee':     ["trace", "audit", "alert", "listener"],
-    'oracle-se':     ["trace", "audit", "alert", "listener"],
-    'oracle-se1':    ["trace", "audit", "alert", "listener"],
-    'oracle-se2':    ["trace", "audit", "alert", "listener"],
-    'sqlserver-ee':  ["error", "agent"],
-    'sqlserver-ex':  ["error"],
-    'sqlserver-se':  ["error", "agent"],
-    'sqlserver-web': ["error", "agent"],
-    'aurora':        ["audit", "error", "general", "slowquery"],
-    'aurora-mysql':  ["audit", "error", "general", "slowquery"],
-    'aurora-postgresql': ["postgresql", "upgrade"]
-}
-        "#;
-        let map = parse_map(from_str(s));
-        assert_eq!(map.is_ok(), true);
-        let map = if let Ok((_ign, Value::Map(om))) = map { om } else { unreachable!() };
-        assert_eq!(map.len(), 14);
-        assert_eq!(map.contains_key("aurora"), true);
-        assert_eq!(map.get("aurora").unwrap(),
-            &Value::List(
-                vec!["audit", "error", "general", "slowquery"].iter().map(|s|
-                    Value::String((*s).to_string())).collect::<Vec<Value>>()
-            )
-        );
-
-        let s = r#"{"IntegrationHttpMethod":"POST","Type":"AWS_PROXY","Uri":"arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaWAFBadBotParserFunction.Arn}/invocations"}"#;
-        let map = parse_map(from_str(s));
-        assert_eq!(map.is_ok(), true);
-        let map = if let Ok((_ign, Value::Map(om))) = map { om } else { unreachable!() };
-        assert_eq!(map.len(), 3);
-        assert_eq!(map.get("IntegrationHttpMethod").unwrap(), &Value::String("POST".to_string()));
-    }
-
-    #[test]
-    fn test_map_success_2() {
-        let s = r#"[
-            {
-                vehicle: "Honda",
-                done: false
-            }]"#;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 5, "", "") };
-        let map_value = Value::Map(make_linked_hashmap(vec![
-            ("vehicle", Value::String("Honda".to_string())),
-            ("done", Value::Bool(false)),
-        ]));
-        assert_eq!(
-            parse_value(from_str(s)),
-            Ok((cmp, Value::List(vec![map_value.clone()])))
-        );
-        assert_eq!(
-            parse_list(from_str(s)),
-            Ok((cmp, Value::List(vec![map_value])))
-        );
-    }
-
-    #[test]
-    fn test_range_type_success() {
-        let s = "r(10,20)";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        let v = parse_range(from_str(s));
-        assert_eq!(
-            v,
-            Ok((
-                cmp,
-                Value::RangeInt(RangeType {
-                    upper: 20,
-                    lower: 10,
-                    inclusive: 0
-                })
-            ))
-        );
-        let r = match v.unwrap().1 {
-            Value::RangeInt(val) => val,
-            _ => unreachable!(),
-        };
-        assert_eq!(10.is_within(&r), false);
-        assert_eq!(15.is_within(&r), true);
-        assert_eq!(20.is_within(&r), false);
-
-        let s = "r[10, 20)";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        let v = parse_range(from_str(s));
-        assert_eq!(
-            v,
-            Ok((
-                cmp,
-                Value::RangeInt(RangeType {
-                    upper: 20,
-                    lower: 10,
-                    inclusive: LOWER_INCLUSIVE
-                })
-            ))
-        );
-        let r = match v.unwrap().1 {
-            Value::RangeInt(val) => val,
-            _ => unreachable!(),
-        };
-        assert_eq!(10.is_within(&r), true);
-        assert_eq!(15.is_within(&r), true);
-        assert_eq!(20.is_within(&r), false);
-        let s = "r[10, 20]";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        let v = parse_range(from_str(s));
-        assert_eq!(
-            v,
-            Ok((
-                cmp,
-                Value::RangeInt(RangeType {
-                    upper: 20,
-                    lower: 10,
-                    inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE
-                })
-            ))
-        );
-        let r = match v.unwrap().1 {
-            Value::RangeInt(val) => val,
-            _ => unreachable!(),
-        };
-        assert_eq!(10.is_within(&r), true);
-        assert_eq!(15.is_within(&r), true);
-        assert_eq!(20.is_within(&r), true);
-        let s = "r(10.2, 50.5)";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            parse_range(from_str(s)),
-            Ok((
-                cmp,
-                Value::RangeFloat(RangeType {
-                    upper: 50.5,
-                    lower: 10.2,
-                    inclusive: 0
-                })
-            ))
-        );
-    }
-
-    #[test]
-    fn test_range_type_failures() {
-        let s = "(10, 20)";
-        let cmp = unsafe { Span::new_from_raw_offset(0, 1, "(10, 20)", "") };
-        assert_eq!(
-            parse_range(from_str(s)),
-            Err(nom::Err::Error((cmp, nom::error::ErrorKind::Char)))
-        );
-    }
-
-    //
-    // test with comments
-    //
-    #[test]
-    fn test_parse_value_with_comments() {
-        let s = "1234 # this comment\n";
-        let cmp = unsafe { Span::new_from_raw_offset(4, 1, " # this comment\n", "") };
-        assert_eq!(
-            parse_value(from_str(s)),
-            Ok((cmp, Value::Int(1234i64)))
-        );
-
-        let s = "#this is a comment\n1234";
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(
-            parse_value(from_str(s)),
-            Ok((cmp, Value::Int(1234i64)))
-        );
-
-        let s = r###"
-
-        # this comment is skipped
-        # this one too
-        [ "value1", # this one is skipped as well
-          "value2" ]"###;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 6, "", "") };
-        assert_eq!(
-            parse_value(from_str(s)),
-            Ok((
-                cmp,
-                Value::List(vec![Value::String("value1".to_string()), Value::String("value2".to_string())])
-            ))
-        );
-
-        let s = r###"{
-        # this comment is skipped
-        # this one as well
-        key: # how about this
-           "Value"
-        }"###;
-        let cmp = unsafe { Span::new_from_raw_offset(s.len(), 6, "", "") };
-        assert_eq!(
-            parse_value(from_str(s)),
-            Ok((
-                cmp,
-                Value::Map(make_linked_hashmap(vec![("key", Value::String("Value".to_string()))]))
-            ))
-        )
-    }
-
-    #[test]
-    fn let_value_test() {
-        let s = "let kms_key_alias := [\"important1\", \"important2\"]\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(s)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "kms_key_alias".to_string(),
-                    value: LetValue::Value(Value::List(vec![
-                        Value::String("important1".to_string()),
-                        Value::String("important2".to_string())
-                    ])),
-                }
-            ))
-        );
-
-        let s = "let is_public := true\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(s)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "is_public".to_string(),
-                    value: LetValue::Value(Value::Bool(true)),
-                }
-            ))
-        );
-
-        let s = r#"let complex := [
-                           { vehicle: "Honda",
-                             done: false
-                            }]
-"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 5, "", "") };
-        assert_eq!(
-            var_assignment(from_str(s)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "complex".to_string(),
-                    value: LetValue::Value(Value::List(vec![Value::Map(make_linked_hashmap(
-                        vec![
-                            ("vehicle", Value::String("Honda".to_string())),
-                            ("done", Value::Bool(false))
-                        ]
-                    ))])),
-                }
-            ))
-        );
-    }
-
-    #[test]
-    fn extract_message_test() {
-        let s = "This is the \n\n message >>\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(23, 3, ">>\n", "") };
-        assert_eq!(
-            extract_message(from_str(s)),
-            Ok((cmp_span, "This is the \n\n message "))
-        );
-        let s = r#"<< This is a custom message >>"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            custom_message(from_str(s)),
-            Ok((cmp_span, " This is a custom message "))
-        );
-
-        let inner = r#"this is multiline custom message
-                            How is this going. EOM"#;
-        let s = "<<".to_owned() + inner + ">>";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(custom_message(from_str(&s)), Ok((cmp_span, inner)));
-
-        // Failure cases
-        let s = "";
-        let cmp_span = unsafe { Span::new_from_raw_offset(0, 1, "", "") };
-        assert_eq!(
-            custom_message(from_str(s)),
-            Err(nom::Err::Error((cmp_span, nom::error::ErrorKind::Tag)))
-        );
-
-        let s = "<< no ending";
-        let cmp_span = unsafe { Span::new_from_raw_offset(2, 1, " no ending", "") };
-        assert_eq!(
-            custom_message(from_str(s)),
-            Err(nom::Err::Failure((cmp_span, nom::error::ErrorKind::Tag)))
-        );
-    }
-
-    #[test]
-    fn var_termination_test(){
-        //
-        // Successful cases
-        //
-        let s = "\n";
-        let r = var_terminated(Span::new_extra(s, ""));
-        let remainder = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(r, Ok((remainder, ())));
-
-        let s = "\r";
-        let r = var_terminated(Span::new_extra(s, ""));
-        let remainder = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(r, Ok((remainder, ())));
-
-        let s = "# this is a comment\n";
-        let r = var_terminated(Span::new_extra(s, ""));
-        let remainder = Span::new_extra(s, "");
-        assert_eq!(r, Ok((remainder, ())));
-
-        let s = "   # this is a comment\n";
-        let r = var_terminated(Span::new_extra(s, ""));
-        let remainder = unsafe { Span::new_from_raw_offset(3, 1, "# this is a comment\n", "") };
-        assert_eq!(r, Ok((remainder, ())));
-
-        //
-        // error cases
-        //
-        let s = "";
-        let r = var_terminated(Span::new_extra(s, ""));
-        assert_eq!(r, Err(nom::Err::Failure((Span::new_extra("", ""), nom::error::ErrorKind::CrLf))));
-
-        let s = "property.access == \"this\"\n";
-        let r = var_terminated(Span::new_extra(s, ""));
-        assert_eq!(r, Err(nom::Err::Failure((Span::new_extra("property.access == \"this\"\n", ""), nom::error::ErrorKind::CrLf))));
-    }
-
-    #[test]
-    fn var_access_test() {
-        let s = "%var";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(var_access(from_str(s)), Ok((cmp_span, "var")));
-
-        let s = "var";
-        let cmp_span = unsafe { Span::new_from_raw_offset(0, 1, "var", "") };
-        assert_eq!(
-            var_access(from_str(s)),
-            Err(nom::Err::Error((cmp_span, nom::error::ErrorKind::Char)))
-        );
-    }
-
-    #[test]
-    fn property_access_test() {
-        let s = "public";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            property_access(from_str(s)),
-            Ok((
-                cmp_span,
-                PropertyAccess {
-                    var_access: None,
-                    property_dotted_notation: vec!["public".to_string()],
-                }
-            ))
-        );
-
-        let s = "policy.statement.*.action";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            property_access(from_str(s)),
-            Ok((
-                cmp_span,
-                PropertyAccess {
-                    var_access: None,
-                    property_dotted_notation: vec!["policy", "statement", "*", "action"].iter()
-                        .map(|s| (*s).to_string()).collect(),
-                }
-            ))
-        );
-
-        let s = "%var.policy.statement";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            property_access(from_str(s)),
-            Ok((
-                cmp_span,
-                PropertyAccess {
-                    var_access: Some("var".to_string()),
-                    property_dotted_notation: vec!["policy", "statement"].iter()
-                        .map(|s| (*s).to_string()).collect(),
-                }
-            ))
-        );
-    }
-
-    #[test]
-    fn var_property_dotted_test() {
-        let s = r#"%statement.*.action"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            var_property_dotted_notation(from_str(s)),
-            Ok((
-                cmp_span,
-                PropertyAccess {
-                    var_access: Some("statement".to_string()),
-                    property_dotted_notation: vec!["*", "action"].iter()
-                        .map(|s| (*s).to_string()).collect(),
-                }
-            ))
-        )
-    }
-
-    #[test]
-    fn var_assignment_test() {
-        //
-        // Success cases
-        //
-        // let var = "variable := \"that\"\\n";
-        let var = r#"let variable := "that"
-"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::Value(Value::String("that".to_string())),
-                }
-            ))
-        );
-
-        let var = "let variable := 10\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::Value(Value::Int(10)),
-                }
-            ))
-        );
-
-        let var = "let variable := %var2\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("var2".to_string()),
-                        property_dotted_notation: vec![],
-                    }),
-                }
-            ))
-        );
-
-        let var = "let variable := %var2  # this is comment\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(23, 1, "# this is comment\n", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("var2".to_string()),
-                        property_dotted_notation: vec![],
-                    }),
-                }
-            ))
-        );
-
-        //
-        // let form testing
-        //
-        let var = "let variable = \"that\"\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::Value(Value::String("that".to_string())),
-                }
-            ))
-        );
-
-        let var = "let variable := \"that\"\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "variable".to_string(),
-                    value: LetValue::Value(Value::String("that".to_string())),
-                }
-            ))
-        );
-
-        let var = "let letvariable := \"that\"\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(var.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(var)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "letvariable".to_string(),
-                    value: LetValue::Value(Value::String("that".to_string())),
-                }
-            ))
-        );
-
-    }
-
-    #[test]
-    fn single_type_clause_test() {
-        let s = r#"AWS::S3::Bucket public == true"#;
-        let public_clause = Clause {
-            access: PropertyAccess {
-                var_access: None,
-                property_dotted_notation: vec!["public".to_string()],
-            },
-            custom_message: None,
-            compare_with: Some(LetValue::Value(Value::Bool(true))),
-            comparator: ValueOperator::Cmp(CmpOperator::Eq),
-            location: Location {
-                line: 1,
-                column: 17,
-                file_name: ""
-            }
-        };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::S3::Bucket".to_string(),
-            type_clauses: vec![PropertyClause::Clause(public_clause.clone())],
-        };
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            type_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-
-        //
-        // Multiline is fine
-        //
-        let s = r#"AWS::S3::Bucket public == true |OR|
-                            policy == null"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        let policy_null = Clause {
-            access: PropertyAccess {
-                var_access: None,
-                property_dotted_notation: vec!["policy".to_string()],
-            },
-            custom_message: None,
-            compare_with: Some(LetValue::Value(Value::Null)),
-            comparator: ValueOperator::Cmp(CmpOperator::Eq),
-            location: Location {
-                line: 2,
-                column: 29,
-                file_name: ""
-            }
-        };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::S3::Bucket".to_string(),
-            type_clauses: vec![PropertyClause::Disjunction(vec![
-                public_clause.clone(),
-                policy_null.clone(),
-            ])],
-        };
-        assert_eq!(
-            type_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-
-    #[test]
-    fn type_var_and_property_clause() {
-        let s = "let keyName := keyName\n";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
-        assert_eq!(
-            var_assignment(from_str(s)),
-            Ok((
-                cmp_span,
-                LetExpr {
-                    var: "keyName".to_string(),
-                    value: LetValue::PropertyAccess(PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["keyName".to_string()],
-                    }),
-                }
-            ))
-        );
-
-        let s = "";
-        let cmp_span = unsafe { Span::new_from_raw_offset(0, 1, "", "") };
-        assert_eq!(
-            disjunction_property_clauses(from_str(s)),
-            Err(nom::Err::Error((cmp_span, nom::error::ErrorKind::Char)))
-        );
-    }
-
-    #[test]
-    fn type_block_test() {
-        let s = r#"
-            AWS::EC2::Instance {
-                let keyName := keyName
-
-                %keyName        == "KeyName" or
-                %keyName        == "Key2"
-
-                image           == %latest  <<hook with latest image>>
-                instanceType    == "t3.Medium"
-            }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 10, "", "") };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::EC2::Instance".to_string(),
-            type_clauses: vec![
-                PropertyClause::Variable(LetExpr {
-                    var: "keyName".to_string(),
-                    value: LetValue::PropertyAccess(PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["keyName".to_string()],
-                    }),
-                }),
-                PropertyClause::Disjunction(vec![
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: Some("keyName".to_string()),
-                            property_dotted_notation: vec![],
-                        },
-                        compare_with: Some(LetValue::Value(Value::String("KeyName".to_string()))),
-                        comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                        custom_message: None,
-                        location: Location {
-                            line: 5,
-                            column: 17,
-                            file_name: ""
-                        }
-                    },
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: Some("keyName".to_string()),
-                            property_dotted_notation: vec![],
-                        },
-                        compare_with: Some(LetValue::Value(Value::String("Key2".to_string()))),
-                        comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                        custom_message: None,
-                        location: Location {
-                            line: 6,
-                            column: 17,
-                            file_name: ""
-                        }
-                    },
-                ]),
-                PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["image".to_string()],
-                    },
-                    compare_with: Some(LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("latest".to_string()),
-                        property_dotted_notation: vec![],
-                    })),
-                    comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                    custom_message: Some("hook with latest image".to_string()),
-                    location: Location {
-                        line: 8,
-                        column: 17,
-                        file_name: ""
-                    }
-                }),
-                PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["instanceType".to_string()],
-                    },
-                    compare_with: Some(LetValue::Value(Value::String("t3.Medium".to_string()))),
-                    comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                    custom_message: None,
-                    location: Location {
-                        line: 9,
-                        column: 17,
-                        file_name: ""
-                    }
-                }),
-            ],
-        };
-        assert_eq!(
-            type_block_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-
-    #[test]
-    fn default_rule_type_clauses_test() {
-        let s = r#"
-        AWS::EC2::Instance securityGroups == ["InstanceSecurityGroup"]
-        AWS::EC2::Instance keyName == "KeyName" or
-            keyName != "Key2"
-
-        AWS::EC2::Instance availabilityZone in ["us-east-2a", "us-east-2b"]
-        AWS::EC2::Instance image == %latest
-
-        AWS::EC2::Instance instanceType == "t3.medium""#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 9, "", "") };
-
-        let cmp = vec![
-            TypeClauseExpr {
-                type_name: "AWS::EC2::Instance".to_string(),
-                type_clauses: vec![PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["securityGroups".to_string()],
-                    },
-                    custom_message: None,
-                    comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::List(vec![Value::String(
-                        "InstanceSecurityGroup".to_string(),
-                    )]))),
-                    location: Location {
-                        line: 2,
-                        column: 28,
-                        file_name: ""
-                    }
-                })],
-            },
-            TypeClauseExpr {
-                type_name: "AWS::EC2::Instance".to_string(),
-                type_clauses: vec![PropertyClause::Disjunction(vec![
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: None,
-                            property_dotted_notation: vec!["keyName".to_string()],
-                        },
-                        custom_message: None,
-                        comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                        compare_with: Some(LetValue::Value(Value::String("KeyName".to_string()))),
-                        location: Location {
-                            line: 3,
-                            column: 28,
-                            file_name: ""
-                        }
-                    },
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: None,
-                            property_dotted_notation: vec!["keyName".to_string()],
-                        },
-                        custom_message: None,
-                        comparator: ValueOperator::Not(CmpOperator::Eq),
-                        compare_with: Some(LetValue::Value(Value::String("Key2".to_string()))),
-                        location: Location {
-                            line: 4,
-                            column: 13,
-                            file_name: ""
-                        }
-                    },
-                ])],
-            },
-            TypeClauseExpr {
-                type_name: "AWS::EC2::Instance".to_string(),
-                type_clauses: vec![PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["availabilityZone".to_string()],
-                    },
-                    custom_message: None,
-                    comparator: ValueOperator::Cmp(CmpOperator::In),
-                    compare_with: Some(LetValue::Value(Value::List(vec![
-                        Value::String("us-east-2a".to_string()),
-                        Value::String("us-east-2b".to_string()),
-                    ]))),
-                    location: Location {
-                        line: 6,
-                        column: 28,
-                        file_name: ""
-                    }
-                })],
-            },
-            TypeClauseExpr {
-                type_name: "AWS::EC2::Instance".to_string(),
-                type_clauses: vec![PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["image".to_string()],
-                    },
-                    custom_message: None,
-                    comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                    compare_with: Some(LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("latest".to_string()),
-                        property_dotted_notation: vec![],
-                    })),
-                    location: Location {
-                        line: 7,
-                        column: 28,
-                        file_name: ""
-                    }
-                })],
-            },
-            TypeClauseExpr {
-                type_name: "AWS::EC2::Instance".to_string(),
-                type_clauses: vec![PropertyClause::Clause(Clause {
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["instanceType".to_string()],
-                    },
-                    custom_message: None,
-                    comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::String("t3.medium".to_string()))),
-                    location: Location {
-                        line: 9,
-                        column: 28,
-                        file_name: ""
-                    }
-                })],
-            },
-        ];
-        assert_eq!(
-            default_rule_type_clauses(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-
-    #[test]
-    fn rule_block_test() {
-        let s = r#"
-        rule s3_secure {
-            AWS::S3::Bucket {
-                public != true
-                policy != null
-            }
-        }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 7, "", "") };
-        let cmp = NamedRuleBlockExpr {
-            rule_name: "s3_secure".to_string(),
-            rule_clauses: vec![NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(
-                TypeClauseExpr {
-                    type_name: "AWS::S3::Bucket".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["public".to_string()],
-                            },
-                            custom_message: None,
-                            comparator: ValueOperator::Not(CmpOperator::Eq),
-                            compare_with: Some(LetValue::Value(Value::Bool(true))),
-                            location: Location {
-                                line: 4,
-                                column: 17,
-                                file_name: ""
-                            }
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["policy".to_string()],
-                            },
-                            custom_message: None,
-                            comparator: ValueOperator::Not(CmpOperator::Eq),
-                            compare_with: Some(LetValue::Value(Value::Null)),
-                            location: Location {
-                                line: 5,
-                                column: 17,
-                                file_name: ""
-                            }
-                        }),
-                    ],
-                },
-            ))],
-            location: Location {
-                line: 2,
-                column: 9,
-                file_name: ""
-            }
-        };
-        assert_eq!(
-            named_rule_block_expr(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-
-        let s = r#"
-            rule s3_secure {
-                s3_policy
-                AWS::S3::Bucket public != true
-            }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 5, "", "") };
-        let cmp = NamedRuleBlockExpr {
-            rule_name: "s3_secure".to_string(),
-            rule_clauses: vec![
-                NamedRuleExpr::RuleClause(NamedRuleClauseExpr::NamedRule("s3_policy".to_string())),
-                NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(TypeClauseExpr {
-                    type_name: "AWS::S3::Bucket".to_string(),
-                    type_clauses: vec![PropertyClause::Clause(Clause {
-                        access: PropertyAccess {
-                            var_access: None,
-                            property_dotted_notation: vec!["public".to_string()],
-                        },
-                        comparator: ValueOperator::Not(CmpOperator::Eq),
-                        compare_with: Some(LetValue::Value(Value::Bool(true))),
-                        custom_message: None,
-                        location: Location {
-                            line: 4,
-                            column: 33,
-                            file_name: ""
-                        }
-                    })],
-                })),
-            ],
-            location: Location {
-                line: 2,
-                column: 13,
-                file_name: ""
-            }
-        };
-        assert_eq!(
-            named_rule_block_expr(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-
-    #[test]
-    fn property_block_with_comments_test() {
-        let s = r###"
-        # This is the property clause testing with comments
-        AWS::EC2::Instance {
-          # Inside comments on what we are checking
-          # only allowed images are contained in latest variable
-          image in %latest
-
-          # Only allowed instance types are contained in types
-          instanceType in %allowed_types
-
-        }"###;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 11, "", "") };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::EC2::Instance".to_string(),
-            type_clauses: vec![
-                PropertyClause::Clause(Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["image".to_string()],
-                    },
-                    comparator: ValueOperator::Cmp(CmpOperator::In),
-                    compare_with: Some(LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("latest".to_string()),
-                        property_dotted_notation: vec![],
-                    })),
-                    location: Location {
-                        line: 6,
-                        column: 11,
-                        file_name: ""
-                    },
-                }),
-                PropertyClause::Clause(Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["instanceType".to_string()],
-                    },
-                    comparator: ValueOperator::Cmp(CmpOperator::In),
-                    compare_with: Some(LetValue::PropertyAccess(PropertyAccess {
-                        var_access: Some("allowed_types".to_string()),
-                        property_dotted_notation: vec![],
-                    })),
-                    location: Location {
-                        line: 9,
-                        column: 11,
-                        file_name: ""
-                    },
-                }),
-            ],
-        };
-        assert_eq!(
-            type_block_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-
-        let s = r###"
-        # Okay this is without the block direct type only
-        AWS::S3::Bucket public != true or policy != null"###;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 3, "", "") };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::S3::Bucket".to_string(),
-            type_clauses: vec![PropertyClause::Disjunction(vec![
-                Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["public".to_string()],
-                    },
-                    comparator: ValueOperator::Not(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::Bool(true))),
-                    location: Location {
-                        line: 3,
-                        column: 25,
-                        file_name: ""
-                    }
-                },
-                Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["policy".to_string()],
-                    },
-                    comparator: ValueOperator::Not(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::Null)),
-                    location: Location {
-                        line: 3,
-                        column: 43,
-                        file_name: ""
-                    }
-                },
-            ])],
-        };
-        assert_eq!(
-            type_property_clause(from_str(s)),
-            Ok((cmp_span, cmp.clone()))
-        );
-        let s = r###"
-        # This is disjunction with or clauses with inline comments and joins
-        AWS::S3::Bucket public != true or # ensure we are not public
-            # and policy must be set
-            policy != null
-        "###;
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::S3::Bucket".to_string(),
-            type_clauses: vec![PropertyClause::Disjunction(vec![
-                Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["public".to_string()],
-                    },
-                    comparator: ValueOperator::Not(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::Bool(true))),
-                    location: Location {
-                        line: 3,
-                        column: 25,
-                        file_name: ""
-                    }
-                },
-                Clause {
-                    custom_message: None,
-                    access: PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["policy".to_string()],
-                    },
-                    comparator: ValueOperator::Not(CmpOperator::Eq),
-                    compare_with: Some(LetValue::Value(Value::Null)),
-                    location: Location {
-                        line: 5,
-                        column: 13,
-                        file_name: ""
-                    }
-                },
-            ])],
-        };
-        let last = "\n        ";
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len() - last.len(), 5, last, "") };
-        assert_eq!(
-            type_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        )
-    }
-
-    #[test]
-    fn block_type_tests() {
-        let s = r#"
-    AWS::EC2::Volume {
-        let encrypted := %encrypted
-        size in r[100, 512]
-    }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 5, "", "") };
-        assert_eq!(
-            type_block_property_clause(from_str(s)),
-            Ok((
-                cmp_span,
-                TypeClauseExpr {
-                    type_name: "AWS::EC2::Volume".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Variable(LetExpr {
-                            var: "encrypted".to_string(),
-                            value: LetValue::PropertyAccess(PropertyAccess {
-                                var_access: Some("encrypted".to_string()),
-                                property_dotted_notation: vec![]
-                            })
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["size".to_string()]
-                            },
-                            custom_message: None,
-                            compare_with: Some(LetValue::Value(Value::RangeInt(RangeType {
-                                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
-                                lower: 100,
-                                upper: 512
-                            }))),
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            location: Location {
-                                line: 4,
-                                column: 9,
-                                file_name: ""
-                            }
-                        })
-                    ]
-                }
-            ))
-        );
-    }
-
-    #[test]
-    fn property_access_test_2() {
-        let s = r#"%statement.*.action in ["deny"]"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-        assert_eq!(
-            property_clause(from_str(s)),
-            Ok((
-                cmp_span,
-                Clause {
-                    custom_message: None,
-                    comparator: ValueOperator::Cmp(CmpOperator::In),
-                    compare_with: Some(LetValue::Value(Value::List(vec![Value::String("deny".to_string())]))),
-                    access: PropertyAccess {
-                        var_access: Some("statement".to_string()),
-                        property_dotted_notation: vec!["*", "action"].iter()
-                            .map(|s| (*s).to_string()).collect()
-                    },
-                    location: Location {
-                        line: 1,
-                        column: 1,
-                        file_name: ""
-                    }
-
-                }
-            ))
-        )
-    }
-
-    #[test]
-    fn block_type_test_2() {
-        let s = r#"
-    AWS::IAM::Policy {
-        let statement := statement
-        %statement.*.action in ["deny"]
-    }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 5, "", "") };
-        assert_eq!(
-            type_block_property_clause(from_str(s)),
-            Ok((
-                cmp_span,
-                TypeClauseExpr {
-                    type_name: "AWS::IAM::Policy".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Variable(LetExpr {
-                            var: "statement".to_string(),
-                            value: LetValue::PropertyAccess(PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["statement".to_string()]
-                            })
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: Some("statement".to_string()),
-                                property_dotted_notation: vec!["*", "action"].iter()
-                                    .map(|s| (*s).to_string()).collect()
-                            },
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            compare_with: Some(LetValue::Value(Value::List(vec![Value::String("deny".to_string())]))),
-                            custom_message: None,
-                            location: Location {
-                                line: 4,
-                                column: 9,
-                                file_name: ""
-                            }
-                        })
-                    ]
-                }
-            ))
-        )
-    }
-
-    #[test]
-    fn rule_block_tests() {
-        let s = r###"
-rule ec2_instance_checks {
-    AWS::EC2::Volume {
-        let encrypted := %encrypted
-        size in r[100, 512]
-    }
-}"###;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 7, "", "") };
-        let cmp = NamedRuleBlockExpr {
-            rule_name: "ec2_instance_checks".to_string(),
-            rule_clauses: vec![NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(
-                TypeClauseExpr {
-                    type_name: "AWS::EC2::Volume".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Variable(LetExpr {
-                            var: "encrypted".to_string(),
-                            value: LetValue::PropertyAccess(PropertyAccess {
-                                var_access: Some("encrypted".to_string()),
-                                property_dotted_notation: vec![],
-                            }),
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["size".to_string()],
-                            },
-                            custom_message: None,
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            compare_with: Some(LetValue::Value(Value::RangeInt(RangeType {
-                                lower: 100,
-                                upper: 512,
-                                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
-                            }))),
-                            location: Location {
-                                line: 5,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                    ],
-                },
-            ))],
-            location: Location {
-                line: 2,
-                column: 1,
-                file_name: ""
-            }
-        };
-        assert_eq!(
-            named_rule_block_expr(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-
-    #[test]
-    fn rules_block_with_comments_test() {
-        let s = r###"
-rule ec2_instance_checks {
-
-    let encrypted   := true
-    let latest      := "ami-6458235"
-
-    # EC2 Intance  Volume
-    AWS::EC2::Instance {
-        # SGs ^ (a or b or c) ^ az ^ image ^ insT
-        securityGroups      == ["InstanceSecurityGroup"]
-
-        keyName             == "KeyName" or
-        keyName             == "Key2"
-
-        availabilityZone    in ["us-east-2a", "us-east-2b"]
-        image               == %latest
-        instanceType        == "t3.medium"
-    }
-
-    AWS::EC2::Volume {
-        let encrypted := %encrypted
-        size in r[100, 512]
-    }
-
-    AWS::IAM::Policy {
-        let statement := statement
-        %statement.*.action in ["deny"]
-    }
-}"###;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 29, "", "") };
-        let cmp = NamedRuleBlockExpr {
-            rule_name: "ec2_instance_checks".to_string(),
-            rule_clauses: vec![
-                NamedRuleExpr::Variable(LetExpr {
-                    var: "encrypted".to_string(),
-                    value: LetValue::Value(Value::Bool(true)),
-                }),
-                NamedRuleExpr::Variable(LetExpr {
-                    var: "latest".to_string(),
-                    value: LetValue::Value(Value::String("ami-6458235".to_string())),
-                }),
-                NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(TypeClauseExpr {
-                    type_name: "AWS::EC2::Instance".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["securityGroups".to_string()],
-                            },
-                            compare_with: Some(LetValue::Value(Value::List(vec![Value::String(
-                                "InstanceSecurityGroup".to_string(),
-                            )]))),
-                            comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                            custom_message: None,
-                            location: Location {
-                                line: 10,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                        PropertyClause::Disjunction(vec![
-                            Clause {
-                                access: PropertyAccess {
-                                    var_access: None,
-                                    property_dotted_notation: vec!["keyName".to_string()],
-                                },
-                                compare_with: Some(LetValue::Value(Value::String("KeyName".to_string()))),
-                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                                custom_message: None,
-                                location: Location {
-                                    line: 12,
-                                    column: 9,
-                                    file_name: ""
-                                }
-                            },
-                            Clause {
-                                access: PropertyAccess {
-                                    var_access: None,
-                                    property_dotted_notation: vec!["keyName".to_string()],
-                                },
-                                compare_with: Some(LetValue::Value(Value::String("Key2".to_string()))),
-                                comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                                custom_message: None,
-                                location: Location {
-                                    line: 13,
-                                    column: 9,
-                                    file_name: ""
-                                }
-                            },
-                        ]),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["availabilityZone".to_string()],
-                            },
-                            compare_with: Some(LetValue::Value(Value::List(vec![
-                                Value::String("us-east-2a".to_string()),
-                                Value::String("us-east-2b".to_string()),
-                            ]))),
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            custom_message: None,
-                            location: Location {
-                                line: 15,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["image".to_string()],
-                            },
-                            compare_with: Some(LetValue::PropertyAccess(PropertyAccess {
-                                var_access: Some("latest".to_string()),
-                                property_dotted_notation: vec![],
-                            })),
-                            comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                            custom_message: None,
-                            location: Location {
-                                line: 16,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["instanceType".to_string()],
-                            },
-                            compare_with: Some(LetValue::Value(Value::String("t3.medium".to_string()))),
-                            comparator: ValueOperator::Cmp(CmpOperator::Eq),
-                            custom_message: None,
-                            location: Location {
-                                line: 17,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                    ],
-                })),
-                NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(TypeClauseExpr {
-                    type_name: "AWS::EC2::Volume".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Variable(LetExpr {
-                            var: "encrypted".to_string(),
-                            value: LetValue::PropertyAccess(PropertyAccess {
-                                var_access: Some("encrypted".to_string()),
-                                property_dotted_notation: vec![],
-                            }),
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["size".to_string()],
-                            },
-                            custom_message: None,
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            compare_with: Some(LetValue::Value(Value::RangeInt(RangeType {
-                                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
-                                lower: 100i64,
-                                upper: 512i64,
-                            }))),
-                            location: Location {
-                                line: 22,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                    ],
-                })),
-                NamedRuleExpr::RuleClause(NamedRuleClauseExpr::TypeClause(TypeClauseExpr {
-                    type_name: "AWS::IAM::Policy".to_string(),
-                    type_clauses: vec![
-                        PropertyClause::Variable(LetExpr {
-                            var: "statement".to_string(),
-                            value: LetValue::PropertyAccess(PropertyAccess {
-                                var_access: None,
-                                property_dotted_notation: vec!["statement".to_string()],
-                            }),
-                        }),
-                        PropertyClause::Clause(Clause {
-                            access: PropertyAccess {
-                                var_access: Some("statement".to_string()),
-                                property_dotted_notation: vec!["*".to_string(), "action".to_string()],
-                            },
-                            comparator: ValueOperator::Cmp(CmpOperator::In),
-                            compare_with: Some(LetValue::Value(Value::List(vec![Value::String("deny".to_string())]))),
-                            custom_message: None,
-                            location: Location {
-                                line: 27,
-                                column: 9,
-                                file_name: ""
-                            }
-                        }),
-                    ],
-                })),
-            ],
-            location: Location {
-                line: 2,
-                column: 1,
-                file_name: ""
-            }
-        };
-        assert_eq!(
-            named_rule_block_expr(from_str(s)),
-            Ok((cmp_span, cmp))
-        )
-    }
-
-    #[test]
-    fn test_parse_rules() -> std::io::Result<()> {
-        let s = r###"
-#
-#  this is the set of rules for secure S3 bucket
-#  it must not be public AND
-#  it must have a policy associated
-#
-rule s3_secure {
-    AWS::S3::Bucket {
-        public != true
-        policy != null
-    }
-}
-
-#
-# must be s3_secure or
-# there must a tag with a key ExternalS3Approved as an exception
-#
-rule s3_secure_exception {
-    s3_secure or
-    AWS::S3::Bucket tags.*.key in ["ExternalS3Approved"]
-}
-
-let kms_keys := [
-    "arn:aws:kms:123456789012:alias/allowed-primary",
-    "arn:aws:kms:123456789012:alias/allowed-secondary"
-]
-
-let encrypted := false
-let latest := "ami-6458235"
-        "###;
-        let rules = parse_rules(Span::new_extra(s, ""));
-        println!("# number of rules {}", rules.unwrap().1.len());
-        Ok(())
-    }
-
-    #[test]
-    fn test_broken_syntax() {
-        let s = r###"
-        rule s3_secure {
-            tags.*.key in ["ExternalS3Approved"] # no type specified
-        }
-        "###;
-
-        let rules = parse_rules(Span::new_extra(s, ""));
-        match rules {
-            Err(nom::Err::Failure((i, _k))) => {
-                let span = i as Span;
-                assert_eq!(3, span.location_line());
-                assert_eq!(17, span.get_utf8_column());
-            },
-            _ => assert!(false, "Should not occur")
-        }
-    }
-
-    #[test]
-    fn membership_test() {
-        let s = r#"
-            AWS::EC2::Instance {
-                let keyName := keyName
-
-                %keyName        IN ["keyName", "keyName2", "keyName3"]
-                %keyName NOT_IN ["keyNameIs", "notInthis"]
-            }"#;
-        let cmp_span = unsafe { Span::new_from_raw_offset(s.len(), 7, "", "") };
-        let cmp = TypeClauseExpr {
-            type_name: "AWS::EC2::Instance".to_string(),
-            type_clauses: vec![
-                PropertyClause::Variable(LetExpr {
-                    var: "keyName".to_string(),
-                    value: LetValue::PropertyAccess(PropertyAccess {
-                        var_access: None,
-                        property_dotted_notation: vec!["keyName".to_string()],
-                    }),
-                }),
-                PropertyClause::Clause(
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: Some("keyName".to_string()),
-                            property_dotted_notation: vec![],
-                        },
-                        compare_with: Some(LetValue::Value(Value::List(vec![Value::String("keyName".to_string()),
-                                                                       Value::String("keyName2".to_string()),
-                                                                       Value::String("keyName3".to_string())]))),
-                        comparator: ValueOperator::Cmp(CmpOperator::In),
-                        custom_message: None,
-                        location: Location {
-                            line: 5,
-                            column: 17,
-                            file_name: ""
-                        }
-                    }),
-                PropertyClause::Clause(
-                    Clause {
-                        access: PropertyAccess {
-                            var_access: Some("keyName".to_string()),
-                            property_dotted_notation: vec![],
-                        },
-                        compare_with: Some(LetValue::Value(Value::List(vec![Value::String("keyNameIs".to_string()), Value::String("notInthis".to_string())]))),
-                        comparator: ValueOperator::Not(CmpOperator::In),
-                        custom_message: None,
-                        location: Location {
-                            line: 6,
-                            column: 17,
-                            file_name: ""
-                        }
-                    },
-                )
-            ],
-        };
-        assert_eq!(
-            type_block_property_clause(from_str(s)),
-            Ok((cmp_span, cmp))
-        );
-    }
-}

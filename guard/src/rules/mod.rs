@@ -1,189 +1,74 @@
-///
-/// This represents the rules language syntax for parsing and how it maps into Rule
-/// clauses that will be evaluated. By default all clauses have an implicit AND conjunction
-/// between all clauses specified. All clauses that are not included as a part of a named
-/// rule block will automatically belong to the default rule block. The naming conventions
-/// to reference these are standardized as follows in the grammar show
-///
-/// rule_clause         ::= type_part property_part value_clause '\n'
-/// rule_block_clause   ::= type_part '{' '\n' (property_part value_clause '\n')+ '}' '\n'
-/// value_clause        ::= in_clause | not_clause | eq_clause
-/// in_clause           ::= IN (var|list_value)
-/// eq_clause           ::= EQ (var|value)
-///
-/// var                 ::= IDENT
-/// IDENT               ::= [a-zA-Z0-9_]+
-/// let_clause          ::= let IDENT = value
-///
-/// **Scalar Values**
-///
-/// scalar_value        ::= string | int | float | bool
-/// string              ::= '"'[^"]+'"'
-/// int                 ::= [0-9]+
-/// float               ::= int.int
-/// bool                ::= true | false
-///
-/// **General Value**
-///
-/// value               ::= scalar_value | list_value | map_value
-/// list_value          ::= '[' value ']'
-/// map_value           ::= '{' (string: value)+, '}'
-///
-///
-/// Grammar in ABNF form
-///
-///
-/// rules               ::=     expr+
-/// expr                ::=     rule       |
-///                             var_assignment
-///
-/// alphanumeric        ::=     [a-ZA-Z0-9_]
-///
-/// value               ::=     scalar |
-///                             list   |
-///                             map
-///
-/// ws                  ::=     [' \n\r\t']
-/// sp                  ::=     [' \t']
-///
-/// **Scalar Values**
-/// scalar              ::=     string      |
-///                             integer     |
-///                             bool        |
-///                             float       |
-///                             char        |
-///                             range
-///
-/// string              ::=     '"' [^"]* '"'
-/// integer             ::=     [0-9]+
-/// bool                ::=     'true' | 'True' | 'false' | 'False'
-/// float               ::=     integer '.' integer ([eE]['+'|'-']integer))?
-///
-/// range               ::=     r ['[('] allowed_range_types sp* ',' sp* allowed_range_types [')]'
-/// allowed_range_type  ::=     integer | float | char
-///
-/// **List Value**
-///
-/// list                ::=     '[' ws* value* ws* ']'
-///
-/// **Map Values**
-///
-/// map                 ::=     '{' ws* (keyword ws* ':' ws* value)* ws* '}'
-/// keyword             ::=     alphanumeric+  # might be restrictive
-///
-/// **Expressions**
-///
-/// var_assignment      ::=     var_name  ":="  value
-/// var_name            ::=     alphanumeric+
-/// var_access          ::=     '%' var_access
-///
-/// rule                ::=     named_rule |
-///                             clause
-///
-/// named_rules         ::=     'rule' var_name sp* '{' ws* type_clause+ ws* '}'
-/// type_clause         ::=     type_block | clause
-///
-/// clause_check        ::=     property_access sp+ op sp+ (value|var_access) ('<<' string '>>')?
-/// clause              ::=     type_name sp+ clause_check
-/// property_access     ::=     (var_access.)? ([property_name|'*'])(.[property_name|'*'])*
-/// op                  ::=     eq | not_eq | in | not_in
-/// eq                  ::=     '=='
-/// not_eq              ::=     '!='
-/// in                  ::=     'in' | 'IN'
-/// not_in              ::=     'not' in
-///
-/// type_block          ::=     type_name sp* '{' ws*
-///                                 (var_assigned)* (var_property_assignment)*
-///                                 clause_check+ ws* '}'
-///
-///
-///
-///
-///
-///
-///
-///
-/// AWS::S3::Bucket {
-///    .public NOT true
-///    .policy NOT null
-/// }
-///
-/// rule secure_bucket {
-///     AWS::S3::Bucket {
-///         .public NOT true
-///         .policy NOT null
-///     }
-/// }
-///
-/// let list = [1, 2, 3,]
-/// let maps = [{s: 1}, {b: 2},]
-/// let multiline = [
-///   {
-///      a:
-///          2,
-///      b:
-///          3,
-///    }]
-/// let mapvalue =
-///    {
-///       a: 1, }
-///
-/// import (
-///     "file-path" as X
-/// )
-///
-/// AWS::S3::Bucket {
-///    .public == true
-///    .policy != NULL
-///    .policy.statement[*].action != "DENY"
-/// }
-///
-/// rule secure_s3 {
-///     AWS::S3::Bucket {
-///        .policy != null
-///        .public != true
-///     }
-///     AWS::S3::BucketPolicy {
-///     }
-///     AWS::S3::Bucket .policy IN { Id: '...', Statement: [{ Principal: ["ec2.amazonaws.com"] }] }
-///     AWS::S3::Bucket {
-///         .policy.Id = '...'
-///         .policy.Statement[*].Principal IN ["ec2.amazonaws.com"]
-///     }
-/// }
-///
-/// secure_s3 and ....
-///
-/// rule XXYYY {
-///     secure_s3
-///     ...
-///     ...
-/// }
-///
-/// secure_s3
-/// XXYYY
-///
-/// secure_s3 OR XXYYY
-///
-///
-///
-///
-///
-mod common;
-mod scope;
-
-pub(crate) mod dependency;
-pub(crate) mod values;
-pub(crate) mod parser;
-pub(crate) mod expr;
-pub(crate) mod parser2;
+pub(crate) mod errors;
+pub(crate) mod evaluate;
 pub(crate) mod exprs;
+pub(crate) mod parser;
+pub(crate) mod values;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum EvalStatus {
+use errors::Error;
+use values::Value;
+use std::fmt::Formatter;
+use colored::*;
+
+pub(crate) type Result<R> = std::result::Result<R, Error>;
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub(crate) enum Status {
     PASS,
     FAIL,
-    FAIL_WITH_MESSAGE(String),
-    SKIP
+    SKIP,
 }
 
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Status::PASS => f.write_str(&"PASS".green())?,
+            Status::SKIP => f.write_str(&"SKIP".yellow())?,
+            Status::FAIL => f.write_str(&"FAIL".red())?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub(crate) enum EvaluationType {
+    File,
+    Rule,
+    Type,
+    Condition,
+    ConditionBlock,
+    Filter,
+    Clause
+}
+
+impl std::fmt::Display for EvaluationType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvaluationType::File => f.write_str("File")?,
+            EvaluationType::Rule => f.write_str("Rule")?,
+            EvaluationType::Type => f.write_str("Type")?,
+            EvaluationType::Condition => f.write_str("Condition")?,
+            EvaluationType::ConditionBlock => f.write_str("ConditionBlock")?,
+            EvaluationType::Filter => f.write_str("Filter")?,
+            EvaluationType::Clause => f.write_str("Clause")?,
+        }
+        Ok(())
+    }
+}
+
+
+pub(crate) trait EvaluationContext {
+    fn resolve_variable(&self,
+                        variable: &str) -> Result<Vec<&Value>>;
+
+    fn rule_status(&self, rule_name: &str) -> Result<Status>;
+
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>);
+
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
+}
+
+pub(crate) trait Evaluate {
+    fn evaluate(&self,
+                context: &Value,
+                var_resolver: &dyn EvaluationContext) -> Result<Status>;
+}

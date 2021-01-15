@@ -1,0 +1,10 @@
+rule ec2_vpc_exists {
+    Resources.*[ Type == "AWS::EC2::VPC" ] EXISTS
+}
+
+rule ec2_vpc_allowed_cidrs when ec2_vpc_exists {
+    let vpcs = Resources.*[ Type == "AWS::EC2::VPC" ]
+
+    %vpcs.Properties.CidrBlock IN ["10.0.0.0/24", "10.0.10.0/24", "192.168.1.1/24"]
+    # %vpcs.Properties.CidrBlock IN ["192.168.1.1/24"]
+}

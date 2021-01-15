@@ -1,0 +1,15 @@
+let iam_resources = Resources.*[ Type == "AWS::IAM::Role" ]
+rule iam_resources_exists {
+    %iam_resources !EMPTY
+}
+
+rule iam_basic_checks when iam_resources_exists {
+    %iam_resources.Properties.AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
+    %iam_resources.Properties.PermissionsBoundary == /arn:aws:iam::(\d{12}):policy/
+    when %iam_resources.Properties.Tags EXISTS
+         %iam_resources.Properties.Tags !EMPTY {
+
+        %iam_resources.Properties.Tags.Value == /[a-zA-Z0-9]+/
+        %iam_resources.Properties.Tags.Key   == /[a-zA-Z0-9]+/
+    }
+}
