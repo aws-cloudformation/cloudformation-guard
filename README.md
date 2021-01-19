@@ -104,6 +104,14 @@ Everything that can be checked from the command-line version of the tool can be 
 
 ## Installation
 
+If you have [rust and cargo installed](https://doc.rust-lang.org/cargo/getting-started/installation.html), installation is easy via cargo:
+
+```
+cargo install cfn-guard
+```
+
+If cargo and rust are not installed on your machine, we also offer other installation paths:
+
 ### Mac
 
 The CLI tool for cfn-guard is available via [homebrew](https://formulae.brew.sh/formula/cloudformation-guard).
