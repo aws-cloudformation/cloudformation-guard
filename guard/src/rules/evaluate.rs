@@ -170,12 +170,38 @@ fn compare<F>(lhs: &Vec<&Value>,
     }
 }
 
+impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(
+            format_args!(
+                "GuardAccessClause[ check = {} {} {} {}, loc = {} ]",
+                SliceDisplay(&self.access_clause.query),
+                if self.access_clause.comparator.1 { "NOT" } else { "" },
+                self.access_clause.comparator.0,
+                match &self.access_clause.compare_with {
+                    Some(v) => {
+                        match v {
+                            // TODO add Display for Value
+                            LetValue::Value(val) => format!("{:?}", val),
+                            LetValue::AccessClause(qry) => format!("{}", SliceDisplay(qry)),
+
+                        }
+                    },
+                    None => "".to_string()
+                },
+                self.access_clause.location
+            )
+        )?;
+        Ok(())
+    }
+}
+
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate(&self,
                 context: &Value,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
-        let guard_loc = format!("Clause@[loc = {}, query= {}]", self.access_clause.location,
-                                SliceDisplay(&self.access_clause.query));
+        let guard_loc = format!("{}", self);
+                                //SliceDisplay(&self.access_clause.query));
         let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
         //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
@@ -335,7 +361,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        auto_reporter.status(status).message(message);
+        auto_reporter.comparison(status, result.1, result.2).message(message);
         Ok(status)
     }
 }
@@ -567,6 +593,7 @@ fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct RootScope<'s, 'loc> {
     rules: &'s RulesFile<'loc>,
     input_context: &'s Value,

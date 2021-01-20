@@ -110,17 +110,111 @@ impl Command for Validate {
     }
 }
 
-
-struct StackContext {
+#[derive(Debug)]
+struct StatusContext {
     eval_type: EvaluationType,
     context: String,
     indent: usize,
+    msg: Option<String>,
+    from: Option<Value>,
+    to: Option<Value>,
+    status: Option<Status>
 }
 
+impl StatusContext {
+    fn new(eval_type: EvaluationType, context: &str, depth: usize) -> Self {
+        StatusContext {
+            eval_type,
+            context: context.to_string(),
+            status: None,
+            msg: None,
+            from: None,
+            to: None,
+            indent: depth
+        }
+    }
+}
+
+
+#[derive(Debug)]
+struct ContainerContext {
+    status_cxt: StatusContext,
+    children: Vec<StackContext>,
+}
+
+impl ContainerContext {
+    fn new(eval_type: EvaluationType, context: &str, depth: usize) -> Self {
+        ContainerContext {
+            status_cxt: StatusContext::new(eval_type, context, depth),
+            children: vec![]
+        }
+    }
+}
+
+#[derive(Debug)]
+enum StackContext {
+    Single(StatusContext),
+    Container(ContainerContext)
+}
+
+#[derive(Debug)]
 struct ConsoleReporter<'r,'loc>{
     root_context: &'r RootScope<'r, 'loc>,
     stack: std::cell::RefCell<Vec<StackContext>>,
     verbose: bool
+}
+
+fn colored_string(status: Option<Status>) -> ColoredString {
+    let status = match status {
+        Some(s) => s,
+        None => Status::SKIP,
+    };
+    match status {
+        Status::PASS => "PASS".green(),
+        Status::FAIL => "FAIL".red().bold(),
+        Status::SKIP => "SKIP".yellow().bold(),
+    }
+}
+
+fn indent_spaces(indent: usize) {
+    for _idx in 0..indent {
+        print!("{}", INDENT)
+    }
+}
+
+fn print_context(current: &StackContext) {
+    let cxt = match current {
+        StackContext::Single(cxt) => cxt,
+        StackContext::Container(cxt) => &cxt.status_cxt
+    };
+
+    let header = format!("{}({}, {})", cxt.eval_type, cxt.context, colored_string(cxt.status)).underline();
+    let depth = cxt.indent;
+    let sub_indent = depth + 1;
+    indent_spaces(depth - 1);
+    println!("{}", header);
+    match &cxt.from {
+        Some(v) => {
+            indent_spaces(depth);
+            print!("|  ");
+            println!("From: {:?}", v);
+        },
+        None => {}
+    }
+    match &cxt.to {
+        Some(v) => {
+            indent_spaces(depth);
+            print!("|  ");
+            println!("To: {:?}", v);
+        },
+        None => {}
+    }
+
+    if let StackContext::Container(container) = current {
+        for child in &container.children {
+            print_context(child)
+        }
+    }
 }
 
 impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
@@ -129,6 +223,49 @@ impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
             root_context: root,
             stack: std::cell::RefCell::new(Vec::new()),
             verbose,
+        }
+    }
+
+    fn report(self) {
+        print!("{}", "Summary Report".underline());
+        let top = match self.stack.borrow_mut().pop().unwrap() {
+            StackContext::Container(c) => c,
+            _ => unreachable!()
+        };
+
+        println!(" Overall File Status = {}", colored_string(top.status_cxt.status));
+
+        let longest = top.children.iter()
+            .map(|elem| match elem {
+                StackContext::Single(single) => &single.context,
+                StackContext::Container(container) => &container.status_cxt.context
+            })
+            .max_by(|f, s| {
+                (*f).len().cmp(&(*s).len())
+            })
+            .map(|elem| elem.len())
+            .unwrap_or(20);
+
+       for each in &top.children {
+            match each {
+                StackContext::Container(container) => {
+                    print!("{}", container.status_cxt.context);
+                    let container_level = container.status_cxt.context.len();
+                    let spaces = longest - container_level + 4;
+                    for _idx in 0..spaces {
+                        print!(" ");
+                    }
+                    println!("{}", colored_string(container.status_cxt.status));
+                },
+                _ => {}
+            }
+        }
+
+        if self.verbose {
+            println!("Evaluation Tree");
+            for each in &top.children {
+                print_context(each);
+            }
         }
     }
 }
@@ -151,23 +288,51 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
                       from: Option<Value>,
                       to: Option<Value>,
                       status: Option<Status>) {
+
+        if self.stack.borrow().len() == 1 {
+            match self.stack.borrow_mut().get_mut(0) {
+                Some(top) => {
+                    match top {
+                        StackContext::Container(c) => {
+                            c.status_cxt.status = status.clone();
+                            c.status_cxt.from = from.clone();
+                            c.status_cxt.to = to.clone();
+                            c.status_cxt.msg = Some(msg.clone());
+                        },
+                        _ => {}
+                    }
+                },
+
+                None => unreachable!()
+            }
+            return;
+        }
+
         let stack = self.stack.borrow_mut().pop();
         match stack {
-            Some(stack) => {
-                if self.verbose {
-                    if &stack.context == context && eval_type == stack.eval_type {
-                        for idx in 0..stack.indent {
-                            print!("{}", INDENT)
+            Some(mut stack) => {
+                let status_cxt = match &mut stack {
+                    StackContext::Container(c) => {
+                        &mut c.status_cxt
+                    },
+                    StackContext::Single(c) => c
+                };
+                status_cxt.status = status.clone();
+                status_cxt.from = from.clone();
+                status_cxt.to = to.clone();
+                status_cxt.msg = Some(msg.clone());
+
+                match self.stack.borrow_mut().last_mut() {
+                    Some(cxt) =>  {
+                        match cxt {
+                            StackContext::Container(container) => {
+                                container.children.push(stack)
+                            },
+
+                            _ => unreachable!()
                         }
-                        println!("{}[{}] Status = {:?}, Message = {}", eval_type, context.underline(), status, msg);
-                        if let Some(value) = &from {
-                            print!(" Comparing [{:?}]", value);
-                        }
-                        if let Some(value) = &to {
-                            print!(" with [{:?}]", value);
-                        }
-                        print!("\n");
                     }
+                    None => unreachable!()
                 }
             },
             None => {}
@@ -179,15 +344,12 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
                         eval_type: EvaluationType,
                         context: &str) {
         let indent= self.stack.borrow().len();
-        self.stack.borrow_mut().push(StackContext {
-            eval_type, context: context.to_string(), indent: indent+1
-        });
-        if self.verbose {
-            for idx in 0..indent {
-                print!("{}", INDENT)
+        self.stack.borrow_mut().push(
+            match eval_type {
+                EvaluationType::Clause => StackContext::Single(StatusContext::new(eval_type, context, indent)),
+                _ => StackContext::Container(ContainerContext::new(eval_type, context, indent))
             }
-            Self::colorized(eval_type, context);
-        }
+        );
         self.root_context.start_evaluation(eval_type, context);
     }
 
@@ -226,7 +388,9 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, ve
                         let root_context = RootScope::new(rules, &root);
                         let reporter = ConsoleReporter::new(&root_context, verbose);
                         rules.evaluate(&root, &reporter)?;
-                        summary_report(&root_context);
+                        reporter.report();
+                        //summary_report(&root_context);
+                        //println!("{:?}", reporter);
                         //root_context.summary_report();
                     },
 
