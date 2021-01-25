@@ -4,6 +4,7 @@ use std::convert::TryInto;
 use crate::rules::values::WithinRange;
 
 use super::*;
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Status};
 
 #[test]
 fn test_int_parse() {
@@ -998,7 +999,11 @@ fn test_dotted_access() {
                     "",
                 )
             },
-            to_string_vec(&["first", "0", "path"]),
+            AccessQuery::from([
+                QueryPart::Key("first".to_string()),
+                QueryPart::Index(0),
+                QueryPart::Key("path".to_string())
+            ])
         )),
 
         //".first.*.path == ", // ok
@@ -1031,6 +1036,7 @@ fn test_dotted_access() {
     for (idx, text) in examples.iter().enumerate() {
         let span = from_str2(*text);
         let actual = dotted_access(span);
+        println!("#{} Example = {}, Result = {:?}", idx, *text, actual);
         assert_eq!(&actual, &expectations[idx]);
     }
 }
@@ -1178,14 +1184,15 @@ fn test_access() {
         Ok(( // 10 "engine [0]", // 10 ok engine will be property access part
              unsafe {
                  Span::new_from_raw_offset(
-                     "engine".len(),
+                     examples[10].len(),
                      1,
-                     " [0]",
+                     "",
                      "",
                  )
              },
              AccessQuery::from([
-                 QueryPart::Key("engine".to_string())
+                 QueryPart::Key("engine".to_string()),
+                 QueryPart::Index(0),
              ])
         )),
 
@@ -2243,29 +2250,29 @@ fn test_clause_failures() {
         ("!=", (CmpOperator::Eq, true)),
     ];
 
-    for each in lhs.iter() {
-        for (op, _) in comparators.iter() {
-            let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
-                                         lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator);
-            let offset = (*each).len();
-            let fragment = format!("{op}{sep}{rhs}",
-                                   rhs = rhs, op = *op, sep = rhs_separator);
-            let error = Err(nom::Err::Error(ParserError {
-                span: unsafe {
-                    Span::new_from_raw_offset(
-                        offset,
-                        1,
-                        &fragment,
-                        "",
-                    )
-                },
-                kind: nom::error::ErrorKind::Char,
-                context: "expecting one or more WS or comment blocks".to_string(),
-            }));
-            println!("Testing : {}", access_pattern);
-            assert_eq!(clause(super::from_str2(&access_pattern)), error);
-        }
-    }
+//    for each in lhs.iter() {
+//        for (op, _) in comparators.iter() {
+//            let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
+//                                         lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator);
+//            let offset = (*each).len();
+//            let fragment = format!("{op}{sep}{rhs}",
+//                                   rhs = rhs, op = *op, sep = rhs_separator);
+//            let error = Err(nom::Err::Error(ParserError {
+//                span: unsafe {
+//                    Span::new_from_raw_offset(
+//                        offset,
+//                        1,
+//                        &fragment,
+//                        "",
+//                    )
+//                },
+//                kind: nom::error::ErrorKind::Char,
+//                context: "expecting one or more WS or comment blocks".to_string(),
+//            }));
+//            println!("Testing : {}", access_pattern);
+//            assert_eq!(clause(super::from_str2(&access_pattern)), error);
+//        }
+//    }
 
     //
     // Testing for missing access part
@@ -3600,3 +3607,91 @@ fn test_complex_predicate_clauses() -> Result<(), Error> {
     let parsed = GuardClause::try_from(clause)?;
     Ok(())
 }
+
+struct DummyEval{}
+impl EvaluationContext for DummyEval {
+    fn resolve_variable(&self, variable: &str) -> crate::rules::Result<Vec<&Value>> {
+        unimplemented!()
+    }
+
+    fn rule_status(&self, rule_name: &str) -> crate::rules::Result<Status> {
+        unimplemented!()
+    }
+
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    }
+
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+    }
+}
+
+
+#[test]
+fn select_any_one_from_list_clauses() -> Result<(), Error> {
+    let clause = "* == /\\{\\{resolve:secretsmanager/";
+    let parsed = super::clause(from_str2(clause))?.1;
+    let expected = GuardClause::Clause(
+        GuardAccessClause {
+            access_clause: AccessClause {
+                location: FileLocation {
+                    column: 1,
+                    line: 1,
+                    file_name: ""
+                },
+                compare_with: Some(LetValue::Value(Value::Regex("\\{\\{resolve:secretsmanager".to_string()))),
+                comparator: (CmpOperator::Eq, false),
+                custom_message: None,
+                query: AccessQuery::from([QueryPart::AllIndices])
+            },
+            negation: false
+        }
+    );
+    assert_eq!(parsed, expected);
+
+    let templates = [
+        r#"
+        {
+            "Resources": {
+                "rds": {
+                    "Type": "AWS::RDS::DBInstance",
+                    "Properties": {
+                        "MasterUserPassword": "{{resolve:secretsmanager:my-secret:SecretString:password::}}"
+                    }
+                }
+            }
+        }
+        "#,
+        r#"
+        {
+            "Resources": {
+                "rds": {
+                    "Type": "AWS::RDS::DBInstance",
+                    "Properties": {
+                        "MasterUserPassword": {
+                          "Fn::Join": [
+                            "",
+                            [
+                              "{{resolve:secretsmanager:",
+                              {
+                                "Ref": "FtCdkRDSStackInstanceSecret719B40CE3fdaad7efa858a3daf9490cf0a702aeb"
+                              },
+                              ":SecretString:password::}}"
+                            ]
+                          ]
+                        }
+                    }
+                }
+            }
+        }
+        "#,
+    ];
+
+    let dummy = DummyEval{};
+    let clause = GuardClause::try_from(
+        r#"Resources.*[ Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ * == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
+    let value = Value::try_from(templates[1])?;
+    let satutus = clause.evaluate(&value, &dummy)?;
+
+    Ok(())
+}
+

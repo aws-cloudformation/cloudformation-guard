@@ -6,7 +6,7 @@ use nom::bytes::complete::{tag, take_till};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{map, value};
 use nom::multi::{many0, many1};
-use nom::sequence::{delimited, preceded};
+use nom::sequence::{delimited, preceded, delimitedc};
 use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::character::complete::{digit1, one_of, anychar};
 use nom::combinator::{map_res, opt};
@@ -668,33 +668,41 @@ fn predicate_filter_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClau
     Ok((input, filters))
 }
 
-fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, (QueryPart, Option<QueryPart>)>
-    where F: Fn(Span<'loc>) -> IResult<Span<'loc>, String>
-{
-    move |input: Span| {
-        let (input, first) = parser(input)?;
-        let (input, is_filter) = opt(char('['))(input)?;
-        let (input, filter_part) = if is_filter.is_none() { (input, None) } else {
-            let (input, part) = cut(alt((
-                value(QueryPart::AllIndices, preceded(space0, char('*'))),
-                map( preceded(space0, parse_int_value), |idx| {
-                    let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
-                    QueryPart::Index(idx)
-                }),
-                map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses)),
-            ))
-            )(input)?;
-            let (input, _ignored) = cut(terminated(zero_or_more_ws_or_comment, char(']')))(input)?;
-            (input, Some(part))
-        };
+fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
+    preceded(zero_or_more_ws_or_comment,
+             preceded(char('.'),
+             alt((
+                 map(  parse_int_value, |idx| {
+                     let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+                     QueryPart::Index(idx)
+                 }),
+                 map(property_name, |p| QueryPart::Key(p)),
+                 value(QueryPart::AllValues, char('*')),
+                 )) // end alt
+             ) // end preceded for char '.'
+    )(input)
+}
 
-        if &first == "*" {
-            Ok((input, (QueryPart::AllValues, filter_part)))
-        }
-        else {
-            Ok((input, (QueryPart::Key(first), filter_part)))
-        }
-    }
+fn open_array(input: Span) -> IResult<Span, ()> {
+    value((), preceded(zero_or_more_ws_or_comment, char('[')))(input)
+}
+
+fn close_array(input: Span) -> IResult<Span, ()> {
+    value((), preceded(zero_or_more_ws_or_comment, char(']')))(input)
+}
+
+fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {
+    alt((
+        value(QueryPart::AllIndices, delimited(open_array, char('*'), cut(close_array))),
+        map(delimited(open_array, parse_int_value, cut(close_array)), |idx| {
+            let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+            QueryPart::Index(idx)
+        }),
+        delimited(
+            open_array,
+            cut(map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses))),
+            close_array)
+    ))(input)
 }
 
 //
@@ -710,16 +718,13 @@ fn predicate_clause<'loc, F>(parser: F) -> impl Fn(Span<'loc>) -> IResult<Span<'
 //
 fn dotted_access(input: Span) -> IResult<Span, Vec<QueryPart>> {
     fold_many1(
-        preceded(preceded(zero_or_more_ws_or_comment, char('.')), predicate_clause(
-            alt((property_name,
-                 value("*".to_string(), char('*')),
-                 map(digit1, |s: Span| (*s.fragment()).to_string())
-            )))
-        ),
+        alt((
+            dotted_property,
+            predicate_or_index
+            )),
         Vec::new(),
         |mut acc: Vec<QueryPart>, part| {
-            acc.push(part.0);
-            part.1.map(|p| acc.push(p));
+            acc.push(part);
             acc
         },
     )(input)
@@ -737,25 +742,18 @@ fn property_name(input: Span) -> IResult<Span, String> {
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(pair(
-        predicate_clause(
-            alt((var_name_access_inclusive, property_name))),
+            map(
+                alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)),
         opt(dotted_access)), |(first, remainder)| {
 
         match remainder {
             Some(mut parts) => {
-                parts.insert(0, first.0);
-                if let Some(second) = first.1 {
-                    parts.insert(1, second);
-                }
+                parts.insert(0, first);
                 parts
             },
 
             None => {
-                let mut parts = vec![first.0];
-                if let Some(second) = first.1 {
-                    parts.push(second);
-                }
-                parts
+                vec![first]
             }
         }
     })(input)
@@ -797,6 +795,11 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
     // not expect the form *[ [ [] ] ]. We should dis-allows this.
     //
     let (rest, keys) = opt(peek(keys))(rest)?;
+    let (rest, all_indices) = if !keys.is_some() {
+        opt( delimited(zero_or_more_ws_or_comment, char('*'), zero_or_more_ws_or_comment))(rest)?
+    } else {
+        (rest, None)
+    };
 
     let (rest, (lhs, cmp)) =
         if keys.is_some() {
@@ -807,11 +810,16 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                         value_cmp)
             ))(rest)?;
             (r, (AccessQuery::from([QueryPart::MapKeys]), cmp))
-        } else {
+        }
+        else if all_indices.is_some() {
+            let (r, cmp) = cut(value_cmp)(rest)?;
+            (r, (AccessQuery::from([QueryPart::AllIndices]), cmp))
+        }
+        else {
             let (r, (access, _ign_space, cmp)) = tuple((
                 access,
                 // It is an error to not have a ws/comment following it
-                context("expecting one or more WS or comment blocks", one_or_more_ws_or_comment),
+                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
                 // error if there is no value_cmp
                 context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                         value_cmp)
