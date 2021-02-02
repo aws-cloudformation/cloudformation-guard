@@ -3689,9 +3689,6 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
     let dummy = DummyEval{};
     let clause = GuardClause::try_from(
         r#"Resources.*[ Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ * == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
-    let value = Value::try_from(templates[1])?;
-    let satutus = clause.evaluate(&value, &dummy)?;
-
     Ok(())
 }
 

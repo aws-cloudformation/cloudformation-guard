@@ -701,7 +701,7 @@ fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {
         delimited(
             open_array,
             cut(map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses))),
-            close_array)
+            cut(close_array))
     ))(input)
 }
 
