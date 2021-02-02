@@ -37,4 +37,5 @@ jobs:
         asset_path: ./target/release/cfn-guard
         asset_name: cfn-guard-v2-${{ matrix.os }}.tar.gz
         asset_content_type: application/gzip
-
+        asset_name: cfn-guard-${{ matrix.os }}
+        asset_content_type: application/octet-stream
