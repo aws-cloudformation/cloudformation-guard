@@ -16,6 +16,8 @@ use super::errors::{Error, ErrorKind};
 use super::exprs::{QueryPart, SliceDisplay};
 use super::{EvaluationContext, Evaluate, Status};
 use std::cmp::Ordering;
+use crate::rules::evaluate::AutoReport;
+use crate::rules::EvaluationType;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Path(pub(crate) String);
@@ -345,26 +347,40 @@ impl QueryResolver for PathAwareValue {
 
             QueryPart::Filter(conjunctions) => {
                 match self {
-                    PathAwareValue::List((_path, vec)) => {
+                    PathAwareValue::List((path, vec)) => {
                         let mut selected = Vec::with_capacity(vec.len());
+                        let context = format!("Path={},Type=Array", path);
                         for each in vec {
-                            if Status::PASS == conjunctions.evaluate(each, resolver)? {
-                                let index: usize = if query.len() > 1 {
-                                    match &query[1] {
-                                        QueryPart::AllIndices => 2,
-                                        _ => 1
-                                    }
-                                } else { 1 };
-                                selected.extend(each.select(&query[index..], resolver)?);
+                            let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
+                            match conjunctions.evaluate(each, resolver)? {
+                                Status::PASS => {
+                                    filter.status(Status::PASS);
+                                    let index: usize = if query.len() > 1 {
+                                        match &query[1] {
+                                            QueryPart::AllIndices => 2,
+                                            _ => 1
+                                        }
+                                    } else { 1 };
+                                    selected.extend(each.select(&query[index..], resolver)?);
+                                },
+                                rest => { filter.status(rest); }
                             }
                         }
                         Ok(selected)
                     },
 
-                    PathAwareValue::Map((_, map)) => {
+                    PathAwareValue::Map((path, map)) => {
+                        let context = format!("Path={},Type=MapElement", path);
+                        let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
                         match conjunctions.evaluate(self, resolver)? {
-                            Status::PASS => self.select(&query[1..], resolver),
-                            _ => Ok(vec![])
+                            Status::PASS => {
+                                filter.status(Status::PASS);
+                                self.select(&query[1..], resolver)
+                            },
+                            rest => {
+                                filter.status(rest);
+                                Ok(vec![])
+                            }
                         }
                     }
 
@@ -454,6 +470,10 @@ impl PathAwareValue {
 
     pub(crate) fn is_scalar(&self) -> bool {
         !self.is_list() || !self.is_map()
+    }
+
+    pub(crate) fn self_path(&self) -> &Path {
+        self.self_value().0
     }
 
     pub(crate) fn self_value(&self) -> (&Path, &PathAwareValue) {

@@ -463,7 +463,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         let mut overall = Status::PASS;
         let mut atleast_one_type_failed_or_passed = false;
         for (index, each) in values.iter().enumerate() {
-            let type_context = format!("{}#{}", self.type_name, index);
+            let type_context = format!("{}#{}({})", self.type_name, index, (*each).self_path());
             let mut each_type_report = AutoReport::new(
                 EvaluationType::Type,
                 var_resolver,
