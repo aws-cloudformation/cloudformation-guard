@@ -45,7 +45,7 @@ fn guard_access_clause_test_all_up() -> Result<()> {
 
 struct DummyEval{}
 impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         unimplemented!()
     }
 
@@ -53,7 +53,7 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -64,6 +64,7 @@ impl EvaluationContext for DummyEval {
 fn guard_access_clause_tests() -> Result<()> {
     let dummy = DummyEval{};
     let root = read_data(File::open("assets/cfn-lambda.yaml")?)?;
+    let root = PathAwareValue::try_from(root)?;
     let clause = GuardClause::try_from(
         r#"Resources.*[ Type == "AWS::IAM::Role" ].Properties.AssumeRolePolicyDocument.Statement[
                      Principal.Service EXISTS
@@ -118,6 +119,7 @@ fn rule_clause_tests() -> Result<()> {
     "#;
 
     let value = Value::try_from(v)?;
+    let value = PathAwareValue::try_from(value)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(Status::PASS, status);
 
@@ -136,7 +138,7 @@ fn rule_clause_tests() -> Result<()> {
 
 struct Reporter<'r>(&'r dyn EvaluationContext);
 impl<'r> EvaluationContext for Reporter<'r> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         self.0.resolve_variable(variable)
     }
 
@@ -144,7 +146,7 @@ impl<'r> EvaluationContext for Reporter<'r> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
         println!("{} {} {:?}", eval_type, context, status);
         self.0.end_evaluation(
             eval_type, context, msg, from, to, status
@@ -198,6 +200,7 @@ rule iam_basic_checks when iam_resources_exists {
     "###;
 
     let root = Value::try_from(value)?;
+    let root = PathAwareValue::try_from(root)?;
     let rules_file = RulesFile::try_from(file)?;
     let root_context = RootScope::new(&rules_file, &root);
     let reporter = Reporter(&root_context);
@@ -259,6 +262,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     }
     "###;
     let value = Value::try_from(sample)?;
+    let value = PathAwareValue::try_from(value)?;
 
     let dummy = DummyEval{};
     let reporter = Reporter(&dummy);
@@ -279,6 +283,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     assert_eq!(Status::PASS, status);
 
     let value = Value::try_from(SAMPLE)?;
+    let value = PathAwareValue::try_from(value)?;
     let parsed = GuardClause::try_from(clause)?;
     let status = parsed.evaluate(&value, &reporter)?;
     println!("Status {:?}", status);
@@ -340,6 +345,7 @@ rule check_rest_api_private {
     }"###;
 
     let value = Value::try_from(resources)?;
+    let value = PathAwareValue::try_from(value)?;
     let dummy = DummyEval{};
     let reporter = Reporter(&dummy);
     let status = rule.evaluate(&value, &reporter)?;
@@ -401,7 +407,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     "###;
 
     let rules_file = RulesFile::try_from(rules)?;
-    let value = Value::try_from(resources)?;
+    let value = PathAwareValue::try_from(resources)?;
 
     // let dummy = DummyEval{};
     let root_context = RootScope::new(&rules_file, &value);
@@ -514,9 +520,9 @@ rule deny_egress when %sgs NOT EMPTY {
 
     let rules_file = RulesFile::try_from(rules)?;
 
-    let values = Value::try_from(sgs)?;
+    let values = PathAwareValue::try_from(sgs)?;
     let samples = match values {
-        Value::List(v) => v,
+        PathAwareValue::List((_p, v)) => v,
         _ => unreachable!()
     };
 
@@ -528,7 +534,7 @@ rule deny_egress when %sgs NOT EMPTY {
     }
 
     let sample = r#"{ "Resources": {} }"#;
-    let value = Value::try_from(sample)?;
+    let value = PathAwareValue::try_from(sample)?;
     let rule = r###"
 rule deny_egress {
     # Ensure that none of the security group contain a rule
@@ -703,8 +709,8 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
     "###;
 
-    let parsed_values = match Value::try_from(values)? {
-        Value::List(v) => v,
+    let parsed_values = match PathAwareValue::try_from(values)? {
+        PathAwareValue::List((_, v)) => v,
         _ => unreachable!()
     };
 
@@ -862,10 +868,10 @@ fn ecs_iam_role_relationship_assetions() -> Result<()> {
     Ok(())
 }
 
-struct VariableResolver<'a, 'b>(&'a dyn EvaluationContext, HashMap<String, Vec<&'b Value>>);
+struct VariableResolver<'a, 'b>(&'a dyn EvaluationContext, HashMap<String, Vec<&'b PathAwareValue>>);
 
 impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         if let Some(value) = self.1.get(variable) {
             Ok(value.clone())
         }
@@ -878,7 +884,7 @@ impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
         self.0.end_evaluation(eval_type, context, msg, from, to, status);
     }
 
@@ -944,6 +950,7 @@ fn test_iam_subselections() -> Result<()> {
     "###;
 
     let value = Value::try_from(template)?;
+    let value = PathAwareValue::try_from(value)?;
     let query = AccessQueryWrapper::try_from(
         r#"Resources.*[
                     Type == "AWS::IAM::Role"
@@ -952,10 +959,10 @@ fn test_iam_subselections() -> Result<()> {
                  ]"#
     )?.0;
     let dummy = DummyEval{};
-    let selected = value.query(0, &query, &dummy)?;
+    let selected = value.select(&query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
-    let expected = Value::try_from(r#"
+    let expected = PathAwareValue::try_from((r#"
             {
                 Type: "AWS::IAM::Role",
                 Properties: {
@@ -967,7 +974,7 @@ fn test_iam_subselections() -> Result<()> {
                     ]
                 }
             }
-    "#)?;
+    "#, Path::try_from("/Resources/two")?))?;
     assert_eq!(selected[0], &expected);
 
     let query = AccessQueryWrapper::try_from(
@@ -977,11 +984,11 @@ fn test_iam_subselections() -> Result<()> {
                     Properties.PermissionsBoundary !EXISTS
                  ]"#
     )?.0;
-    let selected = value.query(0, &query, &dummy)?;
+    let selected = value.select(&query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 2);
-    let expected2 = Value::try_from(
-        r#"
+    let expected2 = PathAwareValue::try_from(
+        (r#"
             {
                 Type: "AWS::IAM::Role",
                 Properties: {
@@ -993,7 +1000,7 @@ fn test_iam_subselections() -> Result<()> {
                     ]
                 }
             }
-        "#
+        "#, Path::try_from("/Resources/four")?)
     )?;
     assert_eq!(selected[0], &expected);
     assert_eq!(selected[1], &expected2);
@@ -1018,8 +1025,8 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
     let status = rules.evaluate(&value, &reporter)?;
     println!("Status = {}", status);
     assert_eq!(status, Status::PASS);
-    let fail_value= Value::try_from(
-        r#"
+    let fail_value= PathAwareValue::try_from(
+        (r#"
             { Resources: {
                 one: {
                     Type: "AWS::IAM::Role",
@@ -1034,7 +1041,7 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
                 }
                 }
             }
-        "#
+        "#, Path::try_from("/Resources/four")?)
     )?;
     let root_scope = RootScope::new(&rules, &fail_value);
     let reporter = Reporter(&root_scope);

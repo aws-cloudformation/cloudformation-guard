@@ -181,39 +181,41 @@ impl Value {
                         Err(err) => Err(err)
                     },
 
-                QueryPart::Filter(conjunctions) => {
-                    //
-                    // There are two possibilities here, either this was a directly a list value
-                    // of structs and we need filter, OR we are part of all_map_values.
-                    //
-                    // TODO: this is special cased here as the parser today treat 'tags[*]' as
-                    // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
-                    // the collection itself. It should technically translate to 'AllValues', 'Filter'
-                    //
-                    let mut filter_report = AutoReport::new(EvaluationType::Filter, var_resolver, "");
-                    filter_report.status(Status::PASS);
-                    if let Value::List(l) = self {
-                        let mut collected = Vec::with_capacity(l.len());
-                        for each in l {
-                            if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
-                                collected.extend(each.query(index+1, query, var_resolver)?);
-                            }
-                        }
-                        return Ok(collected)
-                    }
+                _ => unimplemented!()
 
-                    //
-                    // Being called from all_map_values
-                    //
-                    if Status::PASS == conjunctions.evaluate(self, var_resolver)? {
-                        return self.query(index+1, query, var_resolver)
-                    }
-
-                    //
-                    // else not selected
-                    //
-                    return Ok(vec![])
-                },
+//                QueryPart::Filter(conjunctions) => {
+//                    //
+//                    // There are two possibilities here, either this was a directly a list value
+//                    // of structs and we need filter, OR we are part of all_map_values.
+//                    //
+//                    // TODO: this is special cased here as the parser today treat 'tags[*]' as
+//                    // for all values in the collection, and 'tag[ key == /PROD/ ]' as just directly
+//                    // the collection itself. It should technically translate to 'AllValues', 'Filter'
+//                    //
+//                    let mut filter_report = AutoReport::new(EvaluationType::Filter, var_resolver, "");
+//                    filter_report.status(Status::PASS);
+//                    if let Value::List(l) = self {
+//                        let mut collected = Vec::with_capacity(l.len());
+//                        for each in l {
+//                            if Status::PASS == conjunctions.evaluate(each, var_resolver)? {
+//                                collected.extend(each.query(index+1, query, var_resolver)?);
+//                            }
+//                        }
+//                        return Ok(collected)
+//                    }
+//
+//                    //
+//                    // Being called from all_map_values
+//                    //
+//                    if Status::PASS == conjunctions.evaluate(self, var_resolver)? {
+//                        return self.query(index+1, query, var_resolver)
+//                    }
+//
+//                    //
+//                    // else not selected
+//                    //
+//                    return Ok(vec![])
+//                },
 
             }
         }

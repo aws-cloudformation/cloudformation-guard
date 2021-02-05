@@ -5,6 +5,7 @@ use crate::rules::values::WithinRange;
 
 use super::*;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Status};
+use crate::rules::path_value::PathAwareValue;
 
 #[test]
 fn test_int_parse() {
@@ -3610,7 +3611,7 @@ fn test_complex_predicate_clauses() -> Result<(), Error> {
 
 struct DummyEval{}
 impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, variable: &str) -> crate::rules::Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
         unimplemented!()
     }
 
@@ -3618,7 +3619,7 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {

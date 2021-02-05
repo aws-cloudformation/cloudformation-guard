@@ -3,11 +3,14 @@ pub(crate) mod evaluate;
 pub(crate) mod exprs;
 pub(crate) mod parser;
 pub(crate) mod values;
+pub(crate) mod path_value;
+
 
 use errors::Error;
 use values::Value;
 use std::fmt::Formatter;
 use colored::*;
+use crate::rules::path_value::PathAwareValue;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -58,17 +61,17 @@ impl std::fmt::Display for EvaluationType {
 
 pub(crate) trait EvaluationContext {
     fn resolve_variable(&self,
-                        variable: &str) -> Result<Vec<&Value>>;
+                        variable: &str) -> Result<Vec<&PathAwareValue>>;
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>);
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>);
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }
 
 pub(crate) trait Evaluate {
     fn evaluate(&self,
-                context: &Value,
+                context: &PathAwareValue,
                 var_resolver: &dyn EvaluationContext) -> Result<Status>;
 }

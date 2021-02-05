@@ -8,10 +8,10 @@ use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock, QueryPart};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
-use crate::rules::parser::{AccessQueryWrapper, rules_file};
+use crate::rules::parser::{AccessQueryWrapper};
 use crate::rules::values::*;
 use std::fmt::Formatter;
-use std::cell::Ref;
+use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -20,20 +20,26 @@ use std::cell::Ref;
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn resolve_query<'s, 'loc>(query: &'s AccessQuery<'loc>,
-                           context: &'s Value,
-                           var_resolver: &'s dyn EvaluationContext) -> Result<Vec<&'s Value>> {
+                           context: &'s PathAwareValue,
+                           var_resolver: &'s dyn EvaluationContext) -> Result<Vec<&'s PathAwareValue>> {
+    match query[0].variable() {
+        Some(var) => {
+            let retrieved = var_resolver.resolve_variable(var)?;
+            let index: usize = if query.len() > 1 {
+                match &query[1] {
+                    QueryPart::AllIndices => 2,
+                    _ => 1,
+                }
+            } else { 1 };
+            let mut acc = Vec::with_capacity(retrieved.len());
+            for each in retrieved {
+                acc.extend(each.select(&query[index..], var_resolver)?)
+            }
+            Ok(acc)
+        },
 
-    let (resolved, index) = if let Some(var) = query[0].variable() {
-        (var_resolver.resolve_variable(var)?, 1 as usize)
-    } else {
-        (vec![context], 0 as usize)
-    };
-
-    let mut expanded = Vec::with_capacity(resolved.len());
-    for each in resolved {
-        expanded.extend(each.query(index, query, var_resolver)?)
+        None => context.select(query, var_resolver)
     }
-    Ok(expanded)
 }
 
 fn invert_status(status: Status, not: bool) -> Status {
@@ -53,8 +59,8 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-fn compare_loop<F>(lhs: &Vec<&Value>, rhs: &Vec<&Value>, compare: F, any: bool) -> Result<(bool, Option<Value>, Option<Value>)>
-    where F: Fn(&Value, &Value) -> Result<bool> {
+fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
     loop {
         'lhs:
         for lhs_value in lhs {
@@ -81,19 +87,19 @@ fn compare_loop<F>(lhs: &Vec<&Value>, rhs: &Vec<&Value>, compare: F, any: bool) 
     Ok((true, None, None))
 }
 
-fn elevate_inner<'a>(list_of_list: &'a Vec<&Value>) -> Result<Vec<Vec<&'a Value>>> {
+fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&'a PathAwareValue>>> {
     let mut elevated = Vec::with_capacity(list_of_list.len());
     for each_list_elem in list_of_list {
         match *each_list_elem {
-            Value::List(list) => {
-                let inner_lhs = list.iter().collect::<Vec<&Value>>();
+            PathAwareValue::List((_path, list)) => {
+                let inner_lhs = list.iter().collect::<Vec<&PathAwareValue>>();
                 elevated.push(inner_lhs);
             },
 
             _ => return Err(Error::new(
                 ErrorKind::IncompatibleError(
                     format!("Expecting the RHS query to return a List<List>, found {}, {:?}",
-                            type_info(*each_list_elem), *each_list_elem)
+                            (*each_list_elem).type_info(), *each_list_elem)
                 )
             ))
         }
@@ -101,13 +107,13 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&Value>) -> Result<Vec<Vec<&'a Value>
     Ok(elevated)
 }
 
-fn compare<F>(lhs: &Vec<&Value>,
+fn compare<F>(lhs: &Vec<&PathAwareValue>,
               lhs_query: &[QueryPart<'_>],
-              rhs: &Vec<&Value>,
+              rhs: &Vec<&PathAwareValue>,
               rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool) -> Result<(bool, Option<Value>, Option<Value>)>
-    where F: Fn(&Value, &Value) -> Result<bool>
+              any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
         return Err(Error::new(
@@ -198,7 +204,7 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
 
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate(&self,
-                context: &Value,
+                context: &PathAwareValue,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let guard_loc = format!("{}", self);
                                 //SliceDisplay(&self.access_clause.query));
@@ -206,45 +212,12 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
-        let lhs_map_keys = if let QueryPart::MapKeys = &clause.access_clause.query[0] {
-            match context {
-                Value::Map(index) => {
-                    index.keys().map(|s| Value::String(s.to_string())).collect::<Vec<Value>>()
-                },
-                _ => return Err(Error::new(
-                    ErrorKind::IncompatibleError(
-                        format!("Attempting to access KEYS, but value type is not a map {}, Value = {:?}",
-                            type_info(context),
-                            context
-                        )
-                    )
-                )),
-            }
-        } else {
-           vec![]
-        };
 
-        let lhs = if lhs_map_keys.is_empty() {
-            match resolve_query(
-            &clause.access_clause.query,  context, var_resolver) {
-                Ok(values) => Some(values),
-                // Err(Error(ErrorKind::RetrievalError(_))) => None,
-                Err(Error(ErrorKind::RetrievalError(e))) => {
-                    let r = match &clause.access_clause.comparator.0 {
-                        CmpOperator::Exists => false,
-                        CmpOperator::Eq => match &clause.access_clause.compare_with {
-                            Some(LetValue::Value(Value::Null)) => true,
-                            _ => return Err(Error::new(ErrorKind::RetrievalError(e)))
-                        }
-                        _ => return Err(Error::new(ErrorKind::RetrievalError(e)))
-                    };
-                    let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
-                    return Ok(auto_reporter.status(status).message(e).get_status())
-                }
-                Err(e) => return Err(e),
-            }
-        } else {
-            Some(lhs_map_keys.iter().collect::<Vec<&Value>>())
+
+        let lhs = match resolve_query(&clause.access_clause.query, context, var_resolver) {
+            Ok(v) => Some(v),
+            Err(Error(ErrorKind::RetrievalError(e))) => None,
+            Err(e) => return Err(e),
         };
 
         let result = match &clause.access_clause.comparator.0 {
@@ -280,7 +253,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(l) => l,
         };
 
-        let (rhs, rhs_query) = match &clause.access_clause.compare_with {
+        let rhs_local = match &clause.access_clause.compare_with {
             None => return Err(Error::new(ErrorKind::IncompatibleError(
                 format!("Expecting a RHS for comparison and did not find one, clause@{}",
                         clause.access_clause.location)
@@ -289,58 +262,83 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(expr) => {
                 match expr {
                     LetValue::Value(v) => {
-                        (vec![v], None)
+                        let path = format!("{}/{}/{}/Clause/",
+                            clause.access_clause.location.file_name,
+                            clause.access_clause.location.line,
+                            clause.access_clause.location.column);
+                        let path = super::path_value::Path(path);
+                        Some(vec![PathAwareValue::try_from((v, path))?])
                     },
-                    LetValue::AccessClause(query) =>
-                        (resolve_query(query, context, var_resolver)?, Some(query.as_slice()))
+
+                    _ => None,
                 }
             }
         };
+
+        let (rhs_resolved, rhs_query) = if let Some(expr) = &clause.access_clause.compare_with {
+            match expr {
+                LetValue::AccessClause(query) =>
+                    (Some(resolve_query(query, context, var_resolver)?), Some(query.as_slice())),
+                _ => (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let rhs = match &rhs_local {
+            Some(local) => local.iter().collect::<Vec<&PathAwareValue>>(),
+            None => match rhs_resolved {
+                Some(resolved) => resolved,
+                None => unreachable!()
+            }
+        };
+
+
 
         let result = match &clause.access_clause.comparator.0 {
             //
             // ==, !=
             //
             CmpOperator::Eq =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_eq, false)?,
 
             //
             // >
             //
             CmpOperator::Gt =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_gt, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_gt, false)?,
 
             //
             // >=
             //
             CmpOperator::Ge =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_ge, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_ge, false)?,
 
             //
             // <
             //
             CmpOperator::Lt =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_lt, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_lt, false)?,
 
             //
             // <=
             //
             CmpOperator::Le =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_le, false)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_le, false)?,
 
             //
             // IN, !IN
             //
             CmpOperator::In =>
-                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?,
+                compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_eq, true)?,
 
             CmpOperator::KeysEq |
             CmpOperator::KeysIn => {
                 if clause.access_clause.comparator.0 == CmpOperator::KeysIn {
-                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, true)?
+                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_eq, true)?
                 }
                 else {
-                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, compare_eq, false)?
+                    compare(&lhs, &clause.access_clause.query, &rhs, rhs_query, super::path_value::compare_eq, false)?
                 }
             }
 
@@ -368,7 +366,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
 impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
     fn evaluate(&self,
-                _context: &Value,
+                _context: &PathAwareValue,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         Ok(invert_status(
             var_resolver.rule_status(&self.dependent_rule)?,
@@ -378,7 +376,7 @@ impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
 
 impl<'loc> Evaluate for GuardClause<'loc> {
     fn evaluate(&self,
-                context: &Value,
+                context: &PathAwareValue,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         match self {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
@@ -389,7 +387,7 @@ impl<'loc> Evaluate for GuardClause<'loc> {
 
 impl<T: Evaluate> Evaluate for Conjunctions<T> {
     fn evaluate(&self,
-                context: &Value,
+                context: &PathAwareValue,
                 var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let mut aleast_one_disjunction_passed = false;
         'conjunction:
@@ -429,7 +427,7 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
 }
 
 impl<'loc> Evaluate for TypeBlock<'loc> {
-    fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+    fn evaluate(&self, context: &PathAwareValue, var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let mut type_report = AutoReport::new(
             EvaluationType::Type,
             var_resolver,
@@ -452,7 +450,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
 
         let query = format!("Resources.*[ Type == \"{}\" ]", self.type_name);
         let cfn_query = AccessQueryWrapper::try_from(query.as_str())?.0;
-        let values = match context.query(0, &cfn_query, var_resolver) {
+        let values = match context.select(&cfn_query, var_resolver) {
             Ok(v) => if v.is_empty() {
                 // vec![context]
                 return Ok(type_report.message(format!("There are no {} types present in context", self.type_name))
@@ -498,7 +496,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
 }
 
 impl<'loc> Evaluate for RuleClause<'loc> {
-    fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+    fn evaluate(&self, context: &PathAwareValue, var_resolver: &dyn EvaluationContext) -> Result<Status> {
         match self {
             RuleClause::Clause(gc) => gc.evaluate(context, var_resolver),
             RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver),
@@ -530,7 +528,7 @@ impl<'loc> Evaluate for RuleClause<'loc> {
 }
 
 impl<'loc> Evaluate for Rule<'loc> {
-    fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+    fn evaluate(&self, context: &PathAwareValue, var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let mut auto = AutoReport::new(
             EvaluationType::Rule, var_resolver, &self.rule_name);
         if let Some(conds) = &self.conditions {
@@ -556,7 +554,7 @@ impl<'loc> Evaluate for Rule<'loc> {
 }
 
 impl<'loc> Evaluate for RulesFile<'loc> {
-    fn evaluate(&self, context: &Value, var_resolver: &dyn EvaluationContext) -> Result<Status> {
+    fn evaluate(&self, context: &PathAwareValue, var_resolver: &dyn EvaluationContext) -> Result<Status> {
         let mut overall = Status::PASS;
         let mut auto_report = AutoReport::new(
             EvaluationType::File, var_resolver, "");
@@ -578,12 +576,12 @@ impl<'loc> Evaluate for RulesFile<'loc> {
 
 
 fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
-                               vars: &mut HashMap<&'s str, Vec<&'s Value>>,
-                               queries: &mut HashMap<&'s str, &'s AccessQuery<'loc>>) {
+                               vars: &mut HashMap<&'s str, PathAwareValue>,
+                               queries: &mut HashMap<&'s str, &'s AccessQuery<'loc>>) -> Result<()> {
     for each in expressions {
         match &each.value {
             LetValue::Value(v) => {
-                vars.insert(&each.var, vec![v]);
+                vars.insert(&each.var, PathAwareValue::try_from((v, Path::try_from("rules_file/")?))?);
             },
 
             LetValue::AccessClause(query) => {
@@ -591,21 +589,23 @@ fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
             }
         }
     }
+    Ok(())
 }
 
 #[derive(Debug)]
 pub(crate) struct RootScope<'s, 'loc> {
     rules: &'s RulesFile<'loc>,
-    input_context: &'s Value,
+    input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'loc>>,
-    variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s Value>>>,
+    variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s PathAwareValue>>>,
+    literals: HashMap<&'s str, PathAwareValue>,
     rule_by_name: HashMap<&'s str, &'s Rule<'loc>>,
     rule_statues: std::cell::RefCell<HashMap<&'s str, Status>>,
 }
 
 impl<'s, 'loc> RootScope<'s, 'loc> {
     pub(crate) fn new(rules: &'s RulesFile<'loc>,
-                      value: &'s Value) -> Self {
+                      value: &'s PathAwareValue) -> Self {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&rules.assignments,
@@ -619,7 +619,8 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
             rules,
             input_context: value,
             pending_queries: pending,
-            variables: std::cell::RefCell::new(literals),
+            literals,
+            variables: std::cell::RefCell::new(HashMap::new()),
             rule_by_name: lookup_cache,
             rule_statues: std::cell::RefCell::new(HashMap::with_capacity(rules.guard_rules.len())),
         }
@@ -658,12 +659,16 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
 }
 
 impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        if let Some(literal) = self.literals.get(variable) {
+            return Ok(vec![literal])
+        }
+
         if let Some(value) = self.variables.borrow().get(variable) {
             return Ok(value.clone())
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.query(0, *query, self)?;
+            let values = self.input_context.select(*query, self)?;
             self.variables.borrow_mut().insert(*key, values.clone());
             Ok(values)
         } else {
@@ -693,8 +698,8 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
                       eval_type: EvaluationType,
                       context: &str,
                       _msg: String,
-                      _from: Option<Value>,
-                      _to: Option<Value>,
+                      _from: Option<PathAwareValue>,
+                      _to: Option<PathAwareValue>,
                       status: Option<Status>) {
         if EvaluationType::Rule == eval_type {
             let (name, _rule) = self.rule_by_name.get_key_value(context).unwrap();
@@ -710,14 +715,15 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
 
 pub(crate) struct BlockScope<'s, T> {
     block_type: &'s Block<'s, T>,
-    input_context: &'s Value,
+    input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'s>>,
-    variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s Value>>>,
+    literals: HashMap<&'s str, PathAwareValue>,
+    variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s PathAwareValue>>>,
     parent: &'s dyn EvaluationContext,
 }
 
 impl<'s, T> BlockScope<'s, T> {
-    pub(crate) fn new(block_type: &'s Block<'s, T>, context: &'s Value, parent: &'s dyn EvaluationContext) -> Self {
+    pub(crate) fn new(block_type: &'s Block<'s, T>, context: &'s PathAwareValue, parent: &'s dyn EvaluationContext) -> Self {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&block_type.assignments,
@@ -726,21 +732,25 @@ impl<'s, T> BlockScope<'s, T> {
         BlockScope {
             block_type,
             input_context: context,
+            literals,
             parent,
-            variables: std::cell::RefCell::new(literals),
+            variables: std::cell::RefCell::new(HashMap::new()),
             pending_queries: pending,
         }
     }
 }
 
 impl<'s, T> EvaluationContext for BlockScope<'s, T> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        if let Some(literal) = self.literals.get(variable) {
+            return Ok(vec![literal])
+        }
+
         if let Some(value) = self.variables.borrow().get(variable) {
             return Ok(value.clone())
         }
-
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.query(0, *query, self)?;
+            let values = self.input_context.select(*query, self)?;
             self.variables.borrow_mut().insert(*key, values.clone());
             Ok(values)
         } else {
@@ -754,7 +764,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 
 
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<Value>, to: Option<Value>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
         self.parent.end_evaluation(eval_type, context, msg, from, to, status)
     }
 
@@ -769,8 +779,8 @@ pub(super) struct AutoReport<'s> {
     type_context: &'s str,
     eval_type: EvaluationType,
     status: Option<Status>,
-    from: Option<Value>,
-    to: Option<Value>,
+    from: Option<PathAwareValue>,
+    to: Option<PathAwareValue>,
     message: Option<String>
 }
 
@@ -803,7 +813,7 @@ impl<'s> AutoReport<'s> {
         self
     }
 
-    pub(super) fn comparison(&mut self, status: Status, from: Option<Value>, to: Option<Value>) -> &mut Self {
+    pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>) -> &mut Self {
         self.status = Some(status);
         self.from = from;
         self.to = to;

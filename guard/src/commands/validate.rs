@@ -14,6 +14,7 @@ use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::values::Value;
 use nom::lib::std::collections::HashMap;
+use crate::rules::path_value::PathAwareValue;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -116,8 +117,8 @@ struct StatusContext {
     context: String,
     indent: usize,
     msg: Option<String>,
-    from: Option<Value>,
-    to: Option<Value>,
+    from: Option<PathAwareValue>,
+    to: Option<PathAwareValue>,
     status: Option<Status>
 }
 
@@ -273,7 +274,7 @@ impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
 const INDENT: &str = "    ";
 
 impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&Value>> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         self.root_context.resolve_variable(variable)
     }
 
@@ -285,8 +286,8 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
                       eval_type: EvaluationType,
                       context: &str,
                       msg: String,
-                      from: Option<Value>,
-                      to: Option<Value>,
+                      from: Option<PathAwareValue>,
+                      to: Option<PathAwareValue>,
                       status: Option<Status>) {
 
         if self.stack.borrow().len() == 1 {
@@ -378,10 +379,10 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, ve
                 match read_file_content(file) {
                     Ok(content) => {
                         let root = match serde_json::from_str::<serde_json::Value>(&content) {
-                            Ok(value) => Value::try_from(value)?,
+                            Ok(value) => PathAwareValue::try_from(value)?,
                             Err(_) => {
                                 let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                Value::try_from(value)?
+                                PathAwareValue::try_from(value)?
                             }
                         };
 
