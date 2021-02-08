@@ -23,10 +23,10 @@ jobs:
     - name: Package release
       id: package
       run: |
-        mkdir cfn-guard-v2-${{ matrix.os }}
-        cp ./target/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
-        cp README.md ./cfn-guard-v2-${{ matrix.os }}/
-        tar -czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
+      mkdir cfn-guard-v2-${{ matrix.os }}
+      cp ./target/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
+      cp README.md ./cfn-guard-v2-${{ matrix.os }}/
+      tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
     - name: Upload Release Asset
       id: upload-release-asset 
       uses: actions/upload-release-asset@v1
@@ -36,6 +36,4 @@ jobs:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
         asset_path: ./target/release/cfn-guard
         asset_name: cfn-guard-v2-${{ matrix.os }}.tar.gz
-        asset_content_type: application/gzip
-        asset_name: cfn-guard-${{ matrix.os }}
         asset_content_type: application/octet-stream
