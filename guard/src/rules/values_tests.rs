@@ -150,7 +150,7 @@ fn test_query_on_value() -> Result<()> {
     // Select all resources inside a template
     //
     let query = AccessQueryWrapper::try_from("Resources.*")?.0;
-    let selected = value.select(&query, &dummy)?;
+    let selected = value.select(true, &query, &dummy)?;
     assert_eq!(selected.len(), 17);
     for each in selected {
         if let PathAwareValue::Map(_index) = each {
@@ -163,7 +163,7 @@ fn test_query_on_value() -> Result<()> {
     // Select all IAM::Role resources inside the template
     //
     let query  = AccessQueryWrapper::try_from("Resources.*[ Type == \"AWS::IAM::Role\" ]")?.0;
-    let selected = value.select(&query, &dummy)?;
+    let selected = value.select(true, &query, &dummy)?;
     assert_eq!(selected.len(), 1);
 
     println!("{:?}", selected[0]);
@@ -173,7 +173,7 @@ fn test_query_on_value() -> Result<()> {
     // Select all policies that has Effect "allow"
     //
     let query  = AccessQueryWrapper::try_from("Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]")?.0;
-    let selected = iam_role.select(&query, &dummy)?;
+    let selected = iam_role.select(true, &query, &dummy)?;
     assert_eq!(selected.len(), 2);
 
     //

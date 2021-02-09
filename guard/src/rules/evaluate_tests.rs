@@ -80,8 +80,8 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#
     )?;
     match clause.evaluate(&root, &dummy) {
-        Ok(_) => assert!(false),
-        Err(_) => {}
+        Ok(Status::SKIP) => {},
+        rest => assert!(false)
     }
     Ok(())
 }
@@ -959,7 +959,7 @@ fn test_iam_subselections() -> Result<()> {
                  ]"#
     )?.0;
     let dummy = DummyEval{};
-    let selected = value.select(&query, &dummy)?;
+    let selected = value.select(true, &query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
     let expected = PathAwareValue::try_from((r#"
@@ -984,7 +984,7 @@ fn test_iam_subselections() -> Result<()> {
                     Properties.PermissionsBoundary !EXISTS
                  ]"#
     )?.0;
-    let selected = value.select(&query, &dummy)?;
+    let selected = value.select(true, &query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 2);
     let expected2 = PathAwareValue::try_from(

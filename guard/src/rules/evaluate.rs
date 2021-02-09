@@ -19,7 +19,8 @@ use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 //                                                                                              //
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn resolve_query<'s, 'loc>(query: &'s AccessQuery<'loc>,
+fn resolve_query<'s, 'loc>(all: bool,
+                           query: &'s AccessQuery<'loc>,
                            context: &'s PathAwareValue,
                            var_resolver: &'s dyn EvaluationContext) -> Result<Vec<&'s PathAwareValue>> {
     match query[0].variable() {
@@ -33,12 +34,29 @@ fn resolve_query<'s, 'loc>(query: &'s AccessQuery<'loc>,
             } else { 1 };
             let mut acc = Vec::with_capacity(retrieved.len());
             for each in retrieved {
-                acc.extend(each.select(&query[index..], var_resolver)?)
+                if query.len() > index {
+                    match each.select(all, &query[1..], var_resolver) {
+                        Ok(result) => {
+                            acc.extend(result);
+                        },
+
+                        Err(Error(ErrorKind::RetrievalError(e))) => {
+                            if all {
+                                return Err(Error::new(ErrorKind::RetrievalError(e)));
+                            }
+                        },
+
+                        Err(e) => return Err(e)
+                    }
+                }
+                else {
+                    acc.push(each);
+                }
             }
             Ok(acc)
         },
 
-        None => context.select(query, var_resolver)
+        None => context.select(all, query, var_resolver)
     }
 }
 
@@ -112,21 +130,11 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
               rhs: &Vec<&PathAwareValue>,
               rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
+              any: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Err(Error::new(
-            ErrorKind::RetrievalError(
-                format!("Expecting comparisons but have either LHS or RHS empty, LHS Query = {}, RHS Query = {}",
-                    SliceDisplay(lhs_query),
-                    match rhs_query {
-                        Some(q) => format!("{}", SliceDisplay(q)),
-                        None => "No Query".to_string()
-                    }
-                )
-            )
-        ))
+        return Ok((Status::SKIP, None, None))
     }
 
     let lhs_elem = lhs[0];
@@ -136,29 +144,33 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     // What are possible comparisons
     //
     if !lhs_elem.is_list() && !rhs_elem.is_list() {
-        compare_loop(lhs, rhs, compare, any)
+        match compare_loop(lhs, rhs, compare, any) {
+            Ok((true, _, _)) => Ok((Status::PASS, None, None)),
+            Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
+            Err(e) => Err(e)
+        }
     }
     else if lhs_elem.is_list() && !rhs_elem.is_list() {
         for elevated in elevate_inner(lhs)? {
             if let Ok((cmp, from, to)) = compare_loop(
                 &elevated, rhs, |f, s| compare(f, s), any) {
                 if !cmp {
-                    return Ok((cmp, from, to))
+                    return Ok((Status::FAIL, from, to))
                 }
             }
         }
-        Ok((true, None, None))
+        Ok((Status::PASS, None, None))
     }
     else if !lhs_elem.is_list() && rhs_elem.is_list() {
         for elevated in elevate_inner(rhs)? {
             if let Ok((cmp, from, to)) = compare_loop(
                 lhs, &elevated, |f, s| compare(f, s), any) {
                 if !cmp {
-                    return Ok((cmp, from, to))
+                    return Ok((Status::FAIL, from, to))
                 }
             }
         }
-        Ok((true, None, None))
+        Ok((Status::PASS, None, None))
     }
     else {
         for elevated_lhs in elevate_inner(lhs)? {
@@ -166,13 +178,13 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
                 if let Ok((cmp, from, to)) = compare_loop(
                     &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any) {
                     if !cmp {
-                        return Ok((cmp, from, to))
+                        return Ok((Status::FAIL, from, to))
                     }
                 }
 
             }
         }
-        Ok((true, None, None))
+        Ok((Status::PASS, None, None))
     }
 }
 
@@ -214,7 +226,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
 
 
-        let lhs = match resolve_query(&clause.access_clause.query, context, var_resolver) {
+        let lhs = match resolve_query(true, &clause.access_clause.query, context, var_resolver) {
             Ok(v) => Some(v),
             Err(Error(ErrorKind::RetrievalError(e))) => None,
             Err(e) => return Err(e),
@@ -278,7 +290,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let (rhs_resolved, rhs_query) = if let Some(expr) = &clause.access_clause.compare_with {
             match expr {
                 LetValue::AccessClause(query) =>
-                    (Some(resolve_query(query, context, var_resolver)?), Some(query.as_slice())),
+                    (Some(resolve_query(true, query, context, var_resolver)?), Some(query.as_slice())),
                 _ => (None, None)
             }
         } else {
@@ -346,7 +358,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         };
 
-        let status = negation_status(result.0, clause.access_clause.comparator.1, clause.negation);
+        let status = invert_status(result.0, clause.access_clause.comparator.1);
+        let status = invert_status(status, clause.negation);
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
             match status {
                 Status::PASS => "PASS",
@@ -450,7 +463,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
 
         let query = format!("Resources.*[ Type == \"{}\" ]", self.type_name);
         let cfn_query = AccessQueryWrapper::try_from(query.as_str())?.0;
-        let values = match context.select(&cfn_query, var_resolver) {
+        let values = match context.select(false, &cfn_query, var_resolver) {
             Ok(v) => if v.is_empty() {
                 // vec![context]
                 return Ok(type_report.message(format!("There are no {} types present in context", self.type_name))
@@ -668,7 +681,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             return Ok(value.clone())
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.select(*query, self)?;
+            let values = self.input_context.select(true, *query, self)?;
             self.variables.borrow_mut().insert(*key, values.clone());
             Ok(values)
         } else {
@@ -750,7 +763,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
             return Ok(value.clone())
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.select(*query, self)?;
+            let values = self.input_context.select(true, *query, self)?;
             self.variables.borrow_mut().insert(*key, values.clone());
             Ok(values)
         } else {
