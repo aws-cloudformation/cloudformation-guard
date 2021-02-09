@@ -213,6 +213,17 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     }
 }
 
+fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+{
+    move |first, second| {
+        let r = f(first, second)?;
+        let r = if clause_not { !r } else { r };
+        let r = if not { !r } else { r };
+        Ok(r)
+    }
+}
+
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate<'s>(&self,
                 context: &'s PathAwareValue,
@@ -304,63 +315,89 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             }
         };
 
-
-
-        let result = match &clause.access_clause.comparator.0 {
+        let result =
+            match &clause.access_clause.comparator.0 {
             //
             // ==, !=
             //
             CmpOperator::Eq =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_eq, false)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             //
             // >
             //
             CmpOperator::Gt =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_gt, false)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_gt, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             //
             // >=
             //
             CmpOperator::Ge =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_ge, false)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_ge, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             //
             // <
             //
             CmpOperator::Lt =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_lt, false)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_lt, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             //
             // <=
             //
             CmpOperator::Le =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_le, false)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_le, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             //
             // IN, !IN
             //
+            CmpOperator::KeysIn |
             CmpOperator::In =>
-                compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_eq, true)?,
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
+                        true)?,
 
-            CmpOperator::KeysEq |
-            CmpOperator::KeysIn => {
-                if clause.access_clause.comparator.0 == CmpOperator::KeysIn {
-                    compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_eq, true)?
-                }
-                else {
-                    compare(&lhs, &clause.access_clause.query.query, &rhs, rhs_query, super::path_value::compare_eq, false)?
-                }
-            }
+            CmpOperator::KeysEq =>
+                compare(&lhs,
+                        &clause.access_clause.query.query,
+                        &rhs,
+                        rhs_query,
+                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
+                        false)?,
 
             _ => unreachable!()
 
         };
 
-        let status = invert_status(result.0, clause.access_clause.comparator.1);
-        let status = invert_status(status, clause.negation);
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
-            match status {
+            match result.0 {
                 Status::PASS => "PASS",
                 Status::FAIL => "FAIL",
                 Status::SKIP => "SKIP",
@@ -371,8 +408,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        auto_reporter.comparison(status, result.1, result.2).message(message);
-        Ok(status)
+        auto_reporter.comparison(result.0, result.1, result.2).message(message);
+        Ok(result.0)
     }
 }
 
