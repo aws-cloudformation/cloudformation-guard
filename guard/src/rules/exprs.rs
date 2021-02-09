@@ -114,7 +114,13 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
     }
 }
 
-pub(crate) type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub(crate) struct AccessQuery<'loc> {
+    pub(crate) query: Vec<QueryPart<'loc>>,
+    pub(crate) match_all: bool,
+}
+
+//pub(crate) type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct AccessClause<'loc> {

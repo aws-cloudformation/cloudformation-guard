@@ -737,16 +737,25 @@ fn property_name(input: Span) -> IResult<Span, String> {
     })))(input)
 }
 
+fn any_keyword(input: Span) -> IResult<Span, bool> {
+    value(true, delimited(
+        zero_or_more_ws_or_comment,
+        alt((tag("ANY"), tag("any"))),
+        one_or_more_ws_or_comment,
+    ))(input)
+}
+
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
-    map(pair(
+    map(tuple((
+        opt(any_keyword),
             map(
                 alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)),
-        opt(dotted_access)), |(first, remainder)| {
+        opt(dotted_access))), |(any, first, remainder)| {
 
-        match remainder {
+        let query_parts = match remainder {
             Some(mut parts) => {
                 parts.insert(0, first);
                 parts
@@ -754,6 +763,13 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
 
             None => {
                 vec![first]
+            }
+        };
+        AccessQuery {
+            query: query_parts,
+            match_all: match any {
+                Some(_) => false,
+                None => true
             }
         }
     })(input)
@@ -794,6 +810,8 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
     // FIXME: clause ends up calling predicate_clause, which is fine, but we should
     // not expect the form *[ [ [] ] ]. We should dis-allows this.
     //
+    let (rest, any) = opt(peek(any_keyword))(rest)?;
+    let any = match any { Some(_) => true, None => false };
     let (rest, keys) = opt(peek(keys))(rest)?;
     let (rest, all_indices) = if !keys.is_some() {
         opt( delimited(zero_or_more_ws_or_comment, char('*'), zero_or_more_ws_or_comment))(rest)?
@@ -809,11 +827,11 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                 context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                         value_cmp)
             ))(rest)?;
-            (r, (AccessQuery::from([QueryPart::MapKeys]), cmp))
+            (r, (AccessQuery{ query: vec![QueryPart::MapKeys], match_all: !any}, cmp))
         }
         else if all_indices.is_some() {
             let (r, cmp) = cut(value_cmp)(rest)?;
-            (r, (AccessQuery::from([QueryPart::AllIndices]), cmp))
+            (r, (AccessQuery{ query: vec![QueryPart::AllIndices], match_all: !any }, cmp))
         }
         else {
             let (r, (access, _ign_space, cmp)) = tuple((
@@ -1395,14 +1413,23 @@ fn or_join(input: Span) -> IResult<Span, Span> {
     )(input)
 }
 
-pub(crate) struct AccessQueryWrapper<'a>(pub(crate) AccessQuery<'a>);
-impl<'a> TryFrom<&'a str> for AccessQueryWrapper<'a> {
+impl<'a> TryFrom<&'a str> for AccessQuery<'a> {
     type Error = Error;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         let access = access(span)?.1;
-        Ok(AccessQueryWrapper(access))
+        Ok(access)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for LetExpr<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        let assign = assignment(span)?.1;
+        Ok(assign)
     }
 }
 

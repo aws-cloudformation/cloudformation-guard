@@ -951,15 +951,15 @@ fn test_iam_subselections() -> Result<()> {
 
     let value = Value::try_from(template)?;
     let value = PathAwareValue::try_from(value)?;
-    let query = AccessQueryWrapper::try_from(
+    let query = AccessQuery::try_from(
         r#"Resources.*[
                     Type == "AWS::IAM::Role"
                     Properties.Tags[ Key == "TestRole" ] !EMPTY
                     Properties.PermissionsBoundary !EXISTS
                  ]"#
-    )?.0;
+    )?;
     let dummy = DummyEval{};
-    let selected = value.select(true, &query, &dummy)?;
+    let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
     let expected = PathAwareValue::try_from((r#"
@@ -977,14 +977,14 @@ fn test_iam_subselections() -> Result<()> {
     "#, Path::try_from("/Resources/two")?))?;
     assert_eq!(selected[0], &expected);
 
-    let query = AccessQueryWrapper::try_from(
+    let query = AccessQuery::try_from(
         r#"Resources.*[
                     Type == "AWS::IAM::Role"
                     Properties.Tags[ Key == "TestRole" or Key == "Prod" ] !EMPTY
                     Properties.PermissionsBoundary !EXISTS
                  ]"#
-    )?.0;
-    let selected = value.select(true, &query, &dummy)?;
+    )?;
+    let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 2);
     let expected2 = PathAwareValue::try_from(

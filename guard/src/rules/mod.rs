@@ -71,7 +71,7 @@ pub(crate) trait EvaluationContext {
 }
 
 pub(crate) trait Evaluate {
-    fn evaluate(&self,
-                context: &PathAwareValue,
-                var_resolver: &dyn EvaluationContext) -> Result<Status>;
+    fn evaluate<'s>(&self,
+                context: &'s PathAwareValue,
+                var_resolver: &'s dyn EvaluationContext) -> Result<Status>;
 }

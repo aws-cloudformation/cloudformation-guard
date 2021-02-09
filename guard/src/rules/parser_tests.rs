@@ -1000,11 +1000,11 @@ fn test_dotted_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            vec![
                 QueryPart::Key("first".to_string()),
                 QueryPart::Index(0),
                 QueryPart::Key("path".to_string())
-            ])
+            ]
         )),
 
         //".first.*.path == ", // ok
@@ -1104,9 +1104,9 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string())
-             ])
+             ], match_all: true }
         )),
         Ok(( // 5
              unsafe {
@@ -1117,10 +1117,10 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec! [
                  QueryPart::Key("engine".to_string()),
                  QueryPart::Key("type".to_string()),
-             ])
+             ], match_all: true }
         )),
         Ok(( // 6
              unsafe {
@@ -1131,11 +1131,11 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::Key("type".to_string()),
                  QueryPart::AllValues,
-             ])
+             ], match_all: true }
         )),
         Ok(( // 7
              unsafe {
@@ -1146,12 +1146,12 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::AllValues,
                  QueryPart::Key("type".to_string()),
                  QueryPart::Key("port".to_string()),
-             ])
+             ], match_all: true },
         )),
         Ok(( // "engine.*.type.%var", // 8 ok
              unsafe {
@@ -1162,11 +1162,11 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::AllValues,
                  QueryPart::Key("type".to_string()),
-             ])
+             ], match_all: true },
         )),
         Ok(( // "engine[0]", // 9 ok
              unsafe {
@@ -1177,10 +1177,10 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::Index(0),
-             ])
+             ], match_all: true },
         )),
         Ok(( // 10 "engine [0]", // 10 ok engine will be property access part
              unsafe {
@@ -1191,10 +1191,10 @@ fn test_access() {
                      "",
                  )
              },
-             AccessQuery::from([
+             AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::Index(0),
-             ])
+             ], match_all: true },
         )),
 
         // "engine.ok.*",// 11 Ok
@@ -1207,11 +1207,11 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
                 QueryPart::Key("ok".to_string()),
                 QueryPart::AllValues,
-            ])
+            ], match_all: true },
         )),
 
         // "engine.%name.*", // 12 ok
@@ -1224,9 +1224,9 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
-            ])
+            ], match_all: true },
         )),
 
         // "%engine.type", // 13 ok
@@ -1239,10 +1239,10 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
                 QueryPart::Key("type".to_string()),
-            ])
+            ], match_all: true },
         )),
 
 
@@ -1256,12 +1256,12 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
                 QueryPart::AllValues,
                 QueryPart::Key("type".to_string()),
                 QueryPart::Index(0),
-            ])
+            ], match_all: true },
         )),
 
 
@@ -1275,9 +1275,9 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-            ])
+            ], match_all: true },
         )),
 
 
@@ -1291,9 +1291,9 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-            ])
+            ], match_all: true },
         )),
 
 
@@ -1307,10 +1307,10 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
                 QueryPart::AllValues,
-            ])
+            ], match_all: true },
         )),
 
         // matches { 'engine': [{'type': 'cfn', 'position': 1, 'other': 20}, {'type': 'tf', 'position': 2, 'other': 10}] }
@@ -1324,15 +1324,15 @@ fn test_access() {
                     "",
                 )
             },
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
                 QueryPart::Filter(vec![
                     vec![GuardClause::Clause(
                         GuardAccessClause {
                             access_clause: AccessClause {
-                                query: AccessQuery::from([
+                                query: AccessQuery{ query: vec![
                                     QueryPart::Key(String::from("type"))
-                                ]),
+                                ], match_all: true },
                                 comparator: (CmpOperator::Eq, false),
                                 custom_message: None,
                                 compare_with: Some(LetValue::Value(Value::String(String::from("cfn")))),
@@ -1347,7 +1347,7 @@ fn test_access() {
                     ]
                 ]),
                 QueryPart::Key(String::from("port")),
-            ])
+            ], match_all: true },
         )),
 
         // " %engine", // 18 err
@@ -1923,11 +1923,12 @@ fn test_clause_success() {
 
     let rhs_dotted: Vec<&str> = rhs.split(".").collect();
     let rhs_dotted = to_string_vec(&rhs_dotted);
-    let rhs_access = Some(LetValue::AccessClause(rhs_dotted));
+    let rhs_access = Some(LetValue::AccessClause(AccessQuery{ query: rhs_dotted, match_all: true }));
 
     for each_lhs in lhs.iter() {
         let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
+        let dotted = AccessQuery { query: dotted, match_all: true };
         let lhs_access =
 
             testing_access_with_cmp(&separators, &comparators,
@@ -1948,6 +1949,7 @@ fn test_clause_success() {
     for each_lhs in lhs.iter() {
         let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
+        let dotted = AccessQuery { query: dotted, match_all: true };
 
         testing_access_with_cmp(&separators, &comparators,
                                 *each_lhs, "",
@@ -1958,6 +1960,7 @@ fn test_clause_success() {
     for each_lhs in lhs.iter() {
         let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
+        let dotted = AccessQuery { query: dotted, match_all: true };
 
         testing_access_with_cmp(&separators, &comparators,
                                 *each_lhs, " does.not.error", // this will not error,
@@ -1978,6 +1981,7 @@ fn test_clause_success() {
     for each_lhs in lhs.iter() {
         let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
+        let dotted = AccessQuery { query: dotted, match_all: true };
 
         testing_access_with_cmp(&separators, &comparators,
                                 *each_lhs, "",
@@ -2004,6 +2008,7 @@ fn test_clause_success() {
         for each_lhs in lhs.iter() {
             let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
             let dotted = to_string_vec(&dotted);
+            let dotted = AccessQuery { query: dotted, match_all: true };
 
             let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
             testing_access_with_cmp(&separators, &comparators,
@@ -2076,9 +2081,9 @@ fn test_predicate_clause_success() {
             "",
             ""
         )},
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key(examples[0].to_string())
-            ])
+            ], match_all: true },
         )),
 
         // "resources.*.type", // 1 Ok
@@ -2088,7 +2093,7 @@ fn test_predicate_clause_success() {
             "",
             ""
         )},
-            to_query_part(examples[1].split(".").collect())
+            AccessQuery{ query: to_query_part(examples[1].split(".").collect()), match_all: true }
         )),
 
         // "resources.*[ type == /AWS::RDS/ ]", // 2 Ok
@@ -2098,7 +2103,7 @@ fn test_predicate_clause_success() {
             "",
             ""
         )},
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("resources".to_string()),
                 QueryPart::AllValues,
                 QueryPart::Filter(Conjunctions::from([
@@ -2108,7 +2113,7 @@ fn test_predicate_clause_success() {
                                 access_clause: AccessClause {
                                     compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
                                     comparator: (CmpOperator::Eq, false),
-                                    query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                    query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
                                     location: FileLocation {
                                         line: 1,
@@ -2120,7 +2125,7 @@ fn test_predicate_clause_success() {
                             })
                     ]),
                 ]))
-            ])
+            ], match_all: true },
         )),
 
 
@@ -2133,7 +2138,7 @@ fn test_predicate_clause_success() {
             "",
             ""
         )},
-            AccessQuery::from([
+            AccessQuery{ query: vec![
                 QueryPart::Key("resources".to_string()),
                 QueryPart::AllValues,
                 QueryPart::Filter(Conjunctions::from([
@@ -2143,7 +2148,7 @@ fn test_predicate_clause_success() {
                                 access_clause: AccessClause {
                                     compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
                                     comparator: (CmpOperator::Eq, false),
-                                    query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                    query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
                                     location: FileLocation {
                                         line: 1,
@@ -2160,7 +2165,7 @@ fn test_predicate_clause_success() {
                                 access_clause: AccessClause {
                                     compare_with: None,
                                     comparator: (CmpOperator::Exists, false),
-                                    query: AccessQuery::from([QueryPart::Key(String::from("deletion_policy"))]),
+                                    query: AccessQuery{ query: vec![QueryPart::Key(String::from("deletion_policy"))], match_all: true },
                                     custom_message: None,
                                     location: FileLocation {
                                         line: 2,
@@ -2177,7 +2182,7 @@ fn test_predicate_clause_success() {
                                 access_clause: AccessClause {
                                     compare_with: Some(LetValue::Value(Value::String("RETAIN".to_string()))),
                                     comparator: (CmpOperator::Eq, false),
-                                    query: AccessQuery::from([QueryPart::Key(String::from("deletion_policy"))]),
+                                    query: AccessQuery{ query: vec![QueryPart::Key(String::from("deletion_policy"))], match_all: true },
                                     custom_message: None,
                                     location: FileLocation {
                                         line: 3,
@@ -2190,7 +2195,7 @@ fn test_predicate_clause_success() {
                     ]),
                 ])),
                 QueryPart::Key("properties".to_string()),
-            ])
+            ], match_all: true }
         )),
 
         // r#"resources.*[]"#, // 4 err
@@ -2580,8 +2585,8 @@ fn test_clauses() {
                                     line: 2,
                                 },
                                 compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
-                                query: "configurations.containers.*.image".split(".")
-                                    .map(|s| if s == "*" { QueryPart::AllValues } else { QueryPart::Key(s.to_string()) }).collect(),
+                                query: AccessQuery{ query: "configurations.containers.*.image".split(".")
+                                    .map(|s| if s == "*" { QueryPart::AllValues } else { QueryPart::Key(s.to_string()) }).collect(), match_all: true },
                                 custom_message: None,
                                 comparator: (CmpOperator::Eq, false),
                             },
@@ -2630,13 +2635,13 @@ fn test_clauses() {
                             access_clause: AccessClause {
                                 location: FileLocation { file_name: "", column: 16, line: 4 },
                                 compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
-                                query: "configurations.containers[*].image".split(".").map( |part|
+                                query: AccessQuery{ query: "configurations.containers[*].image".split(".").map( |part|
                                     if part.contains('[') {
                                         vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices]
                                     } else {
                                         vec![QueryPart::Key(part.to_string())]
                                     }
-                                ).into_iter().flatten().collect(),
+                                ).into_iter().flatten().collect(), match_all: true },
                                 custom_message: None,
                                 comparator: (CmpOperator::Eq, false),
                             },
@@ -2798,8 +2803,8 @@ fn test_assignments() {
             },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::AccessClause(AccessQuery::from([
-                    QueryPart::Key(String::from("engine"))]))
+                value: LetValue::AccessClause(AccessQuery{ query: vec![
+                    QueryPart::Key(String::from("engine"))], match_all: true })
             }
         )),
 
@@ -2815,8 +2820,8 @@ fn test_assignments() {
             },
             LetExpr {
                 var: String::from("engines"),
-                value: LetValue::AccessClause(AccessQuery::from([
-                    QueryPart::Key(String::from("%engines"))]))
+                value: LetValue::AccessClause(AccessQuery{ query: vec![
+                    QueryPart::Key(String::from("%engines"))], match_all: true })
             }
         )),
 
@@ -2878,7 +2883,7 @@ fn test_assignments() {
             LetExpr {
                 var: String::from("aurora_dbs"),
                 value: LetValue::AccessClause(
-                    AccessQuery::from([
+                    AccessQuery{ query: vec![
                         QueryPart::Key(String::from("resources")),
                         QueryPart::AllValues,
                         QueryPart::Filter(Conjunctions::from(
@@ -2890,7 +2895,7 @@ fn test_assignments() {
                                                 compare_with: Some(LetValue::Value(Value::List(
                                                     vec![Value::Regex(String::from("AWS::RDS::DBCluster")),
                                                          Value::Regex(String::from("AWS::RDS::GlobalCluster"))]))),
-                                                query: AccessQuery::from([QueryPart::Key(String::from("type"))]),
+                                                query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                                 custom_message: None,
                                                 comparator: (CmpOperator::In, false),
                                                 location: FileLocation {
@@ -2905,7 +2910,7 @@ fn test_assignments() {
                                 ]),
                             ],
                         ))
-                    ])
+                    ], match_all: true }
                 )
             }
 
@@ -2956,9 +2961,9 @@ fn test_type_block() {
                         LetExpr {
                             var: String::from("keyName"),
                             value: LetValue::AccessClause(
-                                AccessQuery::from([
+                                AccessQuery{ query: vec![
                                     QueryPart::Key(String::from("keyName"))
-                                ])
+                                ], match_all: true }
                             )
                         }
                     ],
@@ -2967,9 +2972,9 @@ fn test_type_block() {
                             GuardClause::Clause(
                                 GuardAccessClause {
                                     access_clause: AccessClause {
-                                        query: AccessQuery::from([
+                                        query: AccessQuery{ query: vec![
                                             QueryPart::Key(String::from("%keyName"))
-                                        ]),
+                                        ], match_all: true },
                                         comparator: (CmpOperator::In, false),
                                         custom_message: None,
                                         compare_with: Some(LetValue::Value(
@@ -2993,9 +2998,9 @@ fn test_type_block() {
                             GuardClause::Clause(
                                 GuardAccessClause {
                                     access_clause: AccessClause {
-                                        query: AccessQuery::from([
+                                        query: AccessQuery{ query: vec![
                                             QueryPart::Key(String::from("%keyName"))
-                                        ]),
+                                        ], match_all: true },
                                         comparator: (CmpOperator::In, true),
                                         custom_message: None,
                                         compare_with: Some(LetValue::Value(
@@ -3034,14 +3039,14 @@ fn test_type_block() {
                 conditions: None,
                 block: Block {
                     assignments: vec![],
-                    conjunctions: Conjunctions::from([
-                        Disjunctions::from([
+                    conjunctions: vec![
+                        vec![
                             GuardClause::Clause(
                                 GuardAccessClause {
                                     access_clause: AccessClause {
-                                        query: AccessQuery::from([
+                                        query: AccessQuery{ query: vec![
                                             QueryPart::Key(String::from("keyName")),
-                                        ]),
+                                        ], match_all: true },
                                         comparator: (CmpOperator::Eq, false),
                                         location: FileLocation {
                                             file_name: "",
@@ -3054,8 +3059,8 @@ fn test_type_block() {
                                     negation: false,
                                 }
                             ),
-                        ])
-                    ])
+                        ]
+                    ]
                 }
             }
         )),
@@ -3071,14 +3076,14 @@ fn test_type_block() {
             },
             TypeBlock {
                 type_name: String::from("AWS::EC2::Instance"),
-                conditions: Some(Conjunctions::from([
-                    Disjunctions::from([
+                conditions: Some(vec![
+                    vec![
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    query: AccessQuery::from([
+                                    query: AccessQuery{ query: vec![
                                         QueryPart::Key(String::from("instance_type")),
-                                    ]),
+                                    ], match_all: true },
                                     comparator: (CmpOperator::Eq, false),
                                     location: FileLocation {
                                         file_name: "",
@@ -3091,18 +3096,17 @@ fn test_type_block() {
                                 negation: false
                             }
                         ),
-                    ]),
-                ])),
+                    ]]),
                 block: Block {
                     assignments: vec![],
-                    conjunctions: Conjunctions::from([
-                        Disjunctions::from([
+                    conjunctions: vec![
+                        vec![
                             GuardClause::Clause(
                                 GuardAccessClause {
                                     access_clause: AccessClause {
-                                        query: AccessQuery::from([
+                                        query: AccessQuery{ query: vec![
                                             QueryPart::Key(String::from("security_groups")),
-                                        ]),
+                                        ], match_all: true },
                                         comparator: (CmpOperator::Exists, false),
                                         location: FileLocation {
                                             file_name: "",
@@ -3115,8 +3119,7 @@ fn test_type_block() {
                                     negation: false
                                 }
                             ),
-                        ])
-                    ])
+                        ]]
                 }
 
             }
@@ -3183,9 +3186,9 @@ fn test_rule_block() {
                             GuardAccessClause {
                                 access_clause: AccessClause{
                                     custom_message: None,
-                                    query: AccessQuery::from([
+                                    query: AccessQuery{ query: vec![
                                         QueryPart::Key("stage".to_string())
-                                    ]),
+                                    ], match_all: true },
                                     compare_with: Some(LetValue::Value(Value::String("prod".to_string()))),
                                     location: FileLocation {
                                         file_name: "",
@@ -3237,12 +3240,12 @@ fn test_rule_block() {
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
                                                         custom_message: None,
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("InstanceType".to_string())
-                                                        ]),
-                                                        compare_with: Some(LetValue::AccessClause(AccessQuery::from([
+                                                        ], match_all: true },
+                                                        compare_with: Some(LetValue::AccessClause(AccessQuery{ query: vec![
                                                             QueryPart::Key("%ec2_instance_types".to_string())
-                                                        ]))),
+                                                        ], match_all: true })),
                                                         location: FileLocation {
                                                             file_name: "",
                                                             line: 8,
@@ -3266,9 +3269,9 @@ fn test_rule_block() {
                                     assignments: vec![
                                         LetExpr {
                                             var: "volumes".to_string(),
-                                            value: LetValue::AccessClause(AccessQuery::from([
+                                            value: LetValue::AccessClause(AccessQuery{ query: vec![
                                                 QueryPart::Key("block_device_mappings".to_string()),
-                                            ]))
+                                            ], match_all: true })
                                         }
                                     ],
                                     // %volumes.*.Ebs EXISTS
@@ -3280,11 +3283,11 @@ fn test_rule_block() {
                                             GuardClause::Clause(
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string())
-                                                        ]),
+                                                        ], match_all: true },
                                                         comparator: (CmpOperator::Exists, false),
                                                         compare_with: None,
                                                         custom_message: None,
@@ -3302,11 +3305,11 @@ fn test_rule_block() {
                                             GuardClause::Clause(
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("device_name".to_string())
-                                                        ]),
+                                                        ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
                                                         compare_with: Some(LetValue::Value(Value::Regex("^/dev/ebs-".to_string()))),
                                                         custom_message: None,
@@ -3324,12 +3327,12 @@ fn test_rule_block() {
                                             GuardClause::Clause(
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("encrypted".to_string())
-                                                        ]),
+                                                        ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
                                                         compare_with: Some(LetValue::Value(Value::Bool(true))),
                                                         custom_message: None,
@@ -3347,12 +3350,12 @@ fn test_rule_block() {
                                             GuardClause::Clause(
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("delete_on_termination".to_string())
-                                                        ]),
+                                                        ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
                                                         compare_with: Some(LetValue::Value(Value::Bool(true))),
                                                         custom_message: None,
@@ -3381,11 +3384,11 @@ fn test_rule_block() {
                                             GuardClause::Clause(
                                                 GuardAccessClause {
                                                     access_clause: AccessClause {
-                                                        query: AccessQuery::from([
+                                                        query: AccessQuery{ query: vec![
                                                             QueryPart::Key("block_device_mappings".to_string()),
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("device_name".to_string())
-                                                        ]),
+                                                        ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
                                                         compare_with: Some(LetValue::Value(Value::Regex("^/dev/sdc-\\d".to_string()))),
                                                         custom_message: None,
@@ -3464,9 +3467,8 @@ fn test_rule_block_clause() -> Result<(), Error> {
 #[test]
 fn test_try_from_access() -> Result<(), Error> {
     let access = "%roles.Document";
-    let access: AccessQueryWrapper = AccessQueryWrapper::try_from(access)?;
-    let access = access.0;
-    println!("{:?} {}", &access, SliceDisplay(&access));
+    let access = AccessQuery::try_from(access)?;
+    println!("{:?} {}", &access, SliceDisplay(&access.query));
     Ok(())
 }
 
@@ -3511,11 +3513,11 @@ fn test_try_from_rule_block() -> Result<(), Error> {
                                             GuardAccessClause {
                                                 negation: false,
                                                 access_clause: AccessClause {
-                                                    query: AccessQuery::from([
+                                                    query: AccessQuery{ query: vec![
                                                         QueryPart::Key(String::from("tags")),
                                                         QueryPart::AllValues,
                                                         QueryPart::Key(String::from("key"))
-                                                    ]),
+                                                    ], match_all: true },
                                                     comparator: (CmpOperator::In, false),
                                                     compare_with: Some(LetValue::Value(
                                                         Value::List(
@@ -3642,7 +3644,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
                 compare_with: Some(LetValue::Value(Value::Regex("\\{\\{resolve:secretsmanager".to_string()))),
                 comparator: (CmpOperator::Eq, false),
                 custom_message: None,
-                query: AccessQuery::from([QueryPart::AllIndices])
+                query: AccessQuery{ query: vec![QueryPart::AllIndices], match_all: true }
             },
             negation: false
         }

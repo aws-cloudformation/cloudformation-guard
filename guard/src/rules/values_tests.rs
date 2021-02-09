@@ -2,8 +2,7 @@ use std::convert::{TryInto, TryFrom};
 
 use super::*;
 use std::fs::read_to_string;
-use crate::rules::parser::AccessQueryWrapper;
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, AccessQuery};
 use std::collections::HashMap;
 use crate::rules::exprs::{TypeBlock, Rule};
 use crate::rules::evaluate::{RootScope, BlockScope};
@@ -149,8 +148,8 @@ fn test_query_on_value() -> Result<()> {
     //
     // Select all resources inside a template
     //
-    let query = AccessQueryWrapper::try_from("Resources.*")?.0;
-    let selected = value.select(true, &query, &dummy)?;
+    let query = AccessQuery::try_from("Resources.*")?;
+    let selected = value.select(query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 17);
     for each in selected {
         if let PathAwareValue::Map(_index) = each {
@@ -162,8 +161,8 @@ fn test_query_on_value() -> Result<()> {
     //
     // Select all IAM::Role resources inside the template
     //
-    let query  = AccessQueryWrapper::try_from("Resources.*[ Type == \"AWS::IAM::Role\" ]")?.0;
-    let selected = value.select(true, &query, &dummy)?;
+    let query = AccessQuery::try_from("Resources.*[ Type == \"AWS::IAM::Role\" ]")?;
+    let selected = value.select(query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 1);
 
     println!("{:?}", selected[0]);
@@ -172,8 +171,8 @@ fn test_query_on_value() -> Result<()> {
     //
     // Select all policies that has Effect "allow"
     //
-    let query  = AccessQueryWrapper::try_from("Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]")?.0;
-    let selected = iam_role.select(true, &query, &dummy)?;
+    let query  = AccessQuery::try_from("Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]")?;
+    let selected = iam_role.select(query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 2);
 
     //

@@ -1,6 +1,6 @@
 use super::*;
 use std::convert::TryInto;
-use crate::rules::parser::AccessQueryWrapper;
+use crate::rules::exprs::{AccessQuery, LetExpr, GuardClause, GuardAccessClause, AccessClause, LetValue, FileLocation};
 
 const SAMPLE_SINGLE: &str = r#"{
             "Resources": {
@@ -198,28 +198,72 @@ fn path_value_queries() -> Result<(), Error> {
     //
     // Select all resources that have security groups present as a property
     //
-    let resources_with_sgs = AccessQueryWrapper::try_from(
-        "Resources.*[ Properties.SecurityGroups EXISTS ]")?.0;
-    let selected = incoming.select(true, &resources_with_sgs, &eval)?;
+    let resources_with_sgs = AccessQuery::try_from(
+        "Resources.*[ Properties.SecurityGroups EXISTS ]")?;
+    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.is_empty(), true);
 
-    let resources_with_sgs = AccessQueryWrapper::try_from(
-        "Resources.*[ Properties.SecurityGroupIds EXISTS ]")?.0;
-    let selected = incoming.select(true, &resources_with_sgs, &eval)?;
+    let resources_with_sgs = AccessQuery::try_from(
+        "Resources.*[ Properties.SecurityGroupIds EXISTS ]")?;
+    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.is_empty(), false);
 
     let get_att_refs =
         r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].*"#;
-    let resources_with_sgs = AccessQueryWrapper::try_from(get_att_refs)?.0;
-    let selected = incoming.select(true, &resources_with_sgs, &eval)?;
+    let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
+    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.len(), 1);
 
     let get_att_refs =
-        r#"Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
-    let resources_with_sgs = AccessQueryWrapper::try_from(get_att_refs)?.0;
-    let selected = incoming.select(false, &resources_with_sgs, &eval)?;
+        r#"ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
+    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.len(), 1);
     println!("{:?}", selected);
+
+    //
+    // Assignments
+    //
+    let assignment = r#"let var = ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let let_statement = LetExpr::try_from(assignment)?;
+    println!("{:?}", let_statement);
+
+    //
+    // Clauses
+    //
+    let clause = "ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
+    let clause_statement = GuardClause::try_from(clause)?;
+    println!("{:?}", clause_statement);
+    let expected = GuardClause::Clause(
+        GuardAccessClause {
+            negation: false,
+            access_clause: AccessClause {
+                query: AccessQuery {
+                    query: vec![
+                        QueryPart::Key(String::from("Resources")),
+                        QueryPart::AllValues,
+                        QueryPart::Key("Properties".to_string()),
+                        QueryPart::Key("SecurityGroupIds".to_string()),
+                        QueryPart::AllIndices,
+                        QueryPart::Key("Fn::GetAtt".to_string()),
+                        QueryPart::AllValues
+                    ],
+                    match_all: false
+                },
+                compare_with: Some(LetValue::Value(
+                    Value::try_from("[/aa/, /bb/]")?
+                )),
+                location: FileLocation {
+                    line: 1,
+                    column: 1,
+                    file_name: ""
+                },
+                comparator: (CmpOperator::In, false),
+                custom_message: None
+            }
+        }
+    );
+    assert_eq!(expected, clause_statement);
 
     Ok(())
 }
