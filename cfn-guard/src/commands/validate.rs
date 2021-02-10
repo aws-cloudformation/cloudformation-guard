@@ -15,6 +15,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::values::Value;
 use nom::lib::std::collections::HashMap;
 use crate::rules::path_value::PathAwareValue;
+use crate::commands::tracker::{StackTracker, StatusContext};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -112,36 +113,8 @@ impl Command for Validate {
 }
 
 #[derive(Debug)]
-struct StatusContext {
-    eval_type: EvaluationType,
-    context: String,
-    indent: usize,
-    msg: Option<String>,
-    from: Option<PathAwareValue>,
-    to: Option<PathAwareValue>,
-    status: Option<Status>,
-    children: Vec<StatusContext>,
-}
-
-impl StatusContext {
-    fn new(eval_type: EvaluationType, context: &str, depth: usize) -> Self {
-        StatusContext {
-            eval_type,
-            context: context.to_string(),
-            status: None,
-            msg: None,
-            from: None,
-            to: None,
-            indent: depth,
-            children: vec![]
-        }
-    }
-}
-
-#[derive(Debug)]
-struct ConsoleReporter<'r,'loc>{
-    root_context: &'r RootScope<'r, 'loc>,
-    stack: std::cell::RefCell<Vec<StatusContext>>,
+struct ConsoleReporter<'r> {
+    root_context: StackTracker<'r>,
     verbose: bool
 }
 
@@ -163,9 +136,9 @@ fn indent_spaces(indent: usize) {
     }
 }
 
-fn print_context(cxt: &StatusContext) {
+fn print_context(cxt: &StatusContext, depth: usize) {
     let header = format!("{}({}, {})", cxt.eval_type, cxt.context, colored_string(cxt.status)).underline();
-    let depth = cxt.indent;
+    //let depth = cxt.indent;
     let sub_indent = depth + 1;
     indent_spaces(depth - 1);
     println!("{}", header);
@@ -187,22 +160,22 @@ fn print_context(cxt: &StatusContext) {
     }
 
     for child in &cxt.children {
-        print_context(child)
+        print_context(child, depth+1)
     }
 }
 
-impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
-    fn new(root: &'r RootScope<'r, 'loc>, verbose: bool) -> Self {
+impl<'r, 'loc> ConsoleReporter<'r> {
+    fn new(root: StackTracker<'r>, verbose: bool) -> Self {
         ConsoleReporter {
             root_context: root,
-            stack: std::cell::RefCell::new(Vec::new()),
             verbose,
         }
     }
 
     fn report(self) {
         print!("{}", "Summary Report".underline());
-        let top = self.stack.borrow_mut().pop().unwrap();
+        let stack = self.root_context.stack();
+        let top = stack.first().unwrap();
         println!(" Overall File Status = {}", colored_string(top.status));
 
         let longest = top.children.iter()
@@ -225,7 +198,7 @@ impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
         if self.verbose {
             println!("Evaluation Tree");
             for each in &top.children {
-                print_context(each);
+                print_context(each, 1);
             }
         }
     }
@@ -233,7 +206,7 @@ impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
 
 const INDENT: &str = "    ";
 
-impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
+impl<'r> EvaluationContext for ConsoleReporter<'r> {
     fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         self.root_context.resolve_variable(variable)
     }
@@ -249,52 +222,18 @@ impl<'r, 'loc> EvaluationContext for ConsoleReporter<'r, 'loc> {
                       from: Option<PathAwareValue>,
                       to: Option<PathAwareValue>,
                       status: Option<Status>) {
-
-        if self.stack.borrow().len() == 1 {
-            match self.stack.borrow_mut().get_mut(0) {
-                Some(top) => {
-                    top.status = status.clone();
-                    top.from = from.clone();
-                    top.to = to.clone();
-                    top.msg = Some(msg.clone());
-                },
-                None => unreachable!()
-            }
-            return;
-        }
-
-        let stack = self.stack.borrow_mut().pop();
-        match stack {
-            Some(mut stack) => {
-                stack.status = status.clone();
-                stack.from = from.clone();
-                stack.to = to.clone();
-                stack.msg = Some(msg.clone());
-
-                match self.stack.borrow_mut().last_mut() {
-                    Some(cxt) =>  {
-                        cxt.children.push(stack)
-                    }
-                    None => unreachable!()
-                }
-            },
-            None => {}
-        }
         self.root_context.end_evaluation(eval_type, context, msg, from, to, status);
     }
 
     fn start_evaluation(&self,
                         eval_type: EvaluationType,
                         context: &str) {
-        let indent= self.stack.borrow().len();
-        self.stack.borrow_mut().push(
-                StatusContext::new(eval_type, context, indent));
         self.root_context.start_evaluation(eval_type, context);
     }
 
 }
 
-impl<'r, 'loc> ConsoleReporter<'r, 'loc> {
+impl<'r> ConsoleReporter<'r> {
     fn colorized(eval_type: EvaluationType, context: &str) {
         match eval_type {
             EvaluationType::Rule => println!("{}", format!("{} = {}", eval_type, context).truecolor(200, 170, 217).underline()),
@@ -325,7 +264,8 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, ve
                         };
 
                         let root_context = RootScope::new(rules, &root);
-                        let reporter = ConsoleReporter::new(&root_context, verbose);
+                        let stacker = StackTracker::new(&root_context);
+                        let reporter = ConsoleReporter::new(stacker, verbose);
                         rules.evaluate(&root, &reporter)?;
                         reporter.report();
                         //summary_report(&root_context);
