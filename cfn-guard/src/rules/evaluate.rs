@@ -501,7 +501,6 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         let cfn_query = AccessQuery::try_from(query.as_str())?;
         let values = match context.select(cfn_query.match_all, &cfn_query.query, var_resolver) {
             Ok(v) => if v.is_empty() {
-                // vec![context]
                 return Ok(type_report.message(format!("There are no {} types present in context", self.type_name))
                                                   .status(Status::SKIP).get_status())
 
