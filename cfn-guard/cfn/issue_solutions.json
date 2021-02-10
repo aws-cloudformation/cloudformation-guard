@@ -1,0 +1,118 @@
+{
+    "Parameters": {
+        "MyParameter": {
+            "Type" : "String",
+            "Default" : "t2.micro",
+            "AllowedValues" : ["t2.micro", "m1.small", "m1.large"],
+            "Description" : "Enter t2.micro, m1.small, or m1.large. Default is t2.micro."
+        }
+    },
+    "Resources": {
+        "MyIAMResource": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {}
+        },
+        "MyBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Metadata": {
+                "ListAllMatch": ["same", "same", "same"],
+                "ListAllDontMatch": ["same", "not"]
+            }
+        },
+        "SampleBucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "DOC-EXAMPLE-BUCKET"
+                },
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "s3:GetObject*"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": {
+                                "Fn::Join": [
+                                    "",
+                                    [
+                                        "arn:aws:s3:::",
+                                        {
+                                            "Ref": "DOC-EXAMPLE-BUCKET"
+                                        },
+                                        "/*"
+                                    ]
+                                ]
+                            },
+                            "Principal": "*",
+                            "Condition": {
+                                "StringLike": {
+                                    "aws:Referer": [
+                                        "http://www.example.com/*",
+                                        "http://example.net/*"
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "TestPolicy": {
+            "Type": "AWS::IAM::ManagedPolicy",
+            "Properties": {
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": [
+                      "dynamodb:GetItem"
+                    ],
+                    "Condition": {
+                      "Bool": {
+                        "aws:SecureTransport": "true"
+                      }
+                    },
+                    "Effect": "Allow",
+                    "Resource": [
+                      "arn:aws:dynamodb:*:*:table/TestTable"
+                    ]
+                  },
+                  {
+                    "Action": [
+                      "acm-pca:GetCertificate"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*"
+                  },
+                  {
+                    "Action": "logs:PutLogEvents",
+                    "Effect": "Allow",
+                    "Resource": "*"
+                  }
+                ],
+                "Version": "2012-10-17"
+              },
+              "Description": "",
+              "ManagedPolicyName": "TestPolicy",
+              "Path": "/",
+              "Roles": [
+                {
+                  "Ref": "TestRole"
+                }
+              ]
+            },
+            "Metadata": {
+              "aws:cdk:path": "TestPolicy/Resource"
+            }
+          },
+        "MyResource":{
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "Tags": [
+                    {"Key": "MyValue", "Value": "someValue"},
+                    {"Key":"KeyValue", "Value": "someValue"}
+                ]
+            }
+        }
+    }
+}
