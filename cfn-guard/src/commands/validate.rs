@@ -7,7 +7,7 @@ use colored::*;
 
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering};
+use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering, iterate_over};
 use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
@@ -70,44 +70,25 @@ impl Command for Validate {
 
         let files = get_files(file, cmp)?;
         let data_files = get_files(data, cmp)?;
-
-        for each_rule_file in files {
-            match open_file(&each_rule_file) {
-                Ok((rule_file_name, file)) => {
-                    match read_file_content(file) {
-                        Ok(file_content) => {
-                            let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                            match crate::rules::parser::rules_file(span) {
-                                Err(e) => {
-                                    println!("Parsing error handling rule file = {}, Error = {}",
-                                             rule_file_name.underline(), e);
-                                    continue;
-                                },
-
-                                Ok(rules) => {
-                                    evaluate_against_data_files(&data_files, &rules, verbose)?
-                                }
-                            }
+        for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
+            match each_file_content {
+                Err(e) => println!("Unable read content from file {}", e),
+                Ok((file_content, rule_file_name)) => {
+                    let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
+                    match crate::rules::parser::rules_file(span) {
+                        Err(e) => {
+                            println!("Parsing error handling rule file = {}, Error = {}",
+                                     rule_file_name.underline(), e);
+                            continue;
                         },
 
-                        Err(e) => {
-                            let msg = format!("Error = {}", e);
-                            let msg = msg.red();
-                            println!("Unable to process file {} Error = {}", rule_file_name, msg);
-                            continue;
+                        Ok(rules) => {
+                            evaluate_against_data_files(&data_files, &rules, verbose)?
                         }
                     }
-                },
-
-                Err(e) => {
-                    let msg = format!("Unable to open file {}, Error = {}",
-                                      each_rule_file.display().to_string().underline(), e);
-                    println!("{}", msg);
-                    continue;
                 }
             }
         }
-
         Ok(())
     }
 }
@@ -247,92 +228,29 @@ impl<'r> ConsoleReporter<'r> {
 
 }
 
-
-
 fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<()> {
-    for each in data_files {
-        match open_file(each) {
-            Ok((name, file)) => {
-                match read_file_content(file) {
-                    Ok(content) => {
-                        let root = match serde_json::from_str::<serde_json::Value>(&content) {
-                            Ok(value) => PathAwareValue::try_from(value)?,
-                            Err(_) => {
-                                let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                PathAwareValue::try_from(value)?
-                            }
-                        };
-
-                        let root_context = RootScope::new(rules, &root);
-                        let stacker = StackTracker::new(&root_context);
-                        let reporter = ConsoleReporter::new(stacker, verbose);
-                        rules.evaluate(&root, &reporter)?;
-                        reporter.report();
-                        //summary_report(&root_context);
-                        //println!("{:?}", reporter);
-                        //root_context.summary_report();
-                    },
-
-                    Err(e) => {
-                        println!("Unable to process data file = {}, Error = {}", name.underline(), e);
-                    }
-                }
-            },
-
-            Err(e) => {
-                println!("Unable to open data file = {}, Error = {}", each.display(), e);
+    let mut iterator = iterate_over(data_files, |content, _| {
+        match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(value) => PathAwareValue::try_from(value),
+            Err(_) => {
+                let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                PathAwareValue::try_from(value)
             }
         }
+    });
 
+    for each in iterator {
+        match each {
+            Err(e) => println!("Error processing data file {}", e),
+            Ok(root) => {
+                let root_context = RootScope::new(rules, &root);
+                let stacker = StackTracker::new(&root_context);
+                let reporter = ConsoleReporter::new(stacker, verbose);
+                rules.evaluate(&root, &reporter)?;
+                reporter.report();
+            }
+        }
     }
+
     Ok(())
-}
-
-fn summary_report(root_scope: &RootScope<'_, '_>) {
-    println!("{}", "Summary Report".underline());
-    let mut longest = 0;
-    let mut find_longest = |name: &str, _status: &Status| {
-        if name.len() > longest {
-            longest = name.len()
-        }
-    };
-    root_scope.rule_statues(find_longest);
-    let output = |name: &str, status: &Status| {
-        let status = match status {
-            Status::PASS => "PASS".green(),
-            Status::FAIL => "FAIL".red(),
-            Status::SKIP => "SKIP".yellow(),
-        };
-        print!("{}", name);
-        for _idx in 0..(longest + 2 - name.len()) {
-            print!("{}", "    ");
-        }
-        println!("{}", status);
-    };
-    root_scope.rule_statues(output);
-
-//    for each in rule_statues.iter() {
-//        let status = match *each.1 {
-//            Status::PASS => "PASS".green(),
-//            Status::FAIL => "FAIL".red(),
-//            Status::SKIP => "SKIP".yellow(),
-//        };
-//        print!("{}", *each.0);
-//        for _idx in 0..(longest + 2 - (*each.0).len()) {
-//            print!("{}", "    ");
-//        }
-//        println!("{}", status);
-//    }
-}
-
-
-fn open_file(path: &PathBuf) -> Result<(String, std::fs::File)> {
-    if let Some(file_name) = path.file_name() {
-        if let Some(file_name) = file_name.to_str() {
-            let file_name = file_name.to_string();
-            return Ok((file_name, File::open(path)?))
-        }
-    }
-    Err(Error::new(
-        ErrorKind::IoError(std::io::Error::from(std::io::ErrorKind::NotFound))))
 }

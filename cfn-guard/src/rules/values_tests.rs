@@ -6,7 +6,7 @@ use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, AccessQuery};
 use std::collections::HashMap;
 use crate::rules::exprs::{TypeBlock, Rule};
 use crate::rules::evaluate::{RootScope, BlockScope};
-use crate::rules::EvaluationType;
+use crate::rules::{ Result, EvaluationContext, EvaluationType, Evaluate, Status, Error, errors::ErrorKind };
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
 
 #[test]

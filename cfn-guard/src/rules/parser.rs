@@ -3,10 +3,10 @@ use nom_locate::LocatedSpan;
 
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{char, multispace0, multispace1, space0};
+use nom::character::complete::{char, multispace1, space0};
 use nom::combinator::{map, value};
 use nom::multi::{many0, many1};
-use nom::sequence::{delimited, preceded, delimitedc};
+use nom::sequence::{delimited, preceded};
 use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::character::complete::{digit1, one_of, anychar};
 use nom::combinator::{map_res, opt};
@@ -975,7 +975,7 @@ fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool)
     let mut rest = input;
     loop {
         match disjunction_clauses(rest.clone(), |i: Span| f(i), true) {
-            Err(nom::Err::Error(e)) => {
+            Err(nom::Err::Error(_)) => {
                 if conjunctions.is_empty() {
                     return Err(nom::Err::Failure(
                         ParserError {

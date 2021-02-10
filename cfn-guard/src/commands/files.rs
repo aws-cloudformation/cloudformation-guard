@@ -37,6 +37,63 @@ pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
     })
 }
 
+pub(crate) fn get_files_with_filter<S, F>(file: &str, sort: S, filter: F) -> Result<Vec<PathBuf>, Error>
+    where S: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
+          F: Fn(&walkdir::DirEntry) -> bool
+{
+    let mut selected = Vec::with_capacity(10);
+    let walker = WalkDir::new(file).sort_by(sort).into_iter();
+    for each in walker.filter_entry(filter) {
+        //
+        // We are ignoring errors here. TODO fix this later
+        //
+        if let Ok(entry) = each {
+            selected.push(entry.into_path());
+        }
+    }
+    Ok(selected)
+}
+
+#[derive(Debug)]
+pub(crate) struct Iter<'i, T, C>
+    where C: Fn(String, &PathBuf) -> Result<T, Error>
+{
+files: &'i [PathBuf],
+    index: usize,
+    converter: C,
+}
+
+impl<'i, T, C> Iterator for Iter<'i, T, C>
+    where C: Fn(String, &PathBuf) -> Result<T, Error>
+{
+type Item = Result<T, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.files.len() {
+            return None;
+        }
+        let next = &self.files[self.index];
+        self.index += 1;
+        let file = match File::open(next) {
+            Ok(file) => file,
+            Err(e) => return Some(Err(Error::from(e))),
+        };
+        let content = match read_file_content(file) {
+            Ok(content) => content,
+            Err(e) => return Some(Err(Error::from(e))),
+        };
+        Some((self.converter)(content, next))
+    }
+}
+
+pub(crate) fn iterate_over<T, C>(files: &[PathBuf], converter: C) -> Iter<T, C>
+    where C: Fn(String, &PathBuf) -> Result<T, Error>
+{
+    Iter {
+        files, converter, index: 0
+    }
+}
+
 pub(crate) fn alpabetical(first : &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
     first.file_name().cmp(second.file_name())
 }
