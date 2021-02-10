@@ -34,7 +34,7 @@ fn resolve_query<'s, 'loc>(all: bool,
             let mut acc = Vec::with_capacity(retrieved.len());
             for each in retrieved {
                 if query.len() > index {
-                    match each.select(all, &query[1..], var_resolver) {
+                    match each.select(all, &query[index..], var_resolver) {
                         Ok(result) => {
                             acc.extend(result);
                         },
