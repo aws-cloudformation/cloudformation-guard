@@ -486,46 +486,11 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
             return Ok(Status::FAIL)
         }
 
-        Ok(if self.len() - num_of_conjunction_skips == 0 {
+        Ok(if self.len() == num_of_conjunction_skips {
             Status::SKIP
         } else {
             Status::PASS
         })
-
-//        let mut aleast_one_disjunction_passed = false;
-//        'conjunction:
-//        for conjunction in self {
-//            let mut all_skips = true;
-//            for disjunction in conjunction {
-//                match disjunction.evaluate(context, var_resolver) {
-//                    Ok(status) => {
-//                        match status {
-//                            Status::PASS => {
-//                                aleast_one_disjunction_passed = true;
-//                                continue 'conjunction
-//                            },
-//                            Status::SKIP => continue,
-//                            Status::FAIL => {
-//                                all_skips = false
-//                            }
-//                        }
-//                    },
-//
-//                    Err(Error(ErrorKind::RetrievalError(_))) => continue,
-//
-//                    Err(e) => return Err(e)
-//                }
-//            }
-//            if !all_skips {
-//                return Ok(Status::FAIL)
-//            }
-//        }
-//        if aleast_one_disjunction_passed {
-//            Ok(Status::PASS)
-//        }
-//        else {
-//            Ok(Status::SKIP)
-//        }
     }
 }
 
