@@ -209,6 +209,18 @@ rule iam_basic_checks when iam_resources_exists {
     Ok(())
 }
 
+#[test]
+fn rules_not_in_tests() -> Result<()> {
+    let clause = "Resources.*.Type NOT IN [/AWS::IAM/, /AWS::S3/]";
+    let parsed = GuardClause::try_from(clause)?;
+    let value = "{ Resources: { iam: { Type: 'AWS::IAM::Role' } } }";
+    let parsed_value = PathAwareValue::try_from(value)?;
+    let dummy = DummyEval{};
+    let status = parsed.evaluate(&parsed_value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
 const SAMPLE: &str = r###"
     {
         "Statement": [

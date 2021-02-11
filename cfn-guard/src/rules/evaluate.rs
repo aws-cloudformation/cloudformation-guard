@@ -376,13 +376,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             // IN, !IN
             //
             CmpOperator::KeysIn |
-            CmpOperator::In =>
-                compare(&lhs,
+            CmpOperator::In => {
+                let mut result = compare(&lhs,
                         &clause.access_clause.query.query,
                         &rhs,
                         rhs_query,
-                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        true)?,
+                        super::path_value::compare_eq,
+                        true)?;
+                let status = invert_status(result.0, clause.access_clause.comparator.1);
+                let status = invert_status(status, clause.negation);
+                result.0 = status;
+                result
+            }
 
             CmpOperator::KeysEq =>
                 compare(&lhs,
