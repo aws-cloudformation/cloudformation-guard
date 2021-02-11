@@ -1,0 +1,9 @@
+let allowed_sse_algorithms = ["KMS"]
+
+rule dynamo_db_table_has_sse_turned_on {
+    AWS::DynamoDB::Table {
+        # Properties.SSESpecification EXISTS
+        Properties.SSESpecification.SSEEnabled == true
+        Properties.SSESpecification.SSEType IN %allowed_sse_algorithms
+    }
+}
