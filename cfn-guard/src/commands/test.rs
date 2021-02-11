@@ -114,9 +114,11 @@ struct TestSpec {
 
 fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<()> {
     for specs in iterate_over(test_data_files, |data, path| {
-        match serde_json::from_str::<TestSpec>(&data) {
-            Ok(spec) => Ok(vec![spec]),
-            Err(_) => match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
+        match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
+            Ok(spec) => {
+                Ok(spec)
+            },
+            Err(_) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
                 Ok(specs) => Ok(specs),
                 Err(e) => Err(Error::new (ErrorKind::ParseError(
                     format!("Unable to process data in file {}, Error {},", path.display(), e))))
