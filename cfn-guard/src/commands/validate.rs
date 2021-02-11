@@ -117,7 +117,7 @@ fn indent_spaces(indent: usize) {
     }
 }
 
-fn print_context(cxt: &StatusContext, depth: usize) {
+pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     let header = format!("{}({}, {})", cxt.eval_type, cxt.context, colored_string(cxt.status)).underline();
     //let depth = cxt.indent;
     let sub_indent = depth + 1;
@@ -136,6 +136,15 @@ fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("To: {:?}", v);
+        },
+        None => {}
+    }
+    match &cxt.msg {
+        Some(message) => {
+            indent_spaces(depth);
+            print!("|  ");
+            println!("Message: {}", message);
+
         },
         None => {}
     }

@@ -11,6 +11,8 @@ use values::Value;
 use std::fmt::Formatter;
 use colored::*;
 use crate::rules::path_value::PathAwareValue;
+use nom::lib::std::convert::TryFrom;
+use crate::rules::errors::ErrorKind;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -29,6 +31,21 @@ impl std::fmt::Display for Status {
             Status::FAIL => f.write_str(&"FAIL".red())?,
         }
         Ok(())
+    }
+}
+
+impl TryFrom<&str> for Status {
+    type Error = Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value {
+            "PASS" => Ok(Status::PASS),
+            "FAIL" => Ok(Status::FAIL),
+            "SKIP" => Ok(Status::SKIP),
+            _ => Err(Error::new(ErrorKind::IncompatibleError(
+                format!("Status code is incorrect {}", value)
+            )))
+        }
     }
 }
 
