@@ -1,6 +1,19 @@
 rule check_all_resources_have_tags_present {
     let all_resources = Resources.*.Properties
 
-    %all_resources.Tags EXISTS
-    %all_resources.Tags !EMPTY
+    %all_resources[*].Tags EXISTS
+    %all_resources[*].Tags !EMPTY
+}
+
+rule enforce_only_certain_tag_keys_are_present when check_all_resources_have_tags_present {
+    # select only resources that have tags on them and enforce it 
+    # this will skip resources that do not have tags on them 
+    # if we wanted all resources to have tags and be compliant remove 
+    # ANY from the beginging
+    let tags = Resources.*.Properties.Tags[*]
+    %tags[*].Key IN ["MyValue", "KeyValue"]
+}
+
+rule enforce_at_least_one_tag_has_key_present when check_all_resources_have_tags_present {
+    Resources.*.Properties.Tags[ Key IN ["MyValue", "KeyValue"] ] NOT EMPTY
 }
