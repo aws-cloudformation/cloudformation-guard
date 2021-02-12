@@ -1,0 +1,6 @@
+rule deny_permissions_boundary_iam_role {
+    AWS::IAM::Role {
+        Properties.Tags[ Key == /[A-Za-z0-9]+Role/ ] NOT EMPTY
+        Properties.PermissionsBoundary NOT EXISTS
+    }
+}
