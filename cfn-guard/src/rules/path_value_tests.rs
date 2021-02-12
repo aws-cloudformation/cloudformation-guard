@@ -215,7 +215,7 @@ fn path_value_queries() -> Result<(), Error> {
     assert_eq!(selected.len(), 1);
 
     let get_att_refs =
-        r#"ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+        r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
     let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.len(), 1);
@@ -231,7 +231,7 @@ fn path_value_queries() -> Result<(), Error> {
     //
     // Clauses
     //
-    let clause = "ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
+    let clause = "SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
     let clause_statement = GuardClause::try_from(clause)?;
     println!("{:?}", clause_statement);
     let expected = GuardClause::Clause(

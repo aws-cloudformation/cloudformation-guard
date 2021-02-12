@@ -1,0 +1,24 @@
+- input:
+    Resources:
+        iam:
+            Type: 'AWS::IAM::Role'
+  expectations:
+      rules:
+          disallowed_resource_types: PASS
+          only_allowed_resource_types: FAIL
+- input:
+    Resources: {}
+  expectations:
+      rules:
+          disallowed_resource_types: SKIP
+          only_allowed_resource_types: SKIP
+- input:
+    Resources: 
+        allowed:
+            Type: 'AWS::EC2::Instance'
+        allowed2:
+            Type: 'Consoto::Compute::Machine'
+  expectations:
+      rules:
+          disallowed_resource_types: FAIL
+          only_allowed_resource_types: PASS

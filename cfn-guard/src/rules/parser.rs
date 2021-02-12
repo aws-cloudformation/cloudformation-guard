@@ -3,10 +3,10 @@ use nom_locate::LocatedSpan;
 
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{char, multispace0, multispace1, space0};
+use nom::character::complete::{char, multispace1, space0};
 use nom::combinator::{map, value};
 use nom::multi::{many0, many1};
-use nom::sequence::{delimited, preceded, delimitedc};
+use nom::sequence::{delimited, preceded};
 use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::character::complete::{digit1, one_of, anychar};
 use nom::combinator::{map_res, opt};
@@ -737,10 +737,10 @@ fn property_name(input: Span) -> IResult<Span, String> {
     })))(input)
 }
 
-fn any_keyword(input: Span) -> IResult<Span, bool> {
+fn some_keyword(input: Span) -> IResult<Span, bool> {
     value(true, delimited(
         zero_or_more_ws_or_comment,
-        alt((tag("ANY"), tag("any"))),
+        alt((tag("SOME"), tag("some"))),
         one_or_more_ws_or_comment,
     ))(input)
 }
@@ -750,8 +750,8 @@ fn any_keyword(input: Span) -> IResult<Span, bool> {
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(tuple((
-        opt(any_keyword),
-            map(
+        opt(some_keyword),
+        map(
                 alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)),
         opt(dotted_access))), |(any, first, remainder)| {
 
@@ -810,7 +810,7 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
     // FIXME: clause ends up calling predicate_clause, which is fine, but we should
     // not expect the form *[ [ [] ] ]. We should dis-allows this.
     //
-    let (rest, any) = opt(peek(any_keyword))(rest)?;
+    let (rest, any) = opt(peek(some_keyword))(rest)?;
     let any = match any { Some(_) => true, None => false };
     let (rest, keys) = opt(peek(keys))(rest)?;
     let (rest, all_indices) = if !keys.is_some() {
@@ -975,7 +975,7 @@ fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool)
     let mut rest = input;
     loop {
         match disjunction_clauses(rest.clone(), |i: Span| f(i), true) {
-            Err(nom::Err::Error(e)) => {
+            Err(nom::Err::Error(_)) => {
                 if conjunctions.is_empty() {
                     return Err(nom::Err::Failure(
                         ParserError {

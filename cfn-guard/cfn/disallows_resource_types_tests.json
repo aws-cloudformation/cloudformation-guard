@@ -1,0 +1,15 @@
+[{ "input": {
+    "Resources": {
+        "iam": {
+            "Type": "AWS::IAM::Role"
+        }
+    }
+  },
+  "expectations": {
+      "rules": {
+          "disallowed_resource_types": "PASS",
+          "only_allowed_resource_types": "FAIL"
+          
+      }
+  }
+}]

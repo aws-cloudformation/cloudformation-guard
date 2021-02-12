@@ -1,5 +1,7 @@
 pub(crate) mod files;
 pub(crate) mod validate;
+pub(crate) mod test;
+
 mod tracker;
 mod helper;
 

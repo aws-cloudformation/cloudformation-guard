@@ -376,13 +376,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             // IN, !IN
             //
             CmpOperator::KeysIn |
-            CmpOperator::In =>
-                compare(&lhs,
+            CmpOperator::In => {
+                let mut result = compare(&lhs,
                         &clause.access_clause.query.query,
                         &rhs,
                         rhs_query,
-                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        true)?,
+                        super::path_value::compare_eq,
+                        true)?;
+                let status = invert_status(result.0, clause.access_clause.comparator.1);
+                let status = invert_status(status, clause.negation);
+                result.0 = status;
+                result
+            }
 
             CmpOperator::KeysEq =>
                 compare(&lhs,
@@ -438,40 +443,54 @@ impl<T: Evaluate> Evaluate for Conjunctions<T> {
     fn evaluate<'s>(&self,
                 context: &'s PathAwareValue,
                 var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        let mut aleast_one_disjunction_passed = false;
+        let mut num_of_conjunction_skips = 0;
         'conjunction:
         for conjunction in self {
-            let mut all_skips = true;
+            let mut num_of_skips = 0;
             for disjunction in conjunction {
                 match disjunction.evaluate(context, var_resolver) {
                     Ok(status) => {
                         match status {
                             Status::PASS => {
-                                aleast_one_disjunction_passed = true;
-                                continue 'conjunction
+                                continue 'conjunction;
                             },
-                            Status::SKIP => continue,
+                            Status::SKIP => {
+                                num_of_skips += 1;
+                            },
                             Status::FAIL => {
-                                all_skips = false
                             }
                         }
                     },
 
-                    Err(Error(ErrorKind::RetrievalError(_))) => continue,
+                    Err(Error(ErrorKind::RetrievalError(_))) => {
+                        continue;
+                    },
 
                     Err(e) => return Err(e)
                 }
             }
-            if !all_skips {
-                return Ok(Status::FAIL)
+            //
+            // If ALL of them were skipped, then none of conditions were satisfied
+            // We proceed to the next disjunction set.
+            //
+            if conjunction.len() == num_of_skips {
+                num_of_conjunction_skips += 1;
+                continue;
             }
+            //
+            // Otherwise we had retrieval errors for actual comparison or comparisons failures.
+            // Either case, it is a failure.
+            // REMEMBER when conditions are just cLAUSES, so retrieval errors for these CLAUSES
+            // is a failure and the block will be skipped
+            //
+            return Ok(Status::FAIL)
         }
-        if aleast_one_disjunction_passed {
-            Ok(Status::PASS)
-        }
-        else {
-            Ok(Status::SKIP)
-        }
+
+        Ok(if self.len() == num_of_conjunction_skips {
+            Status::SKIP
+        } else {
+            Status::PASS
+        })
     }
 }
 

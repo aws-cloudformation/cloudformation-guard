@@ -22,6 +22,7 @@ fn main() -> Result<(), Error>{
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
     commands.push(Box::new(crate::commands::validate::Validate::new()));
+    commands.push(Box::new(crate::commands::test::Test::new()));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(

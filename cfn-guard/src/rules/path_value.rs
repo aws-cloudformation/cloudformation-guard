@@ -97,7 +97,7 @@ impl Path {
         match part {
             Value::String(s) => Ok(self.extend_string(s)),
             _ => Err(Error::new(ErrorKind::IncompatibleError(
-                format!("Value type is not String, type = {}, Value = {:?}", type_info(part), part)
+                format!("Value type is not String, Value = {:?}", part)
             )))
         }
     }
@@ -270,8 +270,8 @@ impl QueryResolver for PathAwareValue {
                             } else {
                                 Err(Error::new(
                                     ErrorKind::RetrievalError(
-                                        format!("Could not locate key = {} inside object/map = {:?}, remaining query = {}",
-                                                key, self, SliceDisplay(query))
+                                        format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
+                                                key, self, path, SliceDisplay(query))
                                     )))
                             }
                         },
@@ -286,7 +286,7 @@ impl QueryResolver for PathAwareValue {
 
             QueryPart::MapKeys => {
                 match self {
-                    PathAwareValue::Map((path, map)) => {
+                    PathAwareValue::Map((_path, map)) => {
                         PathAwareValue::accumulate(all, &query[1..], &map.keys, resolver)
                     },
 
@@ -298,7 +298,7 @@ impl QueryResolver for PathAwareValue {
 
             QueryPart::Index(array_idx) => {
                 match self {
-                    PathAwareValue::List((path, vec)) => {
+                    PathAwareValue::List((_path, vec)) => {
                         PathAwareValue::retrieve_index(*array_idx, vec, query)?.select(all, &query[1..], resolver)
                     },
 
@@ -311,7 +311,7 @@ impl QueryResolver for PathAwareValue {
 
             QueryPart::AllIndices => {
                 match self {
-                    PathAwareValue::List((path, elements)) => {
+                    PathAwareValue::List((_path, elements)) => {
                         PathAwareValue::accumulate(all, &query[1..], elements, resolver)
                     },
 
@@ -326,11 +326,11 @@ impl QueryResolver for PathAwareValue {
                     //
                     // Supporting old format
                     //
-                    PathAwareValue::List((path, elements)) => {
+                    PathAwareValue::List((_path, elements)) => {
                         PathAwareValue::accumulate(all, &query[1..], elements, resolver)
                     },
 
-                    PathAwareValue::Map((path, map)) => {
+                    PathAwareValue::Map((_path, map)) => {
                         let values: Vec<&PathAwareValue> = map.values.values().collect();
                         let mut resolved = Vec::with_capacity(values.len());
                         for each in values {
@@ -381,7 +381,7 @@ impl QueryResolver for PathAwareValue {
                         Ok(selected)
                     },
 
-                    PathAwareValue::Map((path, map)) => {
+                    PathAwareValue::Map((path, _map)) => {
                         let context = format!("Path={},Type=MapElement", path);
                         let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
                         match conjunctions.evaluate(self, resolver)? {
@@ -449,18 +449,18 @@ impl PathAwareValue {
 
     pub(crate) fn type_info(&self) -> &'static str {
         match self {
-            PathAwareValue::Null(path)              => "null",
-            PathAwareValue::String((path, _))       => "String",
-            PathAwareValue::Regex((path, _))        => "Regex",
-            PathAwareValue::Bool((path, _))         => "bool",
-            PathAwareValue::Int((path, _))          => "int",
-            PathAwareValue::Float((path, _))        => "float",
-            PathAwareValue::Char((path, _))         => "char",
-            PathAwareValue::List((path, _))         => "array",
-            PathAwareValue::Map((path, _))          => "map",
-            PathAwareValue::RangeInt((path, _))     => "range(int, int)",
-            PathAwareValue::RangeFloat((path, _))   => "range(float, float)",
-            PathAwareValue::RangeChar((path, _))    => "range(char, char)",
+            PathAwareValue::Null(_path)              => "null",
+            PathAwareValue::String((_path, _))       => "String",
+            PathAwareValue::Regex((_path, _))        => "Regex",
+            PathAwareValue::Bool((_path, _))         => "bool",
+            PathAwareValue::Int((_path, _))          => "int",
+            PathAwareValue::Float((_path, _))        => "float",
+            PathAwareValue::Char((_path, _))         => "char",
+            PathAwareValue::List((_path, _))         => "array",
+            PathAwareValue::Map((_path, _))          => "map",
+            PathAwareValue::RangeInt((_path, _))     => "range(int, int)",
+            PathAwareValue::RangeFloat((_path, _))   => "range(float, float)",
+            PathAwareValue::RangeChar((_path, _))    => "range(char, char)",
         }
     }
 
