@@ -1,6 +1,7 @@
 [
   {
-    "input": {
+    "input": 
+    {
       "Resources": {
           "CounterTaskDefExecutionRole5959CB2D": {
               "Type": "AWS::IAM::Role",
@@ -66,7 +67,41 @@
     },
     "expectations": {
       "rules": {
-        "deny_permissions_boundary_iam_role": "FAIL"
+        "deny_permissions_boundary_iam_role": "FAIL",
+        "allow_only_iam_roles_with_permission_boundaries_with_not_allowed_keys": "FAIL",
+        "ensure_roles_tagged_with_pattern_have_permission_boundary": "PASS"
+      }
+    }
+  },
+  {
+    "input": {
+      "Resources": {
+          "CounterTaskDefExecutionRole5959CB2D": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                  "AssumeRolePolicyDocument": {
+                      "Statement": [
+                      {
+                          "Action": "sts:AssumeRole",
+                          "Effect": "Allow",
+                          "Principal": {
+                          "Service": "ecs-tasks.amazonaws.com"
+                          }
+                      }],
+                      "Version": "2012-10-17"
+                  },
+              },
+              "Metadata": {
+                  "aws:cdk:path": "foo/Counter/TaskDef/ExecutionRole/Resource"
+              }
+          }
+      }
+    },
+    "expectations": {
+      "rules": {
+        "deny_permissions_boundary_iam_role": "FAIL",
+        "allow_only_iam_roles_with_permission_boundaries_with_not_allowed_keys": "FAIL",
+        "ensure_roles_tagged_with_pattern_have_permission_boundary": "SKIP"
       }
     }
   }

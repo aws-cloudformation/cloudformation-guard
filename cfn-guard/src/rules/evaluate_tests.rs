@@ -1064,4 +1064,79 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
     Ok(())
 }
 
-
+#[test]
+fn test_rules_with_some_clauses() -> Result<()> {
+    let query = r#"some Resources.*[ Type == 'AWS::IAM::Role' ].Properties.Tags[ Key == /[A-Za-z0-9]+Role/ ]"#;
+    let resources = r#"    {
+      "Resources": {
+          "CounterTaskDefExecutionRole5959CB2D": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                  "AssumeRolePolicyDocument": {
+                      "Statement": [
+                      {
+                          "Action": "sts:AssumeRole",
+                          "Effect": "Allow",
+                          "Principal": {
+                          "Service": "ecs-tasks.amazonaws.com"
+                          }
+                      }],
+                      "Version": "2012-10-17"
+                  },
+                  "PermissionsBoundary": {"Fn::Sub" : "arn::aws::iam::${AWS::AccountId}:policy/my-permission-boundary"},
+                  "Tags": [{ "Key": "TestRole", "Value": ""}]
+              },
+              "Metadata": {
+                  "aws:cdk:path": "foo/Counter/TaskDef/ExecutionRole/Resource"
+              }
+          },
+          "BlankRole001": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                  "AssumeRolePolicyDocument": {
+                      "Statement": [
+                      {
+                          "Action": "sts:AssumeRole",
+                          "Effect": "Allow",
+                          "Principal": {
+                          "Service": "ecs-tasks.amazonaws.com"
+                          }
+                      }],
+                      "Version": "2012-10-17"
+                  },
+                  "Tags": [{ "Key": "FooBar", "Value": ""}]
+              },
+              "Metadata": {
+                  "aws:cdk:path": "foo/Counter/TaskDef/ExecutionRole/Resource"
+              }
+          },
+          "BlankRole002": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                  "AssumeRolePolicyDocument": {
+                      "Statement": [
+                      {
+                          "Action": "sts:AssumeRole",
+                          "Effect": "Allow",
+                          "Principal": {
+                          "Service": "ecs-tasks.amazonaws.com"
+                          }
+                      }],
+                      "Version": "2012-10-17"
+                  }
+              },
+              "Metadata": {
+                  "aws:cdk:path": "foo/Counter/TaskDef/ExecutionRole/Resource"
+              }
+          }
+      }
+    }
+    "#;
+    let value = PathAwareValue::try_from(resources)?;
+    let parsed = AccessQuery::try_from(query)?;
+    let dummy = DummyEval{};
+    let selected = value.select(parsed.match_all, &parsed.query, &dummy)?;
+    println!("{:?}", selected);
+    assert_eq!(selected.len(), 1);
+    Ok(())
+}

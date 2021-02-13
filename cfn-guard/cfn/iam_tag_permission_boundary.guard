@@ -4,3 +4,21 @@ rule deny_permissions_boundary_iam_role {
         Properties.PermissionsBoundary NOT EXISTS
     }
 }
+
+rule allow_only_iam_roles_with_permission_boundaries_with_not_allowed_keys {
+    AWS::IAM::Role {
+        # If there are no tags on an IAM role that is a failure as well  
+        Properties.Tags[*].Key != /[A-Za-z0-9]+Role/
+        Properties.PermissionsBoundary EXISTS
+    }
+}
+
+let pattern = /[A-Za-z0-9]+Role/
+
+rule ensure_roles_tagged_with_pattern_have_permission_boundary {
+    let roles = Resources.*[ Type == 'AWS::IAM::Role' 
+                             Properties.Tags[ Key == %pattern ] !EMPTY ]
+    when %roles !EMPTY {
+        %roles[*].Properties.PermissionsBoundary EXISTS
+    }
+}

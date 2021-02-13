@@ -245,7 +245,12 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let result = match &clause.access_clause.comparator.0 {
             CmpOperator::Empty |
             CmpOperator::KeysEmpty=>
-                match &lhs { None => Some(false), Some(l) => Some(l.is_empty()) }
+                match &lhs { None =>
+                    return Err(Error::new(ErrorKind::RetrievalError(
+                        format!("Expecting a resolved LHS {} for EMPTY comparison and did not find one, Clause@{}",
+                                SliceDisplay(&clause.access_clause.query.query),
+                                clause.access_clause.location)
+                ))), Some(l) => Some(l.is_empty()) }
 
             CmpOperator::Exists => match &lhs { None => Some(false), Some(_) => Some(true) }
 
@@ -266,7 +271,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None => return Err(Error::new(ErrorKind::RetrievalError(
+            None =>
+                return Err(Error::new(ErrorKind::RetrievalError(
                 format!("Expecting a resolved LHS {} for comparison and did not find one, Clause@{}",
                         SliceDisplay(&clause.access_clause.query.query),
                         clause.access_clause.location)
