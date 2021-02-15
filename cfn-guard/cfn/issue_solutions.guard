@@ -1,0 +1,64 @@
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/94
+rule disallow_iam_fails {
+    # Don't allow any IAM resource types
+    Resources.*[Type == /AWS::IAM/] EMPTY
+}
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/3
+rule require_s3_bucket {
+    # Ensure an S3 bucket resource type is in template
+    Resources.*[Type == "AWS::S3::Bucket"]  NOT EMPTY
+}
+
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/5
+rule match_list_values {
+    # Ensure all items in an array match a given all_match_value
+    let s3_buckets = Resources.*[Type == "AWS::S3::Bucket"]
+    %s3_buckets.Metadata.ListAllMatch[*] == "same"
+    %s3_buckets.Metadata.ListAllMatch[*] != "not"
+}
+
+rule one_does_not_match_list_fails {
+    #Show if any do not match, rule fails
+    AWS::S3::Bucket {
+        Metadata.ListAllDontMatch[*] == "same"
+    }
+}
+
+rule any_not_in_match {
+    # if one matches, pass
+    AWS::S3::Bucket {
+        let match_once = "same"
+        %match_once IN Metadata.ListAllDontMatch
+
+        # if none match, pass
+        let none_match = "not"
+        %none_match NOT IN  Metadata.ListAllMatch
+    }
+}
+
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/58
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/107
+# Disallow public write (s3:PutObject or s3:*) when statement gives access to * and write policy on bucket
+rule disallow_public_write_s3_policy {
+    AWS::S3::BucketPolicy {
+        let permissive_statements = Properties.PolicyDocument.Statement[ Principal == "*"]
+        %permissive_statements.Action[*] !=  /s3:PutObject|s3:\*/
+    }
+}
+
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/98
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/107
+# enforce that a property is set
+rule enforce_property_set {
+    AWS::S3::BucketPolicy {
+        Properties.Bucket EXISTS
+    }
+}
+
+# https://github.com/aws-cloudformation/cloudformation-guard/issues/86
+# enforce tagging standards
+rule enforce_certain_tags {
+# filtering here will limit checks to apply to only resources that have tags
+    let tags = Resources.*[Properties.Tags EXISTS].Properties.Tags[*]
+    %tags.Key IN ["MyValue", "KeyValue"]
+}
