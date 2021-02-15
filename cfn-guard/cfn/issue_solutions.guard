@@ -4,8 +4,8 @@ rule disallow_iam_fails {
     Resources.*[Type == /AWS::IAM/] EMPTY
 }
 # https://github.com/aws-cloudformation/cloudformation-guard/issues/3
-rule disallow_s3_bucket {
-    # Ensure a bucket is in template
+rule require_s3_bucket {
+    # Ensure an S3 bucket resource type is in template
     Resources.*[Type == "AWS::S3::Bucket"]  NOT EMPTY
 }
 
@@ -36,12 +36,6 @@ rule any_not_in_match {
     }
 }
 
-# Somewhat related to: https://github.com/aws-cloudformation/cloudformation-guard/issues/39
-# show how parameter values can be checked
-rule check_parameter_values {
-    Parameters.*[Type == "String"].Default == "t2.micro"
-}
-
 # https://github.com/aws-cloudformation/cloudformation-guard/issues/58
 # https://github.com/aws-cloudformation/cloudformation-guard/issues/107
 # Disallow public write (s3:PutObject or s3:*) when statement gives access to * and write policy on bucket
@@ -64,6 +58,7 @@ rule enforce_property_set {
 # https://github.com/aws-cloudformation/cloudformation-guard/issues/86
 # enforce tagging standards
 rule enforce_certain_tags {
+# filtering here will limit checks to apply to only resources that have tags
     let tags = Resources.*[Properties.Tags EXISTS].Properties.Tags[*]
     %tags.Key IN ["MyValue", "KeyValue"]
 }
