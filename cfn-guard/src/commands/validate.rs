@@ -48,6 +48,8 @@ impl Command for Validate {
                 .help("sort by last modified times within a directory"))
             .arg(Arg::with_name("verbose").long("verbose").short("v").required(false)
                 .help("verbose logging"))
+            .arg(Arg::with_name("print-json").long("print-json").short("p").required(false)
+                .help("Print output in json format"))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
@@ -67,6 +69,7 @@ impl Command for Validate {
             false
         };
 
+        let print_json = app.is_present("print-json");
 
         let files = get_files(file, cmp)?;
         let data_files = get_files(data, cmp)?;
@@ -83,7 +86,7 @@ impl Command for Validate {
                         },
 
                         Ok(rules) => {
-                            evaluate_against_data_files(&data_files, &rules, verbose)?
+                            evaluate_against_data_files(&data_files, &rules, verbose, print_json)?
                         }
                     }
                 }
@@ -96,7 +99,8 @@ impl Command for Validate {
 #[derive(Debug)]
 struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
-    verbose: bool
+    verbose: bool,
+    print_json: bool
 }
 
 fn colored_string(status: Option<Status>) -> ColoredString {
@@ -155,42 +159,50 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    fn new(root: StackTracker<'r>, verbose: bool) -> Self {
+    fn new(root: StackTracker<'r>, verbose: bool, print_json: bool) -> Self {
         ConsoleReporter {
             root_context: root,
             verbose,
+            print_json,
         }
     }
 
     fn report(self) {
-        print!("{}", "Summary Report".underline());
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        println!(" Overall File Status = {}", colored_string(top.status));
 
-        let longest = top.children.iter()
-            .max_by(|f, s| {
-                (*f).context.len().cmp(&(*s).context.len())
-            })
-            .map(|elem| elem.context.len())
-            .unwrap_or(20);
-
-       for container in &top.children {
-           print!("{}", container.context);
-           let container_level = container.context.len();
-           let spaces = longest - container_level + 4;
-           for _idx in 0..spaces {
-               print!(" ");
-           }
-           println!("{}", colored_string(container.status));
+        if self.verbose && self.print_json {
+            let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
+            println!("{}", serialized_user);
         }
+        else {
+            print!("{}", "Summary Report".underline());
+            println!(" Overall File Status = {}", colored_string(top.status));
 
-        if self.verbose {
-            println!("Evaluation Tree");
-            for each in &top.children {
-                print_context(each, 1);
+            let longest = top.children.iter()
+                .max_by(|f, s| {
+                    (*f).context.len().cmp(&(*s).context.len())
+                })
+                .map(|elem| elem.context.len())
+                .unwrap_or(20);
+
+           for container in &top.children {
+               print!("{}", container.context);
+               let container_level = container.context.len();
+               let spaces = longest - container_level + 4;
+               for _idx in 0..spaces {
+                   print!(" ");
+               }
+               println!("{}", colored_string(container.status));
             }
-        }
+
+           if self.verbose {
+               println!("Evaluation Tree");
+               for each in &top.children {
+                   print_context(each, 1);
+               }
+           }
+       }
     }
 }
 
@@ -237,7 +249,7 @@ impl<'r> ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<()> {
+fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool) -> Result<()> {
     let mut iterator = iterate_over(data_files, |content, _| {
         match serde_json::from_str::<serde_json::Value>(&content) {
             Ok(value) => PathAwareValue::try_from(value),
@@ -254,7 +266,7 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, ve
             Ok(root) => {
                 let root_context = RootScope::new(rules, &root);
                 let stacker = StackTracker::new(&root_context);
-                let reporter = ConsoleReporter::new(stacker, verbose);
+                let reporter = ConsoleReporter::new(stacker, verbose, print_json);
                 rules.evaluate(&root, &reporter)?;
                 reporter.report();
             }

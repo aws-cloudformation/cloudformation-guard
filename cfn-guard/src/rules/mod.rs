@@ -13,10 +13,11 @@ use colored::*;
 use crate::rules::path_value::PathAwareValue;
 use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
+use serde::{Serialize};
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 pub(crate) enum Status {
     PASS,
     FAIL,
@@ -49,7 +50,7 @@ impl TryFrom<&str> for Status {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 pub(crate) enum EvaluationType {
     File,
     Rule,

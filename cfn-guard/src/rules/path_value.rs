@@ -18,8 +18,9 @@ use super::{EvaluationContext, Evaluate, Status};
 use std::cmp::Ordering;
 use crate::rules::evaluate::AutoReport;
 use crate::rules::EvaluationType;
+use serde::{Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub(crate) struct Path(pub(crate) String);
 
 impl std::fmt::Display for Path {
@@ -103,14 +104,14 @@ impl Path {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize)]
 pub(crate) struct MapValue {
     keys: Vec<PathAwareValue>,
     values: indexmap::IndexMap<String, PathAwareValue>,
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) enum PathAwareValue {
     Null(Path),
     String((Path, String)),

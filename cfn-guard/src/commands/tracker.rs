@@ -1,10 +1,12 @@
 use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
 use nom::lib::std::fmt::Formatter;
+use serde::{Serialize};
 
-#[derive(Debug)]
+#[derive(Serialize, Debug)]
 pub(super) struct StatusContext {
     pub(super) eval_type: EvaluationType,
     pub(super) context: String,
+    #[serde(skip_serializing)]
     pub(super) msg: Option<String>,
     pub(super) from: Option<PathAwareValue>,
     pub(super) to: Option<PathAwareValue>,
