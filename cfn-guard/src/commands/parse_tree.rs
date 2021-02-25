@@ -38,7 +38,7 @@ impl Command for ParseTree {
             .about(r#"Parse tree for the rules"#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file").required(false))
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write to output file").required(false))
-            .arg(Arg::with_name("print-json").long("print-json").short("p").required(false)
+            .arg(Arg::with_name("print-json").long("print-json").short("j").required(false)
                 .help("Print output in json format"))
             .arg(Arg::with_name("print-yaml").long("print-yaml").short("y").required(false)
                 .help("Print output in json format"))
@@ -59,8 +59,6 @@ impl Command for ParseTree {
         };
 
         let yaml = !app.is_present("print-json");
-
-        let print_json = app.is_present("print-json");
         let mut content = String::new();
         file.read_to_string(&mut content)?;
         let span = crate::rules::parser::Span::new_extra(&content, "");
