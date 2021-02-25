@@ -34,6 +34,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./target/release/cfn-guard
+        asset_path: ./cfn-guard-v2-${{ matrix.os }}.tar.gz 
         asset_name: cfn-guard-v2-${{ matrix.os }}.tar.gz
         asset_content_type: application/octet-stream
