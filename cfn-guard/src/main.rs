@@ -21,8 +21,9 @@ fn main() -> Result<(), Error>{
              the rules specified."#);
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(Box::new(crate::commands::validate::Validate::new()));
+    commands.push(Box::new(crate::commands::parse_tree::ParseTree::new()));
     commands.push(Box::new(crate::commands::test::Test::new()));
+    commands.push(Box::new(crate::commands::validate::Validate::new()));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(
@@ -42,7 +43,7 @@ fn main() -> Result<(), Error>{
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
                 match (*command).execute(value) {
-                    Err(e) => println!("Error occured {}", e),
+                    Err(e) => println!("Error occurred {}", e),
                     Ok(_) => {}
                 }
             }

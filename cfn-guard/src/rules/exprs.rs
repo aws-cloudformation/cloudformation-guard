@@ -2,11 +2,13 @@ use crate::rules::values::*;
 
 use std::hash::Hash;
 use std::fmt::Formatter;
+use serde::{Serialize, Deserialize};
 
-#[derive(PartialEq, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
     pub(crate) line: u32,
     pub(crate) column: u32,
+    #[serde(skip_serializing, skip_deserializing)]
     pub(crate) file_name: &'loc str,
 }
 
@@ -17,7 +19,7 @@ impl<'loc> std::fmt::Display for FileLocation<'loc> {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum LetValue<'loc> {
     Value(Value),
     AccessClause(AccessQuery<'loc>),
@@ -29,7 +31,7 @@ pub(crate) enum LetValue<'loc> {
 /// from incoming context. Access expressions support **predicate** queries to help
 /// match specific selections [crate::rules::common::walk_type]
 ///
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LetExpr<'loc> {
     pub(crate) var: String,
     pub(crate) value: LetValue<'loc>,
@@ -50,7 +52,7 @@ pub(crate) struct LetExpr<'loc> {
 /// DynamoDB Table we can use the following `resources.*[type=/AWS::Dynamo/]`
 ///
 ///
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
     Key(String),
     MapKeys,
@@ -114,7 +116,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct AccessQuery<'loc> {
     pub(crate) query: Vec<QueryPart<'loc>>,
     pub(crate) match_all: bool,
@@ -122,7 +124,7 @@ pub(crate) struct AccessQuery<'loc> {
 
 //pub(crate) type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct AccessClause<'loc> {
     pub(crate) query: AccessQuery<'loc>,
     pub(crate) comparator: (CmpOperator, bool),
@@ -134,13 +136,13 @@ pub(crate) struct AccessClause<'loc> {
 pub(crate) type Disjunctions<T> = Vec<T>;
 pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardAccessClause<'loc> {
     pub(crate) access_clause: AccessClause<'loc>,
     pub(crate) negation: bool
 }
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
@@ -148,7 +150,7 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) location: FileLocation<'loc>
 }
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>)
@@ -156,34 +158,34 @@ pub(crate) enum GuardClause<'loc> {
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Block<'loc, T> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) conjunctions: Conjunctions<T>,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TypeBlock<'loc> {
     pub(crate) type_name: String,
     pub(crate) conditions: Option<WhenConditions<'loc>>,
     pub(crate) block: Block<'loc, GuardClause<'loc>>, // only contains access clauses
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum RuleClause<'loc> {
     Clause(GuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
     TypeBlock(TypeBlock<'loc>)
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Rule<'loc> {
     pub(crate) rule_name: String,
     pub(crate) conditions: Option<WhenConditions<'loc>>,
     pub(crate) block: Block<'loc, RuleClause<'loc>>,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RulesFile<'loc> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) guard_rules: Vec<Rule<'loc>>,

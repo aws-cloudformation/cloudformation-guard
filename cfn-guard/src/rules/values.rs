@@ -7,9 +7,9 @@ use nom::lib::std::fmt::Formatter;
 use crate::rules::errors::{Error};
 use crate::rules::parser::Span;
 
-use serde::{Serialize};
+use serde::{Serialize, Deserialize};
 
-#[derive(PartialEq, Debug, Clone, Hash, Copy)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
     Eq,
     In,
@@ -45,7 +45,7 @@ impl std::fmt::Display for CmpOperator {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Null,
     String(String),
@@ -114,7 +114,7 @@ impl Hash for Value {
 //
 //    .X in r(10, 20]
 //    .X in r(10, 20)
-#[derive(PartialEq, Debug, Clone, Serialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RangeType<T: PartialOrd> {
     pub upper: T,
     pub lower: T,
