@@ -12,9 +12,9 @@ use rules::errors::Error;
 fn main() -> Result<(), Error>{
     let mut app =
         App::new("cfn-guard")
-            .version("1.1")
+            .version("2.0")
             .about(r#"
-             Gaurd Rules provides a simple declerative syntax
+             Guard Rules provides a simple declerative syntax
              based on Conjuctive Normal Form (fancy way of saying
              it is a logical AND of OR clauses). It evaluates
              incoming structured payload (JSON/YAML) against
