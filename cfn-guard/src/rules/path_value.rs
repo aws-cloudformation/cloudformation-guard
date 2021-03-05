@@ -134,6 +134,8 @@ impl PartialEq for PathAwareValue {
 
             (PathAwareValue::List((_, list)), PathAwareValue::List((_, list2))) => list == list2,
 
+            (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
+
             (rest, rest2) => match compare_values(rest, rest2) {
                     Ok(ordering) => match ordering {
                         Ordering::Equal => true,
@@ -521,8 +523,6 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
             None => Err(Error::new(ErrorKind::NotComparable("Float values are not comparable".to_owned())))
         },
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
-        (PathAwareValue::Bool(_b), PathAwareValue::Bool(_b2)) => Ok(Ordering::Equal),
-        (PathAwareValue::Regex(_r), PathAwareValue::Regex(_r2)) => Ok(Ordering::Equal),
         (_, _) => Err(Error::new(ErrorKind::NotComparable(
             format!("PathAwareValues are not comparable {}, {}", first.type_info(), other.type_info()))))
     }
