@@ -96,8 +96,38 @@ impl Command for Validate {
     }
 }
 
+pub fn validate_and_return_json(
+    data: &str,
+    rules: &str,
+) -> Result<String> {
+    let mut input_data = match serde_json::from_str::<serde_json::Value>(&data) {
+       Ok(value) => PathAwareValue::try_from(value),
+       Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+    };
+
+    let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
+
+    match crate::rules::parser::rules_file(span) {
+
+        Ok(rules) => {
+            match input_data {
+                Ok(root) => {
+                    let root_context = RootScope::new(&rules, &root);
+                    let stacker = StackTracker::new(&root_context);
+                    let reporter = ConsoleReporter::new(stacker, true, true);
+                    rules.evaluate(&root, &reporter)?;
+                    let json_result = reporter.get_result_json();
+                    return Ok((json_result));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+    }
+}
+
 #[derive(Debug)]
-struct ConsoleReporter<'r> {
+pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     verbose: bool,
     print_json: bool
@@ -159,12 +189,18 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    fn new(root: StackTracker<'r>, verbose: bool, print_json: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, verbose: bool, print_json: bool) -> Self {
         ConsoleReporter {
             root_context: root,
             verbose,
             print_json,
         }
+    }
+
+    pub fn get_result_json(self) -> String {
+        let stack = self.root_context.stack();
+        let top = stack.first().unwrap();
+        return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
     }
 
     fn report(self) {

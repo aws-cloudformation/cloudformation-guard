@@ -28,7 +28,7 @@ impl StatusContext {
     }
 }
 
-pub(super) struct StackTracker<'r> {
+pub(crate) struct StackTracker<'r> {
     root_context: &'r dyn EvaluationContext,
     stack: std::cell::RefCell<Vec<StatusContext>>,
 }
