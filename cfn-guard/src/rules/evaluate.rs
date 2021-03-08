@@ -615,14 +615,60 @@ impl<'loc> Evaluate for Rule<'loc> {
         }
 
         let block_scope = BlockScope::new(&self.block, context, var_resolver);
-        match self.block.conjunctions.evaluate(context, &block_scope) {
-            Ok(status) => {
-                let message = format!("Rule@{}, Status = {:?}", self.rule_name, status);
-
-                return Ok(auto.status(status).message(message).get_status())
-            },
-            other => other
-        }
+        Ok({
+            let status = 'outer: loop {
+                'next_conjunction:
+                for each in &self.block.conjunctions {
+                    for each_rule_clause in each {
+                        let status = match each_rule_clause {
+                            RuleClause::Clause(gc) => gc.evaluate(context, var_resolver)?,
+                            RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver)?,
+                            RuleClause::WhenBlock(conditions, block) => {
+                                let mut auto_cond = AutoReport::new(
+                                    EvaluationType::Condition, var_resolver, "");
+                                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
+                                    Status::PASS => {
+                                        let mut auto_block = AutoReport::new(
+                                            EvaluationType::ConditionBlock,
+                                            var_resolver,
+                                            ""
+                                        );
+                                        let block_scope = BlockScope::new(block, context, var_resolver);
+                                        auto_block.status(block.conjunctions.evaluate(context, &block_scope)?).get_status()
+                                    },
+                                    _ => {
+                                        let mut skip_block = AutoReport::new(
+                                            EvaluationType::ConditionBlock,
+                                            var_resolver,
+                                            ""
+                                        );
+                                        //
+                                        // when block SKIPs in Rule clauses from a rules block's evaluation is
+                                        // a PASS for the whole block, SKIP to next disjunction
+                                        //
+                                        skip_block.status(Status::SKIP);
+                                        continue; // pick next disjunction
+                                    }
+                                }
+                            }
+                        };
+                        if status == Status::PASS {
+                            continue 'next_conjunction;
+                        }
+                        //
+                        // If it is a FAIL/SKIP, try to NEXT DISJUNCTION CLAUSE
+                        //
+                    } // for each disjunction clause
+                    //
+                    // Either all the clauses SKIPPED, in which we don't evaluate other clauses, we fail
+                    // this overall RULE clause
+                    //
+                    break 'outer Status::FAIL
+                } // for each conjunction of disjunction clauses
+                break Status::PASS
+            };
+            auto.status(status).get_status()
+        })
     }
 }
 
