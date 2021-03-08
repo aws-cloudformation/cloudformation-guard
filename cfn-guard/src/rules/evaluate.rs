@@ -245,12 +245,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let result = match &clause.access_clause.comparator.0 {
             CmpOperator::Empty |
             CmpOperator::KeysEmpty=>
-                match &lhs { None =>
-                    return Err(Error::new(ErrorKind::RetrievalError(
-                        format!("Expecting a resolved LHS {} for EMPTY comparison and did not find one, Clause@{}",
-                                SliceDisplay(&clause.access_clause.query.query),
-                                clause.access_clause.location)
-                ))), Some(l) => Some(l.is_empty()) }
+                match &lhs { None => Some(false), Some(l) => Some(l.is_empty()) }
 
             CmpOperator::Exists => match &lhs { None => Some(false), Some(_) => Some(true) }
 
@@ -271,8 +266,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None =>
-                return Err(Error::new(ErrorKind::RetrievalError(
+            None => return Err(Error::new(ErrorKind::RetrievalError(
                 format!("Expecting a resolved LHS {} for comparison and did not find one, Clause@{}",
                         SliceDisplay(&clause.access_clause.query.query),
                         clause.access_clause.location)
@@ -621,25 +615,25 @@ impl<'loc> Evaluate for Rule<'loc> {
                 for each in &self.block.conjunctions {
                     for each_rule_clause in each {
                         let status = match each_rule_clause {
-                            RuleClause::Clause(gc) => gc.evaluate(context, var_resolver)?,
-                            RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver)?,
+                            RuleClause::Clause(gc) => gc.evaluate(context, &block_scope)?,
+                            RuleClause::TypeBlock(tb) => tb.evaluate(context, &block_scope)?,
                             RuleClause::WhenBlock(conditions, block) => {
                                 let mut auto_cond = AutoReport::new(
-                                    EvaluationType::Condition, var_resolver, "");
-                                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
+                                    EvaluationType::Condition, &block_scope, "");
+                                match auto_cond.status(conditions.evaluate(context, &block_scope)?).get_status() {
                                     Status::PASS => {
                                         let mut auto_block = AutoReport::new(
                                             EvaluationType::ConditionBlock,
-                                            var_resolver,
+                                            &block_scope,
                                             ""
                                         );
-                                        let block_scope = BlockScope::new(block, context, var_resolver);
+                                        let block_scope = BlockScope::new(block, context, &block_scope);
                                         auto_block.status(block.conjunctions.evaluate(context, &block_scope)?).get_status()
                                     },
                                     _ => {
                                         let mut skip_block = AutoReport::new(
                                             EvaluationType::ConditionBlock,
-                                            var_resolver,
+                                            &block_scope,
                                             ""
                                         );
                                         //
@@ -647,7 +641,7 @@ impl<'loc> Evaluate for Rule<'loc> {
                                         // a PASS for the whole block, SKIP to next disjunction
                                         //
                                         skip_block.status(Status::SKIP);
-                                        continue; // pick next disjunction
+                                        Status::PASS
                                     }
                                 }
                             }

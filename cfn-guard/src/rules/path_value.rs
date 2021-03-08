@@ -485,7 +485,7 @@ impl PathAwareValue {
         let mut accumulated = Vec::with_capacity(elements.len());
         for each in elements {
             if !query.is_empty() {
-                match each.select(all, &query[1..], resolver) {
+                match each.select(all, query, resolver) {
                     Ok(result) => {
                         accumulated.extend(result);
                     },

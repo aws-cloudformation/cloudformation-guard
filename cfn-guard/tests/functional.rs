@@ -30,14 +30,14 @@ mod tests {
                 "context": "default",
                 "from": null,
                 "to": null,
-                "status": "SKIP",
+                "status": "FAIL",
                 "children": [
                   {
                     "eval_type": "Type",
                     "context": "AWS::ApiGateway::Method",
                     "from": null,
                     "to": null,
-                    "status": "SKIP",
+                    "status": "FAIL",
                     "children": [
                       {
                         "eval_type": "Filter",
@@ -61,7 +61,7 @@ mod tests {
                         "context": "AWS::ApiGateway::Method#0(/Resources/VPC)",
                         "from": null,
                         "to": null,
-                        "status": "SKIP",
+                        "status": "FAIL",
                         "children": [
                           {
                             "eval_type": "Clause",
