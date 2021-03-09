@@ -1230,3 +1230,78 @@ fn some_testing() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn double_projection_tests() -> Result<()> {
+    let rule_str = r###"
+    rule check_ecs_against_local_or_metadata {
+        let ecs_tasks = Resources.*[
+            Type == 'AWS::ECS::TaskDefinition'
+            Properties.TaskRoleArn is_string
+        ]
+
+#        when some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt' exists {
+#            let iam_references = %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
+#            let iam_local = Resources.%iam_references
+#            %iam_local.Type == 'AWS::IAM::Role'
+#            %iam_local.Properties.PermissionsBoundary exists
+#        } or
+        when %ecs_tasks.Properties.TaskRoleArn !empty {
+            %ecs_tasks.Metadata.NotRestricted exists
+        }
+    }
+    "###;
+
+    let resources_str = r###"
+    {
+        Resources: {
+            ecs: {
+                Type: 'AWS::ECS::TaskDefinition',
+                Metadata: {
+                    NotRestricted: true
+                },
+                Properties: {
+                    TaskRoleArn: "aws:arn..."
+                }
+            },
+            ecs2: {
+              Type: 'AWS::ECS::TaskDefinition',
+              Properties: {
+                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
+              }
+            },
+            iam: {
+              Type: 'AWS::IAM::Role',
+              Properties: {
+                PermissionsBoundary: "aws:arn"
+              }
+            }
+        }
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let dummy = DummyEval{};
+    let rule = Rule::try_from(rule_str)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    println!("{}", status);
+    assert_eq!(status, Status::PASS);
+
+//    let resources_str = r###"
+//    {
+//        Resources: {
+//            ecs2: {
+//              Type: 'AWS::ECS::TaskDefinition',
+//              Properties: {
+//                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
+//              }
+//            }
+//        }
+//    }
+//    "###;
+//    let value = PathAwareValue::try_from(resources_str)?;
+//    let status = rule.evaluate(&value, &dummy)?;
+//    println!("{}", status);
+//    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}

@@ -110,6 +110,12 @@ pub(crate) struct MapValue {
     values: indexmap::IndexMap<String, PathAwareValue>,
 }
 
+impl MapValue {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) enum PathAwareValue {
@@ -268,7 +274,50 @@ impl QueryResolver for PathAwareValue {
 
                     Err(_) => match self {
                         PathAwareValue::Map((path, map)) => {
-                            if let Some(next) = map.values.get(key) {
+                            if query[0].is_variable() {
+                                let var = query[0].variable().unwrap();
+                                let keys = resolver.resolve_variable(var)?;
+                                let mut acc = Vec::with_capacity(keys.len());
+                                for each_key in keys {
+                                    if let PathAwareValue::String((_, k)) = each_key {
+                                        if let Some(next) = map.values.get(k) {
+                                            match next.select(all, &query[1..], resolver) {
+                                                Ok(result) => {
+                                                    acc.extend(result);
+                                                },
+
+                                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                                    if all {
+                                                        return Err(Error::new(ErrorKind::RetrievalError(e)));
+                                                    }
+                                                },
+
+                                                Err(e) => return Err(e)
+                                            }
+                                        }
+                                        else if all {
+                                            return Err(Error::new(
+                                                ErrorKind::RetrievalError(
+                                                    format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
+                                                            key, self, path, SliceDisplay(query))
+                                                )))
+                                        }
+                                    }
+                                    else {
+                                       return Err(Error::new(
+                                           ErrorKind::NotComparable(
+                                               format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
+                                                   SliceDisplay(query),
+                                                   each_key.type_info(),
+                                                   each_key.self_value()
+                                               )
+                                           )
+                                       ))
+                                    }
+                                }
+                                Ok(acc)
+                            }
+                            else if let Some(next) = map.values.get(key) {
                                 next.select(all, &query[1..], resolver)
                             } else {
                                 Err(Error::new(

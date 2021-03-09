@@ -594,11 +594,36 @@ fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     let (input, operation) = alt((
         in_keyword,
         exists,
-        empty
+        empty,
+        is_type_operations,
     ))(input)?;
     Ok((input, (operation, not.is_some())))
 }
 
+fn is_list(input: Span) -> IResult<Span, CmpOperator> {
+    value( CmpOperator::IsList, alt((
+        tag("IS_LIST"),
+        tag("is_LIST"),
+    )))(input)
+}
+
+fn is_struct(input: Span) -> IResult<Span, CmpOperator> {
+    value( CmpOperator::IsStruct, alt((
+        tag("IS_STRUCT"),
+        tag("is_struct"),
+    )))(input)
+}
+
+fn is_string(input: Span) -> IResult<Span, CmpOperator> {
+    value( CmpOperator::IsString, alt((
+        tag("IS_STRING"),
+        tag("is_string"),
+        )))(input)
+}
+
+fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
+    alt(( is_string, is_list, is_struct ))(input)
+}
 
 fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     //
@@ -655,9 +680,12 @@ fn custom_message(input: Span) -> IResult<Span, &str> {
 pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     match op {
         CmpOperator::KeysExists |
-        CmpOperator::KeysEmpty |
-        CmpOperator::Empty |
-        CmpOperator::Exists => false,
+        CmpOperator::KeysEmpty  |
+        CmpOperator::Empty      |
+        CmpOperator::Exists     |
+        CmpOperator::IsString   |
+        CmpOperator::IsStruct   |
+        CmpOperator::IsList     => false,
         _ => true
     }
 }
@@ -671,14 +699,15 @@ fn predicate_filter_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClau
 fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
     preceded(zero_or_more_ws_or_comment,
              preceded(char('.'),
-             alt((
-                 map(  parse_int_value, |idx| {
-                     let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
-                     QueryPart::Index(idx)
-                 }),
-                 map(property_name, |p| QueryPart::Key(p)),
-                 value(QueryPart::AllValues, char('*')),
-                 )) // end alt
+                      alt((
+                          map(  parse_int_value, |idx| {
+                              let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+                              QueryPart::Index(idx)
+                          }),
+                          map(property_name, |p| QueryPart::Key(p)),
+                          map(var_name_access_inclusive, |p| QueryPart::Key(p)),
+                          value(QueryPart::AllValues, char('*')),
+                      )) // end alt
              ) // end preceded for char '.'
     )(input)
 }

@@ -245,9 +245,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let all = self.access_clause.query.match_all;
 
 
-        let lhs = match resolve_query(clause.access_clause.query.match_all, &clause.access_clause.query.query, context, var_resolver) {
-            Ok(v) => Some(v),
-            Err(Error(ErrorKind::RetrievalError(e))) => None,
+        let (lhs, retrieve_error, incompat_error) = match resolve_query(clause.access_clause.query.match_all, &clause.access_clause.query.query, context, var_resolver) {
+            Ok(v) => (Some(v), None, None),
+            Err(Error(ErrorKind::RetrievalError(e))) => (None, Some(e), None),
+            Err(Error(ErrorKind::IncompatibleError(e))) => if !all { (None, None, Some(e)) } else { return Err(Error::new(ErrorKind::IncompatibleError(e))) },
             Err(e) => return Err(e),
         };
 
@@ -256,14 +257,52 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             CmpOperator::KeysEmpty =>
                 //
                 // Retrieval Error is considered the same as an empty or !exists
+                // When using "SOME" keyword in the clause, then IncompatibleError is trapped to be none
+                // This is okay as long as the checks are for empty, exists
                 //
-                match &lhs { None => Some(true), Some(l) => Some(l.is_empty()) }
+                match &lhs {
+                    None => Some(true),
+                    Some(l) => Some(l.is_empty()),
+                }
 
             CmpOperator::Exists => match &lhs { None => Some(false), Some(_) => Some(true) }
             CmpOperator::Eq => match &clause.access_clause.compare_with {
                 Some(LetValue::Value(Value::Null)) =>
                     match &lhs { None => Some(true), Some(_) => Some(false), }
                 _ => None
+            },
+
+            CmpOperator::IsString => match &lhs {
+                None => Some(false),
+                Some(l) => Some(l.iter().find(|p|
+                    if let PathAwareValue::String(_) = **p {
+                        false
+                    } else {
+                        true
+                    }
+                ).map_or(true, |i| false))
+            },
+
+            CmpOperator::IsList => match &lhs {
+                None => Some(false),
+                Some(l) => Some(l.iter().find(|p|
+                    if let PathAwareValue::List(_) = **p {
+                        false
+                    } else {
+                        true
+                    }
+                ).map_or(true, |i| false))
+            },
+
+            CmpOperator::IsStruct => match &lhs {
+                None => Some(false),
+                Some(l) => Some(l.iter().find(|p|
+                    if let PathAwareValue::Map(_) = **p {
+                        false
+                    } else {
+                        true
+                    }
+                ).map_or(true, |i| false))
             }
 
             _ => None
@@ -277,12 +316,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None => return Err(Error::new(ErrorKind::RetrievalError(
-                format!("Expecting a resolved LHS {} for comparison and did not find one, Clause@{}",
-                        SliceDisplay(&clause.access_clause.query.query),
-                        clause.access_clause.location)
-            ))),
-
+            None => match retrieve_error {
+                Some(e) => return Err(Error::new(ErrorKind::RetrievalError(e))),
+                None => return Err(Error::new(ErrorKind::IncompatibleError(incompat_error.unwrap()))),
+            },
             Some(l) => l,
         };
 
