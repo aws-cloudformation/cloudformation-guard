@@ -6,6 +6,7 @@ use crate::rules::values::WithinRange;
 use super::*;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Status};
 use crate::rules::path_value::PathAwareValue;
+use crate::commands::RULES;
 
 #[test]
 fn test_int_parse() {
@@ -3695,3 +3696,81 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
     Ok(())
 }
 
+
+#[test]
+fn test_rules_file_default_rules() -> Result<(), Error> {
+    let s = r###"
+    AWS::AmazonMQ::Broker Properties.AutoMinorVersionUpgrade == false <<Version upgrades should be enabled to receive security updates>>
+    AWS::AmazonMQ::Broker Properties.EncryptionOptions.UseAwsOwnedKey == false <<CMKs should be used instead of AWS-provided KMS keys>>
+    "###;
+    let default_rule = Rule {
+        rule_name: String::from("default"),
+        conditions: None,
+        block: Block {
+            assignments: vec![],
+
+            conjunctions: vec![
+                vec![RuleClause::TypeBlock(TypeBlock {
+                    type_name: String::from("AWS::AmazonMQ::Broker"),
+                    conditions: None,
+                    block: Block {
+                        assignments: vec![],
+                        conjunctions: vec![
+                            vec![GuardClause::Clause(GuardAccessClause{
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![QueryPart::Key(String::from("Properties")), QueryPart::Key(String::from("AutoMinorVersionUpgrade"))],
+                                        match_all: true
+                                    },
+                                    comparator: (CmpOperator::Eq, false),
+                                    compare_with: Some(LetValue::Value(Value::Bool(false))),
+                                    custom_message: Some(String::from("Version upgrades should be enabled to receive security updates")),
+                                    location: FileLocation {
+                                        line: 2,
+                                        column: 27,
+                                        file_name: ""
+                                    }
+                                },
+                                negation: false
+                            })]
+                        ]
+                    }
+                })],
+                vec![RuleClause::TypeBlock(TypeBlock {
+                    type_name: String::from("AWS::AmazonMQ::Broker"),
+                    conditions: None,
+                    block: Block {
+                        assignments: vec![],
+                        conjunctions: vec![
+                            vec![GuardClause::Clause(GuardAccessClause{
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![QueryPart::Key(String::from("Properties")), QueryPart::Key(String::from("EncryptionOptions")), QueryPart::Key(String::from("UseAwsOwnedKey"))],
+                                        match_all: true
+                                    },
+                                    comparator: (CmpOperator::Eq, false),
+                                    compare_with: Some(LetValue::Value(Value::Bool(false))),
+                                    custom_message: Some(String::from("CMKs should be used instead of AWS-provided KMS keys")),
+                                    location: FileLocation {
+                                        line: 3,
+                                        column: 27,
+                                        file_name: ""
+                                    }
+                                },
+                                negation: false
+                            })]
+                        ]
+                    }
+                })]
+            ]
+
+            }
+        };
+
+    let rules_file = rules_file(from_str2(s))?;
+    assert_eq!(rules_file, RulesFile {
+        assignments: vec![],
+        guard_rules: vec![default_rule]
+    });
+    Ok(())
+}

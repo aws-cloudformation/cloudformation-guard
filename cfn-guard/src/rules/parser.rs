@@ -1369,9 +1369,9 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
         match each {
             Exprs::Rule(r) => named_rules.push(r),
             Exprs::Assignment(l) => global_assignments.push(l),
-            Exprs::DefaultClause(c) => default_rule_clauses.push(RuleClause::Clause(c)),
-            Exprs::DefaultTypeBlock(t) => default_rule_clauses.push(RuleClause::TypeBlock(t)),
-            Exprs::DefaultWhenBlock(w, b) => default_rule_clauses.push(RuleClause::WhenBlock(w, b)),
+            Exprs::DefaultClause(c) => default_rule_clauses.push(vec![RuleClause::Clause(c)]),
+            Exprs::DefaultTypeBlock(t) => default_rule_clauses.push(vec![RuleClause::TypeBlock(t)]),
+            Exprs::DefaultWhenBlock(w, b) => default_rule_clauses.push(vec![RuleClause::WhenBlock(w, b)]),
         }
     }
 
@@ -1381,7 +1381,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
             rule_name: "default".to_string(),
             block: Block {
                 assignments: vec![],
-                conjunctions: vec![default_rule_clauses]
+                conjunctions: default_rule_clauses
             }
         };
         named_rules.insert(0, default_rule);
