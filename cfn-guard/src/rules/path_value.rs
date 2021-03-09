@@ -493,6 +493,12 @@ impl PathAwareValue {
     }
 
     pub(crate) fn accumulate<'v>(all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
+        if elements.is_empty() && !query.is_empty() && all {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Remaining Query {}, No elements in array", SliceDisplay(query))
+            )));
+        }
+
         let mut accumulated = Vec::with_capacity(elements.len());
         for each in elements {
             if !query.is_empty() {

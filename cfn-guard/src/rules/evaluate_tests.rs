@@ -1140,3 +1140,93 @@ fn test_rules_with_some_clauses() -> Result<()> {
     assert_eq!(selected.len(), 1);
     Ok(())
 }
+
+#[test]
+fn some_testing() -> Result<()> {
+    let clause_some_str  = r#"some Tags[*].Key == /PROD/"#;
+    let clause_some = GuardClause::try_from(clause_some_str)?;
+
+    let clause_str  = r#"Tags[*].Key == /PROD/"#;
+    let clause = GuardClause::try_from(clause_str)?;
+
+    let values_str  = r#"{
+        Tags: [
+            {
+                Key: "InPROD",
+                Value: "ProdApp"
+            },
+            {
+                Key: "NoP",
+                Value: "NoQ"
+            }
+        ]
+    }
+    "#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let dummy = DummyEval{};
+
+    let status = clause_some.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str = r#"{ Tags: [] }"#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let status = clause_some.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::SKIP);
+    let r = clause.evaluate(&values, &dummy);
+    assert_eq!(r.is_err(), true);
+    match r {
+        Err(Error(ErrorKind::RetrievalError(_))) => {},
+        _ => assert!(false)
+    }
+
+    let values_str = r#"{ }"#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let r = clause.evaluate(&values, &dummy);
+    assert_eq!(r.is_err(), true);
+    match r {
+        Err(Error(ErrorKind::RetrievalError(_))) => {},
+        _ => assert!(false)
+    }
+    let r = clause_some.evaluate(&values, &dummy);
+    assert_eq!(r.is_err(), true);
+    match r {
+        Err(Error(ErrorKind::RetrievalError(_))) => {},
+        _ => assert!(false)
+    }
+
+    //
+    // Trying out the selection filters
+    //
+    let selection_str = r#"Resources.*[
+        Type == 'AWS::DynamoDB::Table'
+        some Properties.Tags[*].Key == /PROD/
+    ]"#;
+    let query = AccessQuery::try_from(selection_str)?;
+    let resources_str = r#"{
+        Resources: {
+            ddbSelected: {
+                Type: 'AWS::DynamoDB::Table',
+                Properties: {
+                    Tags: [
+                        {
+                            Key: "PROD",
+                            Value: "ProdApp"
+                        }
+                    ]
+                }
+            },
+            ddbNotSelected: {
+                Type: 'AWS::DynamoDB::Table'
+            }
+        }
+    }"#;
+    let resources = PathAwareValue::try_from(resources_str)?;
+    let selection_query = AccessQuery::try_from(selection_str)?;
+    let selected = resources.select(selection_query.match_all, &selection_query.query, &dummy)?;
+    println!("Selected = {:?}", selected);
+    assert_eq!(selected.len(), 1);
+
+    Ok(())
+}

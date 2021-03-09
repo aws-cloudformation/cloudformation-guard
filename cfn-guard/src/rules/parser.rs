@@ -834,14 +834,17 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
             (r, (AccessQuery{ query: vec![QueryPart::AllIndices], match_all: !any }, cmp))
         }
         else {
-            let (r, (access, _ign_space, cmp)) = tuple((
+            let (r, (access, _ign_space, cmp)) = map(tuple((
                 access,
                 // It is an error to not have a ws/comment following it
                 context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
                 // error if there is no value_cmp
                 context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                         value_cmp)
-            ))(rest)?;
+            )), |(mut query, ign, value)| {
+                query.match_all = !any;
+                (query, ign, value)
+            })(rest)?;
             (r, (access, cmp))
         };
 
