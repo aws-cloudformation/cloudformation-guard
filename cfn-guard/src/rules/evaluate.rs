@@ -252,67 +252,111 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Err(e) => return Err(e),
         };
 
-        let result = match &clause.access_clause.comparator.0 {
-            CmpOperator::Empty |
-            CmpOperator::KeysEmpty =>
+        let result = match clause.access_clause.comparator {
+            (CmpOperator::Empty, not) |
+            (CmpOperator::KeysEmpty, not) =>
                 //
                 // Retrieval Error is considered the same as an empty or !exists
                 // When using "SOME" keyword in the clause, then IncompatibleError is trapped to be none
                 // This is okay as long as the checks are for empty, exists
                 //
                 match &lhs {
-                    None => Some(true),
-                    Some(l) => Some(l.is_empty()),
-                }
-
-            CmpOperator::Exists => match &lhs { None => Some(false), Some(_) => Some(true) }
-            CmpOperator::Eq => match &clause.access_clause.compare_with {
-                Some(LetValue::Value(Value::Null)) =>
-                    match &lhs { None => Some(true), Some(_) => Some(false), }
-                _ => None
-            },
-
-            CmpOperator::IsString => match &lhs {
-                None => Some(false),
-                Some(l) => Some(l.iter().find(|p|
-                    if let PathAwareValue::String(_) = **p {
-                        false
-                    } else {
-                        true
+                    None => Some(negation_status(true, not, clause.negation)),
+                    Some(l) => {
+                        Some(
+                            if !l.is_empty() {
+                                if l[0].is_list() {
+                                    'all_empty: loop {
+                                        for element in l {
+                                            if let PathAwareValue::List((_, vec)) = *element {
+                                                match negation_status(vec.is_empty(), not, clause.negation) {
+                                                    Status::FAIL => break 'all_empty Status::FAIL,
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                        break Status::PASS
+                                    }
+                                }
+                                else {
+                                    negation_status(false, not, clause.negation)
+                                }
+                            }
+                            else {
+                                negation_status(true, not, clause.negation)
+                            })
                     }
-                ).map_or(true, |i| false))
-            },
+                },
 
-            CmpOperator::IsList => match &lhs {
-                None => Some(false),
-                Some(l) => Some(l.iter().find(|p|
-                    if let PathAwareValue::List(_) = **p {
-                        false
-                    } else {
-                        true
-                    }
-                ).map_or(true, |i| false))
-            },
+            (CmpOperator::Exists, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(_) => Some(negation_status(true, not, clause.negation)),
+                },
 
-            CmpOperator::IsStruct => match &lhs {
-                None => Some(false),
-                Some(l) => Some(l.iter().find(|p|
-                    if let PathAwareValue::Map(_) = **p {
-                        false
-                    } else {
-                        true
-                    }
-                ).map_or(true, |i| false))
-            }
+            (CmpOperator::Eq, not) =>
+                match &clause.access_clause.compare_with {
+                    Some(LetValue::Value(Value::Null)) =>
+                        match &lhs {
+                            None => Some(negation_status(true, not, clause.negation)),
+                            Some(_) => Some(negation_status(false, not, clause.negation)),
+                        }
+                    _ => None
+                },
+
+            (CmpOperator::IsString, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::String(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
+
+            (CmpOperator::IsList, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::List(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
+
+            (CmpOperator::IsStruct, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::Map(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
 
             _ => None
         };
 
         if let Some(r) = result {
-            let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
             let message = format!("Guard@{}", self.access_clause.location);
-            auto_reporter.status(status).message(message);
-            return Ok(status)
+            auto_reporter.status(r).from(
+                match &lhs {
+                    None => None,
+                    Some(l) => if !l.is_empty() {
+                        Some(l[0].clone())
+                    } else { None }
+                }
+            ).message(message);
+            return Ok(r)
         }
 
         let lhs = match lhs {
@@ -982,6 +1026,16 @@ impl<'s> AutoReport<'s> {
     pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>) -> &mut Self {
         self.status = Some(status);
         self.from = from;
+        self.to = to;
+        self
+    }
+
+    pub(super) fn from(&mut self, from: Option<PathAwareValue>) -> &mut Self {
+        self.from = from;
+        self
+    }
+
+    pub(super) fn to(&mut self, to: Option<PathAwareValue>) -> &mut Self {
         self.to = to;
         self
     }
