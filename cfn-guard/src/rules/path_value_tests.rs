@@ -209,10 +209,10 @@ fn path_value_queries() -> Result<(), Error> {
     assert_eq!(selected.is_empty(), false);
 
     let get_att_refs =
-        r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].*"#;
+        r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
     let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
-    assert_eq!(selected.len(), 1);
+    assert_eq!(selected.len(), 2);
 
     let get_att_refs =
         r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;

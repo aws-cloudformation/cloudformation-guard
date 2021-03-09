@@ -367,18 +367,29 @@ impl QueryResolver for PathAwareValue {
                         let context = format!("Path={},Type=Array", path);
                         for each in vec {
                             let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
-                            match conjunctions.evaluate(each, resolver)? {
-                                Status::PASS => {
-                                    filter.status(Status::PASS);
-                                    let index: usize = if query.len() > 1 {
-                                        match &query[1] {
-                                            QueryPart::AllIndices => 2,
-                                            _ => 1
-                                        }
-                                    } else { 1 };
-                                    selected.extend(each.select(all, &query[index..], resolver)?);
+                            match conjunctions.evaluate(each, resolver) {
+                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                    if all {
+                                        return Err(Error::new(ErrorKind::RetrievalError(e)))
+                                    }
+                                    // Else treat is like a filter
                                 },
-                                rest => { filter.status(rest); }
+                                Err(e) => return Err(e),
+                                Ok(status) => {
+                                    match status {
+                                        Status::PASS => {
+                                            filter.status(Status::PASS);
+                                            let index: usize = if query.len() > 1 {
+                                                match &query[1] {
+                                                    QueryPart::AllIndices => 2,
+                                                    _ => 1
+                                                }
+                                            } else { 1 };
+                                            selected.extend(each.select(all, &query[index..], resolver)?);
+                                        },
+                                        rest => { filter.status(rest); }
+                                    }
+                                }
                             }
                         }
                         Ok(selected)
