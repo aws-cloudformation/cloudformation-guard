@@ -3700,8 +3700,9 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
 #[test]
 fn test_rules_file_default_rules() -> Result<(), Error> {
     let s = r###"
-    AWS::AmazonMQ::Broker Properties.AutoMinorVersionUpgrade == false <<Version upgrades should be enabled to receive security updates>>
-    AWS::AmazonMQ::Broker Properties.EncryptionOptions.UseAwsOwnedKey == false <<CMKs should be used instead of AWS-provided KMS keys>>
+    AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBot.RootResourceId" or
+    AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBotResource"
+
     "###;
     let default_rule = Rule {
         rule_name: String::from("default"),
