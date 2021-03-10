@@ -5,6 +5,7 @@ use std::collections::HashMap;
 mod rules;
 mod commands;
 mod command;
+mod migrate;
 
 use crate::command::Command;
 use rules::errors::Error;
@@ -24,6 +25,7 @@ fn main() -> Result<(), Error>{
     commands.push(Box::new(crate::commands::parse_tree::ParseTree::new()));
     commands.push(Box::new(crate::commands::test::Test::new()));
     commands.push(Box::new(crate::commands::validate::Validate::new()));
+    commands.push(Box::new(crate::commands::migrate::Migrate::new()));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(

@@ -4,6 +4,7 @@
 mod rules;
 mod commands;
 mod command;
+mod migrate;
 
 pub extern "C" fn run_checks(
     data: &str,

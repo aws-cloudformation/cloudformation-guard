@@ -494,7 +494,7 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 // Expected error codes:
 //    nom::error::ErrorKind::Alpha => if the input does not start with a char
 //
-fn var_name(input: Span) -> IResult<Span, String> {
+pub(crate) fn var_name(input: Span) -> IResult<Span, String> {
     let (remainder, first_part) = alpha1(input)?;
     let (remainder, next_part) = take_while(|c: char| c.is_alphanumeric() || c == '_')(remainder)?;
     let mut var_name = (*first_part.fragment()).to_string();
@@ -513,7 +513,7 @@ fn var_name(input: Span) -> IResult<Span, String> {
 //
 //  see var_name for other error codes
 //
-fn var_name_access(input: Span) -> IResult<Span, String> {
+pub(crate) fn var_name_access(input: Span) -> IResult<Span, String> {
     preceded(char('%'), var_name)(input)
 }
 
@@ -1201,18 +1201,27 @@ fn block<'loc, T, P>(clause_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'l
     }
 }
 
-fn type_name(input: Span) -> IResult<Span, String> {
-    let (input, parts) = tuple((
+pub(crate) fn type_name(input: Span) -> IResult<Span, String> {
+    match tuple((
         terminated(var_name, tag("::")),
         terminated(var_name, tag("::")),
         var_name,
-    ))(input)?;
-
-    let (input, _skip_module) = opt(tag("::MODULE"))(input)?;
-
-    Ok((input, format!("{}::{}::{}", parts.0, parts.1, parts.2)))
+    ))(input) {
+        Ok((remaining, parts)) => {
+            let (remaining, _skip_module) = opt(tag("::MODULE"))(remaining)?;
+            Ok((remaining, format!("{}::{}::{}", parts.0, parts.1, parts.2)))
+        },
+        Err(nom::Err::Error(_e)) => {
+            // custom resource might only have one separator
+            let (remaining, parts) = tuple((
+                terminated(var_name, tag("::")),
+                var_name
+            ))(input)?;
+            Ok((remaining, format!("{}::{}", parts.0, parts.1)))
+        },
+        Err(e) => return Err(e)
+    }
 }
-
 //
 // Type block
 //
