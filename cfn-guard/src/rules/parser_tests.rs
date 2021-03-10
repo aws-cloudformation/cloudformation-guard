@@ -3700,9 +3700,9 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
 #[test]
 fn test_rules_file_default_rules() -> Result<(), Error> {
     let s = r###"
-    AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBot.RootResourceId" or
-    AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBotResource"
-
+    AWS::AmazonMQ::Broker Properties.AutoMinorVersionUpgrade == false <<Version upgrades should be enabled to receive security updates>>
+    AWS::AmazonMQ::Broker Properties.EncryptionOptions.UseAwsOwnedKey == false <<CMKs should be used instead of AWS-provided KMS keys>>
+    AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBot.RootResourceId" <<Should be root resource id>> or  AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBotResource"
     "###;
     let default_rule = Rule {
         rule_name: String::from("default"),
@@ -3762,7 +3762,59 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                             })]
                         ]
                     }
-                })]
+                })],
+                vec![RuleClause::TypeBlock(TypeBlock {
+                    type_name: String::from("AWS::ApiGateway::Method"),
+                    conditions: None,
+                    block: Block {
+                        assignments: vec![],
+                        conjunctions: vec![
+                            vec![GuardClause::Clause(GuardAccessClause{
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![QueryPart::Key(String::from("Properties")), QueryPart::Key(String::from("ResourceId"))],
+                                        match_all: true
+                                    },
+                                    comparator: (CmpOperator::Eq, false),
+                                    compare_with: Some(LetValue::Value(Value::String(String::from("ApiGatewayBadBot.RootResourceId")))),
+                                    custom_message: Some(String::from("Should be root resource id")),
+                                    location: FileLocation {
+                                        line: 4,
+                                        column: 29,
+                                        file_name: ""
+                                    }
+                                },
+                                negation: false
+                            })]
+                        ]
+                    }
+                }),
+                 RuleClause::TypeBlock(TypeBlock {
+                     type_name: String::from("AWS::ApiGateway::Method"),
+                     conditions: None,
+                     block: Block {
+                         assignments: vec![],
+                         conjunctions: vec![
+                             vec![GuardClause::Clause(GuardAccessClause{
+                                 access_clause: AccessClause {
+                                     query: AccessQuery {
+                                         query: vec![QueryPart::Key(String::from("Properties")), QueryPart::Key(String::from("ResourceId"))],
+                                         match_all: true
+                                     },
+                                     comparator: (CmpOperator::Eq, false),
+                                     compare_with: Some(LetValue::Value(Value::String(String::from("ApiGatewayBadBotResource")))),
+                                     custom_message: None,
+                                     location: FileLocation {
+                                         line: 4,
+                                         column: 147,
+                                         file_name: ""
+                                     }
+                                 },
+                                 negation: false
+                             })]
+                         ]
+                     }
+                 })]
             ]
 
             }
