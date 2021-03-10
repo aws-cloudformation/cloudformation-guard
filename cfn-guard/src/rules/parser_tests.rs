@@ -2928,6 +2928,71 @@ fn test_assignments() {
 }
 
 #[test]
+fn test_type_name() {
+    let examples = [
+        "AWS::Resource::Type",
+        "Custom::Resource",
+        "AWS::Module::Type::MODULE",
+        "AWS::" // Failure
+    ];
+    let expectations = [
+        Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    examples[0].len(),
+                    1,
+                    "",
+                    ""
+                )
+            },
+            String::from("AWS::Resource::Type")
+        )),
+        Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    examples[1].len(),
+                    1,
+                    "",
+                    ""
+                )
+            },
+            String::from("Custom::Resource")
+        )),
+        Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    examples[2].len(),
+                    1,
+                    "",
+                    ""
+                )
+            },
+            String::from("AWS::Module::Type")
+        )),
+        Err(nom::Err::Error(
+            ParserError {
+                span: unsafe {
+                    Span::new_from_raw_offset(
+                        examples[3].len(),
+                        1,
+                        "",
+                        ""
+                    )
+                },
+                kind: nom::error::ErrorKind::Alpha, context: "".to_string()
+            }
+        ))
+    ];
+    for (idx, each) in examples.iter().enumerate() {
+        println!("Test #{}: {}", idx, *each);
+        let span = Span::new_extra(*each, "");
+        let result = type_name(span);
+        println!("Test #{} Result: {:?}", idx, result);
+        assert_eq!(&result, &expectations[idx]);
+    }
+}
+
+#[test]
 fn test_type_block() {
     let examples = [
         r#"AWS::EC2::Instance {

@@ -8,6 +8,8 @@ use crate::rules::errors::{Error};
 use crate::rules::parser::Span;
 
 use serde::{Serialize, Deserialize};
+use std::fmt;
+use std::fmt::Display;
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
@@ -104,6 +106,77 @@ impl Hash for Value {
                     value.hash(state);
                 }
             },
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::Regex(s) => write!(f, "/{}/", s),
+            Value::Int(int) => write!(f, "{}", int),
+            Value::Float(float) =>  write!(f, "{}", float),
+            Value::Bool(bool) => write!(f, "{}", bool),
+            Value::List(list) => {
+
+                let result: Vec<String> = list.into_iter().map(|item| format!("{}", item)).collect();
+                write!(f, "[{}]", result.join(", "))
+            },
+            Value::Map(map) => {
+                let key_values: Vec<String> = map.into_iter().map(|(key, value)| {
+                    format!("\"{}\": {}", key, value)
+                }).collect();
+                write!(f, "{{{}}}", key_values.join(", "))
+            },
+            Value::Null => {
+                write!(f, "null")
+            },
+            Value::RangeChar(range) => {
+                if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
+                    write!(f, "[");
+                } else {
+                    write!(f, "(");
+                }
+                write!(f, "{},{}", range.lower, range.upper);
+
+                if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
+                    write!(f, "]")
+                } else {
+                    write!(f, ")")
+                }
+            },
+            Value::RangeFloat(range) => {
+                if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
+                    write!(f, "[");
+                } else {
+                    write!(f, "(");
+                }
+                write!(f, "{},{}", range.lower, range.upper);
+
+                if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
+                    write!(f, "]")
+                } else {
+                    write!(f, ")")
+                }
+            },
+            Value::RangeInt(range) => {
+                if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
+                    write!(f, "[");
+                } else {
+                    write!(f, "(");
+                }
+                write!(f, "{},{}", range.lower, range.upper);
+
+                if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
+                    write!(f, "]")
+                } else {
+                    write!(f, ")")
+                }
+            },
+            Value::Char(c) => {
+                write!(f, "\"{}\"", c)
+            }
         }
     }
 }

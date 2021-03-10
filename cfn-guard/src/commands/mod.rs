@@ -3,6 +3,7 @@ pub(crate) mod validate;
 pub(crate) mod test;
 pub(crate) mod helper;
 pub(crate) mod parse_tree;
+pub(crate) mod migrate;
 
 mod tracker;
 
