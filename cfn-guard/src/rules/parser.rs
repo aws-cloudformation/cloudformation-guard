@@ -1317,9 +1317,9 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 }
 
 fn type_block_clauses(input: Span) -> IResult<Span, Disjunctions<TypeBlock>> {
-    let (input, conjunctions) = disjunction_clauses(
+    let (input, disjunctions) = disjunction_clauses(
         input, type_block, true)?;
-    Ok((input, conjunctions))
+    Ok((input, disjunctions))
 }
 
 fn remove_whitespace_comments<'loc, P, R>(parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
