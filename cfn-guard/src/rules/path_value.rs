@@ -253,32 +253,6 @@ pub(crate) trait QueryResolver {
     fn select(&self, all: bool, query: &[QueryPart<'_>], eval: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error>;
 }
 
-pub(in crate::rules)
-fn select_from<'s>(all: bool,
-                   each: &'s PathAwareValue,
-                   query: &[QueryPart<'_>],
-                   var_resolver: &dyn EvaluationContext) -> rules::Result<Vec<&'s PathAwareValue>> {
-    match each.select(all, query, var_resolver) {
-        Ok(result) => Ok(result),
-
-        Err(Error(ErrorKind::RetrievalError(e))) => {
-            if all {
-                return Err(Error::new(ErrorKind::RetrievalError(e)));
-            }
-            Ok(vec![])
-        },
-
-        Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
-            if all {
-                return Err(Error::new(ErrorKind::IncompatibleRetrievalError(e)));
-            }
-            Ok(vec![])
-        },
-
-        Err(e) => return Err(e)
-    }
-}
-
 impl QueryResolver for PathAwareValue {
     fn select(&self, all: bool, query: &[QueryPart<'_>], resolver: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error> {
         if query.is_empty() {

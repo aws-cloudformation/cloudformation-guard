@@ -291,8 +291,8 @@ fn some_filter_tests() -> Result<(), Error> {
     let query = AccessQuery::try_from(query_str)?;
     let resources = PathAwareValue::try_from(resources_str)?;
     let dummy = DummyEval{};
-    let selected = path_value::select_from(
-        query.match_all, &resources, &query.query, &dummy)?;
+    let selected = resources.select(
+        query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 1);
     Ok(())
 }
