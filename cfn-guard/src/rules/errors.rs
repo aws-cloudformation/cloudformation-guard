@@ -48,8 +48,12 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
             format!("Conflicting rule or variable assignments inside the same scope {}", err)
         },
 
+        ErrorKind::IncompatibleRetrievalError(err) => {
+            format!("Types or variable assignments have incompatible types to retrieve {}", err)
+        },
+
         ErrorKind::IncompatibleError(err) => {
-            format!("Types or variable assignments do not match {}", err)
+            format!("Types or variable assignments are incompatible {}", err)
         },
 
         ErrorKind::NotComparable(err) => {
@@ -98,6 +102,7 @@ pub enum ErrorKind {
     RetrievalError(String),
     MissingVariable(String),
     MultipleValues(String),
+    IncompatibleRetrievalError(String),
     IncompatibleError(String),
     NotComparable(String),
     ConversionError(std::convert::Infallible),

@@ -974,6 +974,7 @@ fn test_iam_subselections() -> Result<()> {
     let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].self_path(), &Path::try_from("/Resources/two")?);
     let expected = PathAwareValue::try_from((r#"
             {
                 Type: "AWS::IAM::Role",
@@ -1177,6 +1178,7 @@ fn some_testing() -> Result<()> {
     let r = clause.evaluate(&values, &dummy);
     assert_eq!(r.is_err(), true);
     match r {
+        Err(Error(ErrorKind::IncompatibleRetrievalError(_))) |
         Err(Error(ErrorKind::RetrievalError(_))) => {},
         _ => assert!(false)
     }
@@ -1186,15 +1188,13 @@ fn some_testing() -> Result<()> {
     let r = clause.evaluate(&values, &dummy);
     assert_eq!(r.is_err(), true);
     match r {
+        Err(Error(ErrorKind::IncompatibleRetrievalError(_))) |
         Err(Error(ErrorKind::RetrievalError(_))) => {},
         _ => assert!(false)
     }
     let r = clause_some.evaluate(&values, &dummy);
-    assert_eq!(r.is_err(), true);
-    match r {
-        Err(Error(ErrorKind::RetrievalError(_))) => {},
-        _ => assert!(false)
-    }
+    assert_eq!(r.is_err(), false);
+    assert_eq!(r.unwrap(), Status::SKIP);
 
     //
     // Trying out the selection filters
@@ -1237,17 +1237,21 @@ fn double_projection_tests() -> Result<()> {
     rule check_ecs_against_local_or_metadata {
         let ecs_tasks = Resources.*[
             Type == 'AWS::ECS::TaskDefinition'
-            Properties.TaskRoleArn is_string
+            Properties.TaskRoleArn exists
         ]
 
-#        when some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt' exists {
-#            let iam_references = %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
-#            let iam_local = Resources.%iam_references
-#            %iam_local.Type == 'AWS::IAM::Role'
-#            %iam_local.Properties.PermissionsBoundary exists
-#        } or
-        when %ecs_tasks.Properties.TaskRoleArn !empty {
-            %ecs_tasks.Metadata.NotRestricted exists
+        let iam_references = some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
+        when %iam_references !empty {
+            let iam_local = Resources.%iam_references
+            %iam_local.Type == 'AWS::IAM::Role'
+            %iam_local.Properties.PermissionsBoundary exists
+        }
+
+        let ecs_task_role_is_string = %ecs_tasks[
+            Properties.TaskRoleArn is_string
+        ]
+        when %ecs_task_role_is_string !empty {
+            %ecs_task_role_is_string.Metadata.NotRestricted exists
         }
     }
     "###;
@@ -1286,22 +1290,22 @@ fn double_projection_tests() -> Result<()> {
     println!("{}", status);
     assert_eq!(status, Status::PASS);
 
-//    let resources_str = r###"
-//    {
-//        Resources: {
-//            ecs2: {
-//              Type: 'AWS::ECS::TaskDefinition',
-//              Properties: {
-//                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
-//              }
-//            }
-//        }
-//    }
-//    "###;
-//    let value = PathAwareValue::try_from(resources_str)?;
-//    let status = rule.evaluate(&value, &dummy)?;
-//    println!("{}", status);
-//    assert_eq!(status, Status::FAIL);
+    let resources_str = r###"
+    {
+        Resources: {
+            ecs2: {
+              Type: 'AWS::ECS::TaskDefinition',
+              Properties: {
+                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
+              }
+            }
+        }
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    println!("{}", status);
+    assert_eq!(status, Status::FAIL);
 
     Ok(())
 }

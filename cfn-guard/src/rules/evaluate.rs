@@ -1,16 +1,15 @@
-use std::collections::{
-    HashMap
-};
+use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt::Formatter;
+
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, path_value, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock, QueryPart};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
+use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
-use std::fmt::Formatter;
-use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -18,6 +17,7 @@ use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 //                                                                                              //
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub(super)
 fn resolve_variable_query<'s>(all: bool,
                               variable: &str,
                               query: &[QueryPart<'_>],
@@ -32,19 +32,7 @@ fn resolve_variable_query<'s>(all: bool,
     let mut acc = Vec::with_capacity(retrieved.len());
     for each in retrieved {
         if query.len() > index {
-            match each.select(all, &query[index..], var_resolver) {
-                Ok(result) => {
-                    acc.extend(result);
-                },
-
-                Err(Error(ErrorKind::RetrievalError(e))) => {
-                    if all {
-                        return Err(Error::new(ErrorKind::RetrievalError(e)));
-                    }
-                },
-
-                Err(e) => return Err(e)
-            }
+            acc.extend(each.select(all, &query[index..], var_resolver)?)
         }
         else {
             acc.push(each);
@@ -122,7 +110,7 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&
             },
 
             _ => return Err(Error::new(
-                ErrorKind::IncompatibleError(
+                ErrorKind::IncompatibleRetrievalError(
                     format!("Expecting the RHS query to return a List<List>, found {}, {:?}",
                             (*each_list_elem).type_info(), *each_list_elem)
                 )
@@ -245,12 +233,17 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let all = self.access_clause.query.match_all;
 
 
-        let (lhs, retrieve_error, incompat_error) = match resolve_query(clause.access_clause.query.match_all, &clause.access_clause.query.query, context, var_resolver) {
-            Ok(v) => (Some(v), None, None),
-            Err(Error(ErrorKind::RetrievalError(e))) => (None, Some(e), None),
-            Err(Error(ErrorKind::IncompatibleError(e))) => if !all { (None, None, Some(e)) } else { return Err(Error::new(ErrorKind::IncompatibleError(e))) },
-            Err(e) => return Err(e),
-        };
+        let (lhs, retrieve_error) =
+            match resolve_query(clause.access_clause.query.match_all,
+                                &clause.access_clause.query.query,
+                                context,
+                                var_resolver)
+            {
+                Ok(v) => (Some(v), None),
+                Err(Error(ErrorKind::RetrievalError(e))) |
+                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => (None, Some(e)),
+                Err(e) => return Err(e),
+            };
 
         let result = match clause.access_clause.comparator {
             (CmpOperator::Empty, not) |
@@ -362,13 +355,13 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let lhs = match lhs {
             None => match retrieve_error {
                 Some(e) => return Err(Error::new(ErrorKind::RetrievalError(e))),
-                None => return Err(Error::new(ErrorKind::IncompatibleError(incompat_error.unwrap()))),
+                None =>  unreachable!()
             },
             Some(l) => l,
         };
 
         let rhs_local = match &clause.access_clause.compare_with {
-            None => return Err(Error::new(ErrorKind::IncompatibleError(
+            None => return Err(Error::new(ErrorKind::IncompatibleRetrievalError(
                 format!("Expecting a RHS for comparison and did not find one, clause@{}",
                         clause.access_clause.location)
             ))),
