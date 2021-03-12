@@ -188,6 +188,26 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     }
 }
 
+fn find_failing_clause(context: &StatusContext) -> Option<&StatusContext> {
+    for each in &context.children {
+        if each.eval_type == EvaluationType::Clause && context.eval_type != EvaluationType::Filter {
+           if let Some(Status::FAIL) = each.status {
+                return Some(each)
+            }
+        }
+        match find_failing_clause(each) {
+            Some(found) => return Some(found),
+            None => continue,
+        }
+    }
+    None
+}
+
+fn print_failing_clause(rule: &StatusContext) {
+    find_failing_clause(rule)
+        .map_or((), |matched| print_context(matched, 2))
+}
+
 impl<'r, 'loc> ConsoleReporter<'r> {
     pub(crate) fn new(root: StackTracker<'r>, verbose: bool, print_json: bool) -> Self {
         ConsoleReporter {
@@ -230,6 +250,10 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                    print!(" ");
                }
                println!("{}", colored_string(container.status));
+
+               if !self.verbose {
+                   print_failing_clause(container);
+               }
             }
 
            if self.verbose {
