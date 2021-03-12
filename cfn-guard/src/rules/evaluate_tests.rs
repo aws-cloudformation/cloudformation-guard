@@ -80,7 +80,7 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#
     )?;
     match clause.evaluate(&root, &dummy) {
-        Ok(Status::SKIP) => {},
+        Ok(Status::FAIL) => {},
         rest => assert!(false)
     }
     Ok(())
@@ -1174,7 +1174,7 @@ fn some_testing() -> Result<()> {
     let values_str = r#"{ Tags: [] }"#;
     let values = PathAwareValue::try_from(values_str)?;
     let status = clause_some.evaluate(&values, &dummy)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status, Status::FAIL);
     let status = clause.evaluate(&values, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1186,7 +1186,7 @@ fn some_testing() -> Result<()> {
 
     let r = clause_some.evaluate(&values, &dummy);
     assert_eq!(r.is_err(), false);
-    assert_eq!(r.unwrap(), Status::SKIP);
+    assert_eq!(r.unwrap(), Status::FAIL);
 
     //
     // Trying out the selection filters

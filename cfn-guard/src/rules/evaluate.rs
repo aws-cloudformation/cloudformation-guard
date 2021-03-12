@@ -129,7 +129,7 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::SKIP, None, None, false))
+        return Ok((Status::FAIL, None, None, false))
     }
 
     let lhs_elem = lhs[0];
