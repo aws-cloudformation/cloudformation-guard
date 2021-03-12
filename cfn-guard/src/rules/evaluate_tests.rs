@@ -1175,23 +1175,15 @@ fn some_testing() -> Result<()> {
     let values = PathAwareValue::try_from(values_str)?;
     let status = clause_some.evaluate(&values, &dummy)?;
     assert_eq!(status, Status::SKIP);
-    let r = clause.evaluate(&values, &dummy);
-    assert_eq!(r.is_err(), true);
-    match r {
-        Err(Error(ErrorKind::IncompatibleRetrievalError(_))) |
-        Err(Error(ErrorKind::RetrievalError(_))) => {},
-        _ => assert!(false)
-    }
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
 
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
     let r = clause.evaluate(&values, &dummy);
-    assert_eq!(r.is_err(), true);
-    match r {
-        Err(Error(ErrorKind::IncompatibleRetrievalError(_))) |
-        Err(Error(ErrorKind::RetrievalError(_))) => {},
-        _ => assert!(false)
-    }
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
     let r = clause_some.evaluate(&values, &dummy);
     assert_eq!(r.is_err(), false);
     assert_eq!(r.unwrap(), Status::SKIP);

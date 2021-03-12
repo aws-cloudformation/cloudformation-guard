@@ -353,10 +353,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None => match retrieve_error {
-                Some(e) => return Err(Error::new(ErrorKind::RetrievalError(e))),
-                None =>  unreachable!()
-            },
+            None => if all { return Ok(Status::FAIL) } else { return Ok(Status::SKIP) }
             Some(l) => l,
         };
 
@@ -669,11 +666,7 @@ impl<'loc> Evaluate for Rule<'loc> {
                     let mut num_of_fails = 0;
                     for each_rule_clause in each {
                         let status = match each_rule_clause {
-                            RuleClause::Clause(gc) => match gc.evaluate(context, &block_scope) {
-                                Ok(status) => status,
-                                Err(Error(ErrorKind::RetrievalError(_))) => Status::SKIP,
-                                Err(e) => return Err(e)
-                            },
+                            RuleClause::Clause(gc) => gc.evaluate(context, &block_scope)?,
                             RuleClause::TypeBlock(tb) => tb.evaluate(context, &block_scope)?,
                             RuleClause::WhenBlock(conditions, block) => {
                                 let mut auto_cond = AutoReport::new(
