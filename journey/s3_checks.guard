@@ -1,0 +1,14 @@
+let s3_buckets = Resources.*[
+   Type == 'AWS::S3::Bucket'
+]
+
+let s3_buckets_with_versions = %s3_buckets[
+     Properties.VersionConfiguration.Status == 'Enabled'
+]
+
+rule s3_bucket_with_version when %s3_buckets_with_versions !empty {
+    # sample_encryption_at_rest
+    let rules = %s3_buckets_with_versions.Properties.LifecycleConfiguration.Rules
+    %rules.ExpirationInDays == 365
+    %rules.NonCurrentversionExpirationInDays == 365
+}

@@ -1,0 +1,51 @@
+---
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      dynamo_db_sse_on: SKIP
+      dynamo_db_sse_on_for_prod_only: SKIP
+- input:
+    Resources:
+      ddb1:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          SSESpecification:
+            SSEEnabled: true
+            SSEType: KMS
+  expectations:
+    rules:
+      dynamo_db_sse_on: PASS
+      dynamo_db_sse_on_for_prod_only: SKIP
+- input:
+    Resources:
+      ddb1:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          SSESpecification:
+            SSEEnabled: true
+            SSEType: KMS
+          Tags:
+            - Key: PROD
+              Value: Selected
+  expectations:
+    rules:
+      dynamo_db_sse_on: PASS
+      dynamo_db_sse_on_for_prod_only: PASS
+- input:
+    Resources:
+      ddb1:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          SSESpecification:
+            SSEEnabled: true
+            SSEType: KMS
+          Tags:
+            - Key: PROD
+              Value: Selected
+      ddb2:
+        Type: 'AWS::DynamoDB::Table'
+  expectations:
+    rules:
+      dynamo_db_sse_on: FAIL
+      dynamo_db_sse_on_for_prod_only: PASS

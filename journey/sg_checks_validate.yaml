@@ -1,0 +1,8 @@
+Resources: 
+  sgNotOkay: 
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - CidrIpv6: '::/0'

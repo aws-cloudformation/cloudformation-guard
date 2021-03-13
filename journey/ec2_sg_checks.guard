@@ -1,0 +1,10 @@
+let ec2_resources = Resources.*[ Type == 'AWS::EC2::Instance'  ]
+rule prevent_ec2_with_public_ip when %ec2_resources !empty {
+    some %ec2_resources.NetworkInterfaces[*].AssociatePublicIpAddress == true
+}
+
+let eip_resources = Resources.*[ Type == 'AWS::EC2::EIP' ]
+rule prevent_eip_associations_with_ec2 when %eip_resources !empty {
+    %eip_resources.Properties.InstanceId !exists
+}
+

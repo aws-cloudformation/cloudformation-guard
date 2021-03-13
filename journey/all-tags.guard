@@ -1,0 +1,5 @@
+rule assert_all_resources_have_non_empty_tags {
+    when Resources.* !empty { 
+        Resources.*.Properties.Tags !empty
+    }
+}

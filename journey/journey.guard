@@ -1,0 +1,27 @@
+rule assert_all_resources_have_non_empty_tags {
+    Resources.*.Properties.Tags !empty
+}
+
+let allowed_sse_algorithms = ["KMS"]
+rule dynamo_db_table_has_sse_turned_on {
+    assert_all_resources_have_non_empty_tags # ensure this is true
+    let ddb_tables = Resources.*[
+        Type == 'AWS::DynamoDB::Table'
+    ]
+    when %ddb_tables !empty {
+        %ddb_tables.Properties.SSESpecification[*].SSEEnabled == true
+        %ddb_tables.Properties.SSESpecification[*].SSEType in %allowed_sse_algorithms
+    }
+}
+
+rule dynamo_db_table_has_sse_turned_on_for_only_prod {
+    let ddb_tables = Resources.*[
+        Type == 'AWS::DynamoDB::Table'
+        some Properties.Tags[*].Key == /PROD/
+    ]
+    when %ddb_tables !empty {
+        %ddb_tables.Properties.SSESpecification[*].SSEEnabled == true
+        %ddb_tables.Properties.SSESpecification[*].SSEType in %allowed_sse_algorithms
+    }
+}
+

@@ -1,0 +1,21 @@
+---
+- input:
+    Resources:
+      rdsValid:
+        Type: 'AWS::RDS::DBInstance'
+        Properties:
+          MasterPassword: "{{resolve:secretsmanager:bbbb:SecretString:password::}}"
+  expectations:
+    rules:
+      make_rds_masterpassword_only_secrets_manager: PASS
+      make_rds_masterpassword_from_secrets_manger_fn_join: SKIP
+- input:
+    Resources:
+      rdsValid:
+        Type: 'AWS::RDS::DBInstance'
+        Properties:
+          MasterPassword: "FailMe"
+  expectations:
+    rules:
+      make_rds_masterpassword_only_secrets_manager: FAIL
+      make_rds_masterpassword_from_secrets_manger_fn_join: SKIP
