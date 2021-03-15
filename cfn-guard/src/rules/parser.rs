@@ -1325,6 +1325,12 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     }))
 }
 
+fn type_block_clauses(input: Span) -> IResult<Span, Disjunctions<TypeBlock>> {
+    let (input, disjunctions) = disjunction_clauses(
+        input, type_block, true)?;
+    Ok((input, disjunctions))
+}
+
 fn remove_whitespace_comments<'loc, P, R>(parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
     where P: Fn(Span<'loc>) -> IResult<Span<'loc>, R>
 {
@@ -1340,9 +1346,7 @@ fn remove_whitespace_comments<'loc, P, R>(parser: P) -> impl Fn(Span<'loc>) -> I
 #[derive(Clone, PartialEq, Debug)]
 enum Exprs<'loc> {
     Assignment(LetExpr<'loc>),
-    DefaultTypeBlock(TypeBlock<'loc>),
-
-    // WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
+    DefaultTypeBlock(Disjunctions<TypeBlock<'loc>>),
     DefaultWhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
     DefaultClause(GuardClause<'loc>),
     Rule(Rule<'loc>),
@@ -1357,7 +1361,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
             alt((
                 map(assignment, Exprs::Assignment),
                 map(rule_block, Exprs::Rule),
-                map(type_block, Exprs::DefaultTypeBlock),
+                map(type_block_clauses, Exprs::DefaultTypeBlock),
                 when_block(clauses, alt((clause, rule_clause)), |c, b|
                     Exprs::DefaultWhenBlock(c, Block { assignments: b.0, conjunctions: b.1 })),
                 map(clause, Exprs::DefaultClause),
@@ -1379,7 +1383,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
             Exprs::Rule(r) => named_rules.push(r),
             Exprs::Assignment(l) => global_assignments.push(l),
             Exprs::DefaultClause(c) => default_rule_clauses.push(vec![RuleClause::Clause(c)]),
-            Exprs::DefaultTypeBlock(t) => default_rule_clauses.push(vec![RuleClause::TypeBlock(t)]),
+            Exprs::DefaultTypeBlock(disjunctions) => default_rule_clauses.push(disjunctions.into_iter().map(|type_block| RuleClause::TypeBlock(type_block)).collect()),
             Exprs::DefaultWhenBlock(w, b) => default_rule_clauses.push(vec![RuleClause::WhenBlock(w, b)]),
         }
     }
