@@ -353,7 +353,15 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None => if all { return Ok(Status::FAIL) } else { return Ok(Status::SKIP) }
+            None =>
+                if all {
+                    return Ok(auto_reporter.status(Status::FAIL)
+                                  .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                }
+                else {
+                    return Ok(auto_reporter.status(Status::FAIL)
+                        .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                }
             Some(l) => l,
         };
 
