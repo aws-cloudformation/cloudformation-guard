@@ -43,6 +43,20 @@ AWS::EC2::Instance SourceDestCheck != false << EC2 source destination check shou
 
 AWS::EC2::Volume Encrypted == true << EC2 volumes should be encrypted
 
+AWS::ECS::TaskDefinition Cpu == /.*/ << CPU limit should be set for a task
+AWS::ECS::TaskDefinition Memory == /.*/ << Memory limit should be set for task
+AWS::ECS::TaskDefinition ContainerDefinitions.*.Memory == /.*/ << container should have a memory limit
+AWS::ECS::TaskDefinition ContainerDefinitions.*.Cpu == /.*/ << cpu limit should be set for container
+AWS::ECS::TaskDefinition ContainerDefinitions.*.DockerSecurityOptions == /.*/ << docker security options should be set
+AWS::ECS::TaskDefinition ContainerDefinitions.*.ReadonlyRootFilesystem == true << container file system should be set as read-only
+AWS::ECS::TaskDefinition ContainerDefinitions.*.Ulimits == /.*/ << ulimits should be set in a container
+AWS::ECS::TaskDefinition ContainerDefinitions.*.User != root << container should be run as a non-root user
+AWS::ECS::TaskDefinition ContainerDefinitions.*.User != 0 << container should be run as a non-root user
+AWS::ECS::TaskDefinition WHEN RequiresCompatibilities == ["EC2"] CHECK IpcMode IN [none, task] << IPC mode should not be set to host
+AWS::ECS::TaskDefinition WHEN RequiresCompatibilities == ["EC2"] CHECK PidMode != host << PidMode should be set to task or left blank for enabling private namespace
+AWS::ECS::TaskDefinition WHEN RequiresCompatibilities == ["EC2"] CHECK ContainerDefinitions.*.Privileged == false << container should not run with all linux capabilties
+
+
 AWS::EFS::FileSystem Encrypted == true << EFS file system should be encrypted
 
 AWS::EKS::Cluster EncryptionConfig.Provider.KeyArn == /.*/ << EKS cluster encryption config should be set

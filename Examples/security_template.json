@@ -1,8 +1,8 @@
 {
     "Resources": {
-        "AmazonMQBroker" : {
-            "Type" : "AWS::AmazonMQ::Broker",
-            "Properties" : {
+        "AmazonMQBroker": {
+            "Type": "AWS::AmazonMQ::Broker",
+            "Properties": {
                 "AutoMinorVersionUpgrade": false,
                 "EncryptionOptions": {
                     "UseAwsOwnedKey": true
@@ -15,125 +15,331 @@
                 "PubliclyAccessible": true
             }
         },
-        "ApiGatewayDomain" : {
-            "Type" : "AWS::ApiGateway::DomainName",
-            "Properties" : {
+        "ApiGatewayDomain": {
+            "Type": "AWS::ApiGateway::DomainName",
+            "Properties": {
                 "DomainName": "test.com",
                 "SecurityPolicy": "TLS_1_0"
             }
         },
-        "ApiGatewayDomainSecure" : {
-            "Type" : "AWS::ApiGateway::DomainName",
-            "Properties" : {
+        "ApiGatewayDomainSecure": {
+            "Type": "AWS::ApiGateway::DomainName",
+            "Properties": {
                 "DomainName": "test.com",
                 "SecurityPolicy": "TLS_1_2"
             }
         },
-        "CloudFrontDistribution" : {
-            "Type" : "AWS::CloudFront::Distribution",
-            "Properties" : {
-                "ViewerCertificate" : {
-                    "MinimumProtocolVersion" : "TLSv1"
+        "CloudFrontDistribution": {
+            "Type": "AWS::CloudFront::Distribution",
+            "Properties": {
+                "ViewerCertificate": {
+                    "MinimumProtocolVersion": "TLSv1"
                 }
             }
         },
-        "CloudTrailTrail" : {
-            "Type" : "AWS::CloudTrail::Trail",
-            "Properties" : {
-                "EnableLogFileValidation" : false,
+        "CloudTrailTrail": {
+            "Type": "AWS::CloudTrail::Trail",
+            "Properties": {
+                "EnableLogFileValidation": false,
                 "IncludeGlobalServiceEvents": false,
                 "IsLogging": false,
                 "IsMultiRegionTrail": false
             }
         },
-        "CodeBuildProject" : {
-            "Type" : "AWS::CodeBuild::Project",
-            "Properties" : {
-                
-            }
+        "CodeBuildProject": {
+            "Type": "AWS::CodeBuild::Project",
+            "Properties": {}
         },
-        "CodeBuildCredentials" : {
-            "Type" : "AWS::CodeBuild::SourceCredential",
-            "Properties" : {
+        "CodeBuildCredentials": {
+            "Type": "AWS::CodeBuild::SourceCredential",
+            "Properties": {
                 "Token": "{{resolve:secretsmanager}}"
             }
         },
-        "CodeStarRepo" : {
-            "Type" : "AWS::CodeStar::GitHubRepository",
-            "Properties" : {
+        "CodeStarRepo": {
+            "Type": "AWS::CodeStar::GitHubRepository",
+            "Properties": {
                 "IsPrivate": false
             }
         },
-        "DMSInstance" : {
-            "Type" : "AWS::DMS::ReplicationInstance",
-            "Properties" : {
+        "DMSInstance": {
+            "Type": "AWS::DMS::ReplicationInstance",
+            "Properties": {
                 "AllowMajorVersionUpgrade": false,
                 "AutoMinorVersionUpgrade": false,
                 "MultiAZ": false,
                 "PubliclyAccessible": true
             }
         },
-        "DocDBCluster" : {
-            "Type" : "AWS::DocDB::DBCluster",
-            "Properties" : {
+        "DocDBCluster": {
+            "Type": "AWS::DocDB::DBCluster",
+            "Properties": {
                 "BackupRetentionPeriod": 1,
                 "StorageEncrypted": false
             }
         },
-        "DynamoDBTable" : {
-            "Type" : "AWS::DynamoDB::Table",
-            "Properties" : {
+        "DynamoDBTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
                 "SSESpecification": {
                     "SSEEnabled": false
                 }
             }
         },
-        "EC2Instance" : {
-            "Type" : "AWS::EC2::Instance",
-            "Properties" : {
+        "EC2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
                 "SourceDestCheck": false
             }
         },
-        "EC2SecurityGroup" : {
-            "Type" : "AWS::EC2::SecurityGroup",
-            "Properties" : {
+        "EC2SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
                 "CidrIp": "0.0.0.0/0",
                 "FromPort": 22,
                 "ToPort": 22
             }
         },
-        "EC2Volume" : {
-            "Type" : "AWS::EC2::Volume",
-            "Properties" : {
+        "EC2Volume": {
+            "Type": "AWS::EC2::Volume",
+            "Properties": {
                 "Encrypted": false
             }
         },
-        "EFSFileSystem" : {
-            "Type" : "AWS::EFS::FileSystem",
-            "Properties" : {
-                "Encrypted": false
-            }
-        },
-        "EKSCluster" : {
-            "Type" : "AWS::EKS::Cluster",
-            "Properties" : {
-                "EncryptionConfig": {
-                    "Provider": {
-                        
+        "ECSTask": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "ContainerDefinitions": [
+                    {
+                        "Command": [
+                            "CMD-SHELL"
+                        ],
+                        "Cpu": 128,
+                        "DisableNetworking": true,
+                        "DnsSearchDomains": [
+                            "example.com"
+                        ],
+                        "DnsServers": [
+                            "10.0.0.1"
+                        ],
+                        "DockerLabels": {
+                            "key": "fooLabel",
+                            "value": "barLabel"
+                        },
+                        "DockerSecurityOptions": [
+                            "no-new-privileges"
+                        ],
+                        "EntryPoint": [
+                            "top",
+                            "-b"
+                        ],
+                        "Essential": true,
+                        "ExtraHosts": [
+                            {
+                                "Hostname": "name",
+                                "IpAddress": "10.0.0.19"
+                            }
+                        ],
+                        "HealthCheck": {
+                            "Command": [
+                                "CMD-SHELL",
+                                "curl localhost:8000"
+                            ],
+                            "Interval": 30,
+                            "Retries": 3,
+                            "Timeout": 5
+                        },
+                        "Hostname": "host.example.com",
+                        "Image": "/aws/aws-example-app",
+                        "Ulimits": {
+                            "HardLimit": 1024,
+                            "Name": "nofile",
+                            "SoftLimit": 512
+                        },
+                        "LinuxParameters": {
+                            "Capabilities": {
+                                "Drop": [
+                                    "SETUID",
+                                    "SETGID",
+                                    "FOWNER"
+                                ]
+                            }
+                        },
+                        "LogConfiguration": {
+                            "LogDriver": "awslogs",
+                            "Options": {
+                                "awslogs-group": {
+                                    "Ref": "ContainerLogGroupE6FD74A4"
+                                },
+                                "awslogs-stream-prefix": "prefix",
+                                "awslogs-region": {
+                                    "Ref": "AWS::Region"
+                                }
+                            }
+                        },
+                        "Memory": 1024,
+                        "MemoryReservation": 512,
+                        "Name": "Container",
+                        "Privileged": false,
+                        "ReadonlyRootFilesystem": true,
+                        "ResourceRequirements": [
+                            {
+                                "Type": "GPU",
+                                "Value": "16"
+                            }
+                        ],
+                        "StartTimeout": 2,
+                        "StopTimeout": 5,
+                        "User": "test",
+                        "WorkingDirectory": "a/b/c"
                     }
+                ],
+                "Cpu": "512",
+                "Memory": "1024",
+                "ExecutionRoleArn": {
+                    "Fn::GetAtt": [
+                        "TaskDefExecutionRoleB4775C97",
+                        "Arn"
+                    ]
+                },
+                "Family": "TestStackTaskDefA6238255",
+                "IpcMode": "none",
+                "PidMode": "task",
+                "NetworkMode": "bridge",
+                "RequiresCompatibilities": [
+                    "EC2"
+                ],
+                "TaskRoleArn": {
+                    "Fn::GetAtt": [
+                        "TaskDefTaskRole1EDB4A67",
+                        "Arn"
+                    ]
                 }
             }
         },
-        "ElastiCacheCluster" : {
-            "Type" : "AWS::ElastiCache::CacheCluster",
-            "Properties" : {
+        "InsecureECSTask": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "ContainerDefinitions": [
+                    {
+                        "Command": [
+                            "CMD-SHELL"
+                        ],
+                        "DisableNetworking": true,
+                        "DnsSearchDomains": [
+                            "example.com"
+                        ],
+                        "DnsServers": [
+                            "10.0.0.1"
+                        ],
+                        "DockerLabels": {
+                            "key": "fooLabel",
+                            "value": "barLabel"
+                        },
+                        "EntryPoint": [
+                            "top",
+                            "-b"
+                        ],
+                        "Essential": true,
+                        "ExtraHosts": [
+                            {
+                                "Hostname": "name",
+                                "IpAddress": "10.0.0.19"
+                            }
+                        ],
+                        "HealthCheck": {
+                            "Command": [
+                                "CMD-SHELL",
+                                "curl localhost:8000"
+                            ],
+                            "Interval": 30,
+                            "Retries": 3,
+                            "Timeout": 5
+                        },
+                        "Hostname": "host.example.com",
+                        "Image": "/aws/aws-example-app",
+                        "LinuxParameters": {
+                            "Capabilities": {
+                                "Drop": [
+                                    "SETUID",
+                                    "SETGID",
+                                    "FOWNER"
+                                ]
+                            }
+                        },
+                        "LogConfiguration": {
+                            "LogDriver": "awslogs",
+                            "Options": {
+                                "awslogs-group": {
+                                    "Ref": "ContainerLogGroupE6FD74A4"
+                                },
+                                "awslogs-stream-prefix": "prefix",
+                                "awslogs-region": {
+                                    "Ref": "AWS::Region"
+                                }
+                            }
+                        },
+                        "MemoryReservation": 512,
+                        "Name": "Container",
+                        "Privileged": true,
+                        "ReadonlyRootFilesystem": false,
+                        "ResourceRequirements": [
+                            {
+                                "Type": "GPU",
+                                "Value": "16"
+                            }
+                        ],
+                        "StartTimeout": 2,
+                        "StopTimeout": 5,
+                        "User": "root",
+                        "WorkingDirectory": "a/b/c"
+                    }
+                ],
+                "ExecutionRoleArn": {
+                    "Fn::GetAtt": [
+                        "TaskDefExecutionRoleB4775C97",
+                        "Arn"
+                    ]
+                },
+                "Family": "TestStackTaskDefA6238255",
+                "IpcMode": "host",
+                "PidMode": "host",
+                "NetworkMode": "bridge",
+                "RequiresCompatibilities": [
+                    "EC2"
+                ],
+                "TaskRoleArn": {
+                    "Fn::GetAtt": [
+                        "TaskDefTaskRole1EDB4A67",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "EFSFileSystem": {
+            "Type": "AWS::EFS::FileSystem",
+            "Properties": {
+                "Encrypted": false
+            }
+        },
+        "EKSCluster": {
+            "Type": "AWS::EKS::Cluster",
+            "Properties": {
+                "EncryptionConfig": {
+                    "Provider": {}
+                }
+            }
+        },
+        "ElastiCacheCluster": {
+            "Type": "AWS::ElastiCache::CacheCluster",
+            "Properties": {
                 "AutoMinorVersionUpgrade": false,
                 "SnapshotRetentionLimit": 1
             }
         },
-        "ElasticsearchDomain" : {
-            "Type" : "AWS::Elasticsearch::Domain",
-            "Properties" : {
+        "ElasticsearchDomain": {
+            "Type": "AWS::Elasticsearch::Domain",
+            "Properties": {
                 "EncryptionAtRestOptions": {
                     "Enabled": false
                 },
@@ -142,74 +348,64 @@
                 }
             }
         },
-        "ELB" : {
-            "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
-            "Properties" : {
+        "ELB": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
                 "AccessLoggingPolicy": {
                     "Enabled": false
                 }
             }
         },
-        "FsXFilesystem" : {
-            "Type" : "AWS::FSx::FileSystem",
-            "Properties" : {
-                
-            }
+        "FsXFilesystem": {
+            "Type": "AWS::FSx::FileSystem",
+            "Properties": {}
         },
-        "GuardDutyDetector" : {
-            "Type" : "AWS::GuardDuty::Detector",
-            "Properties" : {
+        "GuardDutyDetector": {
+            "Type": "AWS::GuardDuty::Detector",
+            "Properties": {
                 "Enabled": true
             }
         },
-        "ImageBuilderComponent" : {
-            "Type" : "AWS::ImageBuilder::Component",
-            "Properties" : {
-                
-            }
+        "ImageBuilderComponent": {
+            "Type": "AWS::ImageBuilder::Component",
+            "Properties": {}
         },
         "ImageBuilderInfrastructureConfiguration": {
             "Type": "AWS::ImageBuilder::InfrastructureConfiguration",
             "Properties": {
-                "Logging": {
-                    
-                }
+                "Logging": {}
             }
         },
-        "KinesisStream" : {
-            "Type" : "AWS::Kinesis::Stream",
-            "Properties" : {
+        "KinesisStream": {
+            "Type": "AWS::Kinesis::Stream",
+            "Properties": {
                 "StreamEncryption": {
                     "EncryptionType": "invalid"
                 }
             }
         },
-        "KMSKey" : {
-            "Type" : "AWS::KMS::Key",
-            "Properties" : {
+        "KMSKey": {
+            "Type": "AWS::KMS::Key",
+            "Properties": {
                 "EnableKeyRotation": false
             }
         },
-        "LambdaFunction" : {
-            "Type" : "AWS::Lambda::Function",
-            "Properties" : {
-                "VpcConfig": {
-
-                }
+        "LambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "VpcConfig": {}
             }
         },
-        "MediaStoreContainer" : {
-            "Type" : "AWS::MediaStore::Container",
-            "Properties" : {
+        "MediaStoreContainer": {
+            "Type": "AWS::MediaStore::Container",
+            "Properties": {
                 "AccessLoggingEnabled": false
             }
         },
-        "MSKCluster" : {
-            "Type" : "AWS::MSK::Cluster",
-            "Properties" : {
-                "ClientAuthentication": {
-                    
-                },
+        "MSKCluster": {
+            "Type": "AWS::MSK::Cluster",
+            "Properties": {
+                "ClientAuthentication": {},
                 "EncryptionInfo": {
                     "EncryptionAtRest": false,
                     "EncryptionInTransit": false
@@ -217,44 +413,44 @@
                 "EnhancedMonitoring": "PER_BROKER"
             }
         },
-        "NeptuneCluster" : {
-            "Type" : "AWS::Neptune::DBCluster",
-            "Properties" : {
+        "NeptuneCluster": {
+            "Type": "AWS::Neptune::DBCluster",
+            "Properties": {
                 "BackupRetentionPeriod": 1,
                 "IamAuthEnabled": false,
                 "StorageEncrypted": false
             }
         },
-        "NeptuneInstance" : {
-            "Type" : "AWS::Neptune::DBInstance",
-            "Properties" : {
+        "NeptuneInstance": {
+            "Type": "AWS::Neptune::DBInstance",
+            "Properties": {
                 "AllowMajorVersionUpgrade": false,
                 "AutoMinorVersionUpgrade": false
             }
         },
-        "OpsWorksApp" : {
-            "Type" : "AWS::OpsWorks::App",
-            "Properties" : {
+        "OpsWorksApp": {
+            "Type": "AWS::OpsWorks::App",
+            "Properties": {
                 "EnableSslx": false
             }
         },
-        "OpsWorksCMServer" : {
-            "Type" : "AWS::OpsWorksCM::Server",
-            "Properties" : {
+        "OpsWorksCMServer": {
+            "Type": "AWS::OpsWorksCM::Server",
+            "Properties": {
                 "AssociatePublicIpAddress": true,
                 "DisableAutomatedBackup": true
             }
         },
-        "RDSDBCluster" : {
-            "Type" : "AWS::RDS::DBCluster",
-            "Properties" : {
+        "RDSDBCluster": {
+            "Type": "AWS::RDS::DBCluster",
+            "Properties": {
                 "BackupRetentionPeriod": 1,
                 "StorageEncrypted": false
             }
         },
-        "RDSDBInstance" : {
-            "Type" : "AWS::RDS::DBInstance",
-            "Properties" : {
+        "RDSDBInstance": {
+            "Type": "AWS::RDS::DBInstance",
+            "Properties": {
                 "AllowMajorVersionUpgrade": false,
                 "AutoMinorVersionUpgrade": false,
                 "BackupRetentionPeriod": 1,
@@ -262,25 +458,25 @@
                 "StorageEncrypted": false
             }
         },
-        "RDSDBProxy" : {
-            "Type" : "AWS::RDS::DBProxy",
-            "Properties" : {
+        "RDSDBProxy": {
+            "Type": "AWS::RDS::DBProxy",
+            "Properties": {
                 "DebugLogging": true,
                 "RequireTLS": false
             }
         },
-        "RedshiftCluster" : {
-            "Type" : "AWS::Redshift::Cluster",
-            "Properties" : {
+        "RedshiftCluster": {
+            "Type": "AWS::Redshift::Cluster",
+            "Properties": {
                 "AllowVersionUpgrade": false,
                 "AutomatedSnapshotRetentionPeriod": 1,
                 "Encrypted": false,
                 "PubliclyAccessible": true
             }
         },
-        "S3AccessPoint" : {
-            "Type" : "AWS::S3::AccessPoint",
-            "Properties" : {
+        "S3AccessPoint": {
+            "Type": "AWS::S3::AccessPoint",
+            "Properties": {
                 "PublicAccessBlockConfiguration": {
                     "BlockPublicAcls": false,
                     "BlockPublicPolicy": false,
@@ -289,9 +485,9 @@
                 }
             }
         },
-        "S3Bucket" : {
-            "Type" : "AWS::S3::AccessPoint",
-            "Properties" : {
+        "S3Bucket": {
+            "Type": "AWS::S3::AccessPoint",
+            "Properties": {
                 "PublicAccessBlockConfiguration": {
                     "BlockPublicAcls": false,
                     "BlockPublicPolicy": false,
@@ -300,34 +496,28 @@
                 }
             }
         },
-        "SageMakerNotebook" : {
-            "Type" : "AWS::SageMaker::NotebookInstance",
-            "Properties" : {
+        "SageMakerNotebook": {
+            "Type": "AWS::SageMaker::NotebookInstance",
+            "Properties": {
                 "DirectInternetAccess": "Enabled",
                 "RootAccess": true
             }
         },
-        "SNSTopic" : {
-            "Type" : "AWS::SNS::Topic",
-            "Properties" : {
-                
-            }
+        "SNSTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {}
         },
-        "SQSQueue" : {
-            "Type" : "AWS::SQS::Queue",
-            "Properties" : {
-                
-            }
+        "SQSQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {}
         },
-        "StepFunctionsStateMachine" : {
-            "Type" : "AWS::StepFunctions::StateMachine",
-            "Properties" : {
-                
-            }
+        "StepFunctionsStateMachine": {
+            "Type": "AWS::StepFunctions::StateMachine",
+            "Properties": {}
         },
-        "WorkspacesWorkspace" : {
-            "Type" : "AWS::WorkSpaces::Workspace",
-            "Properties" : {
+        "WorkspacesWorkspace": {
+            "Type": "AWS::WorkSpaces::Workspace",
+            "Properties": {
                 "RootVolumeEncryptionEnabled": false,
                 "UserVolumeEncryptionEnabled": false
             }
