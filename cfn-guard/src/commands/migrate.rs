@@ -2,14 +2,14 @@ use clap::{App, Arg, ArgMatches};
 use colored::*;
 
 use crate::command::Command;
-use crate::commands::files::{get_files, regular_ordering, iterate_over, read_file_content};
+use crate::commands::files::read_file_content;
 use crate::rules::Result;
 use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::fmt::Write as FmtWrite;
 use std::io::Write as IoWrite;
 use std::collections::HashSet;
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -54,12 +54,15 @@ impl Command for Migrate {
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };
         match read_file_content(file) {
-            Err(e) => println!("Unable read content from file {}", e),
+            Err(e) => {
+                println!("Unable read content from file {}", e);
+                Err(Error::new(ErrorKind::IoError(e)))
+            },
             Ok(file_content) => {
                 match parse_rules_file(&file_content, &file_name) {
                     Err(e) => {
-                        println!("Parsing error handling rule file = {}, Error = {}",
-                                 file_name, e);
+                        println!("Could not parse 1.0 rule file: {}. Please ensure the file is valid with the old version of the tool and try again.", file_name);
+                        Err(e)
                     },
                     Ok(rules) => {
                         let migrated_rules = migrate_rules(rules)?;
@@ -67,16 +70,17 @@ impl Command for Migrate {
                         match crate::rules::parser::rules_file(span) {
                             Ok(_rules) => {
                                 write!(out,"{}", migrated_rules);
+                                Ok(())
                             },
-                            Err(err) => {
-                                println!("Parsing error with migrated rules file for original file '{}': {}", &file_name, err);
+                            Err(e) => {
+                                println!("Could not parse migrated ruleset for file: '{}': {}", &file_name, e);
+                                Err(e)
                             }
                         }
                     }
                 }
             }
         }
-        Ok(())
     }
 }
 
