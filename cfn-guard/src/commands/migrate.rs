@@ -2,12 +2,21 @@ use clap::{App, Arg, ArgMatches};
 use colored::*;
 
 use crate::command::Command;
-use crate::commands::files::{get_files, regular_ordering, iterate_over};
+use crate::commands::files::{get_files, regular_ordering, iterate_over, read_file_content};
 use crate::rules::Result;
-use crate::migrate::parser::parse_rules_file;
+use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule};
 use std::fs::{File, OpenOptions};
 use std::fmt::Write as FmtWrite;
 use std::io::Write as IoWrite;
+use std::collections::HashSet;
+use crate::rules::errors::Error;
+use std::path::PathBuf;
+use std::str::FromStr;
+
+#[cfg(test)]
+#[path = "migrate_tests.rs"]
+mod migrate_tests;
+
 
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -35,48 +44,68 @@ impl Command for Migrate {
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
-        let file = app.value_of("rules").unwrap();
+        let file_input = app.value_of("rules").unwrap();
+        let path = PathBuf::from_str(file_input).unwrap();
+        let file_name = path.to_str().unwrap_or("").to_string();
+        let file = File::open(file_input)?;
 
         let mut out= match app.value_of("output") {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };
-
-        let mut migrated_rules = String::new();
-        let files = get_files(file, regular_ordering)?;
-        for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
-            match each_file_content {
-                Err(e) => println!("Unable read content from file {}", e),
-                Ok((file_content, rule_file_name)) => {
-                    match parse_rules_file(&file_content, &rule_file_name) {
-                        Err(e) => {
-                            println!("Parsing error handling rule file = {}, Error = {}",
-                                     rule_file_name.underline(), e);
-                            continue;
-                        },
-
-                        Ok(rules) => {
-                            for rule in rules {
-                                writeln!(&mut migrated_rules, "{}", rule);
+        match read_file_content(file) {
+            Err(e) => println!("Unable read content from file {}", e),
+            Ok(file_content) => {
+                match parse_rules_file(&file_content, &file_name) {
+                    Err(e) => {
+                        println!("Parsing error handling rule file = {}, Error = {}",
+                                 file_name, e);
+                    },
+                    Ok(rules) => {
+                        let migrated_rules = migrate_rules(rules)?;
+                        let span = crate::rules::parser::Span::new_extra(&migrated_rules, "");
+                        match crate::rules::parser::rules_file(span) {
+                            Ok(_rules) => {
+                                write!(out,"{}", migrated_rules);
+                            },
+                            Err(err) => {
+                                println!("Parsing error with migrated rules file for original file '{}': {}", &file_name, err);
                             }
-                            continue;
                         }
                     }
                 }
             }
         }
-        // validate rules written
-        let span = crate::rules::parser::Span::new_extra(&migrated_rules, "");
-        match crate::rules::parser::rules_file(span) {
-            Ok(_rules) => {
-                write!(out,"{}", migrated_rules);
-                Ok(())
-            },
-            Err(e) => {
-                println!("Parsing error with migrated rules file, Error = {}", e);
-                Err(e)
-            },
+        Ok(())
+    }
+}
 
+pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<String>> {
+    let mut resource_types = HashSet::new();
+    for rule in rules {
+        if let RuleLineType::Clause(clause) = rule.clone() {
+            clause.rules.into_iter().for_each(|rule|
+                match rule {
+                    Rule::Basic(basic_rule) => { resource_types.insert(basic_rule.type_name); },
+                    Rule::Conditional(conditional_rule) => { resource_types.insert(conditional_rule.type_name); }
+                }
+            );
         }
     }
+    let mut resource_types_list = resource_types.into_iter().collect::<Vec<_>>();
+    resource_types_list.sort();
+    Ok(resource_types_list)
+}
+
+pub (crate) fn migrate_rules(rules: Vec<RuleLineType>) -> Result<String> {
+    let mut migrated_rules = String::new();
+    let resource_types = get_resource_types_in_ruleset(&rules).unwrap();
+    // write assignments for every resource type
+    for resource_type in resource_types {
+        writeln!(&mut migrated_rules, "let {} = Resources.*[ Type == \"{}\" ]", resource_type.to_lowercase().replace("::", "_"), resource_type);
+    }
+    for rule in rules {
+        writeln!(&mut migrated_rules, "{}", rule);
+    }
+    Ok(migrated_rules)
 }

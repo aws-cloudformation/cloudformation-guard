@@ -82,9 +82,9 @@ impl Display for CmpOperator {
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct PropertyComparison {
-    pub(in crate::migrate) property_path: String,
-    pub(in crate::migrate) operator: CmpOperator,
-    pub(in crate::migrate) comparison_value: OldGuardValues,
+    pub property_path: String,
+    pub operator: CmpOperator,
+    pub comparison_value: OldGuardValues,
 }
 
 impl Display for PropertyComparison {
@@ -109,10 +109,10 @@ impl Display for BaseRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.custom_message {
             Some(message) => {
-                write!(f, "{} {} <<{}>>", self.type_name, self.property_comparison, message)
+                write!(f, "%{}.{} <<{}>>", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison, message)
             },
             None => {
-                write!(f, "{} {}", self.type_name, self.property_comparison)
+                write!(f, "%{}.{}", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison)
             }
         }
     }
@@ -120,15 +120,13 @@ impl Display for BaseRule {
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct ConditionalRule {
-    pub(in crate::migrate) type_name: String,
-    pub(in crate::migrate) when_condition: PropertyComparison,
-    pub(in crate::migrate) check_condition: PropertyComparison
+    pub type_name: String,
+    pub when_condition: PropertyComparison,
+    pub check_condition: PropertyComparison
 }
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{} when {} {{", self.type_name, self.when_condition);
-        writeln!(f, "\t {}", self.check_condition);
-        writeln!(f, "}}")
+        writeln!(f, "%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition)
     }
 }
 
@@ -171,7 +169,7 @@ impl Display for RuleLineType {
         match self {
             RuleLineType::Assignment(assignment) => write!(f, "{}", assignment),
             RuleLineType::Clause(clause) => write!(f, "{}", clause),
-            RuleLineType::Comment(comment) => write!(f, "{}", comment),
+            RuleLineType::Comment(comment) => write!(f, "#{}", comment),
             RuleLineType::EmptyLine => write!(f, "")
         }
     }

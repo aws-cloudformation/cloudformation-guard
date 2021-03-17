@@ -1325,6 +1325,13 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     }))
 }
 
+fn default_clauses(input: Span) -> IResult<Span, Disjunctions<GuardClause>> {
+    let (input, disjunctions) = disjunction_clauses(
+        input, clause, true)?;
+    Ok((input, disjunctions))
+}
+
+
 fn type_block_clauses(input: Span) -> IResult<Span, Disjunctions<TypeBlock>> {
     let (input, disjunctions) = disjunction_clauses(
         input, type_block, true)?;
@@ -1348,7 +1355,7 @@ enum Exprs<'loc> {
     Assignment(LetExpr<'loc>),
     DefaultTypeBlock(Disjunctions<TypeBlock<'loc>>),
     DefaultWhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
-    DefaultClause(GuardClause<'loc>),
+    DefaultClause(Disjunctions<GuardClause<'loc>>),
     Rule(Rule<'loc>),
 }
 
@@ -1364,7 +1371,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
                 map(type_block_clauses, Exprs::DefaultTypeBlock),
                 when_block(clauses, alt((clause, rule_clause)), |c, b|
                     Exprs::DefaultWhenBlock(c, Block { assignments: b.0, conjunctions: b.1 })),
-                map(clause, Exprs::DefaultClause),
+                map(default_clauses, Exprs::DefaultClause),
             ))
         ),
         Vec::new(),
@@ -1382,7 +1389,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
         match each {
             Exprs::Rule(r) => named_rules.push(r),
             Exprs::Assignment(l) => global_assignments.push(l),
-            Exprs::DefaultClause(c) => default_rule_clauses.push(vec![RuleClause::Clause(c)]),
+            Exprs::DefaultClause(clause_disjunctions) => default_rule_clauses.push(clause_disjunctions.into_iter().map(|clause| RuleClause::Clause(clause)).collect()),
             Exprs::DefaultTypeBlock(disjunctions) => default_rule_clauses.push(disjunctions.into_iter().map(|type_block| RuleClause::TypeBlock(type_block)).collect()),
             Exprs::DefaultWhenBlock(w, b) => default_rule_clauses.push(vec![RuleClause::WhenBlock(w, b)]),
         }
