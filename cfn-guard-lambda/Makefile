@@ -1,6 +1,6 @@
 UNAME_S := $(shell uname -s)
 SYSTEM_RELEASE := $(shell cat /etc/system-release 2>/dev/null || echo 'Unknown')
-AWS_CLI_VERSION := $(shell aws --version 2>/dev/null | sed 's/aws-cli\/\(.\).*/\1/')
+AWS_CLI_VERSION := $(shell aws --version 2>&1 | sed 's/aws-cli\/\(.\).*/\1/')
 project_name = cfn-guard-lambda
 role_arn := ${CFN_GUARD_LAMBDA_ROLE_ARN}
 request_payload_fail = '{ "template": "{\n    \"Resources\": {\n        \"NewVolume\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 100,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        },\n        \"NewVolume2\" : {\n            \"Type\" : \"AWS::EC2::Volume\",\n            \"Properties\" : {\n                \"Size\" : 99,\n                \"Encrypted\": true,\n                \"AvailabilityZone\" : \"us-east-1b\"\n            }\n        } }\n}",\
@@ -164,7 +164,7 @@ pre-reqs:
 build: clean
 	@echo This is a $(UNAME_S) machine...
 	env PKG_CONFIG_ALLOW_CROSS=1 cargo build --release --target x86_64-unknown-linux-musl
-	cp target/x86_64-unknown-linux-musl/release/$(project_name) ./bootstrap
+	cp ../target/x86_64-unknown-linux-musl/release/$(project_name) ./bootstrap
 	chmod +x bootstrap
 	zip lambda.zip bootstrap
 
