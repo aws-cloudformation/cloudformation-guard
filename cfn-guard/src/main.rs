@@ -25,6 +25,7 @@ fn main() -> Result<(), Error>{
     commands.push(Box::new(crate::commands::parse_tree::ParseTree::new()));
     commands.push(Box::new(crate::commands::test::Test::new()));
     commands.push(Box::new(crate::commands::validate::Validate::new()));
+    commands.push(Box::new(crate::commands::rulegen::Rulegen::new()));
     commands.push(Box::new(crate::commands::migrate::Migrate::new()));
 
     let mappings = commands.iter()

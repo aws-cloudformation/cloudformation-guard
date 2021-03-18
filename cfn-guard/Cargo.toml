@@ -23,6 +23,8 @@ walkdir = "2.3.1"
 colored = "2.0.0"
 heck = "0.3.1"
 lazy_static = "1.4.0"
+itertools = "0.4.7"
+string-builder = "0.2.0"
 
 [dependencies.serde_json]
 version = "1.0.60"

@@ -1,5 +1,6 @@
 pub(crate) mod files;
 pub(crate) mod validate;
+pub(crate) mod rulegen;
 pub(crate) mod test;
 pub(crate) mod helper;
 pub(crate) mod parse_tree;
