@@ -126,7 +126,9 @@ pub(crate) struct ConditionalRule {
 }
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition)
+        writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name.to_lowercase().replace("::", "_"), self.when_condition);
+        writeln!(f, "\t%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition);
+        writeln!(f, "}}")
     }
 }
 
