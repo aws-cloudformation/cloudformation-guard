@@ -48,7 +48,7 @@ pub(crate) struct Assignment {
 
 impl Display for Assignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "let {} = {}", self.var_name, self.value)
+        write!(f, "\tlet {} = {}", self.var_name, self.value)
     }
 }
 
@@ -127,8 +127,8 @@ pub(crate) struct ConditionalRule {
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name.to_lowercase().replace("::", "_"), self.when_condition);
-        writeln!(f, "\t%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition);
-        writeln!(f, "}}")
+        writeln!(f, "\t\t%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition);
+        write!(f, "\t}}")
     }
 }
 

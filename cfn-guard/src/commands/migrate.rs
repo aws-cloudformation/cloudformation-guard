@@ -105,11 +105,13 @@ pub (crate) fn migrate_rules(rules: Vec<RuleLineType>) -> Result<String> {
     let mut migrated_rules = String::new();
     let resource_types = get_resource_types_in_ruleset(&rules).unwrap();
     // write assignments for every resource type
+    writeln!(&mut migrated_rules, "rule migrated_rules {{");
     for resource_type in resource_types {
-        writeln!(&mut migrated_rules, "let {} = Resources.*[ Type == \"{}\" ]", resource_type.to_lowercase().replace("::", "_"), resource_type);
+        writeln!(&mut migrated_rules, "\tlet {} = Resources.*[ Type == \"{}\" ]", resource_type.to_lowercase().replace("::", "_"), resource_type);
     }
     for rule in rules {
-        writeln!(&mut migrated_rules, "{}", rule);
+        writeln!(&mut migrated_rules, "\t{}", rule);
     }
+    writeln!(&mut migrated_rules, "}}");
     Ok(migrated_rules)
 }
