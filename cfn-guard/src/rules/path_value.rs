@@ -260,6 +260,10 @@ impl QueryResolver for PathAwareValue {
         }
 
         match &query[0] {
+            QueryPart::It => {
+                self.select(all, &query[1..], resolver)
+            },
+
             QueryPart::Key(key) => {
                 match key.parse::<i32>() {
                     Ok(index) => {
@@ -346,6 +350,16 @@ impl QueryResolver for PathAwareValue {
                 match self {
                     PathAwareValue::Map((_path, map)) => {
                         PathAwareValue::accumulate(all, &query[1..], &map.keys, resolver)
+                    },
+
+                    _ => self.map_some_or_error_all(all, query)
+                }
+            },
+
+            QueryPart::Keys => {
+                match self {
+                    PathAwareValue::Map((_path, map)) => {
+                        Ok(map.keys.iter().collect::<Vec<&PathAwareValue>>())
                     },
 
                     _ => self.map_some_or_error_all(all, query)

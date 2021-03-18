@@ -690,10 +690,12 @@ pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     }
 }
 
-fn predicate_filter_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
+fn predicate_filter_clauses(input: Span) -> IResult<Span, QueryPart> {
+    let (input, _open) = open_array(input)?;
     let (input, filters) = cnf_clauses(
         input, clause, std::convert::identity, true)?;
-    Ok((input, filters))
+    let (input, _close) = cut(close_array)(input)?;
+    Ok((input, QueryPart::Filter(filters)))
 }
 
 fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
@@ -720,17 +722,62 @@ fn close_array(input: Span) -> IResult<Span, ()> {
     value((), preceded(zero_or_more_ws_or_comment, char(']')))(input)
 }
 
+fn all_indices(input: Span) -> IResult<Span, QueryPart> {
+    value(QueryPart::AllIndices,
+          delimited(open_array, char('*'), cut(close_array)))
+        (input)
+}
+
+fn array_index(input: Span) -> IResult<Span, QueryPart> {
+    map(delimited(open_array, parse_int_value, cut(close_array)), |idx| {
+        let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
+        QueryPart::Index(idx)
+    })(input)
+}
+
+fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
+    map(delimited(open_array, parse_string, cut(close_array)), |idx| {
+        let idx = match idx { Value::String(i) => i, _ => unreachable!() };
+        QueryPart::Key(idx)
+    })(input)
+}
+
+fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
+    let (input, _open) = open_array(input)?;
+    let (input, key_clauses) = match cnf_clauses(
+        input,
+        |s|
+            clause_with(s,
+                        |i| value(AccessQuery {
+                            query: vec![QueryPart::Keys],
+                            match_all: false,
+                        }, keys)(i)
+        ),
+        std::convert::identity,
+        true
+    ) {
+        //
+        // We capture Failure from disjunction_clauses as keys may not be in the
+        // clause. We try the next one on the list
+        //
+        Err(nom::Err::Error(e)) |
+        Err(nom::Err::Failure(e)) => return Err(nom::Err::Error(e)),
+
+        Err(e) => return Err(e),
+
+        Ok(clauses) => clauses
+    };
+    let (input, _close) = cut(close_array)(input)?;
+    Ok((input, QueryPart::Filter(key_clauses)))
+}
+
 fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {
     alt((
-        value(QueryPart::AllIndices, delimited(open_array, char('*'), cut(close_array))),
-        map(delimited(open_array, parse_int_value, cut(close_array)), |idx| {
-            let idx = match idx { Value::Int(i) => i as i32, _ => unreachable!() };
-            QueryPart::Index(idx)
-        }),
-        delimited(
-            open_array,
-            cut(map(predicate_filter_clauses, |clauses| QueryPart::Filter(clauses))),
-            cut(close_array))
+        all_indices,
+        array_index,
+        map_key_lookup,
+        map_keys_match,
+        predicate_filter_clauses
     ))(input)
 }
 
@@ -780,8 +827,10 @@ fn some_keyword(input: Span) -> IResult<Span, bool> {
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(tuple((
         opt(some_keyword),
-        map(
-                alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)),
+        alt(
+            (value(QueryPart::It, preceded(zero_or_more_ws_or_comment, char('_'))),
+            map(
+                alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)))),
         opt(dotted_access))), |(any, first, remainder)| {
 
         let query_parts = match remainder {
@@ -804,92 +853,36 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     })(input)
 }
 
-//
-//  simple_unary               = "EXISTS" / "EMPTY"
-//  keys_unary                 = "KEYS" 1*SP simple_unary
-//  keys_not_unary             = "KEYS" 1*SP not_keyword 1*SP unary_operators
-//  unary_operators            = simple_unary / keys_unary / not_keyword simple_unary / keys_not_unary
-//
-//
-//  clause                     = access 1*SP unary_operators *(LWSP/comment) custom_message /
-//                               access 1*SP binary_operators 1*(LWSP/comment) (access/value) *(LWSP/comment) custom_message
-//
-// Errors:
-//     nom::error::ErrorKind::Alpha, if var_name_access / var_name does not work out
-//     nom::error::ErrorKind::Char, if whitespace / comment does not work out for needed spaces
-//
-// Failures:
-//     nom::error::ErrorKind::Char  if access / parse_value does not work out
-//
-//
-fn clause(input: Span) -> IResult<Span, GuardClause> {
+fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
+    where A: Fn(Span) -> IResult<Span, AccessQuery>
+{
     let location = FileLocation {
         file_name: input.extra,
         line: input.location_line(),
         column: input.get_utf8_column() as u32,
     };
 
-    let (rest, not) = opt(not)(input)?;
-
-    //
-    // TODO find a better way to do this. Predicate clause uses this as well which can have
-    // the form *[ KEYS == ... ], where KEYS was the keyword. No other form of expression has
-    // this problem.
-    //
-    // FIXME: clause ends up calling predicate_clause, which is fine, but we should
-    // not expect the form *[ [ [] ] ]. We should dis-allows this.
-    //
-    let (rest, any) = opt(peek(some_keyword))(rest)?;
-    let any = match any { Some(_) => true, None => false };
-    let (rest, keys) = opt(peek(keys))(rest)?;
-    let (rest, all_indices) = if !keys.is_some() {
-        opt( delimited(zero_or_more_ws_or_comment, char('*'), zero_or_more_ws_or_comment))(rest)?
-    } else {
-        (rest, None)
-    };
-
-    let (rest, (lhs, cmp)) =
-        if keys.is_some() {
-            let (r, (_space_ign, cmp)) = tuple((
-                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
-                // error if there is no value_cmp
-                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
-                        value_cmp)
-            ))(rest)?;
-            (r, (AccessQuery{ query: vec![QueryPart::MapKeys], match_all: !any}, cmp))
-        }
-        else if all_indices.is_some() {
-            let (r, cmp) = cut(value_cmp)(rest)?;
-            (r, (AccessQuery{ query: vec![QueryPart::AllIndices], match_all: !any }, cmp))
-        }
-        else {
-            let (r, (access, _ign_space, cmp)) = map(tuple((
-                access,
-                // It is an error to not have a ws/comment following it
-                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
-                // error if there is no value_cmp
-                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
-                        value_cmp)
-            )), |(mut query, ign, value)| {
-                query.match_all = !any;
-                (query, ign, value)
-            })(rest)?;
-            (r, (access, cmp))
-        };
+    let (rest, not) = preceded( zero_or_more_ws_or_comment, opt(not))(input)?;
+    let (rest, (query, cmp)) = map(tuple((
+        |a| access(a),
+        context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
+        // error if there is no value_cmp, has to exist
+        context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+                value_cmp)
+    )), |(mut query, _ign, value)| {
+        (query, value)
+    })(rest)?;
 
     if !does_comparator_have_rhs(&cmp.0) {
-        let remaining = rest.clone();
-        let (remaining, custom_message) = cut(
-            map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
+        let (rest, custom_message) = map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
                 |msg| {
                     msg.map(String::from)
-                }))(remaining)?;
-        let rest = if custom_message.is_none() { rest } else { remaining };
+                })(rest)?;
         Ok((rest,
             GuardClause::Clause(
                 GuardAccessClause {
                     access_clause: AccessClause {
-                        query: lhs,
+                        query,
                         comparator: cmp,
                         compare_with: None,
                         custom_message,
@@ -897,7 +890,8 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                     },
                     negation: not.is_some() }
             )))
-    } else {
+    }
+    else {
         let (rest, (compare_with, custom_message)) =
             context("expecting either a property access \"engine.core\" or value like \"string\" or [\"this\", \"that\"]",
                     cut(alt((
@@ -920,7 +914,7 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
             GuardClause::Clause(
                 GuardAccessClause {
                     access_clause: AccessClause {
-                        query: lhs,
+                        query,
                         comparator: cmp,
                         compare_with,
                         custom_message,
@@ -930,6 +924,136 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                 })
         ))
     }
+}
+
+
+//
+//  simple_unary               = "EXISTS" / "EMPTY"
+//  keys_unary                 = "KEYS" 1*SP simple_unary
+//  keys_not_unary             = "KEYS" 1*SP not_keyword 1*SP unary_operators
+//  unary_operators            = simple_unary / keys_unary / not_keyword simple_unary / keys_not_unary
+//
+//
+//  clause                     = access 1*SP unary_operators *(LWSP/comment) custom_message /
+//                               access 1*SP binary_operators 1*(LWSP/comment) (access/value) *(LWSP/comment) custom_message
+//
+// Errors:
+//     nom::error::ErrorKind::Alpha, if var_name_access / var_name does not work out
+//     nom::error::ErrorKind::Char, if whitespace / comment does not work out for needed spaces
+//
+// Failures:
+//     nom::error::ErrorKind::Char  if access / parse_value does not work out
+//
+//
+fn clause(input: Span) -> IResult<Span, GuardClause> {
+    clause_with(input, access)
+//    let location = FileLocation {
+//        file_name: input.extra,
+//        line: input.location_line(),
+//        column: input.get_utf8_column() as u32,
+//    };
+//
+//    let (rest, not) = opt(not)(input)?;
+//
+//    //
+//    // TODO find a better way to do this. Predicate clause uses this as well which can have
+//    // the form *[ KEYS == ... ], where KEYS was the keyword. No other form of expression has
+//    // this problem.
+//    //
+//    // FIXME: clause ends up calling predicate_clause, which is fine, but we should
+//    // not expect the form *[ [ [] ] ]. We should dis-allows this.
+//    //
+//    let (rest, any) = opt(peek(some_keyword))(rest)?;
+//    let any = match any { Some(_) => true, None => false };
+//    let (rest, keys) = opt(peek(keys))(rest)?;
+//    let (rest, all_indices) = if !keys.is_some() {
+//        opt( delimited(zero_or_more_ws_or_comment, char('*'), zero_or_more_ws_or_comment))(rest)?
+//    } else {
+//        (rest, None)
+//    };
+//
+//    let (rest, (lhs, cmp)) =
+//        if keys.is_some() {
+//            let (r, (_space_ign, cmp)) = tuple((
+//                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
+//                // error if there is no value_cmp
+//                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+//                        value_cmp)
+//            ))(rest)?;
+//            (r, (AccessQuery{ query: vec![QueryPart::MapKeys], match_all: !any}, cmp))
+//        }
+//        else if all_indices.is_some() {
+//            let (r, cmp) = cut(value_cmp)(rest)?;
+//            (r, (AccessQuery{ query: vec![QueryPart::AllIndices], match_all: !any }, cmp))
+//        }
+//        else {
+//            let (r, (access, _ign_space, cmp)) = map(tuple((
+//                access,
+//                // It is an error to not have a ws/comment following it
+//                context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
+//                // error if there is no value_cmp
+//                context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
+//                        value_cmp)
+//            )), |(mut query, ign, value)| {
+//                query.match_all = !any;
+//                (query, ign, value)
+//            })(rest)?;
+//            (r, (access, cmp))
+//        };
+//
+//    if !does_comparator_have_rhs(&cmp.0) {
+//        let remaining = rest.clone();
+//        let (remaining, custom_message) = cut(
+//            map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
+//                |msg| {
+//                    msg.map(String::from)
+//                }))(remaining)?;
+//        let rest = if custom_message.is_none() { rest } else { remaining };
+//        Ok((rest,
+//            GuardClause::Clause(
+//                GuardAccessClause {
+//                    access_clause: AccessClause {
+//                        query: lhs,
+//                        comparator: cmp,
+//                        compare_with: None,
+//                        custom_message,
+//                        location,
+//                    },
+//                    negation: not.is_some() }
+//            )))
+//    } else {
+//        let (rest, (compare_with, custom_message)) =
+//            context("expecting either a property access \"engine.core\" or value like \"string\" or [\"this\", \"that\"]",
+//                    cut(alt((
+//                        //
+//                        // Order does matter here as true/false and other values can be interpreted as access
+//                        //
+//                        map(tuple((
+//                            parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+//                            move |(rhs, msg)| {
+//                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
+//                            }),
+//                        map(tuple((
+//                            preceded(zero_or_more_ws_or_comment, access),
+//                            preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+//                            |(rhs, msg)| {
+//                                (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
+//                            }),
+//                    ))))(rest)?;
+//        Ok((rest,
+//            GuardClause::Clause(
+//                GuardAccessClause {
+//                    access_clause: AccessClause {
+//                        query: lhs,
+//                        comparator: cmp,
+//                        compare_with,
+//                        custom_message,
+//                        location,
+//                    },
+//                    negation: not.is_some()
+//                })
+//        ))
+//    }
 }
 
 //

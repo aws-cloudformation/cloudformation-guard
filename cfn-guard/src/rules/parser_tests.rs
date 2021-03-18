@@ -2302,7 +2302,11 @@ fn test_clause_failures() {
     // Testing for missing access
     //
     assert_eq!(Err(nom::Err::Error(ParserError {
-        span: from_str2(" > 10"),
+        span: unsafe {
+            Span::new_from_raw_offset(
+                1, 1, "> 10", ""
+            )
+        },
         kind: nom::error::ErrorKind::Char,
         context: "".to_string(),
     })), clause(from_str2(" > 10")));
@@ -2679,6 +2683,7 @@ fn test_clauses() {
     ];
 
     for (idx, each) in examples.iter().enumerate() {
+        println!("Testing #{}, Case = {}", idx, each);
         let span = from_str2(*each);
         let result = clauses(span);
         assert_eq!(&result, &expectations[idx]);
@@ -3646,7 +3651,7 @@ fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
      request.kind.kind == "Pod"
      request.operation == "CREATE"
      let service_name = request.object.spec.serviceAccountName
-     %allowlist[ serviceAccount == %service_name ] !EMPTY
+     %allowlist[ _.serviceAccount == %service_name ] !EMPTY
  }"###;
     let rule = Rule::try_from(r)?;
     println!("{:?}", rule);
@@ -3705,7 +3710,7 @@ impl EvaluationContext for DummyEval {
 
 #[test]
 fn select_any_one_from_list_clauses() -> Result<(), Error> {
-    let clause = "* == /\\{\\{resolve:secretsmanager/";
+    let clause = "_ == /\\{\\{resolve:secretsmanager/";
     let parsed = super::clause(from_str2(clause))?.1;
     let expected = GuardClause::Clause(
         GuardAccessClause {
@@ -3718,7 +3723,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
                 compare_with: Some(LetValue::Value(Value::Regex("\\{\\{resolve:secretsmanager".to_string()))),
                 comparator: (CmpOperator::Eq, false),
                 custom_message: None,
-                query: AccessQuery{ query: vec![QueryPart::AllIndices], match_all: true }
+                query: AccessQuery{ query: vec![QueryPart::It], match_all: true }
             },
             negation: false
         }
@@ -3765,7 +3770,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
 
     let dummy = DummyEval{};
     let clause = GuardClause::try_from(
-        r#"Resources.*[ Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ * == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
+        r#"Resources.*[ _.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ _ == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
     Ok(())
 }
 
@@ -3845,5 +3850,116 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
         assignments: vec![],
         guard_rules: vec![default_rule]
     });
+    Ok(())
+}
+
+#[test]
+fn some_clause_parse() -> Result<(), Error> {
+    let clause = GuardClause::try_from(
+        r#"some %api_gws.Properties.Policy.Statement[*].Condition[
+            keys ==  /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty"#)?;
+    let parsed_clause = GuardClause::Clause(
+        GuardAccessClause {
+            negation: false,
+            access_clause: AccessClause {
+                query: AccessQuery {
+                    match_all: false,
+                    query: vec![
+                        QueryPart::Key("%api_gws".to_string()),
+                        QueryPart::Key("Properties".to_string()),
+                        QueryPart::Key("Policy".to_string()),
+                        QueryPart::Key("Statement".to_string()),
+                        QueryPart::AllIndices,
+                        QueryPart::Key("Condition".to_string()),
+                        QueryPart::Filter(
+                            Conjunctions::from(
+                                [Disjunctions::from(
+                                    [GuardClause::Clause(
+                                        GuardAccessClause {
+                                            negation: false,
+                                            access_clause: AccessClause {
+                                                query: AccessQuery {
+                                                    match_all: false,
+                                                    query: vec![
+                                                        QueryPart::Keys
+                                                    ]
+                                                },
+                                                custom_message: None,
+                                                comparator: (CmpOperator::Eq, false),
+                                                compare_with: Some(LetValue::Value(Value::Regex(String::from(
+                                                    "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)"
+                                                )))),
+                                                location: FileLocation {
+                                                    line: 2,
+                                                    column: 13,
+                                                    file_name: ""
+                                                }
+                                            }
+                                        }
+                                    )]
+                                )]
+                            )
+                        )
+                    ]
+                },
+                compare_with: None,
+                comparator: (CmpOperator::Empty, true),
+                custom_message: None,
+                location: FileLocation {
+                    line: 1,
+                    column: 1,
+                    file_name: ""
+                }
+            }
+        }
+    );
+    assert_eq!(parsed_clause, clause);
+    Ok(())
+}
+
+#[test]
+fn it_support_test() -> Result<(), Error> {
+    let query = r#"Tags[ some _ == { Key: "Hi", Value: "There" }]"#;
+    let parsed_query = AccessQuery::try_from(query)?;
+    println!("{:?}", parsed_query);
+    let expected = AccessQuery {
+        match_all: true,
+        query: vec![
+            QueryPart::Key("Tags".to_string()),
+            QueryPart::Filter(
+                Conjunctions::from([
+                    Disjunctions::from([
+                        GuardClause::Clause(
+                            GuardAccessClause {
+                                negation: false,
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        match_all: false,
+                                        query: vec![
+                                            QueryPart::It
+                                        ]
+                                    },
+                                    custom_message: None,
+                                    comparator: (CmpOperator::Eq, false),
+                                    location: FileLocation {
+                                        file_name: "",
+                                        column: 7,
+                                        line: 1
+                                    },
+                                    compare_with: Some(LetValue::Value(Value::Map(
+                                        make_linked_hashmap(vec![
+                                            ("Key", Value::String("Hi".to_string())),
+                                            ("Value", Value::String("There".to_string()))
+                                        ])
+                                    )))
+                                }
+                            }
+                        )
+                    ])
+                ])
+            )
+        ]
+    };
+    assert_eq!(parsed_query, expected);
     Ok(())
 }

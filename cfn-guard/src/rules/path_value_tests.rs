@@ -296,3 +296,27 @@ fn some_filter_tests() -> Result<(), Error> {
     assert_eq!(selected.len(), 1);
     Ok(())
 }
+
+#[test]
+fn it_support_evaluation_tests() -> Result<(), Error> {
+    let tags = r#"Tags[ _ == { Key: "Hi", Value: "There" } ]"#;
+    let parsed_tags = AccessQuery::try_from(tags)?;
+    let values = r#"{
+        Tags: [
+            { Key: "Hi", Value: "There" },
+            { Key: "NotHi", Value: "NotThere" }
+        ]
+    }"#;
+    let parsed_values = PathAwareValue::try_from(values)?;
+    let dummy = DummyEval{};
+    let selected = parsed_values.select(parsed_tags.match_all, &parsed_tags.query, &dummy)?;
+    println!("Selected = {:?}", selected);
+    assert_eq!(selected.len(), 1);
+    match selected[0] {
+        PathAwareValue::Map((p, map)) => {
+            assert_eq!(p, &Path::try_from("/Tags/0")?);
+        },
+        _ => unreachable!()
+    }
+    Ok(())
+}

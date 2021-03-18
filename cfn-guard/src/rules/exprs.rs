@@ -54,6 +54,8 @@ pub(crate) struct LetExpr<'loc> {
 ///
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
+    It,
+    Keys,
     Key(String),
     MapKeys,
     AllValues,
@@ -109,8 +111,15 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
 
             QueryPart::MapKeys => {
                 f.write_str("[KEYS]")?;
-            }
+            },
 
+            QueryPart::Keys => {
+                f.write_str("keys")?;
+            },
+
+            QueryPart::It => {
+                f.write_str("_")?;
+            }
         }
         Ok(())
     }
