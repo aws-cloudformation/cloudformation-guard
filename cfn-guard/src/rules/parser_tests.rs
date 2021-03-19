@@ -1107,7 +1107,7 @@ fn test_access() {
              },
              AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string())
-             ], match_all: true }
+             ],  match_all: true }
         )),
         Ok(( // 5
              unsafe {
@@ -1157,9 +1157,9 @@ fn test_access() {
         Ok(( // "engine.*.type.%var", // 8 ok
              unsafe {
                  Span::new_from_raw_offset(
-                     examples[8].len() - ".%var".len(),
+                     examples[8].len(),
                      1,
-                     ".%var",
+                     "",
                      "",
                  )
              },
@@ -1167,6 +1167,7 @@ fn test_access() {
                  QueryPart::Key("engine".to_string()),
                  QueryPart::AllValues,
                  QueryPart::Key("type".to_string()),
+                 QueryPart::Key("%var".to_string())
              ], match_all: true },
         )),
         Ok(( // "engine[0]", // 9 ok
@@ -1219,14 +1220,16 @@ fn test_access() {
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
-                    examples[12].len() - ".%name.*".len(),
+                    examples[12].len(),
                     1,
-                    ".%name.*",
+                    "",
                     "",
                 )
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
+                QueryPart::Key("%name".to_string()),
+                QueryPart::AllValues
             ], match_all: true },
         )),
 
@@ -1270,14 +1273,16 @@ fn test_access() {
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
-                    examples[15].len() - ".%type.*".len(),
+                    examples[15].len(),
                     1,
-                    ".%type.*",
+                    "",
                     "",
                 )
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::Key("%type".to_string()),
+                QueryPart::AllValues,
             ], match_all: true },
         )),
 
@@ -1286,14 +1291,17 @@ fn test_access() {
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
-                    examples[16].len() - ".%type.*.port".len(),
+                    examples[16].len(),
                     1,
-                    ".%type.*.port",
+                    "",
                     "",
                 )
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::Key("%type".to_string()),
+                QueryPart::AllValues,
+                QueryPart::Key("port".to_string())
             ], match_all: true },
         )),
 
@@ -1343,7 +1351,7 @@ fn test_access() {
                                     file_name: ""
                                 }
                             },
-                            negation: false
+                            negation: false,
                         }),
                     ]
                 ]),

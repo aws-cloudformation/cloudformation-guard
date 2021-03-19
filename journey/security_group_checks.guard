@@ -1,0 +1,30 @@
+let resources_with_ids = Resources.*[
+    Properties.SecurityGroupsIds exists
+]
+
+let resources_with_grps = Resources.*[
+    Properties.SecurityGroups exists
+]
+
+
+rule allow_resources_with_shared_metadata when %resources_with_ids !empty {
+    let resources_with_direct_refs = %resources_with_ids[
+        some Properties.SecurityGroupIds[*] is_string
+    ]
+    when %resources_with_direct_refs !empty {
+        %resources_with_direct_refs.Metadata.SharedSecurityGroup
+    }
+}
+
+rule make_sure_refs_and_get_atts_are_local when %resources_with_ids !empty or 
+                                                %resources_with_grps !empty {
+    let get_atts = some %resources_with_ids.Properties.SecurityGroupIds[*].'Fn::GetAtt'
+    when %get_atts !empty {
+        Resources.%get_atts.Type == 'Aws::EC2::SecurityGroup'
+    }
+
+    let refs = some %resources_with_grps.Properties.SecurityGroups.'Ref'
+    when %refs !empty {
+        Resources.%refs.Type == 'AWS::EC2::SecurityGroup'
+    }
+}

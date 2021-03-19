@@ -132,7 +132,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                     let root = PathAwareValue::try_from(each.input)?;
                     let context = RootScope::new(rules, &root);
                     let stacker = StackTracker::new(&context);
-                    rules.evaluate(&root, &stacker);
+                    rules.evaluate(&root, &stacker)?;
                     let expectations = each.expectations.rules;
                     let stack = stacker.stack();
                     for each in &stack[0].children {

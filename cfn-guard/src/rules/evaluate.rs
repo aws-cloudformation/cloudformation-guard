@@ -1,16 +1,15 @@
-use std::collections::{
-    HashMap
-};
+use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt::Formatter;
+
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, path_value, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, RuleClause, TypeBlock, QueryPart};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
+use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
-use std::fmt::Formatter;
-use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
@@ -18,43 +17,36 @@ use crate::rules::path_value::{PathAwareValue, QueryResolver, Path};
 //                                                                                              //
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub(super)
+fn resolve_variable_query<'s>(all: bool,
+                              variable: &str,
+                              query: &[QueryPart<'_>],
+                              var_resolver: &'s dyn EvaluationContext) -> Result<Vec<&'s PathAwareValue>> {
+    let retrieved = var_resolver.resolve_variable(variable)?;
+    let index: usize = if query.len() > 1 {
+        match &query[1] {
+            QueryPart::AllIndices => 2,
+            _ => 1,
+        }
+    } else { 1 };
+    let mut acc = Vec::with_capacity(retrieved.len());
+    for each in retrieved {
+        if query.len() > index {
+            acc.extend(each.select(all, &query[index..], var_resolver)?)
+        }
+        else {
+            acc.push(each);
+        }
+    }
+    Ok(acc)
+}
+
 fn resolve_query<'s, 'loc>(all: bool,
-                           query: &'s [QueryPart<'loc>],
+                           query: &[QueryPart<'loc>],
                            context: &'s PathAwareValue,
                            var_resolver: &'s dyn EvaluationContext) -> Result<Vec<&'s PathAwareValue>> {
     match query[0].variable() {
-        Some(var) => {
-            let retrieved = var_resolver.resolve_variable(var)?;
-            let index: usize = if query.len() > 1 {
-                match &query[1] {
-                    QueryPart::AllIndices => 2,
-                    _ => 1,
-                }
-            } else { 1 };
-            let mut acc = Vec::with_capacity(retrieved.len());
-            for each in retrieved {
-                if query.len() > index {
-                    match each.select(all, &query[index..], var_resolver) {
-                        Ok(result) => {
-                            acc.extend(result);
-                        },
-
-                        Err(Error(ErrorKind::RetrievalError(e))) => {
-                            if all {
-                                return Err(Error::new(ErrorKind::RetrievalError(e)));
-                            }
-                        },
-
-                        Err(e) => return Err(e)
-                    }
-                }
-                else {
-                    acc.push(each);
-                }
-            }
-            Ok(acc)
-        },
-
+        Some(var) => resolve_variable_query(all, var, query, var_resolver),
         None => context.select(all, query, var_resolver)
     }
 }
@@ -76,19 +68,23 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
+fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>, bool)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
+    let mut at_least_one_match = false;
     loop {
         'lhs:
         for lhs_value in lhs {
             for rhs_value in rhs {
                 let check = compare(*lhs_value, *rhs_value)?;
+                if check {
+                    at_least_one_match = true;
+                }
                 if any && check {
                     continue 'lhs
                 }
 
                 if !any && !check {
-                    return Ok((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())))
+                    return Ok((false, Some((*lhs_value).clone()), Some((*rhs_value).clone()), at_least_one_match))
                 }
             }
             //
@@ -96,12 +92,12 @@ fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compa
             // it would be a failure to be here
             //
             if any {
-                return Ok((false, Some((*lhs_value).clone()), None))
+                return Ok((false, Some((*lhs_value).clone()), None, at_least_one_match))
             }
         }
         break;
     };
-    Ok((true, None, None))
+    Ok((true, None, None, true))
 }
 
 fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&'a PathAwareValue>>> {
@@ -114,7 +110,7 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&
             },
 
             _ => return Err(Error::new(
-                ErrorKind::IncompatibleError(
+                ErrorKind::IncompatibleRetrievalError(
                     format!("Expecting the RHS query to return a List<List>, found {}, {:?}",
                             (*each_list_elem).type_info(), *each_list_elem)
                 )
@@ -129,11 +125,11 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
               rhs: &Vec<&PathAwareValue>,
               rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
+              any: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>, bool)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::SKIP, None, None))
+        return Ok((Status::FAIL, None, None, false))
     }
 
     let lhs_elem = lhs[0];
@@ -144,46 +140,46 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     //
     if !lhs_elem.is_list() && !rhs_elem.is_list() {
         match compare_loop(lhs, rhs, compare, any) {
-            Ok((true, _, _)) => Ok((Status::PASS, None, None)),
-            Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
+            Ok((true, _, _, atleast)) => Ok((Status::PASS, None, None, atleast)),
+            Ok((false, from, to, atleast)) => Ok((Status::FAIL, from, to, atleast)),
             Err(e) => Err(e)
         }
     }
     else if lhs_elem.is_list() && !rhs_elem.is_list() {
         for elevated in elevate_inner(lhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, from, to, atleast)) = compare_loop(
                 &elevated, rhs, |f, s| compare(f, s), any) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, from, to, atleast))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, None, None, true))
     }
     else if !lhs_elem.is_list() && rhs_elem.is_list() {
         for elevated in elevate_inner(rhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, from, to, atleast)) = compare_loop(
                 lhs, &elevated, |f, s| compare(f, s), any) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, from, to, atleast))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, None, None, true))
     }
     else {
         for elevated_lhs in elevate_inner(lhs)? {
             for elevated_rhs in elevate_inner(rhs)? {
-                if let Ok((cmp, from, to)) = compare_loop(
+                if let Ok((cmp, from, to, atleast)) = compare_loop(
                     &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any) {
                     if !cmp {
-                        return Ok((Status::FAIL, from, to))
+                        return Ok((Status::FAIL, from, to, atleast))
                     }
                 }
 
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, None, None, true))
     }
 }
 
@@ -234,49 +230,143 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
+        let all = self.access_clause.query.match_all;
 
 
-        let lhs = match resolve_query(clause.access_clause.query.match_all, &clause.access_clause.query.query, context, var_resolver) {
-            Ok(v) => Some(v),
-            Err(Error(ErrorKind::RetrievalError(e))) => None,
-            Err(e) => return Err(e),
-        };
+        let (lhs, retrieve_error) =
+            match resolve_query(clause.access_clause.query.match_all,
+                                &clause.access_clause.query.query,
+                                context,
+                                var_resolver)
+            {
+                Ok(v) => (Some(v), None),
+                Err(Error(ErrorKind::RetrievalError(e))) |
+                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => (None, Some(e)),
+                Err(e) => return Err(e),
+            };
 
-        let result = match &clause.access_clause.comparator.0 {
-            CmpOperator::Empty |
-            CmpOperator::KeysEmpty=>
-                match &lhs { None => Some(false), Some(l) => Some(l.is_empty()) }
+        let result = match clause.access_clause.comparator {
+            (CmpOperator::Empty, not) |
+            (CmpOperator::KeysEmpty, not) =>
+                //
+                // Retrieval Error is considered the same as an empty or !exists
+                // When using "SOME" keyword in the clause, then IncompatibleError is trapped to be none
+                // This is okay as long as the checks are for empty, exists
+                //
+                match &lhs {
+                    None => Some(negation_status(true, not, clause.negation)),
+                    Some(l) => {
+                        Some(
+                            if !l.is_empty() {
+                                if l[0].is_list() {
+                                    'all_empty: loop {
+                                        for element in l {
+                                            if let PathAwareValue::List((_, vec)) = *element {
+                                                match negation_status(vec.is_empty(), not, clause.negation) {
+                                                    Status::FAIL => break 'all_empty Status::FAIL,
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                        break Status::PASS
+                                    }
+                                }
+                                else {
+                                    negation_status(false, not, clause.negation)
+                                }
+                            }
+                            else {
+                                negation_status(true, not, clause.negation)
+                            })
+                    }
+                },
 
-            CmpOperator::Exists => match &lhs { None => Some(false), Some(_) => Some(true) }
+            (CmpOperator::Exists, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(_) => Some(negation_status(true, not, clause.negation)),
+                },
 
-            CmpOperator::Eq => match &clause.access_clause.compare_with {
-                Some(LetValue::Value(Value::Null)) =>
-                    match &lhs { None => Some(true), Some(_) => Some(false), }
-                _ => None
-            }
+            (CmpOperator::Eq, not) =>
+                match &clause.access_clause.compare_with {
+                    Some(LetValue::Value(Value::Null)) =>
+                        match &lhs {
+                            None => Some(negation_status(true, not, clause.negation)),
+                            Some(_) => Some(negation_status(false, not, clause.negation)),
+                        }
+                    _ => None
+                },
+
+            (CmpOperator::IsString, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::String(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
+
+            (CmpOperator::IsList, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::List(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
+
+            (CmpOperator::IsMap, not) =>
+                match &lhs {
+                    None => Some(negation_status(false, not, clause.negation)),
+                    Some(l) => Some(
+                        negation_status( l.iter().find(|p|
+                            if let PathAwareValue::Map(_) = **p {
+                                false
+                            } else {
+                                true
+                            }
+                        ).map_or(true, |i| false), not, clause.negation))
+                },
 
             _ => None
         };
 
         if let Some(r) = result {
-            let status = negation_status(r, clause.access_clause.comparator.1, clause.negation);
             let message = format!("Guard@{}", self.access_clause.location);
-            auto_reporter.status(status).message(message);
-            return Ok(status)
+            auto_reporter.status(r).from(
+                match &lhs {
+                    None => None,
+                    Some(l) => if !l.is_empty() {
+                        Some(l[0].clone())
+                    } else { None }
+                }
+            ).message(message);
+            return Ok(r)
         }
 
         let lhs = match lhs {
-            None => return Err(Error::new(ErrorKind::RetrievalError(
-                format!("Expecting a resolved LHS {} for comparison and did not find one, Clause@{}",
-                        SliceDisplay(&clause.access_clause.query.query),
-                        clause.access_clause.location)
-            ))),
-
+            None =>
+                if all {
+                    return Ok(auto_reporter.status(Status::FAIL)
+                                  .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                }
+                else {
+                    return Ok(auto_reporter.status(Status::FAIL)
+                        .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                }
             Some(l) => l,
         };
 
         let rhs_local = match &clause.access_clause.compare_with {
-            None => return Err(Error::new(ErrorKind::IncompatibleError(
+            None => return Err(Error::new(ErrorKind::IncompatibleRetrievalError(
                 format!("Expecting a RHS for comparison and did not find one, clause@{}",
                         clause.access_clause.location)
             ))),
@@ -315,7 +405,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             }
         };
 
-        let result =
+        let mut result =
             match &clause.access_clause.comparator.0 {
             //
             // ==, !=
@@ -326,7 +416,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             //
             // >
@@ -337,7 +427,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_gt, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             //
             // >=
@@ -348,7 +438,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_ge, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             //
             // <
@@ -359,7 +449,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_lt, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             //
             // <=
@@ -370,7 +460,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_le, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             //
             // IN, !IN
@@ -395,11 +485,15 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        false)?,
+                        if all { false } else { true })?,
 
             _ => unreachable!()
 
         };
+
+        if !all && result.3 == true {
+            result.0 = Status::PASS;
+        }
 
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
             match result.0 {
@@ -439,57 +533,47 @@ impl<'loc> Evaluate for GuardClause<'loc> {
     }
 }
 
-impl<T: Evaluate> Evaluate for Conjunctions<T> {
+impl<'loc> Evaluate for Conjunctions<GuardClause<'loc>> {
     fn evaluate<'s>(&self,
                 context: &'s PathAwareValue,
                 var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        let mut num_of_conjunction_skips = 0;
-        'conjunction:
-        for conjunction in self {
-            let mut num_of_skips = 0;
-            for disjunction in conjunction {
-                match disjunction.evaluate(context, var_resolver) {
-                    Ok(status) => {
-                        match status {
-                            Status::PASS => {
-                                continue 'conjunction;
-                            },
-                            Status::SKIP => {
-                                num_of_skips += 1;
-                            },
-                            Status::FAIL => {
+        Ok('outer: loop {
+            let mut num_of_conjunction_skips = 0;
+            'conjunction:
+            for conjunction in self {
+                let mut num_of_fails = 0;
+                for disjunction in conjunction {
+                    match disjunction.evaluate(context, var_resolver) {
+                        Ok(status) => {
+                            match status {
+                                Status::PASS => {
+                                    continue 'conjunction;
+                                },
+                                Status::SKIP => {},
+                                Status::FAIL => {
+                                    num_of_fails += 1;
+                                }
                             }
-                        }
-                    },
+                        },
 
-                    Err(Error(ErrorKind::RetrievalError(_))) => {
-                        continue;
-                    },
+                        Err(Error(ErrorKind::RetrievalError(_))) => {
+                            continue;
+                        },
 
-                    Err(e) => return Err(e)
+                        Err(e) => return Err(e)
+                    }
                 }
-            }
-            //
-            // If ALL of them were skipped, then none of conditions were satisfied
-            // We proceed to the next disjunction set.
-            //
-            if conjunction.len() == num_of_skips {
-                num_of_conjunction_skips += 1;
-                continue;
-            }
-            //
-            // Otherwise we had retrieval errors for actual comparison or comparisons failures.
-            // Either case, it is a failure.
-            // REMEMBER when conditions are just cLAUSES, so retrieval errors for these CLAUSES
-            // is a failure and the block will be skipped
-            //
-            return Ok(Status::FAIL)
-        }
 
-        Ok(if self.len() == num_of_conjunction_skips {
-            Status::SKIP
-        } else {
-            Status::PASS
+                if num_of_fails > 0 {
+                    break 'outer Status::FAIL
+                }
+                num_of_conjunction_skips += 1;
+            }
+            if num_of_conjunction_skips > 0 {
+                break Status::SKIP
+            } else {
+                break Status::PASS
+            }
         })
     }
 }
@@ -499,7 +583,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         let mut type_report = AutoReport::new(
             EvaluationType::Type,
             var_resolver,
-                &self.type_name
+            &self.type_name
         );
 
         if let Some(conditions) = &self.conditions {
@@ -521,76 +605,49 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         let values = match context.select(cfn_query.match_all, &cfn_query.query, var_resolver) {
             Ok(v) => if v.is_empty() {
                 return Ok(type_report.message(format!("There are no {} types present in context", self.type_name))
-                                                  .status(Status::SKIP).get_status())
-
+                    .status(Status::SKIP).get_status())
             } else { v }
             Err(_) => vec![context]
         };
 
-        let mut overall = Status::PASS;
-        let mut atleast_one_type_failed_or_passed = false;
-        for (index, each) in values.iter().enumerate() {
-            let type_context = format!("{}#{}({})", self.type_name, index, (*each).self_path());
-            let mut each_type_report = AutoReport::new(
-                EvaluationType::Type,
-                var_resolver,
-                &type_context
-            );
-            let block_scope = BlockScope::new(&self.block, *each, var_resolver);
-            match each_type_report.status(self.block.conjunctions.evaluate(*each, &block_scope)? ).get_status() {
-                Status::PASS => {
-                    atleast_one_type_failed_or_passed = true;
-                },
+        let overall = 'outer: loop {
+            let mut type_block_skips = 0;
+            for (index, each) in values.iter().enumerate() {
+                let type_context = format!("{}#{}({})", self.type_name, index, (*each).self_path());
+                let mut each_type_report = AutoReport::new(
+                    EvaluationType::Type,
+                    var_resolver,
+                    &type_context
+                );
+                let block_scope = BlockScope::new(&self.block, *each, var_resolver);
+                match each_type_report.status(self.block.conjunctions.evaluate(*each, &block_scope)?).get_status() {
+                    Status::PASS => {},
 
-                Status::FAIL => {
-                    atleast_one_type_failed_or_passed = true;
-                    overall = Status::FAIL
-                },
-
-                Status::SKIP => {
-                    each_type_report.message(
-                        format!("All Clauses WERE SKIPPED. This is usually an ERROR specifying them. Maybe we need EXISTS or !EXISTS")
-                    );
-                    continue;
-                }
-            }
-        }
-        Ok(if !atleast_one_type_failed_or_passed {
-            type_report.status(Status::SKIP).message(
-                format!("ALL Clauses for all types {} was SKIPPED. This can be an error", self.type_name)).get_status()
-        } else { type_report.status(overall).get_status() })
-    }
-}
-
-impl<'loc> Evaluate for RuleClause<'loc> {
-    fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        match self {
-            RuleClause::Clause(gc) => gc.evaluate(context, var_resolver),
-            RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver),
-            RuleClause::WhenBlock(conditions, block) => {
-                let mut auto_cond = AutoReport::new(
-                    EvaluationType::Condition, var_resolver, "");
-                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
-                    Status::PASS => {
-                        let mut auto_block = AutoReport::new(
-                            EvaluationType::ConditionBlock,
-                            var_resolver,
-                            ""
-                        );
-                        let block_scope = BlockScope::new(block, context, var_resolver);
-                        Ok(auto_block.status(block.conjunctions.evaluate(context, &block_scope)?).get_status())
+                    Status::FAIL => {
+                        break 'outer Status::FAIL
                     },
-                    _ => {
-                        let mut skip_block = AutoReport::new(
-                            EvaluationType::ConditionBlock,
-                            var_resolver,
-                            ""
+
+                    Status::SKIP => {
+                        each_type_report.message(
+                            format!("All Clauses WERE SKIPPED. This is usually an ERROR specifying them. Maybe we need EXISTS or !EXISTS")
                         );
-                        Ok(skip_block.status(Status::SKIP).get_status())
+                        type_block_skips += 1;
+                        continue;
                     }
                 }
             }
-        }
+            if type_block_skips > 0 {
+                break Status::SKIP
+            } else {
+                break Status::PASS
+            }
+        };
+        Ok(match overall {
+            Status::SKIP =>
+                type_report.status(Status::SKIP).message(
+                    format!("ALL Clauses for all types {} was SKIPPED. This can be an error", self.type_name)).get_status(),
+            rest => type_report.status(rest).get_status()
+        })
     }
 }
 
@@ -611,8 +668,10 @@ impl<'loc> Evaluate for Rule<'loc> {
         let block_scope = BlockScope::new(&self.block, context, var_resolver);
         Ok({
             let status = 'outer: loop {
+                let mut conjunction_skips = 0;
                 'next_conjunction:
                 for each in &self.block.conjunctions {
+                    let mut num_of_fails = 0;
                     for each_rule_clause in each {
                         let status = match each_rule_clause {
                             RuleClause::Clause(gc) => gc.evaluate(context, &block_scope)?,
@@ -640,26 +699,42 @@ impl<'loc> Evaluate for Rule<'loc> {
                                         // when block SKIPs in Rule clauses from a rules block's evaluation is
                                         // a PASS for the whole block, SKIP to next disjunction
                                         //
-                                        skip_block.status(Status::SKIP);
-                                        Status::PASS
+                                        skip_block.status(Status::SKIP).get_status()
                                     }
                                 }
                             }
                         };
-                        if status == Status::PASS {
-                            continue 'next_conjunction;
+                        match status {
+                            Status::PASS => continue 'next_conjunction,
+                            Status::FAIL => {
+                                num_of_fails += 1;
+                            },
+                            Status::SKIP => {}
                         }
                         //
                         // If it is a FAIL/SKIP, try to NEXT DISJUNCTION CLAUSE
                         //
                     } // for each disjunction clause
                     //
-                    // Either all the clauses SKIPPED, in which we don't evaluate other clauses, we fail
-                    // this overall RULE clause
+                    // Even if one FAILED, we fail overall rule, as the others skipped
                     //
-                    break 'outer Status::FAIL
+                    if num_of_fails > 0 {
+                        break 'outer Status::FAIL
+                    }
+                    //
+                    // else everything skipped, so we keep track. to see if another of the
+                    // other conjunction sets would fail
+                    //
+                    conjunction_skips += 1;
                 } // for each conjunction of disjunction clauses
-                break Status::PASS
+                //
+                // Even if one conjunction set SKIPPEd and all other PASS, it is a SKIP
+                //
+                if conjunction_skips > 0 {
+                    break Status::SKIP
+                } else {
+                    break Status::PASS
+                }
             };
             auto.status(status).get_status()
         })
@@ -781,8 +856,16 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             return Ok(value.clone())
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.select((*query).match_all, &(*query).query, self)?;
-            self.variables.borrow_mut().insert(*key, values.clone());
+            let all = (*query).match_all;
+            let query: &[QueryPart<'_>] = &(*query).query;
+            let values = match query[0].variable() {
+                Some(var) => resolve_variable_query(all, var, query, self)?,
+                None => {
+                    let values = self.input_context.select(all, query, self)?;
+                    self.variables.borrow_mut().insert(*key, values.clone());
+                    values
+                }
+            };
             Ok(values)
         } else {
             Err(Error::new(ErrorKind::MissingVariable(
@@ -863,8 +946,16 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
             return Ok(value.clone())
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let values = self.input_context.select((*query).match_all, &(*query).query, self)?;
-            self.variables.borrow_mut().insert(*key, values.clone());
+            let all = (*query).match_all;
+            let query: &[QueryPart<'_>] = &(*query).query;
+            let values = match query[0].variable() {
+                Some(var) => resolve_variable_query(all, var, query, self)?,
+                None => {
+                    let values = self.input_context.select(all, query, self)?;
+                    self.variables.borrow_mut().insert(*key, values.clone());
+                    values
+                }
+            };
             Ok(values)
         } else {
             self.parent.resolve_variable(variable)
@@ -929,6 +1020,16 @@ impl<'s> AutoReport<'s> {
     pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>) -> &mut Self {
         self.status = Some(status);
         self.from = from;
+        self.to = to;
+        self
+    }
+
+    pub(super) fn from(&mut self, from: Option<PathAwareValue>) -> &mut Self {
+        self.from = from;
+        self
+    }
+
+    pub(super) fn to(&mut self, to: Option<PathAwareValue>) -> &mut Self {
         self.to = to;
         self
     }

@@ -1,0 +1,54 @@
+---
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      ensure_all_elbs_are_secure: SKIP
+- input:
+    Resources:
+      ServiceLBPublicListener46709EAA:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+          Protocol: HTTPS
+          Certificates:
+            - CertificateArn: "arn:aws:acm..."
+  expectations:
+    rules:
+      ensure_all_elbs_are_secure: PASS
+- input:
+    Resources:
+      ServiceLBPublicListener46709EAA:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+  expectations:
+    rules:
+      ensure_all_elbs_are_secure: FAIL
+- input:
+    Resources:
+      ServiceLBPublicListener46709EAA:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+          Protocol: HTTPS
+          Certificates:
+            - CertificateArn: "arn:aws:acm..."
+      ServiceLBPublicListener4670GGG:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+  expectations:
+    rules:
+      ensure_all_elbs_are_secure: FAIL
+- input:
+    Resources:
+      ServiceLBPublicListener46709EAA:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+          Protocol: HTTPS
+          Certificates:
+            - CertificateArn: "arn:aws:acm..."
+      ServiceLBPublicListener4670GGG:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+          Protocol: HTTPS
+          Certificates:
+            - CertificateArn: "arn:aws:acm..."
+  expectations:
+    rules:
+      ensure_all_elbs_are_secure: PASS

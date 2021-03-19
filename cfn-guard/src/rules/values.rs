@@ -25,6 +25,10 @@ pub enum CmpOperator {
     KeysEq,
     KeysExists,
     KeysEmpty,
+
+    IsString,
+    IsList,
+    IsMap,
 }
 
 impl std::fmt::Display for CmpOperator {
@@ -42,6 +46,9 @@ impl std::fmt::Display for CmpOperator {
             CmpOperator::KeysEq => f.write_str("KEYS EQUALS")?,
             CmpOperator::KeysExists => f.write_str("KEYS EXISTS")?,
             CmpOperator::KeysIn => f.write_str("KEYS IN")?,
+            CmpOperator::IsString => f.write_str("IS STRING")?,
+            CmpOperator::IsList => f.write_str("IS LIST")?,
+            CmpOperator::IsMap => f.write_str("IS MAP")?,
         }
         Ok(())
     }

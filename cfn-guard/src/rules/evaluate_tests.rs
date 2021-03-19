@@ -80,7 +80,7 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#
     )?;
     match clause.evaluate(&root, &dummy) {
-        Ok(Status::SKIP) => {},
+        Ok(Status::FAIL) => {},
         rest => assert!(false)
     }
     Ok(())
@@ -974,6 +974,7 @@ fn test_iam_subselections() -> Result<()> {
     let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].self_path(), &Path::try_from("/Resources/two")?);
     let expected = PathAwareValue::try_from((r#"
             {
                 Type: "AWS::IAM::Role",
@@ -1138,5 +1139,163 @@ fn test_rules_with_some_clauses() -> Result<()> {
     let selected = value.select(parsed.match_all, &parsed.query, &dummy)?;
     println!("{:?}", selected);
     assert_eq!(selected.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_support_for_atleast_one_match_clause() -> Result<()> {
+    let clause_some_str  = r#"some Tags[*].Key == /PROD/"#;
+    let clause_some = GuardClause::try_from(clause_some_str)?;
+
+    let clause_str  = r#"Tags[*].Key == /PROD/"#;
+    let clause = GuardClause::try_from(clause_str)?;
+
+    let values_str  = r#"{
+        Tags: [
+            {
+                Key: "InPROD",
+                Value: "ProdApp"
+            },
+            {
+                Key: "NoP",
+                Value: "NoQ"
+            }
+        ]
+    }
+    "#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let dummy = DummyEval{};
+
+    let status = clause_some.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str = r#"{ Tags: [] }"#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let status = clause_some.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str = r#"{ }"#;
+    let values = PathAwareValue::try_from(values_str)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let r = clause_some.evaluate(&values, &dummy);
+    assert_eq!(r.is_err(), false);
+    assert_eq!(r.unwrap(), Status::FAIL);
+
+    //
+    // Trying out the selection filters
+    //
+    let selection_str = r#"Resources.*[
+        Type == 'AWS::DynamoDB::Table'
+        some Properties.Tags[*].Key == /PROD/
+    ]"#;
+    let query = AccessQuery::try_from(selection_str)?;
+    let resources_str = r#"{
+        Resources: {
+            ddbSelected: {
+                Type: 'AWS::DynamoDB::Table',
+                Properties: {
+                    Tags: [
+                        {
+                            Key: "PROD",
+                            Value: "ProdApp"
+                        }
+                    ]
+                }
+            },
+            ddbNotSelected: {
+                Type: 'AWS::DynamoDB::Table'
+            }
+        }
+    }"#;
+    let resources = PathAwareValue::try_from(resources_str)?;
+    let selection_query = AccessQuery::try_from(selection_str)?;
+    let selected = resources.select(selection_query.match_all, &selection_query.query, &dummy)?;
+    println!("Selected = {:?}", selected);
+    assert_eq!(selected.len(), 1);
+
+    Ok(())
+}
+
+#[test]
+fn double_projection_tests() -> Result<()> {
+    let rule_str = r###"
+    rule check_ecs_against_local_or_metadata {
+        let ecs_tasks = Resources.*[
+            Type == 'AWS::ECS::TaskDefinition'
+            Properties.TaskRoleArn exists
+        ]
+
+        let iam_references = some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
+        when %iam_references !empty {
+            let iam_local = Resources.%iam_references
+            %iam_local.Type == 'AWS::IAM::Role'
+            %iam_local.Properties.PermissionsBoundary exists
+        }
+
+        let ecs_task_role_is_string = %ecs_tasks[
+            Properties.TaskRoleArn is_string
+        ]
+        when %ecs_task_role_is_string !empty {
+            %ecs_task_role_is_string.Metadata.NotRestricted exists
+        }
+    }
+    "###;
+
+    let resources_str = r###"
+    {
+        Resources: {
+            ecs: {
+                Type: 'AWS::ECS::TaskDefinition',
+                Metadata: {
+                    NotRestricted: true
+                },
+                Properties: {
+                    TaskRoleArn: "aws:arn..."
+                }
+            },
+            ecs2: {
+              Type: 'AWS::ECS::TaskDefinition',
+              Properties: {
+                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
+              }
+            },
+            iam: {
+              Type: 'AWS::IAM::Role',
+              Properties: {
+                PermissionsBoundary: "aws:arn"
+              }
+            }
+        }
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let dummy = DummyEval{};
+    let rule = Rule::try_from(rule_str)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let resources_str = r###"
+    {
+        Resources: {
+            ecs2: {
+              Type: 'AWS::ECS::TaskDefinition',
+              Properties: {
+                TaskRoleArn: { 'Fn::GetAtt': ["iam", "arn"] }
+              }
+            }
+        }
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    println!("{}", status);
+    assert_eq!(status, Status::FAIL);
+
     Ok(())
 }

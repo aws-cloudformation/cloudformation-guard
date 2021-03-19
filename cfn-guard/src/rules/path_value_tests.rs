@@ -1,6 +1,9 @@
-use super::*;
 use std::convert::TryInto;
-use crate::rules::exprs::{AccessQuery, LetExpr, GuardClause, GuardAccessClause, AccessClause, LetValue, FileLocation};
+
+use crate::rules::exprs::{AccessClause, AccessQuery, FileLocation, GuardAccessClause, GuardClause, LetExpr, LetValue};
+use crate::rules::path_value;
+
+use super::*;
 
 const SAMPLE_SINGLE: &str = r#"{
             "Resources": {
@@ -209,10 +212,10 @@ fn path_value_queries() -> Result<(), Error> {
     assert_eq!(selected.is_empty(), false);
 
     let get_att_refs =
-        r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].*"#;
+        r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
     let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
-    assert_eq!(selected.len(), 1);
+    assert_eq!(selected.len(), 2);
 
     let get_att_refs =
         r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
@@ -265,5 +268,31 @@ fn path_value_queries() -> Result<(), Error> {
     );
     assert_eq!(expected, clause_statement);
 
+    Ok(())
+}
+
+#[test]
+fn some_filter_tests() -> Result<(), Error> {
+    let query_str = r#"some Resources.*.Properties.SecurityGroups[*].'Fn::GetAtt'"#;
+    let resources_str = r#"{
+        Resources: {
+            ec2: {
+                Properties: {
+                    SecurityGroups: ["sg-1234"]
+                }
+            },
+            ec22: {
+                Properties: {
+                    SecurityGroups: [{ 'Fn::GetAtt': ["sg", "GroupId"] }]
+                }
+            }
+        }
+    }"#;
+    let query = AccessQuery::try_from(query_str)?;
+    let resources = PathAwareValue::try_from(resources_str)?;
+    let dummy = DummyEval{};
+    let selected = resources.select(
+        query.match_all, &query.query, &dummy)?;
+    assert_eq!(selected.len(), 1);
     Ok(())
 }

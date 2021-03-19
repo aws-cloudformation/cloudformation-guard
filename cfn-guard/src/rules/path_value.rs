@@ -1,24 +1,27 @@
+use std::cmp::Ordering;
+use std::convert::TryFrom;
 //
 // Std Libraries
 //
 use std::fmt::Formatter;
-use std::convert::TryFrom;
 
-//
-// crate level
-//
+use serde::Serialize;
 
+use crate::rules;
+use crate::rules::evaluate::AutoReport;
+use crate::rules::EvaluationType;
+
+use super::{Evaluate, EvaluationContext, Status};
+use super::errors::{Error, ErrorKind};
+use super::exprs::{QueryPart, SliceDisplay};
 //
 // Local mod
 //
 use super::values::*;
-use super::errors::{Error, ErrorKind};
-use super::exprs::{QueryPart, SliceDisplay};
-use super::{EvaluationContext, Evaluate, Status};
-use std::cmp::Ordering;
-use crate::rules::evaluate::AutoReport;
-use crate::rules::EvaluationType;
-use serde::{Serialize};
+
+//
+// crate level
+//
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub(crate) struct Path(pub(crate) String);
@@ -108,6 +111,12 @@ impl Path {
 pub(crate) struct MapValue {
     keys: Vec<PathAwareValue>,
     values: indexmap::IndexMap<String, PathAwareValue>,
+}
+
+impl MapValue {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
 }
 
 
@@ -244,7 +253,6 @@ pub(crate) trait QueryResolver {
     fn select(&self, all: bool, query: &[QueryPart<'_>], eval: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error>;
 }
 
-
 impl QueryResolver for PathAwareValue {
     fn select(&self, all: bool, query: &[QueryPart<'_>], resolver: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error> {
         if query.is_empty() {
@@ -256,33 +264,80 @@ impl QueryResolver for PathAwareValue {
                 match key.parse::<i32>() {
                     Ok(index) => {
                         match self {
-                            PathAwareValue::List((_, list)) =>
-                                PathAwareValue::retrieve_index(index, list, query)?.select(all, &query[1..], resolver),
+                            PathAwareValue::List((_, list)) => {
+                                PathAwareValue::retrieve_index(index, list, query)
+                                    .map_or_else(|e| self.map_error_or_empty(all, e),
+                                                 |val| val.select(all, &query[1..], resolver))
+                            }
 
-                            _ => Err(Error::new(ErrorKind::IncompatibleError(
-                                format!("Attempting to retrieve array index at Path = {}, Type was not an array {}, Remaining Query = {}",
-                                        self.self_value().0, self.type_info(), SliceDisplay(query))
-                            )))
+                            _ => self.map_some_or_error_all(all, query)
                         }
                     },
 
                     Err(_) => match self {
                         PathAwareValue::Map((path, map)) => {
-                            if let Some(next) = map.values.get(key) {
+                            //
+                            // Variable interpolation support.
+                            //
+                            if query[0].is_variable() {
+                                let var = query[0].variable().unwrap();
+                                let keys = resolver.resolve_variable(var)?;
+                                let mut acc = Vec::with_capacity(keys.len());
+                                let keys = if query.len() > 1 {
+                                    match query[1] {
+                                        QueryPart::AllIndices => keys,
+                                        QueryPart::Index(index) => {
+                                            let check = if index >= 0 { index } else { -index } as usize;
+                                            if check < keys.len() {
+                                                vec![keys[check]]
+                                            } else {
+                                                self.map_some_or_error_all(all, query)?
+                                            }
+                                        },
+
+                                        _ => return Err(Error::new(ErrorKind::IncompatibleError(
+                                            format!("THIS type of variable interpolation is not supported {}, {}", self.type_info(), SliceDisplay(query))
+                                        )))
+                                    }
+                                } else {
+                                    keys
+                                };
+                                for each_key in keys {
+                                    if let PathAwareValue::String((_, k)) = each_key {
+                                        if let Some(next) = map.values.get(k) {
+                                            acc.extend(
+                                                next.select(all, &query[1..], resolver)?);
+                                        }
+                                        else if all {
+                                            return Err(Error::new(
+                                                ErrorKind::RetrievalError(
+                                                    format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
+                                                            key, self, path, SliceDisplay(query))
+                                                )))
+                                        }
+                                    }
+                                    else {
+                                       return Err(Error::new(
+                                           ErrorKind::NotComparable(
+                                               format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
+                                                   SliceDisplay(query),
+                                                   each_key.type_info(),
+                                                   each_key.self_value()
+                                               )
+                                           )
+                                       ))
+                                    }
+                                }
+                                Ok(acc)
+                            }
+                            else if let Some(next) = map.values.get(key) {
                                 next.select(all, &query[1..], resolver)
                             } else {
-                                Err(Error::new(
-                                    ErrorKind::RetrievalError(
-                                        format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
-                                                key, self, path, SliceDisplay(query))
-                                    )))
+                                self.map_some_or_error_all(all, query)
                             }
                         },
 
-                        _ => Err(Error::new(ErrorKind::IncompatibleError(
-                            format!("Attempting to retrieve key/index at Path = {}, Type was not an object/map/array {}, Remaining Query = {}",
-                                    self.self_value().0, self.type_info(), SliceDisplay(query))
-                        )))
+                        _ => self.map_some_or_error_all(all, query)
                     }
                 }
             },
@@ -293,22 +348,20 @@ impl QueryResolver for PathAwareValue {
                         PathAwareValue::accumulate(all, &query[1..], &map.keys, resolver)
                     },
 
-                    _ => Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Attempting to retrieve KEYS from for type that is isn't a object/map {}(Pointer={})", self.type_info(), self.self_value().0)
-                    )))
+                    _ => self.map_some_or_error_all(all, query)
                 }
             },
 
             QueryPart::Index(array_idx) => {
                 match self {
                     PathAwareValue::List((_path, vec)) => {
-                        PathAwareValue::retrieve_index(*array_idx, vec, query)?.select(all, &query[1..], resolver)
+                        PathAwareValue::retrieve_index(*array_idx, vec, query)
+                            .map_or_else(|e| self.map_error_or_empty(all, e),
+                                         |val| val.select(all, &query[1..], resolver))
+
                     },
 
-                    _ => Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Attempting to retrieve array index at Path = {}, Type was not an array {}, Remaining Query = {}",
-                                self.self_value().0, self.type_info(), SliceDisplay(query))
-                    )))
+                    _ => self.map_some_or_error_all(all, query)
                 }
             },
 
@@ -318,9 +371,7 @@ impl QueryResolver for PathAwareValue {
                         PathAwareValue::accumulate(all, &query[1..], elements, resolver)
                     },
 
-                    _ => Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Attempting to retrieve ALL INDICES from for type that is isn't an array {}(Pointer={})", self.type_info(), self.self_value().0)
-                    )))
+                    _ => self.map_some_or_error_all(all, query)
                 }
             }
 
@@ -337,26 +388,13 @@ impl QueryResolver for PathAwareValue {
                         let values: Vec<&PathAwareValue> = map.values.values().collect();
                         let mut resolved = Vec::with_capacity(values.len());
                         for each in values {
-                            match each.select(all, &query[1..], resolver) {
-                                Ok(result) => {
-                                    resolved.extend(result);
-                                },
-
-                                Err(Error(ErrorKind::RetrievalError(e))) => {
-                                    if all {
-                                        return Err(Error::new(ErrorKind::RetrievalError(e)));
-                                    }
-                                },
-
-                                Err(e) => return Err(e)
-                            }
+                            resolved.extend(
+                                each.select(all, &query[1..], resolver)?);
                         }
                         Ok(resolved)
                     },
 
-                    _ => Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Attempting to retrieve ALL VALUES from for type that is isn't a object/map/list {} (Pointer={})", self.type_info(), self.self_value().0)
-                    )))
+                    _ => self.map_some_or_error_all(all, query)
                 }
             }
 
@@ -367,18 +405,35 @@ impl QueryResolver for PathAwareValue {
                         let context = format!("Path={},Type=Array", path);
                         for each in vec {
                             let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
-                            match conjunctions.evaluate(each, resolver)? {
-                                Status::PASS => {
-                                    filter.status(Status::PASS);
-                                    let index: usize = if query.len() > 1 {
-                                        match &query[1] {
-                                            QueryPart::AllIndices => 2,
-                                            _ => 1
-                                        }
-                                    } else { 1 };
-                                    selected.extend(each.select(all, &query[index..], resolver)?);
+                            match conjunctions.evaluate(each, resolver) {
+                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                    if all {
+                                        return Err(Error::new(ErrorKind::RetrievalError(e)))
+                                    }
+                                    // Else treat is like a filter
                                 },
-                                rest => { filter.status(rest); }
+                                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
+                                    if all {
+                                        return Err(Error::new(ErrorKind::IncompatibleRetrievalError(e)))
+                                    }
+                                    // Else treat is like a filter
+                                },
+                                Err(e) => return Err(e),
+                                Ok(status) => {
+                                    match status {
+                                        Status::PASS => {
+                                            filter.status(Status::PASS);
+                                            let index: usize = if query.len() > 1 {
+                                                match &query[1] {
+                                                    QueryPart::AllIndices => 2,
+                                                    _ => 1
+                                                }
+                                            } else { 1 };
+                                            selected.extend(each.select(all, &query[index..], resolver)?);
+                                        },
+                                        rest => { filter.status(rest); }
+                                    }
+                                }
                             }
                         }
                         Ok(selected)
@@ -387,22 +442,26 @@ impl QueryResolver for PathAwareValue {
                     PathAwareValue::Map((path, _map)) => {
                         let context = format!("Path={},Type=MapElement", path);
                         let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
-                        match conjunctions.evaluate(self, resolver)? {
-                            Status::PASS => {
-                                filter.status(Status::PASS);
-                                self.select(all, &query[1..], resolver)
-                            },
-                            rest => {
-                                filter.status(rest);
-                                Ok(vec![])
-                            }
-                        }
+                        conjunctions.evaluate(self, resolver)
+                            .map_or_else(
+                                |e| self.map_error_or_empty(all, e),
+                                |status| {
+                                    match status {
+                                        Status::PASS => {
+                                            filter.status(Status::PASS);
+                                            self.select(all, &query[1..], resolver)
+                                        },
+                                        rest => {
+                                            filter.status(rest);
+                                            Ok(vec![])
+                                        }
+
+                                    }
+                                }
+                            )
                     }
 
-                    _ => Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Attempting to filter at Path = {}, Type was not an array/selected query {}, Remaining Query = {}",
-                                self.self_value().0, self.type_info(), SliceDisplay(query))
-                    )))
+                    _ => self.map_some_or_error_all(all, query)
                 }
             },
         }
@@ -422,6 +481,31 @@ impl PathAwareValue {
         match self {
             PathAwareValue::Map((_, _)) => true,
             _ => false
+        }
+    }
+
+    fn map_error_or_empty(&self, all: bool, e: Error) -> Result<Vec<&PathAwareValue>, Error> {
+        if !all {
+            match e {
+                Error(ErrorKind::IncompatibleRetrievalError(_)) |
+                Error(ErrorKind::RetrievalError(_)) => Ok(vec![]),
+
+                rest => return Err(rest)
+            }
+        }
+        else {
+            return Err(e)
+        }
+    }
+
+    fn map_some_or_error_all(&self, all: bool, query: &[QueryPart<'_>]) -> Result<Vec<&PathAwareValue>, Error> {
+        if all {
+            Err(Error::new(ErrorKind::IncompatibleRetrievalError(
+                format!("Attempting to retrieve array index or key from map at Path = {}, Type was not an array/object {}, Remaining Query = {}",
+                        self.self_value().0, self.type_info(), SliceDisplay(query))
+            )))
+        } else {
+            Ok(vec![])
         }
     }
 
@@ -482,22 +566,16 @@ impl PathAwareValue {
     }
 
     pub(crate) fn accumulate<'v>(all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
+        if elements.is_empty() && !query.is_empty() && all {
+            return Err(Error::new(ErrorKind::RetrievalError(
+                format!("Remaining Query {}, No elements in array", SliceDisplay(query))
+            )));
+        }
+
         let mut accumulated = Vec::with_capacity(elements.len());
         for each in elements {
             if !query.is_empty() {
-                match each.select(all, query, resolver) {
-                    Ok(result) => {
-                        accumulated.extend(result);
-                    },
-
-                    Err(Error(ErrorKind::RetrievalError(e))) => {
-                        if all {
-                            return Err(Error::new(ErrorKind::RetrievalError(e)));
-                        }
-                    },
-
-                    Err(e) => return Err(e)
-                }
+                accumulated.extend(each.select(all, query, resolver)?);
             }
             else {
                 accumulated.push(each);
@@ -580,3 +658,4 @@ pub(crate) fn compare_ge(first: &PathAwareValue, other: &PathAwareValue) -> Resu
 #[cfg(test)]
 #[path = "path_value_tests.rs"]
 mod path_value_tests;
+
