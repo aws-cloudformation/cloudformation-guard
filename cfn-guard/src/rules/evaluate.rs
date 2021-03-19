@@ -323,7 +323,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         ).map_or(true, |i| false), not, clause.negation))
                 },
 
-            (CmpOperator::IsStruct, not) =>
+            (CmpOperator::IsMap, not) =>
                 match &lhs {
                     None => Some(negation_status(false, not, clause.negation)),
                     Some(l) => Some(

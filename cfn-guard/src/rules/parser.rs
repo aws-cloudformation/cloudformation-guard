@@ -608,7 +608,7 @@ fn is_list(input: Span) -> IResult<Span, CmpOperator> {
 }
 
 fn is_struct(input: Span) -> IResult<Span, CmpOperator> {
-    value( CmpOperator::IsStruct, alt((
+    value(CmpOperator::IsMap, alt((
         tag("IS_STRUCT"),
         tag("is_struct"),
     )))(input)
@@ -684,7 +684,7 @@ pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
         CmpOperator::Empty      |
         CmpOperator::Exists     |
         CmpOperator::IsString   |
-        CmpOperator::IsStruct   |
+        CmpOperator::IsMap |
         CmpOperator::IsList     => false,
         _ => true
     }

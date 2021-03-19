@@ -28,7 +28,7 @@ pub enum CmpOperator {
 
     IsString,
     IsList,
-    IsStruct,
+    IsMap,
 }
 
 impl std::fmt::Display for CmpOperator {
@@ -48,7 +48,7 @@ impl std::fmt::Display for CmpOperator {
             CmpOperator::KeysIn => f.write_str("KEYS IN")?,
             CmpOperator::IsString => f.write_str("IS STRING")?,
             CmpOperator::IsList => f.write_str("IS LIST")?,
-            CmpOperator::IsStruct => f.write_str("IS STRUCT")?,
+            CmpOperator::IsMap => f.write_str("IS MAP")?,
         }
         Ok(())
     }

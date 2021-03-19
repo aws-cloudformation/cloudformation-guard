@@ -1,21 +1,21 @@
-#- input:
-#    Resources: {}
-#  expectations:
-#    rules:
-#      check_ecs_against_local: SKIP
-#      check_ecs_direct_task_role_arn_expection: SKIP
-#- input:
-#    Resources: 
-#      ecs: 
-#        Type: 'AWS::ECS::TaskDefinition'
-#        Metadata:
-#          NotRestricted: true
-#        Properties:
-#          TaskRoleArn: 'aws:arn:....'
-#  expectations:
-#    rules:
-#      check_ecs_against_local: SKIP
-#      check_ecs_direct_task_role_arn_expection: PASS
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      check_ecs_against_local: SKIP
+      check_ecs_direct_task_role_arn_expection: SKIP
+- input:
+    Resources:
+      ecs:
+        Type: 'AWS::ECS::TaskDefinition'
+        Metadata:
+          NotRestricted: true
+        Properties:
+          TaskRoleArn: 'aws:arn:....'
+  expectations:
+    rules:
+      check_ecs_against_local: SKIP
+      check_ecs_direct_task_role_arn_expection: PASS
 - input:
     Resources: 
       ecs: 
@@ -30,5 +30,5 @@
           PermissionsBoundary: 'aws:arn:...'
   expectations:
     rules:
-      check_ecs_against_local: PASS
+      check_ecs_against_local: FAIL
       check_ecs_direct_task_role_arn_expection: SKIP

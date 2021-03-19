@@ -459,16 +459,6 @@ impl QueryResolver for PathAwareValue {
                                     }
                                 }
                             )
-//                        match conjunctions.evaluate(self, resolver)? {
-//                            Status::PASS => {
-//                                filter.status(Status::PASS);
-//                                self.select(all, &query[1..], resolver)
-//                            },
-//                            rest => {
-//                                filter.status(rest);
-//                                Ok(vec![])
-//                            }
-//                        }
                     }
 
                     _ => self.map_some_or_error_all(all, query)

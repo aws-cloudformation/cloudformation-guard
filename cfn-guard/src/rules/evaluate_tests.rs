@@ -1143,7 +1143,7 @@ fn test_rules_with_some_clauses() -> Result<()> {
 }
 
 #[test]
-fn some_testing() -> Result<()> {
+fn test_support_for_atleast_one_match_clause() -> Result<()> {
     let clause_some_str  = r#"some Tags[*].Key == /PROD/"#;
     let clause_some = GuardClause::try_from(clause_some_str)?;
 
@@ -1180,7 +1180,6 @@ fn some_testing() -> Result<()> {
 
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
-    let r = clause.evaluate(&values, &dummy);
     let status = clause.evaluate(&values, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1279,7 +1278,6 @@ fn double_projection_tests() -> Result<()> {
     let dummy = DummyEval{};
     let rule = Rule::try_from(rule_str)?;
     let status = rule.evaluate(&value, &dummy)?;
-    println!("{}", status);
     assert_eq!(status, Status::PASS);
 
     let resources_str = r###"
