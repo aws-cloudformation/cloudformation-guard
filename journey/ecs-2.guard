@@ -1,0 +1,50 @@
+let ecs_tasks = Resources.*[
+    Type == 'AWS::ECS::TaskDefinition'
+]
+
+let task_role_refs = some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
+let task_role_shared = %ecs_tasks[
+    Properties.TaskRoleArn is_string
+]
+
+let execution_role_refs = some %ecs_tasks.Properties.ExecutionRoleArn.'Fn::GetAtt'[0]
+let execution_role_shared = %ecs_tasks[
+    Properties.ExecutionRoleArn is_string
+]
+
+rule all_ecs_tasks_must_have_task_end_execution_roles when %ecs_tasks !empty {
+    %ecs_tasks.Properties.TaskRoleArn exists
+    %ecs_tasks.Properties.ExecutionRoleArn exists
+}
+
+rule check_ecs_task_role_refs_are_local 
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %task_role_refs !empty
+{
+    let iam_references = Resources.%task_role_refs
+    %iam_references.Type == 'AWS::IAM::Role'
+    %iam_references.Properties.PermissionsBoundary exists
+}
+
+rule check_ecs_execution_role_refs_are_local 
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %execution_role_refs !empty
+{
+    let iam_references = Resources.%execution_role_refs
+    %iam_references.Type == 'AWS::IAM::Role'
+    %iam_references.Properties.PermissionsBoundary exists
+}
+
+rule check_ecs_task_role_refs_are_shared
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %task_role_shared !empty
+{
+    %task_role_shared.Metadata.SharedExectionRole exists
+}
+
+rule check_ecs_execution_role_refs_are_shared
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %execution_role_shared !empty
+{
+    %execution_role_shared.Metadata.SharedExectionRole exists
+}
