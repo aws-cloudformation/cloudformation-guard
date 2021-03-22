@@ -289,7 +289,7 @@ impl QueryResolver for PathAwareValue {
                                 let mut acc = Vec::with_capacity(keys.len());
                                 let keys = if query.len() > 1 {
                                     match query[1] {
-                                        QueryPart::AllIndices => keys,
+                                        QueryPart::AllIndices | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
                                             let check = if index >= 0 { index } else { -index } as usize;
                                             if check < keys.len() {
