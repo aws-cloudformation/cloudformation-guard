@@ -8,7 +8,7 @@ use std::fmt::Formatter;
 use serde::Serialize;
 
 use crate::rules;
-use crate::rules::evaluate::AutoReport;
+use crate::rules::evaluate::{AutoReport, invert_closure, resolve_variable_query, resolve_query};
 use crate::rules::EvaluationType;
 
 use super::{Evaluate, EvaluationContext, Status};
@@ -18,6 +18,7 @@ use super::exprs::{QueryPart, SliceDisplay};
 // Local mod
 //
 use super::values::*;
+use crate::rules::exprs::LetValue;
 
 //
 // crate level
@@ -144,6 +145,21 @@ impl PartialEq for PathAwareValue {
             (PathAwareValue::List((_, list)), PathAwareValue::List((_, list2))) => list == list2,
 
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
+
+            (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
+                if let Ok(regex) = regex::Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str())
+                } else {
+                    false
+                }
+            },
+            (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) =>  {
+                if let Ok(regex) = regex::Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str())
+                } else {
+                    false
+                }
+            },
 
             (rest, rest2) => match compare_values(rest, rest2) {
                     Ok(ordering) => match ordering {
@@ -346,26 +362,6 @@ impl QueryResolver for PathAwareValue {
                 }
             },
 
-            QueryPart::MapKeys => {
-                match self {
-                    PathAwareValue::Map((_path, map)) => {
-                        PathAwareValue::accumulate(all, &query[1..], &map.keys, resolver)
-                    },
-
-                    _ => self.map_some_or_error_all(all, query)
-                }
-            },
-
-            QueryPart::Keys => {
-                match self {
-                    PathAwareValue::Map((_path, map)) => {
-                        Ok(map.keys.iter().collect::<Vec<&PathAwareValue>>())
-                    },
-
-                    _ => self.map_some_or_error_all(all, query)
-                }
-            },
-
             QueryPart::Index(array_idx) => {
                 match self {
                     PathAwareValue::List((_path, vec)) => {
@@ -410,7 +406,56 @@ impl QueryResolver for PathAwareValue {
 
                     _ => self.map_some_or_error_all(all, query)
                 }
-            }
+            },
+
+            QueryPart::MapKeyFilter(filter) => {
+                match self {
+                    PathAwareValue::Map((path, map)) => {
+                        let mut selected = Vec::with_capacity(map.values.len());
+                        match &filter.compare_with {
+                            LetValue::AccessClause(query) => {
+                                let values = resolve_query(false, &query.query, self, resolver)?;
+                                for key in map.keys.iter() {
+                                    if values.contains(&key) {
+                                        match key {
+                                            PathAwareValue::String((_, v)) => {
+                                                selected.push(map.values.get(v).unwrap());
+                                            },
+                                            _ => unreachable!()
+                                        }
+                                    }
+                                }
+                            },
+
+                            LetValue::Value(v) => {
+                                let path_value = PathAwareValue::try_from((v, path.clone()))?;
+                                for key in map.keys.iter() {
+                                    if key == &path_value {
+                                        match key {
+                                            PathAwareValue::String((_, v)) => {
+                                                selected.push(map.values.get(v).unwrap());
+                                            },
+                                            _ => unreachable!()
+                                        }
+                                    }
+                                }
+                            },
+                        };
+                        if query.len() > 1 {
+                            let mut acc = Vec::with_capacity(selected.len());
+                            for each in selected {
+                                acc.extend(each.select(all, &query[1..], resolver)?)
+                            }
+                            Ok(acc)
+                        } else {
+                            Ok(selected)
+                        }
+
+                    },
+
+                    _ => self.map_some_or_error_all(all, query)
+                }
+            },
 
             QueryPart::Filter(conjunctions) => {
                 match self {

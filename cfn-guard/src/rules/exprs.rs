@@ -55,9 +55,8 @@ pub(crate) struct LetExpr<'loc> {
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
     It,
-    Keys,
     Key(String),
-    MapKeys,
+    MapKeyFilter(MapKeyFilterClause<'loc>),
     AllValues,
     AllIndices,
     Index(i32),
@@ -109,12 +108,8 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str("(filter-clauses)")?;
             },
 
-            QueryPart::MapKeys => {
-                f.write_str("[KEYS]")?;
-            },
-
-            QueryPart::Keys => {
-                f.write_str("keys")?;
+            QueryPart::MapKeyFilter(clause) => {
+                f.write_str("(map-key-filter-clause)")?;
             },
 
             QueryPart::It => {
@@ -149,6 +144,12 @@ pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 pub(crate) struct GuardAccessClause<'loc> {
     pub(crate) access_clause: AccessClause<'loc>,
     pub(crate) negation: bool
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct MapKeyFilterClause<'loc> {
+    pub(crate) comparator: (CmpOperator, bool),
+    pub(crate) compare_with: LetValue<'loc>,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]

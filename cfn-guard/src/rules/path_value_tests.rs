@@ -320,3 +320,31 @@ fn it_support_evaluation_tests() -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[test]
+fn map_keys_filter_test() -> Result<(), Error> {
+    let condition_str = r#"{
+        Condition: {
+            'aws:SourceVpc': ['vpc-123454'],
+            'aws:IsSecure': false
+        }
+    }"#;
+    let value = PathAwareValue::try_from(condition_str)?;
+    let selection_str = r#"Condition[ keys == /aws:[Ss]ource(Vpc|VPC|VpcE|VPCE)/ ]"#;
+    let access = AccessQuery::try_from(selection_str)?;
+    let dummy = DummyEval{};
+    let selected = value.select(access.match_all, &access.query, &dummy)?;
+    println!("Selected = {:?}", selected);
+    assert_eq!(selected.len(), 1);
+    let inner = selected[0];
+    if let PathAwareValue::List((p, l)) = inner {
+        assert_eq!(p, &Path::try_from("/Condition/aws:SourceVpc")?);
+        assert_eq!(l.len(), 1);
+        let inner = &l[0];
+        if let PathAwareValue::String((p, v)) = inner {
+            assert_eq!(p, &Path::try_from("/Condition/aws:SourceVpc/0")?);
+            assert_eq!(v, "vpc-123454");
+        }
+    }
+    Ok(())
+}

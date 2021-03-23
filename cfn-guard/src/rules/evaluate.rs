@@ -41,6 +41,7 @@ fn resolve_variable_query<'s>(all: bool,
     Ok(acc)
 }
 
+pub(super)
 fn resolve_query<'s, 'loc>(all: bool,
                            query: &[QueryPart<'loc>],
                            context: &'s PathAwareValue,
@@ -220,7 +221,7 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     }
 }
 
-fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+pub(super) fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     move |first, second| {
@@ -257,8 +258,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             };
 
         let result = match clause.access_clause.comparator {
-            (CmpOperator::Empty, not) |
-            (CmpOperator::KeysEmpty, not) =>
+            (CmpOperator::Empty, not) =>
                 //
                 // Retrieval Error is considered the same as an empty or !exists
                 // When using "SOME" keyword in the clause, then IncompatibleError is trapped to be none
@@ -269,14 +269,19 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                     Some(l) => {
                         Some(
                             if !l.is_empty() {
-                                if l[0].is_list() {
+                                if l[0].is_list() || l[0].is_map() {
                                     'all_empty: loop {
                                         for element in l {
-                                            if let PathAwareValue::List((_, vec)) = *element {
-                                                match negation_status(vec.is_empty(), not, clause.negation) {
-                                                    Status::FAIL => break 'all_empty Status::FAIL,
-                                                    _ => {}
-                                                }
+                                            let status = match *element {
+                                                PathAwareValue::List((_, v)) =>
+                                                    negation_status(v.is_empty(), not, clause.negation),
+                                                PathAwareValue::Map((_, m)) =>
+                                                    negation_status(m.is_empty(), not, clause.negation),
+                                                _ => continue
+                                            };
+
+                                            if status == Status::FAIL {
+                                                break 'all_empty Status::FAIL;
                                             }
                                         }
                                         break Status::PASS
@@ -481,7 +486,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             //
             // IN, !IN
             //
-            CmpOperator::KeysIn |
             CmpOperator::In => {
                 let mut result = compare(&lhs,
                         &clause.access_clause.query.query,
@@ -494,16 +498,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 let status = invert_status(status, clause.negation);
                 result.0 = status;
                 result
-            }
-
-            CmpOperator::KeysEq =>
-                compare(&lhs,
-                        &clause.access_clause.query.query,
-                        &rhs,
-                        rhs_query,
-                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        false,
-                        !all)?,
+            },
 
             _ => unreachable!()
 

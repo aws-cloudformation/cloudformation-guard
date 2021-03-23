@@ -557,28 +557,10 @@ fn eq(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 }
 
 fn keys(input: Span) -> IResult<Span, ()> {
-    value((), preceded(
-        alt((
-            tag("KEYS"),
-            tag("keys"))), space1))(input)
-}
-
-fn keys_keyword(input: Span) -> IResult<Span, (CmpOperator, bool)> {
-    let (input, _keys_word) = keys(input)?;
-    let (input, (comparator, inverse)) = alt((
-        eq,
-        other_operations,
-    ))(input)?;
-
-    let comparator = match comparator {
-        CmpOperator::Eq => CmpOperator::KeysEq,
-        CmpOperator::In => CmpOperator::KeysIn,
-        CmpOperator::Exists => CmpOperator::KeysExists,
-        CmpOperator::Empty => CmpOperator::KeysEmpty,
-        _ => unreachable!(),
-    };
-
-    Ok((input, (comparator, inverse)))
+    value((), alt((
+        tag("KEYS"),
+        tag("keys")))
+    )(input)
 }
 
 fn exists(input: Span) -> IResult<Span, CmpOperator> {
@@ -654,7 +636,7 @@ fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
         //
         // Other operations
         //
-        keys_keyword,
+        // keys_keyword,
         other_operations,
     ))(input)
 }
@@ -679,8 +661,6 @@ fn custom_message(input: Span) -> IResult<Span, &str> {
 
 pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     match op {
-        CmpOperator::KeysExists |
-        CmpOperator::KeysEmpty  |
         CmpOperator::Empty      |
         CmpOperator::Exists     |
         CmpOperator::IsString   |
@@ -744,31 +724,25 @@ fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
 
 fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
-    let (input, key_clauses) = match cnf_clauses(
-        input,
-        |s|
-            clause_with(s,
-                        |i| value(AccessQuery {
-                            query: vec![QueryPart::Keys],
-                            match_all: false,
-                        }, keys)(i)
-        ),
-        std::convert::identity,
-        true
-    ) {
-        //
-        // We capture Failure from disjunction_clauses as keys may not be in the
-        // clause. We try the next one on the list
-        //
-        Err(nom::Err::Error(e)) |
-        Err(nom::Err::Failure(e)) => return Err(nom::Err::Error(e)),
-
-        Err(e) => return Err(e),
-
-        Ok(clauses) => clauses
-    };
+    let (input, _keys) = preceded(zero_or_more_ws_or_comment, keys)(input)?;
+    let (input, cmp) = cut(
+        preceded(zero_or_more_ws_or_comment, alt((
+            eq,
+            value((CmpOperator::In, false), in_keyword),
+            map(tuple((not, in_keyword)), |m| {
+                (CmpOperator::In, true)
+            })))
+        )
+    )(input)?;
+    let (input, with) = cut(preceded(zero_or_more_ws_or_comment, alt((
+        map( parse_value, LetValue::Value),
+        map( preceded(zero_or_more_ws_or_comment, access), LetValue::AccessClause),
+    ))))(input)?;
     let (input, _close) = cut(close_array)(input)?;
-    Ok((input, QueryPart::Filter(key_clauses)))
+    Ok((input, QueryPart::MapKeyFilter(MapKeyFilterClause {
+        comparator: cmp,
+        compare_with: with
+    })))
 }
 
 fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {

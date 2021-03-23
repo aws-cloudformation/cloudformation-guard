@@ -1587,17 +1587,13 @@ fn test_other_operations() {
 fn test_keys_keyword() {
     let examples = [
         "", // 0 err
-        "KEYS", // 1 err
-        "KEYS IN", // 2 Ok
-        "KEYS NOT IN", // 3 Ok
-        "KEYS EXISTS", // 4 Ok
-        "KEYS !EXISTS", // 5 Ok,
-        "KEYS ==", // 6 Ok
-        "KEYS !=", // 7 Ok
-        "keys ! in", // 8 err after !
-        "KEYS EMPTY", // 9 ok
-        "KEYS !EMPTY", // 10 ok
-        " KEYS IN", // 11 err
+        "[KEYS]", // 1 err
+        "[KEYS IN %var]", // 2 Ok
+        "[KEYS NOT IN %var]", // 3 Ok
+        "[KEYS == /aws:S/]", // 6 Ok
+        "[KEYS != 'aws:IsSecure']", // 7 Ok
+        "[keys !in %var]", // 8 err after !
+        "KEYS IN", // 11 err
         "KEYS ", // 12 err
     ];
 
@@ -1605,21 +1601,21 @@ fn test_keys_keyword() {
         // "", // 0 err
         Err(nom::Err::Error(ParserError {
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Tag,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
 
         // "KEYS", // 1 err
-        Err(nom::Err::Error(ParserError {
+        Err(nom::Err::Failure(ParserError {
             span: unsafe {
                 Span::new_from_raw_offset(
-                    examples[1].len(),
+                    "[KEYS".len(),
                     1,
-                    "",
+                    "]",
                     "",
                 )
             },
-            kind: nom::error::ErrorKind::Space,
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
 
@@ -1633,7 +1629,15 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            (CmpOperator::KeysIn, false),
+            QueryPart::MapKeyFilter(MapKeyFilterClause {
+                comparator: (CmpOperator::In, false),
+                compare_with: LetValue::AccessClause(AccessQuery {
+                    match_all: true,
+                    query: vec![
+                        QueryPart::Key("%var".to_string())
+                    ]
+                })
+            })
         )),
 
         // "KEYS NOT IN", // 3 Ok
@@ -1646,10 +1650,19 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            (CmpOperator::KeysIn, true),
+            QueryPart::MapKeyFilter(MapKeyFilterClause {
+                comparator: (CmpOperator::In, true),
+                compare_with: LetValue::AccessClause(AccessQuery {
+                    match_all: true,
+                    query: vec![
+                        QueryPart::Key("%var".to_string())
+                    ]
+                })
+            })
         )),
 
-        // "KEYS EXISTS", // 4 Ok
+        // "[KEYS == /aws:S/]", // 6 Ok
+        // "KEYS ==", // 6 Ok
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
@@ -1659,10 +1672,14 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            (CmpOperator::KeysExists, false),
+            QueryPart::MapKeyFilter(MapKeyFilterClause {
+                comparator: (CmpOperator::Eq, false),
+                compare_with: LetValue::Value(Value::Regex("aws:S".to_string())),
+            })
         )),
 
-        // "KEYS !EXISTS", // 5 Ok,
+        // "[KEYS != 'aws:IsSecure']", // 7 Ok
+        // "KEYS !=", // 7 Ok
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
@@ -1672,10 +1689,13 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            (CmpOperator::KeysExists, true),
+            QueryPart::MapKeyFilter(MapKeyFilterClause {
+                comparator: (CmpOperator::Eq, true),
+                compare_with: LetValue::Value(Value::String("aws:IsSecure".to_string())),
+            }),
         )),
 
-        // "KEYS ==", // 6 Ok
+        // "[keys !in %var]", // 8 err after !
         Ok((
             unsafe {
                 Span::new_from_raw_offset(
@@ -1685,87 +1705,35 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            (CmpOperator::KeysEq, false),
-        )),
-
-        // "KEYS !=", // 7 Ok
-        Ok((
-            unsafe {
-                Span::new_from_raw_offset(
-                    examples[7].len(),
-                    1,
-                    "",
-                    "",
-                )
-            },
-            (CmpOperator::KeysEq, true),
-        )),
-
-        // "keys ! in", // 8 err after !
-        Err(nom::Err::Error(ParserError {
-            span: unsafe {
-                Span::new_from_raw_offset(
-                    "keys !".len(),
-                    1,
-                    " in",
-                    "",
-                )
-            },
-            kind: nom::error::ErrorKind::Tag,
-            context: "".to_string(),
-        })),
-
-        // "KEYS EMPTY", // 9 ok
-        Ok((
-            unsafe {
-                Span::new_from_raw_offset(
-                    examples[9].len(),
-                    1,
-                    "",
-                    "",
-                )
-            },
-            (CmpOperator::KeysEmpty, false),
-        )),
-
-        // "KEYS !EMPTY", // 10 ok
-        Ok((
-            unsafe {
-                Span::new_from_raw_offset(
-                    examples[10].len(),
-                    1,
-                    "",
-                    "",
-                )
-            },
-            (CmpOperator::KeysEmpty, true),
+            QueryPart::MapKeyFilter(MapKeyFilterClause {
+                comparator: (CmpOperator::In, true),
+                compare_with: LetValue::AccessClause(AccessQuery {
+                    match_all: true,
+                    query: vec![
+                        QueryPart::Key("%var".to_string())
+                    ]
+                })
+            })
         )),
 
         // " KEYS IN", // 11 err
         Err(nom::Err::Error(ParserError {
-            span: from_str2(" KEYS IN"),
-            kind: nom::error::ErrorKind::Tag,
+            span: from_str2("KEYS IN"),
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
 
         // "KEYS ", // 12 err
         Err(nom::Err::Error(ParserError {
-            span: unsafe {
-                Span::new_from_raw_offset(
-                    "KEYS ".len(),
-                    1,
-                    "",
-                    "",
-                )
-            },
-            kind: nom::error::ErrorKind::Tag,
+            span: from_str2("KEYS "),
+            kind: nom::error::ErrorKind::Char,
             context: "".to_string(),
         })),
     ];
 
     for (idx, each) in examples.iter().enumerate() {
         let span = from_str2(*each);
-        let result = keys_keyword(span);
+        let result = map_keys_match(span);
         assert_eq!(&result, &expectations[idx]);
     }
 }
@@ -1917,10 +1885,6 @@ fn test_clause_success() {
         ("!IN", (CmpOperator::In, true)),
         ("not IN", (CmpOperator::In, true)),
         ("NOT IN", (CmpOperator::In, true)),
-        ("KEYS IN", (CmpOperator::KeysIn, false)),
-        ("KEYS ==", (CmpOperator::KeysEq, false)),
-        ("KEYS !=", (CmpOperator::KeysEq, true)),
-        ("KEYS !IN", (CmpOperator::KeysIn, true)),
     ];
     let separators = [
         (" ", " "),
@@ -1951,8 +1915,6 @@ fn test_clause_success() {
         ("!EXISTS", (CmpOperator::Exists, true)),
         ("EMPTY", (CmpOperator::Empty, false)),
         ("NOT EMPTY", (CmpOperator::Empty, true)),
-        ("KEYS EXISTS", (CmpOperator::KeysExists, false)),
-        ("KEYS NOT EMPTY", (CmpOperator::KeysEmpty, true))
     ];
 
     for each_lhs in lhs.iter() {
@@ -3871,34 +3833,11 @@ fn some_clause_parse() -> Result<(), Error> {
                         QueryPart::Key("Statement".to_string()),
                         QueryPart::AllIndices,
                         QueryPart::Key("Condition".to_string()),
-                        QueryPart::Filter(
-                            Conjunctions::from(
-                                [Disjunctions::from(
-                                    [GuardClause::Clause(
-                                        GuardAccessClause {
-                                            negation: false,
-                                            access_clause: AccessClause {
-                                                query: AccessQuery {
-                                                    match_all: false,
-                                                    query: vec![
-                                                        QueryPart::Keys
-                                                    ]
-                                                },
-                                                custom_message: None,
-                                                comparator: (CmpOperator::Eq, false),
-                                                compare_with: Some(LetValue::Value(Value::Regex(String::from(
-                                                    "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)"
-                                                )))),
-                                                location: FileLocation {
-                                                    line: 2,
-                                                    column: 13,
-                                                    file_name: ""
-                                                }
-                                            }
-                                        }
-                                    )]
-                                )]
-                            )
+                        QueryPart::MapKeyFilter(
+                            MapKeyFilterClause {
+                                comparator: (CmpOperator::Eq, false),
+                                compare_with: LetValue::Value(Value::Regex("aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string()))
+                            }
                         )
                     ]
                 },
