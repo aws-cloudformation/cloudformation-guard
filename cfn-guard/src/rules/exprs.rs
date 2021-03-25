@@ -31,7 +31,7 @@ pub(crate) enum LetValue<'loc> {
 /// from incoming context. Access expressions support **predicate** queries to help
 /// match specific selections [crate::rules::common::walk_type]
 ///
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct LetExpr<'loc> {
     pub(crate) var: String,
     pub(crate) value: LetValue<'loc>,
@@ -161,14 +161,22 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct BlockGuardClause<'loc> {
+    pub(crate) query: AccessQuery<'loc>,
+    pub(crate) block: Block<'loc, GuardClause<'loc>>,
+    pub(crate) location: FileLocation<'loc>
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
-    NamedRule(GuardNamedRuleClause<'loc>)
+    NamedRule(GuardNamedRuleClause<'loc>),
+    BlockClause(BlockGuardClause<'loc>)
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct Block<'loc, T> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) conjunctions: Conjunctions<T>,

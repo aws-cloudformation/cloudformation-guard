@@ -538,6 +538,7 @@ impl<'loc> Evaluate for GuardClause<'loc> {
         match self {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
             GuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
+            GuardClause::BlockClause(_) => unimplemented!()
         }
     }
 }

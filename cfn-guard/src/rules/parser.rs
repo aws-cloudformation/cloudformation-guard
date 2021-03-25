@@ -900,6 +900,22 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
     }
 }
 
+pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
+    let location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
+
+    let (input, query) = access(input)?;
+    let (input, (assignments, conjunctions)) = block(clause)(input)?;
+    Ok((input, GuardClause::BlockClause(BlockGuardClause {
+        query, block: Block {
+            assignments, conjunctions,
+        },
+        location
+    })))
+}
 
 //
 //  simple_unary               = "EXISTS" / "EMPTY"
@@ -920,6 +936,10 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
 //
 //
 fn clause(input: Span) -> IResult<Span, GuardClause> {
+    alt((block_clause, single_clause))(input)
+}
+
+fn single_clause(input: Span) -> IResult<Span, GuardClause> {
     clause_with(input, access)
 }
 
@@ -1039,6 +1059,32 @@ fn disjunction_clauses<'loc, E, F>(input: Span<'loc>, parser: F, non_empty: bool
         )(input)
 
     }
+}
+
+fn single_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
+    cnf_clauses(
+        input,
+        //
+        // Order does matter here. Both rule_clause and access clause have the same syntax
+        // for the first part e.g
+        //
+        // s3_encrypted_bucket  or configuration.containers.*.port == 80
+        //
+        // the first part is a rule clause and the second part is access clause. Consider
+        // this example
+        //
+        // s3_encrypted_bucket or bucket_encryption EXISTS
+        //
+        // The first part if rule clause and second part is access. if we use the rule_clause
+        // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
+        // we are using the alt form to first parse to see if it is clause and then try rules_clause
+        //
+        alt((single_clause, rule_clause)),
+
+        //
+        // Mapping the GuardClause
+        //
+        std::convert::identity, false)
 }
 
 fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
@@ -1227,10 +1273,7 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
     let (input, _space) = cut(one_or_more_ws_or_comment)(input)?;
 
     let (input, when_conditions) = opt(
-        when_conditions(|i: Span| cnf_clauses(i,
-                                               preceded(zero_or_more_ws_or_comment, clause),
-                                               std::convert::identity, true)))
-        (input)?;
+        when_conditions(single_clauses))(input)?;
 
     let (input, (assignments, clauses)) =
         if when_conditions.is_some() {
