@@ -4028,3 +4028,10 @@ fn test_incorrect_block_in_block_properties()-> Result<(), Error> {
 
     Ok(())
 }
+
+#[test]
+fn block_parse_test() -> Result<(), Error> {
+    let block = r#"Resources.*[ Type == /ApiGateway/ ] { Properties.Tags !empty }"#;
+    let clause = GuardClause::try_from(block)?;
+    Ok(())
+}

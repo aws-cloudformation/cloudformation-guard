@@ -6,7 +6,7 @@ use colored::Colorize;
 
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, path_value, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
@@ -538,7 +538,7 @@ impl<'loc> Evaluate for GuardClause<'loc> {
         match self {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
             GuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
-            GuardClause::BlockClause(_) => unimplemented!()
+            GuardClause::BlockClause(bc) => bc.evaluate(context, var_resolver)
         }
     }
 }
@@ -583,6 +583,47 @@ impl<'loc> Evaluate for Conjunctions<GuardClause<'loc>> {
                 break Status::SKIP
             } else {
                 break Status::PASS
+            }
+        })
+    }
+}
+
+impl<'loc> Evaluate for BlockGuardClause<'loc> {
+    fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        let all = self.query.match_all;
+        let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
+            Err(Error(ErrorKind::RetrievalError(_))) |
+            Err(Error(ErrorKind::IncompatibleRetrievalError(_))) => return Ok(Status::FAIL),
+
+            Ok(v) => if v.is_empty() { // one or more
+                return Ok(Status::FAIL)
+            } else { v },
+
+            Err(e) => return Err(e)
+        };
+
+        Ok(loop {
+            let mut num_fail = 0;
+            let mut num_skip = 0;
+            let mut num_pass = 0;
+            for each in block_values {
+                let block = BlockScope::new(&self.block, each, var_resolver);
+                match self.block.conjunctions.evaluate(each, var_resolver)? {
+                    Status::FAIL => { num_fail += 1; },
+                    Status::SKIP => { num_skip += 1; },
+                    Status::PASS => { num_pass += 1; }
+                }
+            }
+
+            if all {
+                if num_fail > 0 { break Status::FAIL }
+                if num_skip > 0 { break Status::SKIP }
+                break Status::PASS
+            }
+            else {
+                if num_pass > 0 { break Status::PASS }
+                if num_fail > 0 { break Status::FAIL }
+                break Status::SKIP
             }
         })
     }

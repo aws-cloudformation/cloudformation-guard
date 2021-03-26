@@ -1394,3 +1394,83 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn block_evaluation() -> Result<()> {
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+                    'aws:sourceVpc': ['vpc-1234']
+              - Action: Allow
+                Resource: ['*', "aws:"]
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
+        EndpointConfiguration == ["PRIVATE"]
+        some Policy.Statement[*] {
+            Action == 'Allow'
+            Condition[ keys == 'aws:IsSecure' ] !empty
+        }
+    }
+    "#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+    Ok(())
+}
+
+#[test]
+fn block_evaluation_fail() -> Result<()> {
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+                    'aws:sourceVpc': ['vpc-1234']
+              - Action: Allow
+                Resource: ['*', "aws:"]
+      apiGw2:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
+        EndpointConfiguration == ["PRIVATE"]
+        some Policy.Statement[*] {
+            Action == 'Allow'
+            Condition[ keys == 'aws:IsSecure' ] !empty
+        }
+    }
+    "#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}
