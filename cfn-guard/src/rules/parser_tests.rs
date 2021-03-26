@@ -3902,3 +3902,129 @@ fn it_support_test() -> Result<(), Error> {
     assert_eq!(parsed_query, expected);
     Ok(())
 }
+
+#[test]
+fn test_block_properties()-> Result<(), Error> {
+    let block_str = r###"Properties.Statements[*] {
+        Effect == 'Deny'
+        Principal != '*'
+    }
+    "###;
+    let block_clause = GuardClause::try_from(block_str)?;
+    let expected = GuardClause::BlockClause(
+        BlockGuardClause {
+            location: FileLocation {
+                file_name: "",
+                column: 1,
+                line:1,
+            },
+            query: AccessQuery {
+                query: vec![
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("Statements".to_string()),
+                    QueryPart::AllIndices
+                ],
+                match_all: true
+            },
+            block: Block {
+                assignments: vec![],
+                conjunctions: vec![
+                    Disjunctions::from([
+                        GuardClause::Clause(
+                            GuardAccessClause {
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![
+                                            QueryPart::Key("Effect".to_string())
+                                        ],
+                                        match_all: true,
+                                    },
+                                    location: FileLocation {
+                                        file_name: "",
+                                        line: 2,
+                                        column: 9,
+                                    },
+                                    compare_with: Some(LetValue::Value(Value::String("Deny".to_string()))),
+                                    comparator: (CmpOperator::Eq, false),
+                                    custom_message: None
+                                },
+                                negation: false
+                            }
+                        )
+                    ]),
+                    Disjunctions::from([
+                        GuardClause::Clause(
+                            GuardAccessClause {
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![
+                                            QueryPart::Key("Principal".to_string())
+                                        ],
+                                        match_all: true,
+                                    },
+                                    location: FileLocation {
+                                        file_name: "",
+                                        line: 3,
+                                        column: 9,
+                                    },
+                                    compare_with: Some(LetValue::Value(Value::String("*".to_string()))),
+                                    comparator: (CmpOperator::Eq, true),
+                                    custom_message: None
+                                },
+                                negation: false
+                            }
+                        )
+                    ])
+
+                ]
+            }
+        }
+    );
+    assert_eq!(block_clause, expected);
+    Ok(())
+}
+
+#[test]
+fn test_block_in_block_properties()-> Result<(), Error> {
+    let block_str = r###"Properties {
+        Statements[*] {
+            Effect == 'Deny'
+            Principal != '*'
+        }
+    }"###;
+    let block = GuardClause::try_from(block_str)?;
+    match &block {
+        GuardClause::BlockClause(block) => {
+            match &block.block.conjunctions[0][0] {
+                GuardClause::BlockClause(blk) => {
+                    assert_eq!(blk.block.assignments.is_empty(), true);
+                    let conjuntions = &blk.block.conjunctions;
+                    assert_eq!(conjuntions.len(), 2);
+                },
+                _ => unreachable!()
+            }
+        },
+        _ => unreachable!()
+    }
+    Ok(())
+}
+
+#[test]
+fn test_incorrect_block_in_block_properties()-> Result<(), Error> {
+    // Empty does not contain properties
+    let block_str = r###"Properties {}"###;
+    match GuardClause::try_from(block_str) {
+        Ok(_) => unreachable!(),
+        Err(_) => {}
+    }
+
+    // Incomplete block
+    let block_str = r###"Properties { Statements[*]"###;
+    match GuardClause::try_from(block_str) {
+        Ok(_) => unreachable!(),
+        Err(_) => {}
+    }
+
+
+    Ok(())
+}

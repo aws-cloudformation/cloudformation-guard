@@ -1344,7 +1344,7 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     let (input, _space) = one_or_more_ws_or_comment(input)?;
 
     let (input, rule_name) = cut(var_name)(input)?;
-    let (input, conditions) = opt(when_conditions(clauses))(input)?;
+    let (input, conditions) = opt(when_conditions(single_clauses))(input)?;
     let (input, (assignments, conjunctions)) =
         cut(block(rule_block_clause))(input)?;
 
@@ -1391,7 +1391,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
                 map(assignment, Exprs::Assignment),
                 map(rule_block, Exprs::Rule),
                 map(type_block, Exprs::DefaultTypeBlock),
-                when_block(clauses, alt((clause, rule_clause)), |c, b|
+                when_block(single_clauses, alt((clause, rule_clause)), |c, b|
                     Exprs::DefaultWhenBlock(c, Block { assignments: b.0, conjunctions: b.1 })),
                 map(clause, Exprs::DefaultClause),
             ))
