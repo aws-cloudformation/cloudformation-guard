@@ -1,0 +1,41 @@
+#
+# Allowed valid protocols for ELB
+#
+let allowed_protocols = [ "HTTPS", "TLS" ]
+
+#
+# Select ALL ELBs in the template
+#
+let elbs = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::Listener' ]
+
+#
+# Rule Intent
+# ----
+#
+# If there ELBs present, ensure that ELBs have protocols specified from the 
+# allows list and the Certificates are not empty
+#
+# Outcome:
+# SKIP: when there are no ELBs
+# FAIL: when protocols or certificates don't match
+# PASS: when they do
+#
+#
+rule ensure_all_elbs_are_secure when %elbs !empty {
+    %elbs.Properties {
+        Protocol in %allowed_protocols
+        Certificates !empty
+    }
+}
+
+#
+# Rule Intent
+# ----
+# 
+# In addition to secure settings, ensure that ELBs are only private
+#
+#
+rule ensure_elbs_are_internal {
+    ensure_all_elbs_are_secure
+    %elbs.Properties.Scheme == 'internal'
+}

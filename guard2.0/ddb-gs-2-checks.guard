@@ -1,0 +1,97 @@
+#
+# Common rule, all resources must have Tags present on them
+#
+rule assert_all_resources_have_non_empty_tags {
+    Resources.*.Properties.Tags !empty
+}
+
+#
+# Select all DDB resources from the incoming template (payload)
+#
+let ddb = Resources.*[ Type == 'AWS::DynamoDB::Table'  ]
+
+#
+# Run this DDB rule when there are DDB table present and 
+# we PASSED the check that all resources did have tags in them 
+# 
+# Rule Intent: ALL DDB Table must have encryption at rest turned 
+# on.
+#
+# Expectations:
+# a) SKIP, when there are not DDB tables present or assert_all_resources_have_non_empty_tags FAILED
+# b) PASS when all DDB Tables do have encryption turned on
+# c) FAIL if wasn't set for them
+#
+rule dynamo_db_sse_on when %ddb !empty 
+                           assert_all_resources_have_non_empty_tags
+{
+    #
+    # Enusre ALL DynamoDB Tables have encryption at rest turned on
+    #
+    %ddb.Properties.SSESpecification.SSEEnabled == true    
+}
+
+#
+# We need a differing set of constraints for DynamoDB Tables that are in PROD.
+# For these table we have the following additional constraints
+# a) The allowed encryption at rest key must be KMS and not server-side-encryption 
+# b) The table has "delete" protection on for these tables
+# 
+# All DynamoDB Tables intended for PROD have a Tag Key == /PROD/ and a Value with App prefixed
+#
+# Expectations:
+# a) PASS if PROD does only allow KMS keys for encryption
+# b) SKIP is there are no DDB tables present or if SSE was not turned on
+# c) FAIL if PROD ones do not use KMS
+#
+#
+
+#
+# Only valid keys that are allowed are KMS
+#
+let allowed_algorithms = [ 'KMS' ]
+
+rule dynamo_db_sse_on_for_prod_only when dynamo_db_sse_on 
+{
+     
+    #
+    # From the set of DynamoDB Tables that had SSE on (dependent rule dynamo_db_sse_on), 
+    # check the ones that are targetted for PRODuction based on 
+    # Key containing /PROD/ and Value starting with /^App/
+    #
+    let only_prod_ddb = %ddb[
+        #
+        # At least one Tag exists that contains Key and Value 
+        # needed on PROD DynamoDB Table
+        #
+        some Properties.Tags[*] {
+            #
+            # contains at-least-one key with PROD 
+            #
+            Key == /PROD/
+
+            #
+            # Value that starts with App 
+            #
+            Value == /^App/
+        }
+    ]
+    
+    #
+    # Skip the enforcement if there were no such DDB Tables
+    #
+    when %only_prod_ddb !empty {        
+        %only_prod_ddb {
+            #
+            # Only permit allowed ones (currently just KMS)
+            #
+            Properties.SSESpecification.SSEType == %allowed_algorithms
+
+            #
+            # Prod DDB Table must have retain
+            #
+            DeletionPolicy == 'Retain'
+        }
+    }
+}
+

@@ -1,0 +1,56 @@
+---
+- input: 
+    Resources: {}
+  expectations:
+    rules:
+      prevent_ec2_with_public_ip: SKIP
+      prevent_eip_associations_with_ec2: SKIP
+- input: 
+    Resources: 
+      eipOk:
+        Type: 'AWS::EC2::EIP'
+        Properties:
+          Domain: "whatever"
+  expectations:
+    rules:
+      prevent_ec2_with_public_ip: SKIP
+      prevent_eip_associations_with_ec2: PASS
+- input: 
+    Resources: 
+      eipFail:
+        Type: 'AWS::EC2::EIP'
+        Properties:
+          Domain: "whatever"
+          InstanceId: "i-23455657"
+  expectations:
+    rules:
+      prevent_ec2_with_public_ip: SKIP
+      prevent_eip_associations_with_ec2: FAIL
+- input: 
+    Resources: 
+      eipFail:
+        Type: 'AWS::EC2::EIP'
+        Properties:
+          Domain: "whatever"
+          InstanceId: "i-23455657"
+      ec2:
+        Type: 'AWS::EC2::Instance'
+        Properties:
+          NetworkInterfaces:
+              - AssociatePublicIpAddress: true
+  expectations:
+    rules:
+      prevent_ec2_with_public_ip: FAIL
+      prevent_eip_associations_with_ec2: FAIL
+- input: 
+    Resources: 
+      eipFail:
+        Type: 'AWS::EC2::EIP'
+        Properties:
+          Domain: "whatever"
+      ec2:
+        Type: 'AWS::EC2::Instance'
+  expectations:
+    rules:
+      prevent_ec2_with_public_ip: SKIP
+      prevent_eip_associations_with_ec2: PASS
