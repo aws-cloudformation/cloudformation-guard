@@ -1,0 +1,62 @@
+---
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: SKIP
+- input:
+    Resources:
+      compliant: 
+        Type: Consoto::Network::VPC
+        Properties: 
+            Tags: [
+                {
+                    Key: "Hi",
+                    Value: "Accepted!"
+                }
+            ]
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: PASS
+- input:
+    Resources:
+      nonCompliant: 
+        Type: Consoto::Network::VPC
+        Properties: {}
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: FAIL
+- input:
+    Resources:
+      skipped: 
+        Type: 'AWS::AmazonBroker::Service' # this is skipped
+      compliant: 
+        Type: Consoto::Network::VPC
+        Properties: 
+            Tags: [
+                {
+                    Key: "Hi",
+                    Value: "Accepted!"
+                }
+            ]
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: PASS
+- input:
+    Resources:
+      nonCompliant: 
+        Type: Consoto::Network::VPC
+        Properties: 
+          Tags: []
+      compliant: 
+        Type: Consoto::Network::VPC
+        Properties: 
+            Tags: [
+                {
+                    Key: "Hi",
+                    Value: "Accepted!"
+                }
+            ]
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: FAIL

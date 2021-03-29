@@ -1299,3 +1299,178 @@ fn double_projection_tests() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_map_keys_function() -> Result<()> {
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+
+    let rule_str = r#"
+let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
+rule check_rest_api_is_private_and_has_access when %api_gws !empty {
+    %api_gws.Properties.EndpointConfiguration == ["PRIVATE"]
+    some %api_gws.Properties.Policy.Statement[*].Condition[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
+}"#;
+    let rule = RulesFile::try_from(rule_str)?;
+    let root = RootScope::new(&rule, &value);
+    let status = rule.evaluate(&value, &root)?;
+    assert_eq!(status, Status::FAIL);
+
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+                    'aws:sourceVpc': ['vpc-1234']
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let root = RootScope::new(&rule, &value);
+    let status = rule.evaluate(&value, &root)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn test_compare_loop_atleast_one_eq() -> Result<()> {
+    let root = Path::root();
+    let lhs = [
+        PathAwareValue::String((root.clone(), "aws:isSecure".to_string())),
+        PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
+    ];
+    let rhs = [
+        PathAwareValue::Regex((root.clone(), "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())),
+    ];
+
+    let lhs_values = lhs.iter().collect::<Vec<&PathAwareValue>>();
+    let rhs_values = rhs.iter().collect::<Vec<&PathAwareValue>>();
+
+    //
+    // match any one rhs = false, at-least-one = false
+    //
+    let (result, first, with) = compare_loop(
+        &lhs_values, &rhs_values, path_value::compare_eq, false, false
+    )?;
+    assert_eq!(result, false);
+
+    //
+    // match any one rhs = false, at-least-one = false
+    //
+    let (result, first, with) = compare_loop(
+        &lhs_values, &rhs_values, path_value::compare_eq, false, true
+    )?;
+    assert_eq!(result, true);
+
+    //
+    // match any one rhs = true, at-least-one = false
+    //
+    let (result, first, with) = compare_loop(
+        &lhs_values, &rhs_values, path_value::compare_eq, true, false
+    )?;
+    assert_eq!(result, false);
+
+    Ok(())
+}
+
+#[test]
+fn block_evaluation() -> Result<()> {
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+                    'aws:sourceVpc': ['vpc-1234']
+              - Action: Allow
+                Resource: ['*', "aws:"]
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
+        EndpointConfiguration == ["PRIVATE"]
+        some Policy.Statement[*] {
+            Action == 'Allow'
+            Condition[ keys == 'aws:IsSecure' ] !empty
+        }
+    }
+    "#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+    Ok(())
+}
+
+#[test]
+fn block_evaluation_fail() -> Result<()> {
+    let value_str = r#"
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                    'aws:IsSecure': true
+                    'aws:sourceVpc': ['vpc-1234']
+              - Action: Allow
+                Resource: ['*', "aws:"]
+      apiGw2:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: Allow
+                Resource: ['*', "aws:"]
+
+    "#;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
+        EndpointConfiguration == ["PRIVATE"]
+        some Policy.Statement[*] {
+            Action == 'Allow'
+            Condition[ keys == 'aws:IsSecure' ] !empty
+        }
+    }
+    "#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}

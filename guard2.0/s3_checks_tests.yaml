@@ -1,0 +1,25 @@
+---
+- input:
+    Resources:
+      s3NoVersion:
+        Type: 'AWS::S3::Bucket'
+      s3Version:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+          VersionConfiguration:
+            Status: 'Enabled'
+  expectations:
+    rules:
+      s3_bucket_with_version: FAIL
+- input:
+    Resources:
+      s3NoVersion:
+        Type: 'AWS::S3::Bucket'
+      s3Version:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+          VersionConfiguration:
+            Status: 'Disabled'
+  expectations:
+    rules:
+      s3_bucket_with_version: SKIP

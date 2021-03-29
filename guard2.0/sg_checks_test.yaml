@@ -1,0 +1,79 @@
+---
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: SKIP
+      prevent_inbound_access_to_any_ip: SKIP
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupEgress:
+            - CidrIp: '10.0.0.0/24'
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: PASS
+      prevent_inbound_access_to_any_ip: SKIP
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupIngress:
+            - CidrIp: '10.0.0.0/24'
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: SKIP
+      prevent_inbound_access_to_any_ip: PASS
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupIngress:
+            - CidrIp: { Ref: inparam }
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: SKIP
+      prevent_inbound_access_to_any_ip: SKIP
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupIngress:
+            - CidrIp: 0.0.0.0/0
+          SecurityGroupEgress:
+            - CidrIpv6: '::/0'
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: FAIL
+      prevent_inbound_access_to_any_ip: FAIL
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupIngress:
+            - CidrIp: { Ref: inparam }
+            - CidrIp: 0.0.0.0/0
+          SecurityGroupEgress:
+            - CidrIp: { Ref: inparam }
+            - CidrIpv6: '::/0'
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: FAIL
+      prevent_inbound_access_to_any_ip: FAIL
+- input:
+    Resources: 
+      sgOkay: 
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          SecurityGroupIngress: []
+          SecurityGroupEgress: []
+  expectations:
+    rules:
+      prevent_outbound_access_to_any_ip: SKIP
+      prevent_inbound_access_to_any_ip: SKIP

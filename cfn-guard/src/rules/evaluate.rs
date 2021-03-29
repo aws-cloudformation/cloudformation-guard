@@ -6,7 +6,7 @@ use colored::Colorize;
 
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, path_value, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
@@ -41,6 +41,7 @@ fn resolve_variable_query<'s>(all: bool,
     Ok(acc)
 }
 
+pub(super)
 fn resolve_query<'s, 'loc>(all: bool,
                            query: &[QueryPart<'loc>],
                            context: &'s PathAwareValue,
@@ -68,36 +69,47 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any: bool) -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>, bool)>
+fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
+    -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
-    let mut at_least_one_match = false;
-    loop {
+    let (cmp, from, to) = 'outer: loop {
         'lhs:
         for lhs_value in lhs {
             for rhs_value in rhs {
                 let check = compare(*lhs_value, *rhs_value)?;
-                if check {
-                    at_least_one_match = true;
+                if check && atleast_one {
+                    break 'outer (true, Some(*lhs_value), Some(*rhs_value));
                 }
-                if any && check {
+
+                if any_one_rhs && check {
                     continue 'lhs
                 }
 
-                if !any && !check {
-                    return Ok((false, Some((*lhs_value).clone()), Some((*rhs_value).clone()), at_least_one_match))
+                if !any_one_rhs && !check && !atleast_one {
+                    break 'outer (false, Some(*lhs_value), Some(*rhs_value));
                 }
             }
             //
             // We are only hear in the "all" case when all of them checked out. For the any case
             // it would be a failure to be here
             //
-            if any {
-                return Ok((false, Some((*lhs_value).clone()), None, at_least_one_match))
+            if any_one_rhs && !atleast_one {
+                break 'outer (false, Some(*lhs_value), None)
             }
         }
-        break;
+        if atleast_one {
+            break (false, None, None)
+        } else {
+            break (true, None, None)
+        }
     };
-    Ok((true, None, None, true))
+    Ok((cmp, match from {
+        None => None,
+        Some(p) => Some(p.clone()),
+    }, match to {
+        None => None,
+        Some(p) => Some(p.clone())
+    }))
 }
 
 fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&'a PathAwareValue>>> {
@@ -125,11 +137,11 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
               rhs: &Vec<&PathAwareValue>,
               rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>, bool)>
+              any: bool, atleast_one: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::FAIL, None, None, false))
+        return Ok((Status::FAIL, None, None))
     }
 
     let lhs_elem = lhs[0];
@@ -139,16 +151,16 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     // What are possible comparisons
     //
     if !lhs_elem.is_list() && !rhs_elem.is_list() {
-        match compare_loop(lhs, rhs, compare, any) {
-            Ok((true, _, _, atleast)) => Ok((Status::PASS, None, None, atleast)),
-            Ok((false, from, to, atleast)) => Ok((Status::FAIL, from, to, atleast)),
+        match compare_loop(lhs, rhs, compare, any, atleast_one) {
+            Ok((true, _, _)) => Ok((Status::PASS, None, None)),
+            Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
             Err(e) => Err(e)
         }
     }
     else if lhs_elem.is_list() && !rhs_elem.is_list() {
         for elevated in elevate_inner(lhs)? {
-            if let Ok((cmp, from, to, atleast)) = compare_loop(
-                &elevated, rhs, |f, s| compare(f, s), any) {
+            if let Ok((cmp, from, to)) = compare_loop(
+                &elevated, rhs, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
                     return Ok((Status::FAIL, from, to, atleast))
                 }
@@ -158,8 +170,8 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     }
     else if !lhs_elem.is_list() && rhs_elem.is_list() {
         for elevated in elevate_inner(rhs)? {
-            if let Ok((cmp, from, to, atleast)) = compare_loop(
-                lhs, &elevated, |f, s| compare(f, s), any) {
+            if let Ok((cmp, from, to)) = compare_loop(
+                lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
                     return Ok((Status::FAIL, from, to, atleast))
                 }
@@ -170,8 +182,8 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     else {
         for elevated_lhs in elevate_inner(lhs)? {
             for elevated_rhs in elevate_inner(rhs)? {
-                if let Ok((cmp, from, to, atleast)) = compare_loop(
-                    &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any) {
+                if let Ok((cmp, from, to)) = compare_loop(
+                    &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any, atleast_one) {
                     if !cmp {
                         return Ok((Status::FAIL, from, to, atleast))
                     }
@@ -209,7 +221,7 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     }
 }
 
-fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+pub(super) fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     move |first, second| {
@@ -246,8 +258,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             };
 
         let result = match clause.access_clause.comparator {
-            (CmpOperator::Empty, not) |
-            (CmpOperator::KeysEmpty, not) =>
+            (CmpOperator::Empty, not) =>
                 //
                 // Retrieval Error is considered the same as an empty or !exists
                 // When using "SOME" keyword in the clause, then IncompatibleError is trapped to be none
@@ -258,14 +269,19 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                     Some(l) => {
                         Some(
                             if !l.is_empty() {
-                                if l[0].is_list() {
+                                if l[0].is_list() || l[0].is_map() {
                                     'all_empty: loop {
                                         for element in l {
-                                            if let PathAwareValue::List((_, vec)) = *element {
-                                                match negation_status(vec.is_empty(), not, clause.negation) {
-                                                    Status::FAIL => break 'all_empty Status::FAIL,
-                                                    _ => {}
-                                                }
+                                            let status = match *element {
+                                                PathAwareValue::List((_, v)) =>
+                                                    negation_status(v.is_empty(), not, clause.negation),
+                                                PathAwareValue::Map((_, m)) =>
+                                                    negation_status(m.is_empty(), not, clause.negation),
+                                                _ => continue
+                                            };
+
+                                            if status == Status::FAIL {
+                                                break 'all_empty Status::FAIL;
                                             }
                                         }
                                         break Status::PASS
@@ -405,7 +421,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             }
         };
 
-        let mut result =
+        let (result, from, to) =
             match &clause.access_clause.comparator.0 {
             //
             // ==, !=
@@ -416,7 +432,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+                        false,
+                        !all)?,
 
             //
             // >
@@ -427,7 +444,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_gt, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+                        false,
+                        !all)?,
 
             //
             // >=
@@ -438,7 +456,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_ge, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+                        false,
+                        !all)?,
 
             //
             // <
@@ -449,7 +468,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_lt, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+                        false,
+                        !all)?,
 
             //
             // <=
@@ -460,32 +480,25 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         &rhs,
                         rhs_query,
                         invert_closure(super::path_value::compare_le, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+                        false,
+                        !all)?,
 
             //
             // IN, !IN
             //
-            CmpOperator::KeysIn |
             CmpOperator::In => {
                 let mut result = compare(&lhs,
                         &clause.access_clause.query.query,
                         &rhs,
                         rhs_query,
                         super::path_value::compare_eq,
-                        true)?;
+                                         true,
+                                         !all)?;
                 let status = invert_status(result.0, clause.access_clause.comparator.1);
                 let status = invert_status(status, clause.negation);
                 result.0 = status;
                 result
-            }
-
-            CmpOperator::KeysEq =>
-                compare(&lhs,
-                        &clause.access_clause.query.query,
-                        &rhs,
-                        rhs_query,
-                        invert_closure(super::path_value::compare_eq, clause.access_clause.comparator.1, clause.negation),
-                        if all { false } else { true })?,
+            },
 
             _ => unreachable!()
 
@@ -496,7 +509,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
-            match result.0 {
+            match result {
                 Status::PASS => "PASS",
                 Status::FAIL => "FAIL",
                 Status::SKIP => "SKIP",
@@ -507,8 +520,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => "(default completed evaluation)"
             }
         );
-        auto_reporter.comparison(result.0, result.1, result.2).message(message);
-        Ok(result.0)
+        auto_reporter.comparison(result, from, to).message(message);
+        Ok(result)
     }
 }
 
@@ -529,6 +542,7 @@ impl<'loc> Evaluate for GuardClause<'loc> {
         match self {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
             GuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
+            GuardClause::BlockClause(bc) => bc.evaluate(context, var_resolver)
         }
     }
 }
@@ -573,6 +587,47 @@ impl<'loc> Evaluate for Conjunctions<GuardClause<'loc>> {
                 break Status::SKIP
             } else {
                 break Status::PASS
+            }
+        })
+    }
+}
+
+impl<'loc> Evaluate for BlockGuardClause<'loc> {
+    fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        let all = self.query.match_all;
+        let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
+            Err(Error(ErrorKind::RetrievalError(_))) |
+            Err(Error(ErrorKind::IncompatibleRetrievalError(_))) => return Ok(Status::FAIL),
+
+            Ok(v) => if v.is_empty() { // one or more
+                return Ok(Status::FAIL)
+            } else { v },
+
+            Err(e) => return Err(e)
+        };
+
+        Ok(loop {
+            let mut num_fail = 0;
+            let mut num_skip = 0;
+            let mut num_pass = 0;
+            for each in block_values {
+                let block = BlockScope::new(&self.block, each, var_resolver);
+                match self.block.conjunctions.evaluate(each, var_resolver)? {
+                    Status::FAIL => { num_fail += 1; },
+                    Status::SKIP => { num_skip += 1; },
+                    Status::PASS => { num_pass += 1; }
+                }
+            }
+
+            if all {
+                if num_fail > 0 { break Status::FAIL }
+                if num_skip > 0 { break Status::SKIP }
+                break Status::PASS
+            }
+            else {
+                if num_pass > 0 { break Status::PASS }
+                if num_fail > 0 { break Status::FAIL }
+                break Status::SKIP
             }
         })
     }

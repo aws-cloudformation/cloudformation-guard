@@ -31,7 +31,7 @@ pub(crate) enum LetValue<'loc> {
 /// from incoming context. Access expressions support **predicate** queries to help
 /// match specific selections [crate::rules::common::walk_type]
 ///
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct LetExpr<'loc> {
     pub(crate) var: String,
     pub(crate) value: LetValue<'loc>,
@@ -54,8 +54,9 @@ pub(crate) struct LetExpr<'loc> {
 ///
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
+    It,
     Key(String),
-    MapKeys,
+    MapKeyFilter(MapKeyFilterClause<'loc>),
     AllValues,
     AllIndices,
     Index(i32),
@@ -107,10 +108,13 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str("(filter-clauses)")?;
             },
 
-            QueryPart::MapKeys => {
-                f.write_str("[KEYS]")?;
-            }
+            QueryPart::MapKeyFilter(clause) => {
+                f.write_str("(map-key-filter-clause)")?;
+            },
 
+            QueryPart::It => {
+                f.write_str("_")?;
+            }
         }
         Ok(())
     }
@@ -143,6 +147,12 @@ pub(crate) struct GuardAccessClause<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct MapKeyFilterClause<'loc> {
+    pub(crate) comparator: (CmpOperator, bool),
+    pub(crate) compare_with: LetValue<'loc>,
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
@@ -151,14 +161,22 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct BlockGuardClause<'loc> {
+    pub(crate) query: AccessQuery<'loc>,
+    pub(crate) block: Block<'loc, GuardClause<'loc>>,
+    pub(crate) location: FileLocation<'loc>
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
-    NamedRule(GuardNamedRuleClause<'loc>)
+    NamedRule(GuardNamedRuleClause<'loc>),
+    BlockClause(BlockGuardClause<'loc>)
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct Block<'loc, T> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) conjunctions: Conjunctions<T>,

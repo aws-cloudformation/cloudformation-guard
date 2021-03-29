@@ -1,0 +1,43 @@
+#
+# This is an exclusion list for resources that do not support Tags. We 
+# will skip these resources when we select them from the CFN template
+#
+let excluded_resources = [
+    /AWS::AmazonBroker/,
+    /AWS::App*/
+]
+
+#
+# Here is a sample template with resources, one exempt and other selected
+# this would PASS the rule assert_all_resources_have_non_empty_tags
+# 
+# Resources:
+#   skipped: 
+#     Type: 'AWS::AmazonBroker::Service' # this is skipped
+#   compliant: 
+#     Type: Consoto::Network::VPC
+#     Properties: 
+#         Tags: [
+#             {
+#                 Key: "Hi",
+#                 Value: "Accepted!"
+#             }
+#         ]
+#
+# This is a filter, sub-selects resources from a list. We select all values 
+# for Resources section, and from the list of values we select those that 
+# have a Type attribute that does not match excluded_resources
+#
+let resources = Resources.*[
+    Type not in %excluded_resources
+]
+
+#
+# This rule will return 
+# 1) SKIP if there are no resources that were selected, protected by the guard clause !empty 
+# 2) FAIL is any one resource did have empty tags or did not have tags specified at all
+# 3) PASS when ALL resource do have non-empty tags
+#
+rule assert_all_resources_have_non_empty_tags when %resources !empty {
+    %resources.Properties.Tags !empty
+}
