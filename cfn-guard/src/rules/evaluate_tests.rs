@@ -1,4 +1,5 @@
 use super::*;
+use super::super::path_value;
 use crate::rules::parser::{rules_file, Span};
 use crate::commands::files::read_file_content;
 use std::fs::File;
@@ -366,7 +367,7 @@ rule check_rest_api_private {
 }
 
 #[test]
-fn testing_IAM_role_prov_serve() -> Result<()> {
+fn testing_iam_role_prov_serve() -> Result<()> {
     let resources = r###"
     {
         "Resources": {

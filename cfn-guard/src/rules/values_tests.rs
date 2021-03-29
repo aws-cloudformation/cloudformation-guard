@@ -114,7 +114,7 @@ fn test_convert_into_json() -> Result<()> {
     Ok(())
 }
 
-//#[test]
+#[test]
 fn test_query_on_value() -> Result<()> {
     let content = read_to_string("assets/cfn-template.json")?;
     let value = PathAwareValue::try_from(content.as_str())?;
@@ -210,7 +210,7 @@ fn test_query_on_value() -> Result<()> {
     Ok(())
 }
 
-//#[test]
+#[test]
 fn test_type_block_with_var_query_evaluation() -> Result<()> {
     let content = read_to_string("assets/cfn-template.json")?;
     let value = PathAwareValue::try_from(content.as_str())?;
