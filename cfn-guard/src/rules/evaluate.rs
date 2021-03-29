@@ -162,22 +162,22 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
             if let Ok((cmp, from, to)) = compare_loop(
                 &elevated, rhs, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to, atleast))
+                    return Ok((Status::FAIL, from, to))
                 }
             }
         }
-        Ok((Status::PASS, None, None, true))
+        Ok((Status::PASS, None, None))
     }
     else if !lhs_elem.is_list() && rhs_elem.is_list() {
         for elevated in elevate_inner(rhs)? {
             if let Ok((cmp, from, to)) = compare_loop(
                 lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to, atleast))
+                    return Ok((Status::FAIL, from, to))
                 }
             }
         }
-        Ok((Status::PASS, None, None, true))
+        Ok((Status::PASS, None, None))
     }
     else {
         for elevated_lhs in elevate_inner(lhs)? {
@@ -185,13 +185,13 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
                 if let Ok((cmp, from, to)) = compare_loop(
                     &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any, atleast_one) {
                     if !cmp {
-                        return Ok((Status::FAIL, from, to, atleast))
+                        return Ok((Status::FAIL, from, to))
                     }
                 }
 
             }
         }
-        Ok((Status::PASS, None, None, true))
+        Ok((Status::PASS, None, None))
     }
 }
 
@@ -503,10 +503,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             _ => unreachable!()
 
         };
-
-        if !all && result.3 == true {
-            result.0 = Status::PASS;
-        }
 
         let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
             match result {

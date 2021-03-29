@@ -1401,7 +1401,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
             alt((
                 map(assignment, Exprs::Assignment),
                 map(rule_block, Exprs::Rule),
-                map(type_block, Exprs::DefaultTypeBlock),
+                map(type_block_clauses, Exprs::DefaultTypeBlock),
                 when_block(single_clauses, alt((clause, rule_clause)), |c, b|
                     Exprs::DefaultWhenBlock(c, Block { assignments: b.0, conjunctions: b.1 })),
                 map(default_clauses, Exprs::DefaultClause),
