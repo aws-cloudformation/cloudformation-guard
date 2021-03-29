@@ -3,10 +3,10 @@ use std::convert::TryInto;
 
 use crate::rules::values::WithinRange;
 
-use super::*;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Status};
+
+use crate::rules::{EvaluationContext, EvaluationType, Status};
 use crate::rules::path_value::PathAwareValue;
-use crate::commands::RULES;
+
 
 #[test]
 fn test_int_parse() {
@@ -1902,7 +1902,7 @@ fn test_clause_success() {
         let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
         let dotted = AccessQuery { query: dotted, match_all: true };
-        let lhs_access =
+        let _lhs_access =
 
             testing_access_with_cmp(&separators, &comparators,
                                     *each_lhs, rhs,
@@ -2217,9 +2217,9 @@ fn test_clause_failures() {
     //
     // Testing white space problems
     //
-    let rhs = "PARAMETERS.ImageList";
-    let lhs_separator = "";
-    let rhs_separator = "";
+    let _rhs = "PARAMETERS.ImageList";
+    let _lhs_separator = "";
+    let _rhs_separator = "";
     let comparators = [
         (">", (CmpOperator::Gt, false)),
         ("<", (CmpOperator::Lt, false)),
@@ -3492,7 +3492,7 @@ let encrypted := false
 let latest := "ami-6458235"
         "###;
 
-    let rules_files = rules_file(from_str2(s))?;
+    let _rules_files = rules_file(from_str2(s))?;
     Ok(())
 }
 
@@ -3501,7 +3501,7 @@ fn test_rule_block_clause() -> Result<(), Error> {
     let s = "{ %select_lambda_service EMPTY or
      %select_lambda_service.Action.* == /sts:AssumeRole/ }";
     let span = from_str2(s);
-    let rule_block = block(rule_block_clause)(span)?;
+    let _rule_block = block(rule_block_clause)(span)?;
     Ok(())
 }
 
@@ -3626,7 +3626,7 @@ fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
     %all_resources.Tags !EMPTY
 }
     "###;
-    let rule = Rule::try_from(r)?;
+    let _rule = Rule::try_from(r)?;
     Ok(())
 }
 
@@ -3643,29 +3643,29 @@ fn parse_regex_tests() -> Result<(), Error> {
 fn test_complex_predicate_clauses() -> Result<(), Error> {
     let clause = "Statement[ Condition EXISTS ].Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY";
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
-    let parsed = GuardClause::try_from(clause)?;
+    let _parsed = GuardClause::try_from(clause)?;
 
     let clause = r#"Statement[ Condition EXISTS
                                      Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
     "#;
-    let parsed = GuardClause::try_from(clause)?;
+    let _parsed = GuardClause::try_from(clause)?;
     Ok(())
 }
 
 struct DummyEval{}
 impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
+    fn resolve_variable(&self, _variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
         unimplemented!()
     }
 
-    fn rule_status(&self, rule_name: &str) -> crate::rules::Result<Status> {
+    fn rule_status(&self, _rule_name: &str) -> crate::rules::Result<Status> {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
     }
 
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
     }
 }
 
@@ -3692,7 +3692,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
     );
     assert_eq!(parsed, expected);
 
-    let templates = [
+    let _templates = [
         r#"
         {
             "Resources": {
@@ -3730,8 +3730,8 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
         "#,
     ];
 
-    let dummy = DummyEval{};
-    let clause = GuardClause::try_from(
+    let _dummy = DummyEval{};
+    let _clause = GuardClause::try_from(
         r#"Resources.*[ _.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ _ == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
     Ok(())
 }
@@ -4085,6 +4085,6 @@ fn test_incorrect_block_in_block_properties()-> Result<(), Error> {
 #[test]
 fn block_parse_test() -> Result<(), Error> {
     let block = r#"Resources.*[ Type == /ApiGateway/ ] { Properties.Tags !empty }"#;
-    let clause = GuardClause::try_from(block)?;
+    let _clause = GuardClause::try_from(block)?;
     Ok(())
 }

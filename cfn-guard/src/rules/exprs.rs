@@ -108,7 +108,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str("(filter-clauses)")?;
             },
 
-            QueryPart::MapKeyFilter(clause) => {
+            QueryPart::MapKeyFilter(_clause) => {
                 f.write_str("(map-key-filter-clause)")?;
             },
 

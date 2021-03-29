@@ -729,7 +729,7 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
         preceded(zero_or_more_ws_or_comment, alt((
             eq,
             value((CmpOperator::In, false), in_keyword),
-            map(tuple((not, in_keyword)), |m| {
+            map(tuple((not, in_keyword)), |_m| {
                 (CmpOperator::In, true)
             })))
         )
@@ -843,7 +843,7 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
         // error if there is no value_cmp, has to exist
         context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                 value_cmp)
-    )), |(mut query, _ign, value)| {
+    )), |(query, _ign, value)| {
         (query, value)
     })(rest)?;
 
@@ -1008,7 +1008,7 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
 //
 // clauses
 //
-fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, m: M, non_empty: bool) -> IResult<Span<'loc>, Conjunctions<E>>
+fn cnf_clauses<'loc, T, E, F, M>(input: Span<'loc>, f: F, _m: M, _non_empty: bool) -> IResult<Span<'loc>, Conjunctions<E>>
     where F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
           M: Fn(Vec<E>) -> T,
           E: Clone + 'loc,

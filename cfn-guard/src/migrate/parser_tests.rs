@@ -1,10 +1,10 @@
 use super::*;
-use crate::rules::parser::{from_str2, Span, parse_value, rules_file};
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::parser::{from_str2, Span};
+
 use indexmap::map::IndexMap;
-use crate::rules::exprs::RulesFile;
-use crate::migrate::parser::Rule::Basic;
-use nom_locate::LocatedSpan;
+
+
+
 
 #[test]
 fn test_assignment() {
@@ -318,7 +318,7 @@ fn test_parse_rules_file() {
      AWS::EC2::Instance InstanceType == \"m2.large\"\n\
      AWS::S3::Bucket BucketName == /Encrypted/ << Buckets should be encrypted, or instance type large, or property path in a,b,c |OR| AWS::EC2::Instance InstanceType == \"m2.large\" \n";
 
-    let span = make_empty_span(example.len());
+    let _span = make_empty_span(example.len());
     let when_condition = PropertyComparison{
         property_path: String::from(".property.path.*"),
         operator: CmpOperator::In,

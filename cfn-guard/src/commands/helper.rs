@@ -13,7 +13,7 @@ pub fn validate_and_return_json(
     data: &str,
     rules: &str,
 ) -> Result<String> {
-    let mut input_data = match serde_json::from_str::<serde_json::Value>(&data) {
+    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
        Ok(value) => PathAwareValue::try_from(value),
        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
@@ -30,7 +30,7 @@ pub fn validate_and_return_json(
                     let reporter = ConsoleReporter::new(stacker, true, true);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
-                    return Ok((json_result));
+                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }

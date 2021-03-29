@@ -7,7 +7,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_run_check() {
-        let mut data = String::from(
+        let data = String::from(
             r#"
                 {
                     "Resources": {

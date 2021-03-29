@@ -3,7 +3,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use clap::{App, Arg, ArgMatches};
-use colored::*;
+
 
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
@@ -12,10 +12,10 @@ use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::values::Value;
+
 use std::collections::HashMap;
 use crate::rules::path_value::PathAwareValue;
-use crate::commands::tracker::{StackTracker, StatusContext};
+use crate::commands::tracker::{StackTracker};
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Copy, Eq, PartialEq)]

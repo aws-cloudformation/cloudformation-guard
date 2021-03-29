@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, HandlerError> {
     info!("Template is [{}]", &e.data);
     info!("Rule Set is [{}]", &e.rules);
-    let (result) = match cfn_guard::run_checks(&e.data, &e.rules)
+    let result = match cfn_guard::run_checks(&e.data, &e.rules)
     {
         Ok(t) => t,
         Err(e) => (e.to_string()),

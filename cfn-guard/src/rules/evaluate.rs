@@ -4,7 +4,7 @@ use std::fmt::Formatter;
 
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, path_value, Result, Status};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
@@ -133,9 +133,9 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&
 }
 
 fn compare<F>(lhs: &Vec<&PathAwareValue>,
-              lhs_query: &[QueryPart<'_>],
+              _lhs_query: &[QueryPart<'_>],
               rhs: &Vec<&PathAwareValue>,
-              rhs_query: Option<&[QueryPart<'_>]>,
+              _rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
               any: bool, atleast_one: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
@@ -323,7 +323,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                             } else {
                                 true
                             }
-                        ).map_or(true, |i| false), not, clause.negation))
+                        ).map_or(true, |_i| false), not, clause.negation))
                 },
 
             (CmpOperator::IsList, not) =>
@@ -336,7 +336,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                             } else {
                                 true
                             }
-                        ).map_or(true, |i| false), not, clause.negation))
+                        ).map_or(true, |_i| false), not, clause.negation))
                 },
 
             (CmpOperator::IsMap, not) =>
@@ -349,7 +349,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                             } else {
                                 true
                             }
-                        ).map_or(true, |i| false), not, clause.negation))
+                        ).map_or(true, |_i| false), not, clause.negation))
                 },
 
             _ => None
@@ -607,7 +607,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
             let mut num_skip = 0;
             let mut num_pass = 0;
             for each in block_values {
-                let block = BlockScope::new(&self.block, each, var_resolver);
+                let _block = BlockScope::new(&self.block, each, var_resolver);
                 match self.block.conjunctions.evaluate(each, var_resolver)? {
                     Status::FAIL => { num_fail += 1; },
                     Status::SKIP => { num_skip += 1; },

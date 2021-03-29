@@ -1,5 +1,5 @@
 use clap::{App, Arg, ArgMatches};
-use colored::*;
+
 
 use crate::command::Command;
 use crate::commands::files::read_file_content;

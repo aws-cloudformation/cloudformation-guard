@@ -1,7 +1,7 @@
-use std::convert::TryInto;
+
 
 use crate::rules::exprs::{AccessClause, AccessQuery, FileLocation, GuardAccessClause, GuardClause, LetExpr, LetValue};
-use crate::rules::path_value;
+
 
 use super::*;
 
@@ -113,18 +113,18 @@ fn path_value_equivalent() -> Result<(), Error> {
 
 struct DummyEval{}
 impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
+    fn resolve_variable(&self, _variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
         unimplemented!()
     }
 
-    fn rule_status(&self, rule_name: &str) -> crate::rules::Result<Status> {
+    fn rule_status(&self, _rule_name: &str) -> crate::rules::Result<Status> {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
     }
 
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
     }
 }
 
@@ -313,7 +313,7 @@ fn it_support_evaluation_tests() -> Result<(), Error> {
     println!("Selected = {:?}", selected);
     assert_eq!(selected.len(), 1);
     match selected[0] {
-        PathAwareValue::Map((p, map)) => {
+        PathAwareValue::Map((p, _map)) => {
             assert_eq!(p, &Path::try_from("/Tags/0")?);
         },
         _ => unreachable!()

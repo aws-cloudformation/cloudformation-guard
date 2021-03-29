@@ -1,4 +1,4 @@
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
+use crate::rules::{EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
 use nom::lib::std::fmt::Formatter;
 use serde::{Serialize};
 
@@ -105,7 +105,7 @@ impl<'r> EvaluationContext for StackTracker<'r> {
     fn start_evaluation(&self,
                         eval_type: EvaluationType,
                         context: &str) {
-        let indent= self.stack.borrow().len();
+        let _indent= self.stack.borrow().len();
         self.stack.borrow_mut().push(
             StatusContext::new(eval_type, context));
         self.root_context.start_evaluation(eval_type, context);

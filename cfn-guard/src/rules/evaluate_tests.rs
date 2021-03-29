@@ -38,25 +38,25 @@ fn read_data(file: File) -> Result<Value> {
 
 #[test]
 fn guard_access_clause_test_all_up() -> Result<()> {
-    let rules = parse_rules(RULES_FILES_EXAMPLE, "iam-rules.gr")?;
-    let root = read_data(File::open("assets/cfn-lambda.yaml")?)?;
+    let _rules = parse_rules(RULES_FILES_EXAMPLE, "iam-rules.gr")?;
+    let _root = read_data(File::open("assets/cfn-lambda.yaml")?)?;
     Ok(())
 }
 
 struct DummyEval{}
 impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+    fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
         unimplemented!()
     }
 
-    fn rule_status(&self, rule_name: &str) -> Result<Status> {
+    fn rule_status(&self, _rule_name: &str) -> Result<Status> {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
     }
 
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
     }
 }
 
@@ -81,7 +81,7 @@ fn guard_access_clause_tests() -> Result<()> {
     )?;
     match clause.evaluate(&root, &dummy) {
         Ok(Status::FAIL) => {},
-        rest => assert!(false)
+        _rest => assert!(false)
     }
     Ok(())
 }
@@ -132,7 +132,7 @@ fn rule_clause_tests() -> Result<()> {
     Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
   }
 }"###;
-    let rule = Rule::try_from(r)?;
+    let _rule = Rule::try_from(r)?;
     Ok(())
 }
 
@@ -755,7 +755,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
 #[test]
 fn ecs_iam_role_relationship_assetions() -> Result<()> {
-    let template = r###"
+    let _template = r###"
     # deny_task_role_no_permission_boundary is expected to be false so negate it to pass test
 {    "Resources": {
     "CounterTaskDef1468734E": {
@@ -1194,7 +1194,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         Type == 'AWS::DynamoDB::Table'
         some Properties.Tags[*].Key == /PROD/
     ]"#;
-    let query = AccessQuery::try_from(selection_str)?;
+    let _query = AccessQuery::try_from(selection_str)?;
     let resources_str = r#"{
         Resources: {
             ddbSelected: {
@@ -1371,7 +1371,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     //
     // match any one rhs = false, at-least-one = false
     //
-    let (result, first, with) = compare_loop(
+    let (result, _first, _with) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, false, false
     )?;
     assert_eq!(result, false);
@@ -1379,7 +1379,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     //
     // match any one rhs = false, at-least-one = false
     //
-    let (result, first, with) = compare_loop(
+    let (result, _first, _with) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, false, true
     )?;
     assert_eq!(result, true);
@@ -1387,7 +1387,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     //
     // match any one rhs = true, at-least-one = false
     //
-    let (result, first, with) = compare_loop(
+    let (result, _first, _with) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, true, false
     )?;
     assert_eq!(result, false);

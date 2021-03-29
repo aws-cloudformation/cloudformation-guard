@@ -2,7 +2,7 @@ use crate::commands::rulegen;
 
 #[test]
 fn test_rulegen() {
-    let mut data = String::from(
+    let data = String::from(
         r#"
         {
             "Resources": {
@@ -42,7 +42,7 @@ fn test_rulegen() {
 
 #[test]
 fn test_rulegen_no_properties() {
-    let mut data = String::from(
+    let data = String::from(
         r#"
         {
             "Resources": {

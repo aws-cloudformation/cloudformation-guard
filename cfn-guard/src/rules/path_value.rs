@@ -7,8 +7,8 @@ use std::fmt::Formatter;
 
 use serde::Serialize;
 
-use crate::rules;
-use crate::rules::evaluate::{AutoReport, invert_closure, resolve_variable_query, resolve_query};
+
+use crate::rules::evaluate::{AutoReport, resolve_query};
 use crate::rules::EvaluationType;
 
 use super::{Evaluate, EvaluationContext, Status};

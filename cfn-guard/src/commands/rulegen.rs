@@ -1,7 +1,7 @@
 use std::fs;
 use std::fs::{File};
 use std::process;
-use std::error::Error;
+
 use std::collections::{HashMap, HashSet};
 use clap::{App, Arg, ArgMatches};
 use crate::command::Command;
@@ -38,12 +38,12 @@ impl Command for Rulegen {
         let file = app.value_of("template").unwrap();
         let template_contents = fs::read_to_string(file)?;
 
-        let mut out = match app.value_of("output") {
+        let out = match app.value_of("output") {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };
 
-        let mut result = parse_template_and_call_gen(&template_contents);
+        let result = parse_template_and_call_gen(&template_contents);
         print_rules(result, out);
 
         Ok(())
@@ -113,7 +113,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
     //
     //
     let mut rule_map: HashMap<String, HashMap<String, HashSet<String>>> = HashMap::new();
-    for (name, cfn_resource) in cfn_resources {
+    for (_name, cfn_resource) in cfn_resources {
         let props: HashMap<String, Value> =
             match serde_json::from_value(cfn_resource["Properties"].clone()) {
                 Ok(s) => s,
@@ -129,7 +129,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
             let mut no_newline_stripped_val = stripped_val.trim().replace("\n", "");
 
             // Preserve double quotes for strings.
-            if (prop_val.is_string()) {
+            if prop_val.is_string() {
                 let test_str = format!("{}{}{}", "\"" , no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
@@ -181,7 +181,7 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
         str.append(format!("rule {} when %{} !empty {{\n", resource_name_underscore, variable_name));
 
         for (property, values) in properties {
-            if (values.len() > 1) {
+            if values.len() > 1 {
                 str.append(format!("  %{}.Properties.{} IN [{}]\n", variable_name, property, values.iter().join(", ")));
             } else {
                 str.append(format!("  %{}.Properties.{} == {}\n", variable_name, property, values.iter().next().unwrap()));
@@ -192,7 +192,7 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
     }
 
     // validate rules generated
-    let mut generated_rules = str.string().unwrap();
+    let generated_rules = str.string().unwrap();
 
     let span = crate::rules::parser::Span::new_extra(&generated_rules, "");
     match crate::rules::parser::rules_file(span) {

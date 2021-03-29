@@ -1,22 +1,22 @@
-use std::convert::TryFrom;
-use std::fs::{File, OpenOptions};
-use std::path::PathBuf;
+
+use std::fs::{File};
+
 
 use clap::{App, Arg, ArgMatches};
-use colored::*;
+
 
 use crate::command::Command;
-use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering, iterate_over};
+
+
 use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
-use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::evaluate::RootScope;
-use crate::rules::exprs::RulesFile;
-use crate::rules::values::Value;
-use nom::lib::std::collections::HashMap;
-use crate::rules::path_value::PathAwareValue;
-use crate::commands::tracker::{StackTracker, StatusContext};
-use std::io::{BufRead, BufWriter};
+
+
+
+
+
+
+
+
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ParseTree {}
@@ -53,7 +53,7 @@ impl Command for ParseTree {
             }
         };
 
-        let mut out= match app.value_of("output") {
+        let out= match app.value_of("output") {
                 Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };

@@ -1,5 +1,5 @@
 use std::convert::TryFrom;
-use std::fs::File;
+
 use std::path::PathBuf;
 
 use clap::{App, Arg, ArgMatches};
@@ -7,13 +7,13 @@ use colored::*;
 
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering, iterate_over};
+use crate::commands::files::{alpabetical, get_files, last_modified, regular_ordering, iterate_over};
 use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::values::Value;
-use nom::lib::std::collections::HashMap;
+
+
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker, StatusContext};
 
@@ -100,7 +100,7 @@ pub fn validate_and_return_json(
     data: &str,
     rules: &str,
 ) -> Result<String> {
-    let mut input_data = match serde_json::from_str::<serde_json::Value>(&data) {
+    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
        Ok(value) => PathAwareValue::try_from(value),
        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
@@ -117,7 +117,7 @@ pub fn validate_and_return_json(
                     let reporter = ConsoleReporter::new(stacker, true, true);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
-                    return Ok((json_result));
+                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }
@@ -154,7 +154,7 @@ fn indent_spaces(indent: usize) {
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     let header = format!("{}({}, {})", cxt.eval_type, cxt.context, colored_string(cxt.status)).underline();
     //let depth = cxt.indent;
-    let sub_indent = depth + 1;
+    let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
     println!("{}", header);
     match &cxt.from {
@@ -310,7 +310,7 @@ impl<'r> ConsoleReporter<'r> {
 }
 
 fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool) -> Result<()> {
-    let mut iterator = iterate_over(data_files, |content, _| {
+    let iterator = iterate_over(data_files, |content, _| {
         match serde_json::from_str::<serde_json::Value>(&content) {
             Ok(value) => PathAwareValue::try_from(value),
             Err(_) => {

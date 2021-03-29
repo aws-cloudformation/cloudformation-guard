@@ -2,10 +2,10 @@ use std::convert::{TryInto, TryFrom};
 
 use super::*;
 use std::fs::read_to_string;
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, AccessQuery};
+use crate::rules::exprs::{GuardClause, AccessQuery};
 use std::collections::HashMap;
 use crate::rules::exprs::{TypeBlock, Rule};
-use crate::rules::evaluate::{RootScope, BlockScope};
+
 use crate::rules::{ Result, EvaluationContext, EvaluationType, Evaluate, Status, Error, errors::ErrorKind };
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
 
@@ -131,7 +131,7 @@ fn test_query_on_value() -> Result<()> {
                 format!("Not found {}", variable))))
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _rule_name: &str) -> Result<Status> {
             unimplemented!()
         }
 
@@ -141,7 +141,7 @@ fn test_query_on_value() -> Result<()> {
         fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
         }
     }
-    let mut dummy = DummyResolver{
+    let dummy = DummyResolver{
         cache: HashMap::new()
     };
 
@@ -217,11 +217,11 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
 
     struct DummyResolver{};
     impl EvaluationContext for DummyResolver {
-        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _rule_name: &str) -> Result<Status> {
             unimplemented!()
         }
 
@@ -328,6 +328,6 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
 fn test_parse_string_with_colon() -> Result<()> {
     // let s = r#"'aws:AssumeRole'"#;
     let s = r#""aws:AssumeRole""#;
-    let value = Value::try_from(s)?;
+    let _value = Value::try_from(s)?;
     Ok(())
 }
