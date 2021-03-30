@@ -827,8 +827,11 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     })(input)
 }
 
-fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
-    where A: Fn(Span) -> IResult<Span, AccessQuery>
+fn clause_with_map<'loc, A, M, T: 'loc>(input: Span<'loc>,
+                         access: A,
+                         mapper: M) -> IResult<Span<'loc>, T>
+    where A: Fn(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
+          M: Fn(GuardAccessClause<'loc>) -> T + 'loc
 {
     let location = FileLocation {
         file_name: input.extra,
@@ -849,11 +852,11 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
 
     if !does_comparator_have_rhs(&cmp.0) {
         let (rest, custom_message) = map(preceded(zero_or_more_ws_or_comment, opt(custom_message)),
-                |msg| {
-                    msg.map(String::from)
-                })(rest)?;
+                                         |msg| {
+                                             msg.map(String::from)
+                                         })(rest)?;
         Ok((rest,
-            GuardClause::Clause(
+            mapper(
                 GuardAccessClause {
                     access_clause: AccessClause {
                         query,
@@ -885,7 +888,7 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
                             }),
                     ))))(rest)?;
         Ok((rest,
-            GuardClause::Clause(
+            mapper(
                 GuardAccessClause {
                     access_clause: AccessClause {
                         query,
@@ -898,6 +901,12 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
                 })
         ))
     }
+}
+
+fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
+    where A: Fn(Span) -> IResult<Span, AccessQuery>
+{
+    clause_with_map(input, access, |g| GuardClause::Clause(g))
 }
 
 pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
@@ -936,11 +945,20 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
 //
 //
 fn clause(input: Span) -> IResult<Span, GuardClause> {
-    alt((block_clause, single_clause))(input)
+    alt((
+            when_block(single_clauses, clause, |conds, (assigns, cls)| {
+                GuardClause::WhenBlock(conds, Block {
+                    assignments: assigns,
+                    conjunctions: cls
+                })
+            }),
+        block_clause,
+        |i| clause_with(i, access)
+    ))(input)
 }
 
-fn single_clause(input: Span) -> IResult<Span, GuardClause> {
-    clause_with(input, access)
+fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
+    clause_with_map(input, access, |gac| WhenGuardClause::Clause(gac))
 }
 
 //
@@ -1061,7 +1079,7 @@ fn disjunction_clauses<'loc, E, F>(input: Span<'loc>, parser: F, non_empty: bool
     }
 }
 
-fn single_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
+fn single_clauses(input: Span) -> IResult<Span, Conjunctions<WhenGuardClause>> {
     cnf_clauses(
         input,
         //
@@ -1079,7 +1097,10 @@ fn single_clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
         // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
         // we are using the alt form to first parse to see if it is clause and then try rules_clause
         //
-        alt((single_clause, rule_clause)),
+        alt((single_clause, map(rule_clause, |g| match g {
+            GuardClause::NamedRule(nr) => WhenGuardClause::NamedRule(nr),
+            _ => unreachable!()
+        }))),
 
         //
         // Mapping the GuardClause
@@ -1168,8 +1189,8 @@ fn when(input: Span) -> IResult<Span, ()> {
     value((), alt((tag("when"), tag("WHEN"))))(input)
 }
 
-fn when_conditions<'loc, P>(condition_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<GuardClause<'loc>>>
-    where P: Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<GuardClause<'loc>>>
+fn when_conditions<'loc, P>(condition_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>
+    where P: Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>
 {
     move |input: Span| {
         //
@@ -1303,11 +1324,11 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
 }
 
 fn when_block<'loc, C, B, M, T, R>(conditions: C, block_fn: B, mapper: M) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
-    where C: Fn(Span<'loc>) -> IResult<Span, Conjunctions<GuardClause<'loc>>>,
+    where C: Fn(Span<'loc>) -> IResult<Span, Conjunctions<WhenGuardClause<'loc>>>,
           B: Fn(Span<'loc>) -> IResult<Span<'loc>, T>,
           T: Clone + 'loc,
           R: 'loc,
-          M: Fn(Conjunctions<GuardClause<'loc>>, (Vec<LetExpr<'loc>>, Conjunctions<T>)) -> R
+          M: Fn(Conjunctions<WhenGuardClause<'loc>>, (Vec<LetExpr<'loc>>, Conjunctions<T>)) -> R
 {
     move |input: Span| {
         map(preceded(zero_or_more_ws_or_comment,
@@ -1323,7 +1344,7 @@ fn rule_block_clause(input: Span) -> IResult<Span, RuleClause> {
         map(preceded(zero_or_more_ws_or_comment, type_block), RuleClause::TypeBlock),
         map(preceded(zero_or_more_ws_or_comment,
                      pair(
-                         when_conditions(clauses),
+                         when_conditions(single_clauses),
                          block(alt((clause, rule_clause)))
                      )),
             |(conditions, block)| {

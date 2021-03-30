@@ -1475,3 +1475,149 @@ fn block_evaluation_fail() -> Result<()> {
     assert_eq!(status, Status::FAIL);
     Ok(())
 }
+
+#[test]
+fn embedded_when_clause_redshift_use_case_test() -> Result<()> {
+    let rule = r###"
+#
+# Find all Redshift subnet group resource and extract all subnet Ids that are referenced
+#
+let local_subnet_refs = some Resources.*[ Type == /Redshift::ClusterSubnetGroup/ ].Properties.SubnetIds[*].Ref
+
+rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
+
+    #
+    # check that all local references where indeed subnet type. FAIL otherwise
+    #
+    Resources.%local_subnet_refs.Type == 'AWS::EC2::Subnet'
+
+    #
+    # Find out all Subnet Route Associations with the set of subnets and extract the
+    # Route Table references that they have
+    #
+    let route_tables = some Resources.*[
+        Type == 'AWS::EC2::SubnetRouteTableAssociation'
+        Properties.SubnetId.Ref in %local_subnet_refs
+    ].Properties.RouteTableId.Ref
+
+    #
+    # If no associations are present in the template then we SKIP the check
+    #
+    when %route_tables !empty {
+        #
+        # Ensure that all of these references where indeed RouteTable references
+        #
+        Resources.%route_tables.Type == 'AWS::EC2::RouteTable'
+
+        #
+        # Find all routes that have a gateways associated with the route table and extract
+        # all their references
+        #
+        let gws_ids = some Resources.*[
+            Type == 'AWS::EC2::Route'
+            Properties.GatewayId.Ref exists
+            Properties.RouteTableId.Ref in %route_tables
+        ].Properties.GatewayId.Ref
+
+        #
+        # if no gateways or route association were found then we skip the check
+        #
+        when %gws_ids !empty {
+            Resources.%gws_ids.Type != 'AWS::EC2::InternetGateway'
+        }
+    }
+
+}"###;
+
+    let value_str = r###"
+    Resources:
+      rcsg:
+        Type: 'AWS::Redshift::ClusterSubnetGroup'
+        Properties:
+          SubnetIds: [{Ref: subnet}, "subnet-2"]
+      subnet:
+        Type: 'AWS::EC2::Subnet'
+      subRtAssoc:
+        Type: 'AWS::EC2::SubnetRouteTableAssociation'
+        Properties:
+          SubnetId: { Ref: subnet }
+          RouteTableId: { Ref: rt }
+      rt:
+        Type: 'AWS::EC2::RouteTable'
+      route1:
+        Type: 'AWS::EC2::Route'
+        Properties:
+          GatewayId: { Ref: gw }
+          RouteTableId: { Ref: rt }
+      gw:
+        Type: 'AWS::EC2::InternetGateway'
+    "###;
+
+    let rules_files = RulesFile::try_from(rule)?;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let root = RootScope::new(&rules_files, &value);
+    let status = rules_files.evaluate(&value, &root)?;
+    assert_eq!(status, Status::FAIL);
+
+    let value_str = r###"
+    Resources:
+      rcsg:
+        Type: 'AWS::Redshift::ClusterSubnetGroup'
+        Properties:
+          SubnetIds: [{Ref: subnet}, "subnet-2"]
+      subnet:
+        Type: 'AWS::EC2::Subnet'
+      subRtAssoc:
+        Type: 'AWS::EC2::SubnetRouteTableAssociation'
+        Properties:
+          SubnetId: { Ref: subnet }
+          RouteTableId: { Ref: rt }
+      rt:
+        Type: 'AWS::EC2::RouteTable'
+      route1:
+        Type: 'AWS::EC2::Route'
+        Properties:
+          GatewayId: { Ref: gw }
+          RouteTableId: { Ref: rt }
+      gw:
+        Type: 'AWS::EC2::TransitGateway'
+    "###;
+
+    let rules_files = RulesFile::try_from(rule)?;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let root = RootScope::new(&rules_files, &value);
+    let status = rules_files.evaluate(&value, &root)?;
+    assert_eq!(status, Status::PASS);
+
+    let value_str = r###"
+    Resources:
+      rcsg:
+        Type: 'AWS::Redshift::ClusterSubnetGroup'
+        Properties:
+          SubnetIds: [{Ref: subnet}, "subnet-2"]
+      subnet:
+        Type: 'AWS::EC2::Subnet'
+      subRtAssoc:
+        Type: 'AWS::EC2::SubnetRouteTableAssociation'
+        Properties:
+          SubnetId: { Ref: subnet }
+          RouteTableId: { Ref: rt }
+      rt:
+        Type: 'AWS::EC2::RouteTable'
+      route1:
+        Type: 'AWS::EC2::Route'
+        Properties:
+          GatewayId: { Ref: gw }
+          RouteTableId: { Ref: rt }
+    "###;
+
+    let rules_files = RulesFile::try_from(rule)?;
+    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = PathAwareValue::try_from(value)?;
+    let root = RootScope::new(&rules_files, &value);
+    let status = rules_files.evaluate(&value, &root)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}

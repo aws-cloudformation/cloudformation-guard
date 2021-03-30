@@ -3119,7 +3119,7 @@ fn test_type_block() {
                 type_name: String::from("AWS::EC2::Instance"),
                 conditions: Some(vec![
                     vec![
-                        GuardClause::Clause(
+                        WhenGuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
                                     query: AccessQuery{ query: vec![
@@ -3223,7 +3223,7 @@ fn test_rule_block() {
                 rule_name: String::from("example_rule"),
                 conditions: Some(Conjunctions::from([
                     Disjunctions::from([
-                        GuardClause::Clause(
+                        WhenGuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause{
                                     custom_message: None,
@@ -4086,5 +4086,38 @@ fn test_incorrect_block_in_block_properties()-> Result<(), Error> {
 fn block_parse_test() -> Result<(), Error> {
     let block = r#"Resources.*[ Type == /ApiGateway/ ] { Properties.Tags !empty }"#;
     let _clause = GuardClause::try_from(block)?;
+    Ok(())
+}
+
+#[test]
+fn when_inside_when_parse_test() -> Result<(), Error> {
+    let when_inside_when = r###"#
+    # If no associations are present in the template then we SKIP the check
+    #
+    when %route_tables !empty {
+        #
+        # Ensure that all of these references where indeed RouteTable references
+        #
+        Resources.%route_tables.Type == 'AWS::EC2::RouteTable'
+
+        #
+        # Find all routes that have a gateways associated with the route table and extract
+        # all their references
+        #
+        let gws_ids = some Resources.*[
+            Type == 'AWS::EC2::Route'
+            Properties.GatewayId.Ref exists
+            Properties.RouteTableId.Ref in %route_tables
+        ].Properties.GatewayId.Ref
+
+        #
+        # if no gateways or route association were found then we skip the check
+        #
+        when %gws_ids !empty {
+            Resources.%gws_ids.Type != 'AWS::EC2::InternetGateway'
+        }
+    }
+    "###;
+    let (_span, clause) = rule_block_clause(from_str2(when_inside_when))?;
     Ok(())
 }

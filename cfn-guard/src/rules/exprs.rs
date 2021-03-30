@@ -168,13 +168,26 @@ pub(crate) struct BlockGuardClause<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct WhenGuardBlockClause<'loc> {
+    pub(crate) conditions: WhenConditions<'loc>,
+    pub(crate) block: Block<'loc, GuardClause<'loc>>,
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
-    BlockClause(BlockGuardClause<'loc>)
+    BlockClause(BlockGuardClause<'loc>),
+    WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
 }
 
-pub(crate) type WhenConditions<'loc> = Conjunctions<GuardClause<'loc>>;
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) enum WhenGuardClause<'loc> {
+    Clause(GuardAccessClause<'loc>),
+    NamedRule(GuardNamedRuleClause<'loc>),
+}
+
+pub(crate) type WhenConditions<'loc> = Conjunctions<WhenGuardClause<'loc>>;
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct Block<'loc, T> {

@@ -6,7 +6,7 @@ use colored::Colorize;
 
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenConditions, WhenGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
@@ -538,15 +538,28 @@ impl<'loc> Evaluate for GuardClause<'loc> {
         match self {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
             GuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
-            GuardClause::BlockClause(bc) => bc.evaluate(context, var_resolver)
+            GuardClause::BlockClause(bc) => bc.evaluate(context, var_resolver),
+            GuardClause::WhenBlock(conditions, clauses) => match conditions.evaluate(context, var_resolver)? {
+                Status::PASS => clauses.evaluate(context, var_resolver),
+                rest => Ok(rest)
+            }
         }
     }
 }
 
-impl<'loc> Evaluate for Conjunctions<GuardClause<'loc>> {
+impl<'loc> Evaluate for Block<'loc, GuardClause<'loc>> {
     fn evaluate<'s>(&self,
-                context: &'s PathAwareValue,
-                var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+                    context: &'s PathAwareValue,
+                    var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        let block = BlockScope::new(&self, context, var_resolver);
+        self.conjunctions.evaluate(context, &block)
+    }
+}
+
+impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
+    fn evaluate<'s>(&self,
+                    context: &'s PathAwareValue,
+                    var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
         Ok('outer: loop {
             let mut num_of_conjunction_skips = 0;
             'conjunction:
@@ -607,8 +620,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
             let mut num_skip = 0;
             let mut num_pass = 0;
             for each in block_values {
-                let _block = BlockScope::new(&self.block, each, var_resolver);
-                match self.block.conjunctions.evaluate(each, var_resolver)? {
+                match self.block.evaluate(each, var_resolver)? {
                     Status::FAIL => { num_fail += 1; },
                     Status::SKIP => { num_skip += 1; },
                     Status::PASS => { num_pass += 1; }
@@ -626,6 +638,15 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
                 break Status::SKIP
             }
         })
+    }
+}
+
+impl<'loc> Evaluate for WhenGuardClause<'loc> {
+    fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        match self {
+            WhenGuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
+            WhenGuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver)
+        }
     }
 }
 
@@ -670,8 +691,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
                     var_resolver,
                     &type_context
                 );
-                let block_scope = BlockScope::new(&self.block, *each, var_resolver);
-                match each_type_report.status(self.block.conjunctions.evaluate(*each, &block_scope)?).get_status() {
+                match each_type_report.status(self.block.evaluate(*each, var_resolver)?).get_status() {
                     Status::PASS => {},
 
                     Status::FAIL => {
@@ -737,8 +757,7 @@ impl<'loc> Evaluate for Rule<'loc> {
                                             &block_scope,
                                             ""
                                         );
-                                        let block_scope = BlockScope::new(block, context, &block_scope);
-                                        auto_block.status(block.conjunctions.evaluate(context, &block_scope)?).get_status()
+                                        auto_block.status(block.evaluate(context, &block_scope)?).get_status()
                                     },
                                     _ => {
                                         let mut skip_block = AutoReport::new(

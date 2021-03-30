@@ -205,7 +205,31 @@ fn find_failing_clause(context: &StatusContext) -> Option<&StatusContext> {
 
 fn print_failing_clause(rule: &StatusContext) {
     find_failing_clause(rule)
-        .map_or((), |matched| print_context(matched, 2))
+        .map_or((), |matched| {
+            let header = format!("{}({})", colored_string(matched.status), matched.context).underline();
+            indent_spaces(1);
+            println!("{}", header);
+            indent_spaces(2);
+            match &matched.from {
+                Some(from) => {
+                    print!("When inspecting Value {:?}", from);
+                },
+                None => {}
+            }
+            match &matched.to {
+                Some(to) => {
+                    println!("with {:?}", to);
+                },
+                None => {}
+            }
+            indent_spaces(2);
+            match &matched.msg {
+                Some(m) => {
+                    println!("{}", m);
+                },
+                None => {}
+            }
+        })
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
@@ -251,9 +275,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                }
                println!("{}", colored_string(container.status));
 
-               if !self.verbose {
-                   print_failing_clause(container);
-               }
+               print_failing_clause(container);
             }
 
            if self.verbose {
