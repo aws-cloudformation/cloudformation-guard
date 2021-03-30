@@ -133,9 +133,9 @@ impl Display for Value {
             },
             Value::RangeChar(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
-                    write!(f, "[");
+                    write!(f, "[")?;
                 } else {
-                    write!(f, "(");
+                    write!(f, "(")?;
                 }
                 write!(f, "{},{}", range.lower, range.upper);
 
@@ -147,11 +147,11 @@ impl Display for Value {
             },
             Value::RangeFloat(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
-                    write!(f, "[");
+                    write!(f, "[")?;
                 } else {
-                    write!(f, "(");
+                    write!(f, "(")?;
                 }
-                write!(f, "{},{}", range.lower, range.upper);
+                write!(f, "{},{}", range.lower, range.upper)?;
 
                 if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
                     write!(f, "]")
@@ -161,11 +161,11 @@ impl Display for Value {
             },
             Value::RangeInt(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
-                    write!(f, "[");
+                    write!(f, "[")?;
                 } else {
-                    write!(f, "(");
+                    write!(f, "(")?;
                 }
-                write!(f, "{},{}", range.lower, range.upper);
+                write!(f, "{},{}", range.lower, range.upper)?;
 
                 if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
                     write!(f, "]")

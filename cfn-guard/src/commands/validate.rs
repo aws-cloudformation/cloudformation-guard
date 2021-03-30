@@ -295,20 +295,6 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-impl<'r> ConsoleReporter<'r> {
-    fn colorized(eval_type: EvaluationType, context: &str) {
-        match eval_type {
-            EvaluationType::Rule => println!("{}", format!("{} = {}", eval_type, context).truecolor(200, 170, 217).underline()),
-            EvaluationType::Type => println!("{}", format!("{} = {}", eval_type, context).truecolor(192, 80, 47).underline()),
-            EvaluationType::Condition => println!("{}", format!("when@{}", context).truecolor(183, 178, 79).underline()),
-            EvaluationType::Filter => println!("{}", "Filter".truecolor(109, 104, 15).underline()),
-            EvaluationType::Clause => println!("{}", format!("Clause = {}", context).truecolor(63, 147, 63).underline()),
-            _ => println!("{}/{}", eval_type, context)
-        }
-    }
-
-}
-
 fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool) -> Result<()> {
     let iterator = iterate_over(data_files, |content, _| {
         match serde_json::from_str::<serde_json::Value>(&content) {

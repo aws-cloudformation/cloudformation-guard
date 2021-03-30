@@ -864,37 +864,6 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
             rule_statues: std::cell::RefCell::new(HashMap::with_capacity(rules.guard_rules.len())),
         }
     }
-
-    pub(crate) fn rule_statues<F>(&self, mut f: F)
-        where F: FnMut(&str, &Status) -> ()
-    {
-        for (name, status) in self.rule_statues.borrow().iter() {
-            f(*name, status)
-        }
-    }
-
-    pub(crate) fn summary_report(&self) {
-        println!("{}", "Summary Report".underline());
-        let mut longest = 0;
-        for name in self.rule_statues.borrow().keys() {
-            if (*name).len() > longest {
-                longest = (*name).len();
-            }
-        }
-
-        for each in self.rule_statues.borrow().iter() {
-            let status = match *each.1 {
-                Status::PASS => "PASS".green(),
-                Status::FAIL => "FAIL".red(),
-                Status::SKIP => "SKIP".yellow(),
-            };
-            print!("{}", *each.0);
-            for _idx in 0..(longest + 2 - (*each.0).len()) {
-                print!("{}", "    ");
-            }
-            println!("{}", status);
-        }
-    }
 }
 
 impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {

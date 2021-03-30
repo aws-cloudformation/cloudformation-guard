@@ -7,8 +7,8 @@ use clap::{App, Arg, ArgMatches};
 
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, get_files, last_modified, read_file_content, regular_ordering, iterate_over, get_files_with_filter};
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
+use crate::commands::files::{alpabetical, last_modified, regular_ordering, iterate_over, get_files_with_filter};
+use crate::rules::{Evaluate, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
@@ -91,7 +91,7 @@ impl Command for Test {
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => println!("Parse Error on ruleset file {}", e),
                         Ok(rules) => {
-                            test_with_data(&data_test_files, &rules, verbose);
+                            test_with_data(&data_test_files, &rules, verbose)?;
                         }
                     }
                 }

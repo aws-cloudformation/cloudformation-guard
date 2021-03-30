@@ -1,22 +1,7 @@
-
 use std::fs::{File};
-
-
 use clap::{App, Arg, ArgMatches};
-
-
 use crate::command::Command;
-
-
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
-
-
-
-
-
-
-
-
+use crate::rules:: Result;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ParseTree {}

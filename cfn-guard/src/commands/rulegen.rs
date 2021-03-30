@@ -197,6 +197,9 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
     let span = crate::rules::parser::Span::new_extra(&generated_rules, "");
     match crate::rules::parser::rules_file(span) {
         Ok(_rules) => {
+            //
+            // TODO fix with Error return
+            //
             write!(writer,"{}", generated_rules);
         },
         Err(e) => {

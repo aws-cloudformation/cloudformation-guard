@@ -24,6 +24,11 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
             format!("Error parsing incoming YAML context {}", err)
         },
 
+        ErrorKind::FormatError(fmt) => {
+            format!("Formatting error when writing {}", fmt)
+        },
+
+
         ErrorKind::IoError(io) => {
             format!("I/O error when reading {}", io)
         },
@@ -94,6 +99,7 @@ impl Display for Error {
 pub enum ErrorKind {
     JsonError(serde_json::Error),
     YamlError(serde_yaml::Error),
+    FormatError(std::fmt::Error),
     IoError(std::io::Error),
     ParseError(String),
     RegexError(regex::Error),
@@ -107,6 +113,12 @@ pub enum ErrorKind {
     NotComparable(String),
     ConversionError(std::convert::Infallible),
     Errors(Vec<ErrorKind>)
+}
+
+impl From<std::fmt::Error> for Error {
+    fn from(e: std::fmt::Error) -> Self {
+        Error::new(ErrorKind::FormatError(e))
+    }
 }
 
 impl From<serde_json::Error> for Error {
