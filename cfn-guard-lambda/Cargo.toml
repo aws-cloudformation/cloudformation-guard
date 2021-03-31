@@ -2,7 +2,7 @@
 name = "cfn-guard-lambda"
 version = "1.0.0"
 edition = "2018"
-authors = ["John Tompkins <jotompki@amazon.com>", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
+authors = ["Nathan McCourtney", "John Tompkins <jotompki@amazon.com>", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
 description = "Lambda version of cfn-guard. Checks AWS CloudFormation templates for policy compliance using a simple, policy-as-code, declarative syntax"
 license = "Apache-2.0"
 repository = "https://github.com/aws-cloudformation/cloudformation-guard"
