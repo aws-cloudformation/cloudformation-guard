@@ -1,6 +1,0 @@
-let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
-
-rule check_rest_api_is_private_and_has_access when %api_gws !empty {
-    %api_gws.Properties.EndpointConfiguration == ["PRIVATE"]
-    some %api_gws.Properties.Policy.Statement[*].Condition[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
-}

@@ -35,10 +35,12 @@ impl Command for Test {
 
     fn command(&self) -> App<'static, 'static> {
         App::new("test")
-            .about(r#"
-             Evaluates a single rule set file against the data files to determine
-             success or failure testing.
-        "#)
+            .about(r#"Built in unit testing capability to validate a Guard rule set file against
+unit tests specified in YAML format to determine each individual rule's success
+or failure testing.
+
+
+"#)
             .arg(Arg::with_name("ruleset-file").long("ruleset-file").short("r").takes_value(true).help("provide a rules file").required(true))
             .arg(Arg::with_name("test-data").long("test-data").short("t").takes_value(true).help("provide a file or dir for data files in JSON or YAML").required(true))
             .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))

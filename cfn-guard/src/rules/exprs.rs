@@ -14,7 +14,7 @@ pub(crate) struct FileLocation<'loc> {
 
 impl<'loc> std::fmt::Display for FileLocation<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Location[file={}#{}@{}]", self.file_name, self.line, self.column))?;
+        f.write_fmt(format_args!("Location[file:{}, line:{}, column:{}]", self.file_name, self.line, self.column))?;
         Ok(())
     }
 }

@@ -15,11 +15,12 @@ fn main() -> Result<(), Error>{
         App::new("cfn-guard")
             .version("2.0")
             .about(r#"
-             Guard Rules provides a simple declerative syntax
-             based on Conjuctive Normal Form (fancy way of saying
-             it is a logical AND of OR clauses). It evaluates
-             incoming structured payload (JSON/YAML) against
-             the rules specified."#);
+  Guard is a general purpose tool that provides a simple declarative syntax to
+  define policy-as-code as rules to validate against any structed hierarchical data (like JSON/YAML).
+  Rules are composed of clauses expressed using Conjuctive Normal Form
+  (fancy way of saying it is a logical AND of OR clauses). Guard has deep
+  integration with CloudFormation templates for evaluation but is a general tool
+  that equally works for any JSON data and can be used in such contexts"#);
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
     commands.push(Box::new(crate::commands::parse_tree::ParseTree::new()));

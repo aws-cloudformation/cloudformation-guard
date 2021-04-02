@@ -7,6 +7,8 @@ pub(crate) mod parse_tree;
 pub(crate) mod migrate;
 
 mod tracker;
+mod aws_meta_appender;
+mod common_test_helpers;
 
 //
 // Constants for arguments

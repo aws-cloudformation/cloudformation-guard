@@ -27,9 +27,9 @@ impl Command for Rulegen {
 
     fn command(&self) -> App<'static, 'static> {
         App::new("rulegen")
-            .about(r#"
-            Autogenerate rules from an existing CloudFormation template
-        "#)
+            .about(r#"Autogenerate rules from an existing CloudFormation template
+
+"#)
             .arg(Arg::with_name("template").long("template").short("t").takes_value(true).help("provide path to a CloudFormation template file in JSON or YAML").required(true))
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write to output file").required(false))
     }

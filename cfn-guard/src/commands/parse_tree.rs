@@ -20,7 +20,9 @@ impl Command for ParseTree {
 
     fn command(&self) -> App<'static, 'static> {
         App::new("parse-tree")
-            .about(r#"Parse tree for the rules"#)
+            .about(r#"print out the parse tree for the rules defined in the file
+
+"#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file").required(false))
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write to output file").required(false))
             .arg(Arg::with_name("print-json").long("print-json").short("j").required(false)

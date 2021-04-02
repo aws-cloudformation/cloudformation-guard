@@ -199,7 +199,8 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(
             format_args!(
-                "GuardAccessClause[ check = {} {} {} {}, loc = {} ]",
+                "Clause({}, Check: {} {} {} {})",
+                self.access_clause.location,
                 SliceDisplay(&self.access_clause.query.query),
                 if self.access_clause.comparator.1 { "NOT" } else { "" },
                 self.access_clause.comparator.0,
@@ -214,7 +215,6 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
                     },
                     None => "".to_string()
                 },
-                self.access_clause.location
             )
         )?;
         Ok(())
@@ -356,7 +356,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         };
 
         if let Some(r) = result {
-            let message = format!("Guard@{}", self.access_clause.location);
+            let message = match &clause.access_clause.custom_message {
+                Some(msg) => msg,
+                None => "(DEFAULT: NO_MESSAGE)"
+            };
             auto_reporter.status(r).from(
                 match &lhs {
                     None => None,
@@ -364,7 +367,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         Some(l[0].clone())
                     } else { None }
                 }
-            ).message(message);
+            ).message(message.to_string());
             return Ok(r)
         }
 
@@ -504,20 +507,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         };
 
-        let message = format!("Guard@{}, Status = {}, Clause = {}, Message = {}", clause.access_clause.location,
-            match result {
-                Status::PASS => "PASS",
-                Status::FAIL => "FAIL",
-                Status::SKIP => "SKIP",
-            },
-            SliceDisplay(&clause.access_clause.query.query),
-            match &clause.access_clause.custom_message {
-                Some(msg) => msg,
-                None => "(default completed evaluation)"
-            }
-        );
-        auto_reporter.comparison(result, from, to).message(message);
+        let message = match &clause.access_clause.custom_message {
+            Some(msg) => msg,
+            None => "(DEFAULT: NO_MESSAGE)"
+        };
+        auto_reporter.comparison(result, from, to).message(message.to_string());
         Ok(result)
+    }
+}
+
+impl<'loc> std::fmt::Display for GuardNamedRuleClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rule({}@{})", self.dependent_rule, self.location)
     }
 }
 
@@ -525,9 +526,11 @@ impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
     fn evaluate<'s>(&self,
                 _context: &'s PathAwareValue,
                 var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        Ok(invert_status(
+        let guard_loc = format!("{}", self);
+        let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
+        Ok(auto_reporter.status(invert_status(
             var_resolver.rule_status(&self.dependent_rule)?,
-            self.negation))
+            self.negation)).get_status())
     }
 }
 
@@ -547,7 +550,7 @@ impl<'loc> Evaluate for GuardClause<'loc> {
     }
 }
 
-impl<'loc> Evaluate for Block<'loc, GuardClause<'loc>> {
+impl<'loc, T: Evaluate + 'loc> Evaluate for Block<'loc, T> {
     fn evaluate<'s>(&self,
                     context: &'s PathAwareValue,
                     var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
@@ -561,42 +564,28 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
                     context: &'s PathAwareValue,
                     var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
         Ok('outer: loop {
-            let mut num_of_conjunction_skips = 0;
+            let mut num_passes = 0;
+            let mut num_fails = 0;
             'conjunction:
             for conjunction in self {
-                let mut num_of_fails = 0;
+                let mut num_of_disjunction_fails = 0;
                 for disjunction in conjunction {
-                    match disjunction.evaluate(context, var_resolver) {
-                        Ok(status) => {
-                            match status {
-                                Status::PASS => {
-                                    continue 'conjunction;
-                                },
-                                Status::SKIP => {},
-                                Status::FAIL => {
-                                    num_of_fails += 1;
-                                }
-                            }
-                        },
-
-                        Err(Error(ErrorKind::RetrievalError(_))) => {
-                            continue;
-                        },
-
-                        Err(e) => return Err(e)
+                    match disjunction.evaluate(context, var_resolver)? {
+                        Status::PASS => { num_passes += 1; continue 'conjunction; },
+                        Status::SKIP => {},
+                        Status::FAIL => { num_of_disjunction_fails += 1; }
                     }
                 }
 
-                if num_of_fails > 0 {
-                    break 'outer Status::FAIL
+                if num_of_disjunction_fails > 0 {
+                    num_fails += 1;
+                    continue;
+                    //break 'outer Status::FAIL
                 }
-                num_of_conjunction_skips += 1;
             }
-            if num_of_conjunction_skips > 0 {
-                break Status::SKIP
-            } else {
-                break Status::PASS
-            }
+            if num_fails > 0 { break Status::FAIL }
+            if num_passes > 0 { break Status::PASS }
+            break Status::SKIP
         })
     }
 }
@@ -605,8 +594,16 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
     fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
         let all = self.query.match_all;
         let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
-            Err(Error(ErrorKind::RetrievalError(_))) |
-            Err(Error(ErrorKind::IncompatibleRetrievalError(_))) => return Ok(Status::FAIL),
+            Err(Error(ErrorKind::RetrievalError(e))) |
+            Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
+                let context = format!("Block[{}]", self.location);
+                let mut report = AutoReport::new(
+                    EvaluationType::Clause,
+                    var_resolver,
+                    &context
+                );
+                return Ok(report.message(e).status(Status::FAIL).get_status())
+            },
 
             Ok(v) => if v.is_empty() { // one or more
                 return Ok(Status::FAIL)
@@ -617,20 +614,19 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
 
         Ok(loop {
             let mut num_fail = 0;
-            let mut num_skip = 0;
             let mut num_pass = 0;
             for each in block_values {
                 match self.block.evaluate(each, var_resolver)? {
                     Status::FAIL => { num_fail += 1; },
-                    Status::SKIP => { num_skip += 1; },
+                    Status::SKIP => {},
                     Status::PASS => { num_pass += 1; }
                 }
             }
 
             if all {
                 if num_fail > 0 { break Status::FAIL }
-                if num_skip > 0 { break Status::SKIP }
-                break Status::PASS
+                if num_pass > 0 { break Status::PASS }
+                break Status::SKIP
             }
             else {
                 if num_pass > 0 { break Status::PASS }
@@ -683,7 +679,8 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
         };
 
         let overall = 'outer: loop {
-            let mut type_block_skips = 0;
+            let mut num_fail = 0;
+            let mut num_pass = 0;
             for (index, each) in values.iter().enumerate() {
                 let type_context = format!("{}#{}({})", self.type_name, index, (*each).self_path());
                 let mut each_type_report = AutoReport::new(
@@ -692,32 +689,53 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
                     &type_context
                 );
                 match each_type_report.status(self.block.evaluate(*each, var_resolver)?).get_status() {
-                    Status::PASS => {},
-
-                    Status::FAIL => {
-                        break 'outer Status::FAIL
-                    },
-
-                    Status::SKIP => {
-                        each_type_report.message(
-                            format!("All Clauses WERE SKIPPED. This is usually an ERROR specifying them. Maybe we need EXISTS or !EXISTS")
-                        );
-                        type_block_skips += 1;
-                        continue;
-                    }
+                    Status::PASS => { num_pass += 1; },
+                    Status::FAIL => { num_fail += 1; },
+                    Status::SKIP => {},
                 }
             }
-            if type_block_skips > 0 {
-                break Status::SKIP
-            } else {
-                break Status::PASS
-            }
+            if num_fail > 0 { break Status::FAIL }
+            if num_pass > 0 { break Status::PASS }
+            break Status::SKIP
         };
         Ok(match overall {
             Status::SKIP =>
                 type_report.status(Status::SKIP).message(
                     format!("ALL Clauses for all types {} was SKIPPED. This can be an error", self.type_name)).get_status(),
             rest => type_report.status(rest).get_status()
+        })
+    }
+}
+
+impl<'loc> Evaluate for RuleClause<'loc> {
+    fn evaluate<'s>(&self,
+                    context: &'s PathAwareValue,
+                    var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        Ok(match self {
+            RuleClause::Clause(gc) => gc.evaluate(context, var_resolver)?,
+            RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver)?,
+            RuleClause::WhenBlock(conditions, block) => {
+                let mut auto_cond = AutoReport::new(
+                    EvaluationType::Condition, var_resolver, "");
+                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
+                    Status::PASS => {
+                        let mut auto_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
+                        auto_block.status(block.evaluate(context, var_resolver)?).get_status()
+                    },
+                    _ => {
+                        let mut skip_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
+                        skip_block.status(Status::SKIP).get_status()
+                    }
+                }
+            }
         })
     }
 }
@@ -735,79 +753,7 @@ impl<'loc> Evaluate for Rule<'loc> {
                 _ => return Ok(auto.status(Status::SKIP).get_status())
             }
         }
-
-        let block_scope = BlockScope::new(&self.block, context, var_resolver);
-        Ok({
-            let status = 'outer: loop {
-                let mut conjunction_skips = 0;
-                'next_conjunction:
-                for each in &self.block.conjunctions {
-                    let mut num_of_fails = 0;
-                    for each_rule_clause in each {
-                        let status = match each_rule_clause {
-                            RuleClause::Clause(gc) => gc.evaluate(context, &block_scope)?,
-                            RuleClause::TypeBlock(tb) => tb.evaluate(context, &block_scope)?,
-                            RuleClause::WhenBlock(conditions, block) => {
-                                let mut auto_cond = AutoReport::new(
-                                    EvaluationType::Condition, &block_scope, "");
-                                match auto_cond.status(conditions.evaluate(context, &block_scope)?).get_status() {
-                                    Status::PASS => {
-                                        let mut auto_block = AutoReport::new(
-                                            EvaluationType::ConditionBlock,
-                                            &block_scope,
-                                            ""
-                                        );
-                                        auto_block.status(block.evaluate(context, &block_scope)?).get_status()
-                                    },
-                                    _ => {
-                                        let mut skip_block = AutoReport::new(
-                                            EvaluationType::ConditionBlock,
-                                            &block_scope,
-                                            ""
-                                        );
-                                        //
-                                        // when block SKIPs in Rule clauses from a rules block's evaluation is
-                                        // a PASS for the whole block, SKIP to next disjunction
-                                        //
-                                        skip_block.status(Status::SKIP).get_status()
-                                    }
-                                }
-                            }
-                        };
-                        match status {
-                            Status::PASS => continue 'next_conjunction,
-                            Status::FAIL => {
-                                num_of_fails += 1;
-                            },
-                            Status::SKIP => {}
-                        }
-                        //
-                        // If it is a FAIL/SKIP, try to NEXT DISJUNCTION CLAUSE
-                        //
-                    } // for each disjunction clause
-                    //
-                    // Even if one FAILED, we fail overall rule, as the others skipped
-                    //
-                    if num_of_fails > 0 {
-                        break 'outer Status::FAIL
-                    }
-                    //
-                    // else everything skipped, so we keep track. to see if another of the
-                    // other conjunction sets would fail
-                    //
-                    conjunction_skips += 1;
-                } // for each conjunction of disjunction clauses
-                //
-                // Even if one conjunction set SKIPPEd and all other PASS, it is a SKIP
-                //
-                if conjunction_skips > 0 {
-                    break Status::SKIP
-                } else {
-                    break Status::PASS
-                }
-            };
-            auto.status(status).get_status()
-        })
+        Ok(auto.status(self.block.evaluate(context, var_resolver)?).get_status())
     }
 }
 

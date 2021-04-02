@@ -48,7 +48,7 @@ mod tests {
                         "children": [
                           {
                             "eval_type": "Clause",
-                            "context": "GuardAccessClause[ check = Type  EQUALS String(\"AWS::ApiGateway::Method\"), loc = Location[file=#1@14] ]",
+                            "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
                             "from": null,
                             "to": null,
                             "status": "PASS",
@@ -65,7 +65,7 @@ mod tests {
                         "children": [
                           {
                             "eval_type": "Clause",
-                            "context": "GuardAccessClause[ check = Properties.AuthorizationType  EQUALS String(\"NONE\"), loc = Location[file=lambda#1@27] ]",
+                            "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
                             "from": {
                               "String": [
                                 "/Resources/VPC/Properties/AuthorizationType",

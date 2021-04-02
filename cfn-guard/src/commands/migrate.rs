@@ -36,9 +36,9 @@ impl Command for Migrate {
 
     fn command(&self) -> App<'static, 'static> {
         App::new("migrate")
-            .about(r#"
-            Migrates 1.0 rulesets to 2.0 compatible rulesets.
-        "#)
+            .about(r#"Migrates 1.0 rulesets to 2.0 compatible rulesets.
+
+"#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file").required(true))
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write migrated rules to output file").required(false))
     }

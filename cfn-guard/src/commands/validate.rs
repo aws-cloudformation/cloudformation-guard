@@ -16,6 +16,7 @@ use crate::rules::exprs::RulesFile;
 
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker, StatusContext};
+use crate::commands::aws_meta_appender::MetadataAppender;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -34,15 +35,17 @@ impl Command for Validate {
 
     fn command(&self) -> App<'static, 'static> {
         App::new("validate")
-            .about(r#"
-             Evaluates rules against the data files to determine
-             success or failure. When pointed to a directory it will
-             read all rules in the directory file and evaluate them
-             against the data files found in the directory. The command
-             can also point to a single file and it would work as well
-        "#)
+            .about(r#"Evaluates rules against the data files to determine
+success or failure. When pointed to a directory it will
+read all rules in the directory file and evaluate them
+against the data files found in the directory. The command
+can also point to a single file and it would work as well
+
+"#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file or a directory").required(true))
             .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("provide a file or dir for data files in JSON or YAML").required(true))
+            .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
+                .help("show clause failure along with summary"))
             .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))
             .arg(Arg::with_name("last-modified").short("-m").required(false).conflicts_with("alphabetical")
                 .help("sort by last modified times within a directory"))
@@ -70,6 +73,7 @@ impl Command for Validate {
         };
 
         let print_json = app.is_present("print-json");
+        let show_clause_failures = app.is_present("show-clause-failures");
 
         let files = get_files(file, cmp)?;
         let data_files = get_files(data, cmp)?;
@@ -86,7 +90,7 @@ impl Command for Validate {
                         },
 
                         Ok(rules) => {
-                            evaluate_against_data_files(&data_files, &rules, verbose, print_json)?
+                            evaluate_against_data_files(&data_files, &rules, verbose, print_json, show_clause_failures)?
                         }
                     }
                 }
@@ -114,7 +118,7 @@ pub fn validate_and_return_json(
                 Ok(root) => {
                     let root_context = RootScope::new(&rules, &root);
                     let stacker = StackTracker::new(&root_context);
-                    let reporter = ConsoleReporter::new(stacker, true, true);
+                    let reporter = ConsoleReporter::new(stacker, true, true, false);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
                     return Ok(json_result);
@@ -130,7 +134,8 @@ pub fn validate_and_return_json(
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     verbose: bool,
-    print_json: bool
+    print_json: bool,
+    show_clause_failures: bool,
 }
 
 fn colored_string(status: Option<Status>) -> ColoredString {
@@ -188,56 +193,68 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     }
 }
 
-fn find_failing_clause(context: &StatusContext) -> Option<&StatusContext> {
+fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
+    let mut failed = Vec::with_capacity(context.children.len());
     for each in &context.children {
-        if each.eval_type == EvaluationType::Clause && context.eval_type != EvaluationType::Filter {
-           if let Some(Status::FAIL) = each.status {
-                return Some(each)
+        if each.eval_type == EvaluationType::Clause &&
+            !(context.eval_type == EvaluationType::Filter ||
+              context.eval_type == EvaluationType::ConditionBlock ||
+              context.eval_type == EvaluationType::Condition) {
+            if let Some(Status::FAIL) = each.status {
+                failed.push(each);
+                continue;
             }
         }
-        match find_failing_clause(each) {
-            Some(found) => return Some(found),
-            None => continue,
-        }
+        failed.extend(find_all_failing_clauses(each))
     }
-    None
+    failed
 }
 
-fn print_failing_clause(rule: &StatusContext) {
-    find_failing_clause(rule)
-        .map_or((), |matched| {
-            let header = format!("{}({})", colored_string(matched.status), matched.context).underline();
-            indent_spaces(1);
-            println!("{}", header);
-            indent_spaces(2);
-            match &matched.from {
-                Some(from) => {
-                    print!("When inspecting Value {:?}", from);
-                },
-                None => {}
-            }
-            match &matched.to {
-                Some(to) => {
-                    println!("with {:?}", to);
-                },
-                None => {}
-            }
-            indent_spaces(2);
-            match &matched.msg {
-                Some(m) => {
-                    println!("{}", m);
-                },
-                None => {}
-            }
-        })
+fn print_failing_clause(rule: &StatusContext, longest: usize) {
+    print!("{rule:<0$}", longest+4, rule=rule.context);
+    let mut first = true;
+    for (index, matched) in find_all_failing_clauses(rule).iter().enumerate() {
+        let matched = *matched;
+        let header = format!("{}({})", colored_string(matched.status), matched.context).underline();
+        if !first {
+            print!("{space:>longest$}", space=" ", longest=longest+4)
+        }
+        let clause = format!("Clause #{}", index+1).bold();
+        println!("{header:<20}{content}", header=clause, content=header);
+        match &matched.from {
+            Some(from) => {
+                print!("{space:>longest$}", space=" ", longest=longest+4);
+                let content = format!("Comparing {:?}", from);
+                print!("{header:<20}{content}", header=" ", content=content);
+            },
+            None => {}
+        }
+        match &matched.to {
+            Some(to) => {
+                println!(" with {:?} failed", to);
+            },
+            None => {}
+        }
+        match &matched.msg {
+            Some(m) => {
+                for each in m.split('\n') {
+                    print!("{space:>longest$}", space=" ", longest=longest+4);
+                    println!("{header:<20}{content}", header = " ", content = each);
+                }
+            },
+            None => {}
+        }
+        if first { first = false; }
+    }
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, verbose: bool, print_json: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
             verbose,
             print_json,
+            show_clause_failures,
         }
     }
 
@@ -266,25 +283,42 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                 .map(|elem| elem.context.len())
                 .unwrap_or(20);
 
-           for container in &top.children {
-               print!("{}", container.context);
-               let container_level = container.context.len();
-               let spaces = longest - container_level + 4;
-               for _idx in 0..spaces {
-                   print!(" ");
-               }
-               println!("{}", colored_string(container.status));
+            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
+                top.children.iter().partition(|ctx|
+                    match (*ctx).status {
+                       Some(Status::FAIL) => true,
+                        _ => false
+                    });
 
-               print_failing_clause(container);
+            println!("{}", "PASS/SKIP rules".bold());
+            Self::print_partition(&rest, longest);
+
+            if !failed.is_empty() {
+                println!("{}", "FAILED rules".bold());
+                Self::print_partition(&failed, longest);
+
+                if self.show_clause_failures {
+                    println!("{}", "Clause Failure Summary".bold());
+                    for each in failed {
+                        print_failing_clause(each, longest);
+                    }
+                }
             }
 
-           if self.verbose {
-               println!("Evaluation Tree");
-               for each in &top.children {
-                   print_context(each, 1);
-               }
-           }
+            if self.verbose {
+                println!("Evaluation Tree");
+                for each in &top.children {
+                    print_context(each, 1);
+                }
+            }
        }
+    }
+
+    fn print_partition(part: &Vec<&StatusContext>, longest: usize) {
+        for container in part {
+            println!("{context:<0$}{status}", longest+4, context=(*container).context, status=colored_string((*container).status));
+        }
+
     }
 }
 
@@ -317,7 +351,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool) -> Result<()> {
+fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<()> {
     let iterator = iterate_over(data_files, |content, _| {
         match serde_json::from_str::<serde_json::Value>(&content) {
             Ok(value) => PathAwareValue::try_from(value),
@@ -334,8 +368,9 @@ fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, ve
             Ok(root) => {
                 let root_context = RootScope::new(rules, &root);
                 let stacker = StackTracker::new(&root_context);
-                let reporter = ConsoleReporter::new(stacker, verbose, print_json);
-                rules.evaluate(&root, &reporter)?;
+                let reporter = ConsoleReporter::new(stacker, verbose, print_json, show_clause_failures);
+                let appender = MetadataAppender{delegate: &reporter, root_context: &root};
+                rules.evaluate(&root, &appender)?;
                 reporter.report();
             }
         }

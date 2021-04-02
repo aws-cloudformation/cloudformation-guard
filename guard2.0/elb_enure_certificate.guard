@@ -35,7 +35,7 @@ rule ensure_all_elbs_are_secure when %elbs !empty {
 # In addition to secure settings, ensure that ELBs are only private
 #
 #
-rule ensure_elbs_are_internal {
+rule ensure_elbs_are_internal when %elbs !empty {
     ensure_all_elbs_are_secure
     %elbs.Properties.Scheme == 'internal'
 }
