@@ -9,6 +9,7 @@ mod migrate;
 
 use crate::command::Command;
 use rules::errors::Error;
+use std::process::exit;
 
 fn main() -> Result<(), Error>{
     let mut app =
@@ -47,8 +48,13 @@ fn main() -> Result<(), Error>{
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
                 match (*command).execute(value) {
-                    Err(e) => println!("Error occurred {}", e),
-                    Ok(_) => {}
+                    Err(e) => {
+                        println!("Error occurred {}", e);
+                        exit(-1);
+                    },
+                    Ok(code) => {
+                        exit(code)
+                    }
                 }
             }
             else {

@@ -1,4 +1,4 @@
-use crate::rules::{EvaluationContext, Status, EvaluationType, Result, errors::Error, errors::ErrorKind};
+use crate::rules::{EvaluationContext, Status, EvaluationType, Result};
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
 use crate::rules::exprs::{QueryPart, AccessQuery};
 use std::convert::TryFrom;

@@ -50,7 +50,7 @@ or failure testing.
                 .help("verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("ruleset-file").unwrap();
         let data = app.value_of("test-data").unwrap();
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
@@ -82,6 +82,7 @@ or failure testing.
             )))
         }
 
+        let mut exit_code = 0;
         let ruleset = vec![path];
         for rules in iterate_over(&ruleset, |content, file| {
             Ok((content, file.to_str().unwrap_or("").to_string()))
@@ -93,13 +94,20 @@ or failure testing.
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => println!("Parse Error on ruleset file {}", e),
                         Ok(rules) => {
-                            test_with_data(&data_test_files, &rules, verbose)?;
+                            match test_with_data(&data_test_files, &rules, verbose) {
+                                Ok(code) => {
+                                    exit_code = code;
+                                },
+                                Err(_) => {
+                                    exit_code = 5;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        Ok(())
+        Ok(exit_code)
     }
 }
 
@@ -114,7 +122,8 @@ struct TestSpec {
     expectations: TestExpectations,
 }
 
-fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<()> {
+fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<i32> {
+    let mut exit_code = 0;
     for specs in iterate_over(test_data_files, |data, path| {
         match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
             Ok(spec) => {
@@ -147,6 +156,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                         if status != got {
                                             println!("FAILED Expected Rule = {}, Status = {}, Got Status = {}",
                                                      each.context, status, got);
+                                            exit_code = 7;
                                         }
                                         else {
                                             println!("PASS Expected Rule = {}, Status = {}, Got Status = {}",
@@ -168,6 +178,6 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
             }
         }
     }
-    Ok(())
+    Ok(exit_code)
 }
 

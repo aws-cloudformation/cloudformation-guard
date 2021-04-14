@@ -566,18 +566,30 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
         Ok('outer: loop {
             let mut num_passes = 0;
             let mut num_fails = 0;
+            let item_name = std::any::type_name::<T>();
             'conjunction:
             for conjunction in self {
                 let mut num_of_disjunction_fails = 0;
+                let mut report = if "cfn_guard::rules::exprs::GuardClause" == item_name {
+                    Some(AutoReport::new(
+                        EvaluationType::Conjunction,
+                        var_resolver,
+                        item_name
+                    ))
+                } else { None };
                 for disjunction in conjunction {
                     match disjunction.evaluate(context, var_resolver)? {
-                        Status::PASS => { num_passes += 1; continue 'conjunction; },
+                        Status::PASS => {
+                            let _ = report.as_mut().map(|r| Some(r.status(Status::PASS).get_status()));
+                            num_passes += 1;
+                            continue 'conjunction; },
                         Status::SKIP => {},
                         Status::FAIL => { num_of_disjunction_fails += 1; }
                     }
                 }
 
                 if num_of_disjunction_fails > 0 {
+                    let _ = report.as_mut().map(|r| Some(r.status(Status::FAIL).get_status()));
                     num_fails += 1;
                     continue;
                     //break 'outer Status::FAIL
@@ -678,7 +690,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
             Err(_) => vec![context]
         };
 
-        let overall = 'outer: loop {
+        let overall = loop {
             let mut num_fail = 0;
             let mut num_pass = 0;
             for (index, each) in values.iter().enumerate() {
@@ -715,9 +727,13 @@ impl<'loc> Evaluate for RuleClause<'loc> {
             RuleClause::Clause(gc) => gc.evaluate(context, var_resolver)?,
             RuleClause::TypeBlock(tb) => tb.evaluate(context, var_resolver)?,
             RuleClause::WhenBlock(conditions, block) => {
-                let mut auto_cond = AutoReport::new(
-                    EvaluationType::Condition, var_resolver, "");
-                match auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status() {
+                let status = {
+                    let mut auto_cond = AutoReport::new(
+                        EvaluationType::Condition, var_resolver, "");
+                    auto_cond.status(conditions.evaluate(context, var_resolver)?).get_status()
+                };
+
+                match status {
                     Status::PASS => {
                         let mut auto_block = AutoReport::new(
                             EvaluationType::ConditionBlock,

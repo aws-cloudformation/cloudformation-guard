@@ -1,7 +1,5 @@
 use std::convert::TryFrom;
 
-use std::path::PathBuf;
-
 use clap::{App, Arg, ArgMatches};
 use colored::*;
 
@@ -17,6 +15,9 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::aws_meta_appender::MetadataAppender;
+use std::io::{BufReader, Read, Write};
+use std::fs::File;
+use std::io;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -43,7 +44,7 @@ can also point to a single file and it would work as well
 
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file or a directory").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("provide a file or dir for data files in JSON or YAML").required(true))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("provide a file or dir for data files in JSON or YAML"))
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("show clause failure along with summary"))
             .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))
@@ -55,15 +56,34 @@ can also point to a single file and it would work as well
                 .help("Print output in json format"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("rules").unwrap();
-        let data = app.value_of("data").unwrap();
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical
         } else if let Some(_ignored) = app.value_of(LAST_MODIFIED.0) {
             last_modified
         } else {
             regular_ordering
+        };
+
+        let data_files = match app.value_of("data") {
+            Some(file_or_dir) => {
+                let selected = get_files(file_or_dir, cmp)?;
+                let mut streams = Vec::with_capacity(selected.len());
+                for each in selected {
+                    let mut context = String::new();
+                    let mut reader = BufReader::new(File::open(each.as_path())?);
+                    reader.read_to_string(&mut context)?;
+                    streams.push((context, each.to_str().map_or("".to_string(), |p| p.to_string())));
+                }
+                streams
+            },
+            None => {
+                let mut context = String::new();
+                let mut reader = BufReader::new(std::io::stdin());
+                reader.read_to_string(&mut context);
+                vec![(context, "STDIN".to_string())]
+            }
         };
 
         let verbose = if app.is_present("verbose") {
@@ -76,7 +96,8 @@ can also point to a single file and it would work as well
         let show_clause_failures = app.is_present("show-clause-failures");
 
         let files = get_files(file, cmp)?;
-        let data_files = get_files(data, cmp)?;
+        // let data_files = get_files(data, cmp)?;
+        let mut exit_code = 0;
         for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
             match each_file_content {
                 Err(e) => println!("Unable read content from file {}", e),
@@ -86,17 +107,24 @@ can also point to a single file and it would work as well
                         Err(e) => {
                             println!("Parsing error handling rule file = {}, Error = {}",
                                      rule_file_name.underline(), e);
+                            exit_code = 5;
                             continue;
                         },
 
                         Ok(rules) => {
-                            evaluate_against_data_files(&data_files, &rules, verbose, print_json, show_clause_failures)?
+                            match evaluate_against_data_input(
+                                &data_files, &rules, verbose, print_json, show_clause_failures)? {
+                                Status::SKIP | Status::PASS => continue,
+                                Status::FAIL => {
+                                    exit_code = 5;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        Ok(())
+        Ok(exit_code)
     }
 }
 
@@ -196,16 +224,20 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
 fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
     let mut failed = Vec::with_capacity(context.children.len());
     for each in &context.children {
-        if each.eval_type == EvaluationType::Clause &&
-            !(context.eval_type == EvaluationType::Filter ||
-              context.eval_type == EvaluationType::ConditionBlock ||
-              context.eval_type == EvaluationType::Condition) {
-            if let Some(Status::FAIL) = each.status {
-                failed.push(each);
-                continue;
+        if each.status.map_or(false, |s| s == Status::FAIL) {
+            match each.eval_type {
+                EvaluationType::Clause => {
+                    failed.push(each);
+                },
+
+                EvaluationType::Filter |
+                EvaluationType::Condition => {
+                    continue;
+                },
+
+                _ => failed.extend(find_all_failing_clauses(each))
             }
         }
-        failed.extend(find_all_failing_clauses(each))
     }
     failed
 }
@@ -233,16 +265,16 @@ fn print_failing_clause(rule: &StatusContext, longest: usize) {
             Some(to) => {
                 println!(" with {:?} failed", to);
             },
-            None => {}
+            None => { print!("\n") }
         }
         match &matched.msg {
             Some(m) => {
                 for each in m.split('\n') {
-                    print!("{space:>longest$}", space=" ", longest=longest+4);
-                    println!("{header:<20}{content}", header = " ", content = each);
+                    print!("{space:>longest$}", space=" ", longest=longest+4+20);
+                    println!("{}", each);
                 }
             },
-            None => {}
+            None => { print!("\n"); }
         }
         if first { first = false; }
     }
@@ -351,30 +383,28 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_files(data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<()> {
-    let iterator = iterate_over(data_files, |content, _| {
-        match serde_json::from_str::<serde_json::Value>(&content) {
+fn evaluate_against_data_input(data_files: &[(String, String)], rules: &RulesFile<'_>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<Status> {
+    let iterator: Result<Vec<PathAwareValue>> = data_files.iter().map(|(content, _name)|
+        match serde_json::from_str::<serde_json::Value>(content) {
             Ok(value) => PathAwareValue::try_from(value),
             Err(_) => {
-                let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                let value = serde_yaml::from_str::<serde_json::Value>(content)?;
                 PathAwareValue::try_from(value)
             }
         }
-    });
+    ).collect();
 
-    for each in iterator {
-        match each {
-            Err(e) => println!("Error processing data file {}", e),
-            Ok(root) => {
-                let root_context = RootScope::new(rules, &root);
-                let stacker = StackTracker::new(&root_context);
-                let reporter = ConsoleReporter::new(stacker, verbose, print_json, show_clause_failures);
-                let appender = MetadataAppender{delegate: &reporter, root_context: &root};
-                rules.evaluate(&root, &appender)?;
-                reporter.report();
-            }
+    let mut overall = Status::PASS;
+    for each in iterator? {
+        let root_context = RootScope::new(rules, &each);
+        let stacker = StackTracker::new(&root_context);
+        let reporter = ConsoleReporter::new(stacker, verbose, print_json, show_clause_failures);
+        let appender = MetadataAppender{delegate: &reporter, root_context: &each};
+        let status = rules.evaluate(&each, &appender)?;
+        reporter.report();
+        if status == Status::FAIL {
+            overall = Status::FAIL
         }
     }
-
-    Ok(())
+    Ok(overall)
 }

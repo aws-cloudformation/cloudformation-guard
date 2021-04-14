@@ -34,7 +34,7 @@ impl Command for Rulegen {
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("template").unwrap();
         let template_contents = fs::read_to_string(file)?;
 
@@ -46,7 +46,7 @@ impl Command for Rulegen {
         let result = parse_template_and_call_gen(&template_contents);
         print_rules(result, out);
 
-        Ok(())
+        Ok(0 as i32)
     }
 }
 

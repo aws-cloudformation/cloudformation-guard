@@ -31,7 +31,7 @@ impl Command for ParseTree {
                 .help("Print output in json format"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
 
         let mut file: Box<dyn std::io::Read> = match app.value_of("rules") {
             Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
@@ -52,6 +52,7 @@ impl Command for ParseTree {
         match crate::rules::parser::rules_file(span) {
             Err(e) => {
                 println!("Parsing error handling rule, Error = {}", e);
+                return Err(e);
             },
 
             Ok(rules) => {
@@ -64,6 +65,6 @@ impl Command for ParseTree {
             }
         }
 
-        Ok(())
+        Ok(0 as i32)
     }
 }

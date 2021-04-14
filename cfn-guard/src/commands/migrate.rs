@@ -43,7 +43,7 @@ impl Command for Migrate {
             .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write migrated rules to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<()> {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file_input = app.value_of("rules").unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();
@@ -70,7 +70,7 @@ impl Command for Migrate {
                         match crate::rules::parser::rules_file(span) {
                             Ok(_rules) => {
                                 write!(out,"{}", migrated_rules)?;
-                                Ok(())
+                                Ok(0 as i32)
                             },
                             Err(e) => {
                                 println!("Could not parse migrated ruleset for file: '{}': {}", &file_name, e);

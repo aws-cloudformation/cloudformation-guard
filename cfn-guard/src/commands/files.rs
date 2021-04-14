@@ -4,7 +4,7 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use walkdir::WalkDir;
+use walkdir::{WalkDir, DirEntry};
 use crate::rules::errors::Error;
 
 pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
@@ -43,12 +43,21 @@ pub(crate) fn get_files_with_filter<S, F>(file: &str, sort: S, filter: F) -> Res
 {
     let mut selected = Vec::with_capacity(10);
     let walker = WalkDir::new(file).sort_by(sort).into_iter();
-    for each in walker.filter_entry(filter) {
+    let dir_check = |entry: &DirEntry| {
+        // select directories to traverse
+        if entry.path().is_dir() {
+            return true
+        }
+        filter(entry)
+    };
+    for each in walker.filter_entry(dir_check) {
         //
         // We are ignoring errors here. TODO fix this later
         //
         if let Ok(entry) = each {
-            selected.push(entry.into_path());
+            if entry.path().is_file() {
+                selected.push(entry.into_path());
+            }
         }
     }
     Ok(selected)

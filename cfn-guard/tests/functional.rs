@@ -47,12 +47,21 @@ mod tests {
                         "status": "PASS",
                         "children": [
                           {
-                            "eval_type": "Clause",
-                            "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
+                            "eval_type": "Conjunction",
+                            "context": "cfn_guard::rules::exprs::GuardClause",
                             "from": null,
                             "to": null,
                             "status": "PASS",
-                            "children": []
+                            "children": [
+                              {
+                                "eval_type": "Clause",
+                                "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
+                                "from": null,
+                                "to": null,
+                                "status": "PASS",
+                                "children": []
+                              }
+                            ]
                           }
                         ]
                       },
@@ -64,22 +73,31 @@ mod tests {
                         "status": "FAIL",
                         "children": [
                           {
-                            "eval_type": "Clause",
-                            "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
-                            "from": {
-                              "String": [
-                                "/Resources/VPC/Properties/AuthorizationType",
-                                "10.0.0.0/24"
-                              ]
-                            },
-                            "to": {
-                              "String": [
-                                "lambda/1/27/Clause/",
-                                "NONE"
-                              ]
-                            },
+                            "eval_type": "Conjunction",
+                            "context": "cfn_guard::rules::exprs::GuardClause",
+                            "from": null,
+                            "to": null,
                             "status": "FAIL",
-                            "children": []
+                            "children": [
+                              {
+                                "eval_type": "Clause",
+                                "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
+                                "from": {
+                                  "String": [
+                                    "/Resources/VPC/Properties/AuthorizationType",
+                                    "10.0.0.0/24"
+                                  ]
+                                },
+                                "to": {
+                                  "String": [
+                                    "lambda/1/27/Clause/",
+                                    "NONE"
+                                  ]
+                                },
+                                "status": "FAIL",
+                                "children": []
+                              }
+                            ]
                           }
                         ]
                       }
