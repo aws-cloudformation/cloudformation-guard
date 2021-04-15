@@ -37,30 +37,36 @@ impl Command for Validate {
     fn command(&self) -> App<'static, 'static> {
         App::new("validate")
             .about(r#"Evaluates rules against the data files to determine
-success or failure. When pointed to a directory it will
-read all rules in the directory file and evaluate them
-against the data files found in the directory. The command
-can also point to a single file and it would work as well
-
+success or failure. You can point rules flag to a rules
+directory and point data flag to a data directory. When
+pointed to a directory it will read all rules in the
+directory file and evaluate them against the data files
+found in the directory. The command can also point to a
+single file and it would work as well.
+Note - When pointing the command to a directory, the
+directory may not contain a mix of ruleset and data files.
+The directory being pointed to must contain only data files,
+or ruleset files.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("provide a rules file or a directory").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rule files").required(true))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
-                .help("show clause failure along with summary"))
-            .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))
+                .help("Show clause failure along with summary"))
+            .arg(Arg::with_name("alphabetical").short("-a").required(false).help("Validate files in a directory ordered alphabetically"))
             .arg(Arg::with_name("last-modified").short("-m").required(false).conflicts_with("alphabetical")
-                .help("sort by last modified times within a directory"))
+                .help("Validate files in a directory ordered by last modified times"))
             .arg(Arg::with_name("verbose").long("verbose").short("v").required(false)
-                .help("verbose logging"))
+                .help("Verbose logging"))
             .arg(Arg::with_name("print-json").long("print-json").short("p").required(false)
                 .help("Print output in json format"))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("rules").unwrap();
-        let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
+
+        let cmp = if app.is_present("alphabetical") {
             alpabetical
-        } else if let Some(_ignored) = app.value_of(LAST_MODIFIED.0) {
+        } else if app.is_present("last-modified") {
             last_modified
         } else {
             regular_ordering
@@ -96,7 +102,6 @@ can also point to a single file and it would work as well
         let show_clause_failures = app.is_present("show-clause-failures");
 
         let files = get_files(file, cmp)?;
-        // let data_files = get_files(data, cmp)?;
         let mut exit_code = 0;
         for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
             match each_file_content {

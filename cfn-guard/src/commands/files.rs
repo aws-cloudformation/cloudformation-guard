@@ -18,21 +18,18 @@ pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
     where F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static
 {
     let path = PathBuf::from_str(file)?;
-    let file = File::open(file)?;
-    let metatdata = file.metadata()?;
-    Ok(if metatdata.is_file() {
+    let input_file = File::open(file)?;
+    let metadata = input_file.metadata()?;
+    Ok(if metadata.is_file() {
         vec![path]
     }
     else {
-        let walkdir = WalkDir::new(path).follow_links(true)
-            .sort_by(sort);
-        let mut result = Vec::with_capacity(10);
-        for file in walkdir {
-            if let Ok(entry) = file {
-                let path = entry.into_path();
-                result.push(path);
-            }
-        }
+        let result = get_files_with_filter(file, sort, |entry| {
+            entry.file_name().to_str()
+                .map(|name|
+                    !name.ends_with("/")
+                ).unwrap_or(false)
+        })?;
         result
     })
 }

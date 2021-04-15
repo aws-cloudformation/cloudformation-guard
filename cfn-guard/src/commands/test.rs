@@ -41,17 +41,17 @@ or failure testing.
 
 
 "#)
-            .arg(Arg::with_name("ruleset-file").long("ruleset-file").short("r").takes_value(true).help("provide a rules file").required(true))
-            .arg(Arg::with_name("test-data").long("test-data").short("t").takes_value(true).help("provide a file or dir for data files in JSON or YAML").required(true))
-            .arg(Arg::with_name("alphabetical").alias("-a").help("sort alphabetically inside a directory").required(false))
+            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file").required(true))
+            .arg(Arg::with_name("test-data").long("test-data").short("t").takes_value(true).help("Provide a file or dir for data files in JSON or YAML").required(true))
+            .arg(Arg::with_name("alphabetical").alias("-a").help("Sort alphabetically inside a directory").required(false))
             .arg(Arg::with_name("last-modified").short("-m").required(false).conflicts_with("alphabetical")
-                .help("sort by last modified times within a directory"))
+                .help("Sort by last modified times within a directory"))
             .arg(Arg::with_name("verbose").long("verbose").short("v").required(false)
-                .help("verbose logging"))
+                .help("Verbose logging"))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file = app.value_of("ruleset-file").unwrap();
+        let file = app.value_of("rules").unwrap();
         let data = app.value_of("test-data").unwrap();
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical

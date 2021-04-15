@@ -30,8 +30,8 @@ impl Command for Rulegen {
             .about(r#"Autogenerate rules from an existing CloudFormation template
 
 "#)
-            .arg(Arg::with_name("template").long("template").short("t").takes_value(true).help("provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("write to output file").required(false))
+            .arg(Arg::with_name("template").long("template").short("t").takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
+            .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("Write to output file").required(false))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
