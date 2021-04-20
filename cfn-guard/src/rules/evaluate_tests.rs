@@ -1621,3 +1621,109 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     assert_eq!(status, Status::FAIL);
     Ok(())
 }
+
+struct Tracker<'a> {
+    root: &'a dyn EvaluationContext,
+    expected: HashMap<String, Status>
+}
+
+impl<'a> EvaluationContext for Tracker<'a> {
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        self.root.resolve_variable(variable)
+    }
+
+    fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        self.root.rule_status(rule_name)
+    }
+
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+        self.root.end_evaluation(eval_type, context, msg, from, to, status.clone());
+        if eval_type == EvaluationType::Rule {
+            match self.expected.get(context) {
+                Some(e) => {
+                    assert_eq!(*e, status.unwrap());
+                },
+                _ => unreachable!()
+            }
+        }
+    }
+
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        self.root.start_evaluation(eval_type, context)
+    }
+}
+
+#[test]
+fn rule_clause_when_check() -> Result<()> {
+    let rules_skipped = r#"
+    rule skipped when skip !exists {
+        Resources.*.Properties.Tags !empty
+    }
+
+    rule dependent_on_skipped when skipped {
+        Resources.*.Properties exists
+    }
+
+    rule dependent_on_dependent when dependent_on_skipped {
+        Resources.*.Properties exists
+    }
+
+    rule dependent_on_not_skipped when !skipped {
+        Resources.*.Properties exists
+    }
+    "#;
+
+    let input = r#"
+    {
+        skip: true,
+        Resources: {
+            first: {
+                Type: 'WhackWhat',
+                Properties: {
+                    Tags: [{ hi: "there" }, { right: "way" }]
+                }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules = RulesFile::try_from(rules_skipped)?;
+    let root = RootScope::new(&rules, &resources);
+    let mut expectations = HashMap::with_capacity(3);
+    expectations.insert("skipped".to_string(), Status::SKIP);
+    expectations.insert("dependent_on_skipped".to_string(), Status::SKIP);
+    expectations.insert("dependent_on_dependent".to_string(), Status::SKIP);
+    expectations.insert("dependent_on_not_skipped".to_string(), Status::PASS);
+    let tracker = Tracker{ root: &root, expected: expectations };
+
+    let status = rules.evaluate(&resources, &tracker)?;
+    assert_eq!(status, Status::PASS);
+
+    let input = r#"
+    {
+        Resources: {
+            first: {
+                Type: 'WhackWhat',
+                Properties: {
+                    Tags: [{ hi: "there" }, { right: "way" }]
+                }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules = RulesFile::try_from(rules_skipped)?;
+    let root = RootScope::new(&rules, &resources);
+    let mut expectations = HashMap::with_capacity(3);
+    expectations.insert("skipped".to_string(), Status::PASS);
+    expectations.insert("dependent_on_skipped".to_string(), Status::PASS);
+    expectations.insert("dependent_on_dependent".to_string(), Status::PASS);
+    expectations.insert("dependent_on_not_skipped".to_string(), Status::SKIP);
+    let tracker = Tracker{ root: &root, expected: expectations };
+
+    let status = rules.evaluate(&resources, &tracker)?;
+    assert_eq!(status, Status::PASS);
+    Ok(())
+}

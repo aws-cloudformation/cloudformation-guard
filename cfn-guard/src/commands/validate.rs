@@ -63,7 +63,6 @@ or ruleset files.
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("rules").unwrap();
-
         let cmp = if app.is_present("alphabetical") {
             alpabetical
         } else if app.is_present("last-modified") {

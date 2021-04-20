@@ -529,7 +529,10 @@ impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
         let guard_loc = format!("{}", self);
         let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
         Ok(auto_reporter.status(invert_status(
-            var_resolver.rule_status(&self.dependent_rule)?,
+            match var_resolver.rule_status(&self.dependent_rule)? {
+                Status::PASS => Status::PASS,
+                _ => Status::FAIL
+            },
             self.negation)).get_status())
     }
 }
