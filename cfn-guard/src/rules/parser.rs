@@ -585,7 +585,7 @@ fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 fn is_list(input: Span) -> IResult<Span, CmpOperator> {
     value( CmpOperator::IsList, alt((
         tag("IS_LIST"),
-        tag("is_LIST"),
+        tag("is_list"),
     )))(input)
 }
 

@@ -4121,3 +4121,10 @@ fn when_inside_when_parse_test() -> Result<(), Error> {
     let (_span, clause) = rule_block_clause(from_str2(when_inside_when))?;
     Ok(())
 }
+
+#[test]
+fn is_list_check_parser_bug() -> Result<(), Error> {
+    let bug_test = "some %normal_managed_policies.Properties.PolicyDocument.Statement[ Action is_list ]";
+    let _access = AccessQuery::try_from(bug_test)?;
+    Ok(())
+}

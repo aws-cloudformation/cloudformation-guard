@@ -381,7 +381,14 @@ impl QueryResolver for PathAwareValue {
                         PathAwareValue::accumulate(all, &query[1..], elements, resolver)
                     },
 
-                    _ => self.map_some_or_error_all(all, query)
+                    //
+                    // Often in the place where a list of values is accepted
+                    // single values often are accepted. So proceed to the next
+                    // part of your query
+                    //
+                    rest => {
+                        rest.select(all, &query[1..], resolver)
+                    }
                 }
             }
 
@@ -404,7 +411,14 @@ impl QueryResolver for PathAwareValue {
                         Ok(resolved)
                     },
 
-                    _ => self.map_some_or_error_all(all, query)
+                    //
+                    // Often in the place where a list of values is accepted
+                    // single values often are accepted. So proceed to the next
+                    // part of your query
+                    //
+                    rest => {
+                        rest.select(all, &query[1..], resolver)
+                    }
                 }
             },
 

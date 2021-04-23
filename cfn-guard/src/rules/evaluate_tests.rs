@@ -1727,3 +1727,46 @@ fn rule_clause_when_check() -> Result<()> {
     assert_eq!(status, Status::PASS);
     Ok(())
 }
+
+#[test]
+fn test_field_type_array_or_single() -> Result<()> {
+    let statements = r#"{
+        Statement: [{
+            Action: '*',
+            Effect: 'Allow',
+            Resources: '*'
+        }, {
+            Action: ['api:Get', 'api2:Set'],
+            Effect: 'Allow',
+            Resources: '*'
+        }]
+    }
+    "#;
+    let path_value = PathAwareValue::try_from(statements)?;
+    let clause = GuardClause::try_from(r#"Statement[*].Action != '*'"#)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&path_value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let statements = r#"{
+        Statement: {
+            Action: '*',
+            Effect: 'Allow',
+            Resources: '*'
+        }
+    }
+    "#;
+    let path_value = PathAwareValue::try_from(statements)?;
+    let status = clause.evaluate(&path_value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let clause = GuardClause::try_from(r#"Statement[*].Action[*] != '*'"#)?;
+    let status = clause.evaluate(&path_value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    // Test old format
+    let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
+    let status = clause.evaluate(&path_value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}

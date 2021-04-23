@@ -121,12 +121,9 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&
                 elevated.push(inner_lhs);
             },
 
-            _ => return Err(Error::new(
-                ErrorKind::IncompatibleRetrievalError(
-                    format!("Expecting the RHS query to return a List<List>, found {}, {:?}",
-                            (*each_list_elem).type_info(), *each_list_elem)
-                )
-            ))
+            rest => {
+                elevated.push(vec![rest])
+            }
         }
     }
     Ok(elevated)
