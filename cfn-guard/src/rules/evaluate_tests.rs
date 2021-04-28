@@ -1482,7 +1482,7 @@ fn embedded_when_clause_redshift_use_case_test() -> Result<()> {
 #
 # Find all Redshift subnet group resource and extract all subnet Ids that are referenced
 #
-let local_subnet_refs = some Resources.*[ Type == /Redshift::ClusterSubnetGroup/ ].Properties.SubnetIds[*].Ref
+let local_subnet_refs = Resources.*[ Type == /Redshift::ClusterSubnetGroup/ ].Properties.SubnetIds[ Ref exists ].Ref
 
 rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
 
@@ -1768,5 +1768,132 @@ fn test_field_type_array_or_single() -> Result<()> {
     let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
     let status = clause.evaluate(&path_value, &dummy)?;
     assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn test_for_not_in() -> Result<()> {
+    let statments = r#"
+    {
+      "mainSteps": [
+          {
+            "action": "aws:updateAgent"
+          },
+          {
+            "action": "aws:configurePackage"
+          }
+        ]
+    }"#;
+
+    let clause = GuardClause::try_from(r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(statments)?)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn test_rule_with_range_test() -> Result<()> {
+    let rule_str = r#"rule check_parameter_validity {
+     InputParameter.TcpBlockedPorts[*] {
+         _ in r[0, 65535] <<[NON_COMPLIANT] Parameter TcpBlockedPorts has invalid value.>>
+     }
+ }"#;
+
+    let rule = Rule::try_from(rule_str)?;
+
+    let value_str = r#"
+    InputParameter:
+        TcpBlockedPorts:
+            - 21
+            - 22
+            - 101
+    "#;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let dummy = DummyEval{};
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn test_inner_when_skipped() -> Result<()> {
+    let rule_str = r#"
+    rule no_wild_card_in_managed_policy {
+        Resources.*[ Type == /ManagedPolicy/ ] {
+            when Properties.ManagedPolicyName != /Admin/ {
+                Properties.PolicyDocument.Statement[*].Action[*] != '*'
+            }
+        }
+    }
+    "#;
+
+    let rule = Rule::try_from(rule_str)?;
+    let dummy = DummyEval{};
+
+    let value_str = r#"
+    Resources:
+      ReadOnlyAdminPolicy:
+        Type: 'AWS::IAM::ManagedPolicy'
+        Properties:
+          PolicyDocument:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          Description: ''
+          ManagedPolicyName: AdminPolicy
+      ReadOnlyPolicy:
+        Type: 'AWS::IAM::ManagedPolicy'
+        Properties:
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'cloudwatch:*'
+                  - '*'
+                Effect: Allow
+                Resource: '*'
+            Version: 2013-10-17
+          Description: ''
+          ManagedPolicyName: OperatorPolicy
+    "#;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let value_str = r#"
+    Resources:
+      ReadOnlyAdminPolicy:
+        Type: 'AWS::IAM::ManagedPolicy'
+        Properties:
+          PolicyDocument:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          Description: ''
+          ManagedPolicyName: AdminPolicy
+    "#;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::SKIP);
+
+    let value_str = r#"
+    Resources: {}
+    "#;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let value_str = r#"{}"#;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let status = rule.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
     Ok(())
 }

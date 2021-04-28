@@ -487,16 +487,29 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             // IN, !IN
             //
             CmpOperator::In => {
-                let mut result = compare(&lhs,
-                        &clause.access_clause.query.query,
-                        &rhs,
-                        rhs_query,
-                        super::path_value::compare_eq,
-                                         true,
-                                         !all)?;
-                let status = invert_status(result.0, clause.access_clause.comparator.1);
-                let status = invert_status(status, clause.negation);
-                result.0 = status;
+                let mut result = if clause.access_clause.comparator.1 {
+                    //
+                    // ! IN operator
+                    //
+                    compare(&lhs,
+                            &clause.access_clause.query.query,
+                            &rhs,
+                            rhs_query,
+                            |lhs, rhs| {
+                                Ok(!super::path_value::compare_eq(lhs, rhs)?)
+                            },
+                            false,
+                            !all)?
+                } else {
+                    compare(&lhs,
+                            &clause.access_clause.query.query,
+                            &rhs,
+                            rhs_query,
+                            super::path_value::compare_eq,
+                            true,
+                            !all)?
+                };
+                result.0 = invert_status(result.0, clause.negation);
                 result
             },
 
@@ -542,9 +555,32 @@ impl<'loc> Evaluate for GuardClause<'loc> {
             GuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
             GuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
             GuardClause::BlockClause(bc) => bc.evaluate(context, var_resolver),
-            GuardClause::WhenBlock(conditions, clauses) => match conditions.evaluate(context, var_resolver)? {
-                Status::PASS => clauses.evaluate(context, var_resolver),
-                rest => Ok(rest)
+            GuardClause::WhenBlock(conditions, clauses) => {
+                let status = loop {
+                    let mut when_conditions = AutoReport::new(
+                        EvaluationType::Condition,
+                        var_resolver,
+                        "");
+                    break when_conditions.status(conditions.evaluate(context, var_resolver)?).get_status();
+                };
+                match status {
+                    Status::PASS => {
+                        let mut auto_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
+                        Ok(auto_block.status(clauses.evaluate(context, var_resolver)?).get_status())
+                    },
+                    _ => {
+                        let mut skip_block = AutoReport::new(
+                            EvaluationType::ConditionBlock,
+                            var_resolver,
+                            ""
+                        );
+                        Ok(skip_block.status(Status::SKIP).get_status())
+                    }
+                }
             }
         }
     }

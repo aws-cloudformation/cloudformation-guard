@@ -161,6 +161,21 @@ impl PartialEq for PathAwareValue {
                 }
             },
 
+            //
+            // Range checks
+            //
+            (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
+                value.is_within(r)
+            },
+
+            (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
+                value.is_within(r)
+            },
+
+            (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
+                value.is_within(r)
+            },
+
             (rest, rest2) => match compare_values(rest, rest2) {
                     Ok(ordering) => match ordering {
                         Ordering::Equal => true,
