@@ -6,7 +6,6 @@ use serde::{Serialize};
 pub(super) struct StatusContext {
     pub(super) eval_type: EvaluationType,
     pub(super) context: String,
-    #[serde(skip_serializing)]
     pub(super) msg: Option<String>,
     pub(super) from: Option<PathAwareValue>,
     pub(super) to: Option<PathAwareValue>,
