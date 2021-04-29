@@ -28,6 +28,7 @@ mod tests {
               {
                 "eval_type": "Rule",
                 "context": "default",
+                "msg": "DEFAULT MESSAGE(FAIL)",
                 "from": null,
                 "to": null,
                 "status": "FAIL",
@@ -35,6 +36,7 @@ mod tests {
                   {
                     "eval_type": "Type",
                     "context": "AWS::ApiGateway::Method",
+                    "msg": "DEFAULT MESSAGE(FAIL)",
                     "from": null,
                     "to": null,
                     "status": "FAIL",
@@ -42,6 +44,7 @@ mod tests {
                       {
                         "eval_type": "Filter",
                         "context": "Path=/Resources/VPC,Type=MapElement",
+                        "msg": "DEFAULT MESSAGE(PASS)",
                         "from": null,
                         "to": null,
                         "status": "PASS",
@@ -49,6 +52,7 @@ mod tests {
                           {
                             "eval_type": "Conjunction",
                             "context": "cfn_guard::rules::exprs::GuardClause",
+                            "msg": "DEFAULT MESSAGE(PASS)",
                             "from": null,
                             "to": null,
                             "status": "PASS",
@@ -56,6 +60,7 @@ mod tests {
                               {
                                 "eval_type": "Clause",
                                 "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
+                                "msg": "(DEFAULT: NO_MESSAGE)",
                                 "from": null,
                                 "to": null,
                                 "status": "PASS",
@@ -68,6 +73,7 @@ mod tests {
                       {
                         "eval_type": "Type",
                         "context": "AWS::ApiGateway::Method#0(/Resources/VPC)",
+                        "msg": "DEFAULT MESSAGE(FAIL)",
                         "from": null,
                         "to": null,
                         "status": "FAIL",
@@ -75,6 +81,7 @@ mod tests {
                           {
                             "eval_type": "Conjunction",
                             "context": "cfn_guard::rules::exprs::GuardClause",
+                            "msg": "DEFAULT MESSAGE(FAIL)",
                             "from": null,
                             "to": null,
                             "status": "FAIL",
@@ -82,6 +89,7 @@ mod tests {
                               {
                                 "eval_type": "Clause",
                                 "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
+                                "msg": "(DEFAULT: NO_MESSAGE)",
                                 "from": {
                                   "String": [
                                     "/Resources/VPC/Properties/AuthorizationType",
