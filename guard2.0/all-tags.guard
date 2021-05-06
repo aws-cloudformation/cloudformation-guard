@@ -38,6 +38,8 @@ let resources = Resources.*[
 # 2) FAIL is any one resource did have empty tags or did not have tags specified at all
 # 3) PASS when ALL resource do have non-empty tags
 #
-rule assert_all_resources_have_non_empty_tags when %resources !empty {
-    %resources.Properties.Tags !empty
+rule assert_all_resources_have_non_empty_tags {
+    %resources {
+        Properties.Tags !empty
+    }
 }

@@ -3613,7 +3613,7 @@ fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
      request.kind.kind == "Pod"
      request.operation == "CREATE"
      let service_name = request.object.spec.serviceAccountName
-     %allowlist[ _.serviceAccount == %service_name ] !EMPTY
+     %allowlist[ this.serviceAccount == %service_name ] !EMPTY
  }"###;
     let rule = Rule::try_from(r)?;
     println!("{:?}", rule);
@@ -3672,7 +3672,7 @@ impl EvaluationContext for DummyEval {
 
 #[test]
 fn select_any_one_from_list_clauses() -> Result<(), Error> {
-    let clause = "_ == /\\{\\{resolve:secretsmanager/";
+    let clause = "this == /\\{\\{resolve:secretsmanager/";
     let parsed = super::clause(from_str2(clause))?.1;
     let expected = GuardClause::Clause(
         GuardAccessClause {
@@ -3685,7 +3685,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
                 compare_with: Some(LetValue::Value(Value::Regex("\\{\\{resolve:secretsmanager".to_string()))),
                 comparator: (CmpOperator::Eq, false),
                 custom_message: None,
-                query: AccessQuery{ query: vec![QueryPart::It], match_all: true }
+                query: AccessQuery{ query: vec![QueryPart::This], match_all: true }
             },
             negation: false
         }
@@ -3732,7 +3732,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
 
     let _dummy = DummyEval{};
     let _clause = GuardClause::try_from(
-        r#"Resources.*[ _.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ _ == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
+        r#"Resources.*[ this.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ this == /\{\{resolve:secretsmanager/ ] !EMPTY"#)?;
     Ok(())
 }
 
@@ -3911,7 +3911,7 @@ fn some_clause_parse() -> Result<(), Error> {
 
 #[test]
 fn it_support_test() -> Result<(), Error> {
-    let query = r#"Tags[ some _ == { Key: "Hi", Value: "There" }]"#;
+    let query = r#"Tags[ some this == { Key: "Hi", Value: "There" }]"#;
     let parsed_query = AccessQuery::try_from(query)?;
     println!("{:?}", parsed_query);
     let expected = AccessQuery {
@@ -3928,7 +3928,7 @@ fn it_support_test() -> Result<(), Error> {
                                     query: AccessQuery {
                                         match_all: false,
                                         query: vec![
-                                            QueryPart::It
+                                            QueryPart::This
                                         ]
                                     },
                                     custom_message: None,
@@ -3979,6 +3979,7 @@ fn test_block_properties()-> Result<(), Error> {
                 ],
                 match_all: true
             },
+            not_empty: false,
             block: Block {
                 assignments: vec![],
                 conjunctions: vec![
@@ -4104,7 +4105,7 @@ fn when_inside_when_parse_test() -> Result<(), Error> {
         # Find all routes that have a gateways associated with the route table and extract
         # all their references
         #
-        let gws_ids = some Resources.*[
+        let gws_ids = Resources.*[
             Type == 'AWS::EC2::Route'
             Properties.GatewayId.Ref exists
             Properties.RouteTableId.Ref in %route_tables

@@ -795,14 +795,23 @@ fn some_keyword(input: Span) -> IResult<Span, bool> {
     ))(input)
 }
 
+fn self_reference(input: Span) -> IResult<Span, QueryPart> {
+    preceded(zero_or_more_ws_or_comment,
+          alt((
+              value(QueryPart::This, tag("this")),
+              value(QueryPart::This, tag("THIS")),
+              ))
+    )(input)
+}
+
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(tuple((
         opt(some_keyword),
-        alt(
-            (value(QueryPart::It, preceded(zero_or_more_ws_or_comment, char('_'))),
+        alt((
+            self_reference,
             map(
                 alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)))),
         opt(dotted_access))), |(any, first, remainder)| {
@@ -909,6 +918,16 @@ fn clause_with<A>(input: Span, access: A) -> IResult<Span, GuardClause>
     clause_with_map(input, access, |g| GuardClause::Clause(g))
 }
 
+fn not_empty(input: Span) -> IResult<Span, ()> {
+    preceded(zero_or_more_ws_or_comment,
+    value((), tuple((
+              preceded(space0, not),
+              preceded( space0,empty)
+            ))
+        )
+    )(input)
+}
+
 pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     let location = FileLocation {
         file_name: input.extra,
@@ -917,12 +936,23 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     };
 
     let (input, query) = access(input)?;
+    let (input, not_empty) = match &query.query.last().unwrap() {
+        QueryPart::MapKeyFilter(_) |
+        QueryPart::Filter(_) |
+        QueryPart::AllIndices |
+        QueryPart::AllValues => {
+            opt(not_empty)(input)?
+        },
+
+        _ => (input, None)
+    };
     let (input, (assignments, conjunctions)) = block(clause)(input)?;
     Ok((input, GuardClause::BlockClause(BlockGuardClause {
         query, block: Block {
             assignments, conjunctions,
         },
-        location
+        location,
+        not_empty: not_empty.map_or(false, |_| true)
     })))
 }
 

@@ -3,7 +3,7 @@
     Resources: {}
   expectations:
     rules:
-      check_rest_api_is_private_and_has_access: SKIP
+      check_rest_api_is_private_and_has_access: FAIL
 - input:
     Resources:
       apiGw:

@@ -72,7 +72,6 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service == /^lambda/ ].Action == "sts:AssumeRole""#
     )?;
     let status = clause.evaluate(&root, &dummy)?;
-    println!("Status = {:?}", status);
     assert_eq!(Status::PASS, status);
 
     let clause = GuardClause::try_from(
@@ -81,7 +80,7 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#
     )?;
     match clause.evaluate(&root, &dummy) {
-        Ok(Status::FAIL) => {},
+        Ok(Status::SKIP) => {},
         _rest => assert!(false)
     }
     Ok(())
@@ -284,7 +283,6 @@ fn test_iam_statement_clauses() -> Result<()> {
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
     let parsed = GuardClause::try_from(clause)?;
     let status = parsed.evaluate(&value, &reporter)?;
-    println!("Status {:?}", status);
     assert_eq!(Status::PASS, status);
 
     let clause = r#"Statement[ Condition EXISTS
@@ -292,14 +290,12 @@ fn test_iam_statement_clauses() -> Result<()> {
     "#;
     let parsed = GuardClause::try_from(clause)?;
     let status = parsed.evaluate(&value, &reporter)?;
-    println!("Status {:?}", status);
     assert_eq!(Status::PASS, status);
 
     let value = Value::try_from(SAMPLE)?;
     let value = PathAwareValue::try_from(value)?;
     let parsed = GuardClause::try_from(clause)?;
     let status = parsed.evaluate(&value, &reporter)?;
-    println!("Status {:?}", status);
     assert_eq!(Status::FAIL, status);
 
     Ok(())
@@ -362,7 +358,7 @@ rule check_rest_api_private {
     let dummy = DummyEval{};
     let reporter = Reporter(&dummy);
     let status = rule.evaluate(&value, &reporter)?;
-    println!("{}", status);
+    assert_eq!(status, Status::PASS);
     Ok(())
 }
 
@@ -400,24 +396,15 @@ fn testing_iam_role_prov_serve() -> Result<()> {
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 let ecs_tasks = Resources.*[ Type == "AWS::ECS::TaskDefinition" ]
 
-rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
+rule deny_permissions_boundary_iam_role {
     # atleast one Tags contains a Key "TestRole"
-    %iam_roles.Properties.Tags[ Key == "TestRole" ] NOT EMPTY
-    %iam_roles.Properties.PermissionBoundary !EXISTS
-}
-
-rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
-    let task_role = %ecs_tasks.Properties.TaskRoleArn
-
-    when %task_role.'Fn::GetAtt' EXISTS {
-        let role_name = %task_role.'Fn::GetAtt'[0]
-        let iam_roles_by_name = Resources.*[ KEYS == %role_name ]
-        %iam_roles_by_name !EMPTY
-        iam_roles_by_name.Properties.Tags !EMPTY
-    } or
-    %task_role == /aws:arn/ # either a direct string or
-}
-    "###;
+    %iam_roles {
+        Properties {
+            Tags[ Key == "TestRole" ] NOT EMPTY
+            PermissionBoundary NOT EXISTS
+        }
+    }
+}"###;
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
@@ -426,7 +413,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     let root_context = RootScope::new(&rules_file, &value);
     let reporter = Reporter(&root_context);
     let status = rules_file.evaluate(&value, &reporter)?;
-    println!("{}", status);
+    assert_eq!(status, Status::FAIL);
     Ok(())
 }
 
@@ -515,35 +502,33 @@ fn testing_sg_rules_pro_serve() -> Result<()> {
       }
     }
     }
-}]
-
-    "###;
+}]"###;
 
     let rules = r###"
 let sgs = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
 
-rule deny_egress when %sgs NOT EMPTY {
+rule deny_egress {
     # Ensure that none of the security group contain a rule
     # that has Cidr Ip set to any
-    %sgs.Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
-                                         CidrIpv6 == "::/0" ] EMPTY
-}
-
-    "###;
+    %sgs {
+        Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
+                                        CidrIpv6 == "::/0" ] EMPTY
+    }
+}"###;
 
     let rules_file = RulesFile::try_from(rules)?;
-
     let values = PathAwareValue::try_from(sgs)?;
     let samples = match values {
         PathAwareValue::List((_p, v)) => v,
         _ => unreachable!()
     };
 
+    let statues = [Status::FAIL, Status::FAIL, Status::PASS, Status::PASS];
     for (index, each) in samples.iter().enumerate() {
         let root_context = RootScope::new(&rules_file, each);
         let reporter = Reporter(&root_context);
         let status = rules_file.evaluate(each, &reporter)?;
-        println!("{}", format!("Status {} = {}", index, status).underline());
+        assert_eq!(status, statues[index]);
     }
 
     let sample = r#"{ "Resources": {} }"#;
@@ -552,19 +537,18 @@ rule deny_egress when %sgs NOT EMPTY {
 rule deny_egress {
     # Ensure that none of the security group contain a rule
     # that has Cidr Ip set to any
-    Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
-        .Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
-                                         CidrIpv6 == "::/0" ] EMPTY
-}
-    "###;
+    Resources.*[ Type == "AWS::EC2::SecurityGroup" ] {
+        Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
+                                        CidrIpv6 == "::/0" ] EMPTY
+    }
+}"###;
 
     let dummy = DummyEval{};
     let rule_parsed = Rule::try_from(rule)?;
     let status = rule_parsed.evaluate(&value, &dummy)?;
-    println!("Status {:?}", status);
+    assert_eq!(status, Status::FAIL);
 
     Ok(())
-
 }
 
 #[test]
@@ -718,9 +702,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
             }
         }
     }
-}]
-
-    "###;
+}]"###;
 
     let parsed_values = match PathAwareValue::try_from(values)? {
         PathAwareValue::List((_, v)) => v,
@@ -729,155 +711,30 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
     let rule = r###"
     rule deny_s3_public_bucket {
-    AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
-        Properties.BlockPublicAcls NOT EXISTS or
-        Properties.BlockPublicPolicy NOT EXISTS or
-        Properties.IgnorePublicAcls NOT EXISTS or
-        Properties.RestrictPublicBuckets NOT EXISTS or
-
-        Properties.BlockPublicAcls == false or
-        Properties.BlockPublicPolicy == false or
-        Properties.IgnorePublicAcls == false or
-        Properties.RestrictPublicBuckets == false
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties {
+            BlockPublicAcls == true
+            BlockPublicPolicy == true
+            IgnorePublicAcls == true
+            RestrictPublicBuckets == true
+        }
     }
-}
+}"###;
 
-    "###;
-
+    let statues = [
+        Status::PASS,
+        Status::FAIL,Status::FAIL,Status::FAIL,Status::FAIL,Status::FAIL,
+        Status::FAIL, Status::FAIL,
+        Status::FAIL,Status::FAIL,Status::FAIL,
+    ];
     let s3_rule = Rule::try_from(rule)?;
     let dummy = DummyEval{};
     let reported = Reporter(&dummy);
     for (idx, each) in parsed_values.iter().enumerate() {
         let status = s3_rule.evaluate(each, &reported)?;
         println!("Status#{} = {}", idx, status);
+        assert_eq!(status, statues[idx]);
     }
-    Ok(())
-}
-
-#[test]
-fn ecs_iam_role_relationship_assetions() -> Result<()> {
-    let _template = r###"
-    # deny_task_role_no_permission_boundary is expected to be false so negate it to pass test
-{    "Resources": {
-    "CounterTaskDef1468734E": {
-      "Type": "AWS::ECS::TaskDefinition",
-      "Properties": {
-        "ContainerDefinitions": [
-          {
-            "Environment": [
-              {
-                "Name": "COUNTER_TABLE_NAME",
-                "Value": {
-                  "Ref": "CounterTableFE2C0268"
-                }
-              }
-            ],
-            "Essential": true,
-            "Image": {
-              "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-${AWS::AccountId}-${AWS::Region}:9a4832ed07fabf889e6df624dc8a8170008880d8db629312f85dba129920e0b1"
-            },
-            "LogConfiguration": {
-              "LogDriver": "awslogs",
-              "Options": {
-                "awslogs-group": {
-                  "Ref": "CounterTaskDefwebLogGroup437F46A3"
-                },
-                "awslogs-stream-prefix": "Counter",
-                "awslogs-region": {
-                  "Ref": "AWS::Region"
-                }
-              }
-            },
-            "Name": "web",
-            "PortMappings": [
-              {
-                "ContainerPort": 8080,
-                "Protocol": "tcp"
-              }
-            ]
-          }
-        ],
-        "Cpu": "256",
-        "ExecutionRoleArn": {
-          "Fn::GetAtt": [
-            "CounterTaskDefExecutionRole5959CB2D",
-            "Arn"
-          ]
-        },
-        "Family": "fooCounterTaskDef49BA9021",
-        "Memory": "512",
-        "NetworkMode": "awsvpc",
-        "RequiresCompatibilities": [
-          "FARGATE"
-        ],
-        "TaskRoleArn": {
-          "Fn::GetAtt": [
-            "CounterTaskRole71EBC3F8",
-            "Arn"
-          ]
-        }
-      },
-      "Metadata": {
-        "aws:cdk:path": "foo/Counter/TaskDef/Resource"
-      }
-    },
-    "CounterTaskRole71EBC3F8": {
-      "Type": "AWS::IAM::Role",
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Statement": [
-            {
-              "Action": "sts:AssumeRole",
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "ecs-tasks.amazonaws.com"
-              }
-            }
-          ],
-          "Version": "2012-10-17"
-        },
-        "Tags": [{"Key": "TestRole", "Value": ""}],
-        "PermissionBoundary": "arn:aws:iam...",
-        "Policies": [
-          {
-            "PolicyDocument": {
-              "Statement": [
-                {
-                  "Action": [
-                    "dynamodb:BatchGet*",
-                    "dynamodb:DescribeStream",
-                    "dynamodb:DescribeTable",
-                    "dynamodb:Get*",
-                    "dynamodb:Query",
-                    "dynamodb:Scan",
-                    "dynamodb:BatchWrite*",
-                    "dynamodb:CreateTable",
-                    "dynamodb:Delete*",
-                    "dynamodb:Update*",
-                    "dynamodb:PutItem"
-                  ],
-                  "Effect": "Allow",
-                  "Resource": {
-                    "Fn::GetAtt": [
-                      "CounterTableFE2C0268",
-                      "Arn"
-                    ]
-                  }
-                }
-              ],
-              "Version": "2012-10-17"
-            },
-            "PolicyName": "DynamoDBTableRWAccess"
-          }
-        ]
-      },
-      "Metadata": {
-        "aws:cdk:path": "foo/CounterTaskRole/Default/Resource"
-      }
-    }
-    }
-}
-    "###;
     Ok(())
 }
 
@@ -1068,7 +925,12 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
 
 #[test]
 fn test_rules_with_some_clauses() -> Result<()> {
-    let query = r#"some Resources.*[ Type == 'AWS::IAM::Role' ].Properties.Tags[ Key == /[A-Za-z0-9]+Role/ ]"#;
+    let query = r#"Resources.*[ Type == 'AWS::IAM::Role' ].Properties[
+        Tags !empty
+        some Tags[*] {
+            Key == /[A-Za-z0-9]+Role/
+        }
+    ]"#;
     let resources = r#"    {
       "Resources": {
           "CounterTaskDefExecutionRole5959CB2D": {
@@ -1211,6 +1073,33 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
             },
             ddbNotSelected: {
                 Type: 'AWS::DynamoDB::Table'
+            }
+        }
+    }"#;
+    let resources = PathAwareValue::try_from(resources_str)?;
+    let selection_query = AccessQuery::try_from(selection_str)?;
+    let selected = resources.select(selection_query.match_all, &selection_query.query, &dummy)?;
+    println!("Selected = {:?}", selected);
+    assert_eq!(selected.len(), 1);
+
+    let resources_str = r#"{
+        Resources: {
+            ddbSelected: {
+                Type: 'AWS::DynamoDB::Table',
+                Properties: {
+                    Tags: [
+                        {
+                            Key: "PROD",
+                            Value: "ProdApp"
+                        }
+                    ]
+                }
+            },
+            ddbNotSelected: {
+                Type: 'AWS::DynamoDB::Table',
+                Properties: {
+                    Tags: []
+                }
             }
         }
     }"#;
@@ -1483,7 +1372,6 @@ fn embedded_when_clause_redshift_use_case_test() -> Result<()> {
 # Find all Redshift subnet group resource and extract all subnet Ids that are referenced
 #
 let local_subnet_refs = Resources.*[ Type == /Redshift::ClusterSubnetGroup/ ].Properties.SubnetIds[ Ref exists ].Ref
-
 rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
 
     #
@@ -1797,7 +1685,7 @@ fn test_for_not_in() -> Result<()> {
 fn test_rule_with_range_test() -> Result<()> {
     let rule_str = r#"rule check_parameter_validity {
      InputParameter.TcpBlockedPorts[*] {
-         _ in r[0, 65535] <<[NON_COMPLIANT] Parameter TcpBlockedPorts has invalid value.>>
+         this in r[0, 65535] <<[NON_COMPLIANT] Parameter TcpBlockedPorts has invalid value.>>
      }
  }"#;
 
@@ -1895,5 +1783,384 @@ fn test_inner_when_skipped() -> Result<()> {
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
+    Ok(())
+}
+
+#[test]
+fn empty_all_values_fails() -> Result<()> {
+    let resources_str = r#"{ Resources: {} }"#;
+    let resources = PathAwareValue::try_from(resources_str)?;
+
+    let all_tags = GuardClause::try_from("Resources.*.Properties.Tags !empty")?;
+    let dummy = DummyEval{};
+    let status = all_tags.evaluate(&resources, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let all_tags = GuardClause::try_from("Resources.* { Properties.Tags !empty }")?;
+    let dummy = DummyEval{};
+    let status = all_tags.evaluate(&resources, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let all_tags = GuardClause::try_from("Resources.* !empty { Properties.Tags !empty }")?;
+    let dummy = DummyEval{};
+    let status = all_tags.evaluate(&resources, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    //
+    // Block level failures
+    //
+    let block_clause = GuardClause::try_from(r#"some Properties.Tags[*] {
+        Key == /PROD$/
+        Value == /^App/
+    }"#)?;
+    let values_str= r#"
+    Properties:
+        Tags: []
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        NoTags: Check
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    NoProperties:
+        NoTags: Check
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"{}"#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: Beta
+              Value: BetaAppNoMatch
+            - Key: NotPRODEnding
+              Value: AppEvenIfThisMatches
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: EndingPROD
+              Value: BetaAppNoMatch
+            - Key: NotPRODEnding
+              Value: AppEvenIfThisMatches
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: SomePROD
+              Value: AppThisWorks
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: Beta
+              Value: BetaAppNoMatch
+            - Key: SomePROD
+              Value: AppThisWorks
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    //
+    // Block level ALL cases
+    //
+    let block_clause = GuardClause::try_from(r#"Properties.Tags[*] {
+        Key == /PROD$/
+        Value == /^App/
+    }"#)?;
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: Beta
+              Value: BetaAppNoMatch
+            - Key: SomePROD
+              Value: AppThisWorks
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: SomePROD
+              Value: AppThisWorks
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let values_str= r#"
+    Properties:
+        Tags:
+            - Key: SomePROD
+              Value: AppThisWorks
+            - Key: AnotherSomePROD
+              Value: AppAnotherThisWorks
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = block_clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn filter_return_empty_direct_clause_skip() -> Result<()> {
+
+    let dummy = DummyEval{};
+    let clause_str = r#"some Properties.Tags[*].Key == /PROD$/"#;
+    let clause = GuardClause::try_from(clause_str)?;
+
+    let values_str = r#"
+    Properties:
+        Tags: []
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    Properties:
+        NoTags: Check
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"
+    NoProperties:
+        NoTags: Check
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str= r#"{}"#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let rule_str = r#"rule not_the_same_as_block {
+        #
+        # These are 2 independent clauses, this is not the same as a block
+        # clause, each clause is evalulate separately. Hence when the input is
+        #
+        #    Properties:
+        #        Tags:
+        #            - Key: EndPROD
+        #              Value: NoTAppStart
+        #            - Key: NotPRODEnd
+        #              Value: AppStart
+        #
+        # This will PASS due to some clause
+        #
+        some Properties.Tags[*].Key == /PROD$/
+        some Properties.Tags[*].Value == /^App/
+    }
+    "#;
+    let rule = Rule::try_from(rule_str)?;
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: NotAppStart
+            - Key: NotPRODEnd
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn filter_based_single_clause() -> Result<()> {
+    let clause = GuardClause::try_from(
+        r#"Properties.Tags[ Key == /PROD$/ ].Value == /^App/"#)?;
+    let dummy = DummyEval{};
+
+    let values_str = r#"
+    Properties:
+        Tags: []
+    "#;
+    let values = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(values_str)?
+    )?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::SKIP);
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: NotAppStart
+            - Key: NotPRODEnd
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let values_str = r#"
+    Properties:
+        Tags:
+            - Key: EndPROD
+              Value: AppStart
+            - Key: NotPRODEnd
+              Value: AppStart
+    "#;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(values_str)?)?;
+    let status = clause.evaluate(&values, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn cross_ref_test() -> Result<()> {
+    let query_str = r#"Resources.*[
+    Type in [/IAM::Policy/, /IAM::ManagedPolicy/]
+    some Properties.PolicyDocument.Statement[*] {
+        some Action[*] == 'cloudwatch:CreateLogGroup'
+        Effect == 'Allow'
+    }
+]"#;
+    let query = AccessQuery::try_from(query_str)?;
+    let resources_str = r###"
+  Resources:
+    ReadOnlyPolicy:
+      Type: 'AWS::IAM::Policy'
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Action:
+                - 'cloudwatch:Describe*'
+                - 'cloudwatch:List*'
+              Effect: Deny
+              Resource: '*'
+            - Action:
+                - 'cloudwatch:Describe*'
+                - 'cloudwatch:CreateLogGroup'
+              Effect: Allow
+              Resource: '*'
+          Version: 2012-10-17
+        Description: ''
+        Roles:
+          - Ref: EcsTaskInstanceRole
+        ManagedPolicyName: OperatorPolicy
+    EcsTaskInstanceRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Action: 'sts:AssumeRole'
+              Effect: Allow
+              Principal:
+                Service: 'ecs-tasks.amazonaws.com'
+          Version: 2012-10-17
+        Description: This Admin Operator role
+        RoleName: EcsTaskInstanceRole
+        Tags:
+          - Key: Team
+            Value: IAM
+          - Key: IsPipeline
+            Value: 'false'
+          - Key: RoleARN
+            Value: !Sub 'arn:aws:iam::${AWS::AccountId}:role/EcsTaskInstanceRole'
+          - Key: VPC
+            Value: BOM-EgressVPC
+
+    "###;
+    let resources = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(resources_str)?)?;
+    let dummy = DummyEval{};
+    let selected = resources.select(query.match_all, &query.query, &dummy)?;
+    println!("{:?}", selected);
+    assert_eq!(selected.len(), 1);
+
+    let rule_str = r###"rule certain_actions_forbid_for_ecs_role {
+    let policies_with_create_log_group = Resources.*[
+        Type in [/IAM::Policy/, /IAM::ManagedPolicy/]
+        some Properties.PolicyDocument.Statement[*] {
+            some Action[*] == 'cloudwatch:CreateLogGroup'
+            Effect == 'Allow'
+        }
+    ]
+
+    let role_refs = some %policies_with_create_log_group.Properties.Roles[*].Ref
+    Resources.%role_refs {
+        Type == 'AWS::IAM::Role'
+        Properties.AssumeRolePolicyDocument.Statement[*] {
+            Principal[*] {
+                Service != /^ecs-tasks/
+            }
+        }
+    }
+}"###;
+    let rule = RulesFile::try_from(rule_str)?;
+    let root = RootScope::new(&rule, &resources);
+    let status = rule.evaluate(&resources, &root)?;
+    assert_eq!(status, Status::FAIL);
     Ok(())
 }

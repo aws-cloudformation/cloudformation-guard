@@ -138,7 +138,7 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::FAIL, None, None))
+        return Ok((Status::SKIP, None, None))
     }
 
     let lhs_elem = lhs[0];
@@ -243,7 +243,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
 
         let (lhs, retrieve_error) =
-            match resolve_query(clause.access_clause.query.match_all,
+            match resolve_query(true,
                                 &clause.access_clause.query.query,
                                 context,
                                 var_resolver)
@@ -364,7 +364,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                         Some(l[0].clone())
                     } else { None }
                 }
-            ).message(message.to_string());
+            );
+            if r == Status::FAIL {
+                auto_reporter.message(message.to_string());
+            }
             return Ok(r)
         }
 
@@ -375,9 +378,11 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                                   .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
                 }
                 else {
-                    return Ok(auto_reporter.status(Status::FAIL)
+                    let status = if retrieve_error.is_none() { Status::SKIP } else { Status::FAIL };
+                    return Ok(auto_reporter.status(status)
                         .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
-                }
+                },
+
             Some(l) => l,
         };
 
@@ -406,7 +411,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         let (rhs_resolved, rhs_query) = if let Some(expr) = &clause.access_clause.compare_with {
             match expr {
                 LetValue::AccessClause(query) =>
-                    (Some(resolve_query(query.match_all, &query.query, context, var_resolver)?), Some(query.query.as_slice())),
+                    (Some(resolve_query(true, &query.query, context, var_resolver)?), Some(query.query.as_slice())),
                 _ => (None, None)
             }
         } else {
@@ -521,7 +526,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(msg) => msg,
             None => "(DEFAULT: NO_MESSAGE)"
         };
-        auto_reporter.comparison(result, from, to).message(message.to_string());
+        auto_reporter.comparison(result, from, to);
+        if result == Status::FAIL {
+            auto_reporter.message(message.to_string());
+        }
         Ok(result)
     }
 }
@@ -640,27 +648,28 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
 
 impl<'loc> Evaluate for BlockGuardClause<'loc> {
     fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
+        let blk_context = format!("Block[{}]", self.location);
+        let mut report = AutoReport::new(
+            EvaluationType::BlockClause,
+            var_resolver,
+            &blk_context
+        );
         let all = self.query.match_all;
-        let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
+        let block_values = match resolve_query(true, &self.query.query, context, var_resolver) {
             Err(Error(ErrorKind::RetrievalError(e))) |
             Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
-                let context = format!("Block[{}]", self.location);
-                let mut report = AutoReport::new(
-                    EvaluationType::Clause,
-                    var_resolver,
-                    &context
-                );
                 return Ok(report.message(e).status(Status::FAIL).get_status())
             },
 
-            Ok(v) => if v.is_empty() { // one or more
-                return Ok(Status::FAIL)
+            Ok(v) => if v.is_empty() {
+                return Ok(report.message(format!("Query {} returned no results", SliceDisplay(&self.query.query))).status(
+                    if self.not_empty { Status::FAIL } else { Status::SKIP }).get_status())
             } else { v },
 
             Err(e) => return Err(e)
         };
 
-        Ok(loop {
+        Ok(report.status(loop {
             let mut num_fail = 0;
             let mut num_pass = 0;
             for each in block_values {
@@ -681,7 +690,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
                 if num_fail > 0 { break Status::FAIL }
                 break Status::SKIP
             }
-        })
+        }).get_status())
     }
 }
 

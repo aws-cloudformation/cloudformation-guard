@@ -1,9 +1,13 @@
 ---
+- input: {}
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: FAIL
 - input:
     Resources: {}
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: SKIP
+      assert_all_resources_have_non_empty_tags: FAIL
 - input:
     Resources:
       compliant: 

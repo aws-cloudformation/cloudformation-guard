@@ -22,13 +22,14 @@ let ddb = Resources.*[ Type == 'AWS::DynamoDB::Table'  ]
 # b) PASS when all DDB Tables do have encryption turned on
 # c) FAIL if wasn't set for them
 #
-rule dynamo_db_sse_on when %ddb !empty 
-                           assert_all_resources_have_non_empty_tags
+rule dynamo_db_sse_on when assert_all_resources_have_non_empty_tags
 {
     #
     # Enusre ALL DynamoDB Tables have encryption at rest turned on
     #
-    %ddb.Properties.SSESpecification.SSEEnabled == true    
+    %ddb {
+        Properties.SSESpecification.SSEEnabled == true     
+    }
 }
 
 #
@@ -60,38 +61,38 @@ rule dynamo_db_sse_on_for_prod_only when dynamo_db_sse_on
     # Key containing /PROD/ and Value starting with /^App/
     #
     let only_prod_ddb = %ddb[
-        #
-        # At least one Tag exists that contains Key and Value 
-        # needed on PROD DynamoDB Table
-        #
-        some Properties.Tags[*] {
+        Properties {
             #
-            # contains at-least-one key with PROD 
+            # At least one Tag exists that contains Key and Value 
+            # needed on PROD DynamoDB Table
             #
-            Key == /PROD/
+            some Tags[*] {
+                #
+                # contains at-least-one key with PROD 
+                #
+                Key == /PROD/
 
-            #
-            # Value that starts with App 
-            #
-            Value == /^App/
+                #
+                # Value that starts with App 
+                #
+                Value == /^App/
+            }
         }
     ]
     
     #
     # Skip the enforcement if there were no such DDB Tables
     #
-    when %only_prod_ddb !empty {        
-        %only_prod_ddb {
-            #
-            # Only permit allowed ones (currently just KMS)
-            #
-            Properties.SSESpecification.SSEType == %allowed_algorithms
+    %only_prod_ddb {
+        #
+        # Only permit allowed ones (currently just KMS)
+        #
+        Properties.SSESpecification.SSEType == %allowed_algorithms
 
-            #
-            # Prod DDB Table must have retain
-            #
-            DeletionPolicy == 'Retain'
-        }
+        #
+        # Prod DDB Table must have retain
+        #
+        DeletionPolicy == 'Retain'
     }
 }
 
