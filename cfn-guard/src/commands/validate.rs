@@ -230,12 +230,8 @@ fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
     for each in &context.children {
         if each.status.map_or(false, |s| s == Status::FAIL) {
             match each.eval_type {
-                EvaluationType::Clause |
-                EvaluationType::BlockClause => {
+                EvaluationType::Clause => {
                     failed.push(each);
-                    if each.eval_type == EvaluationType::BlockClause {
-                        failed.extend(find_all_failing_clauses(each));
-                    }
                 },
 
                 EvaluationType::Filter |

@@ -116,26 +116,3 @@
       assert_all_resources_have_non_empty_tags: FAIL
       dynamo_db_sse_on: SKIP
       dynamo_db_sse_on_for_prod_only: SKIP
-- input:
-    Resources: 
-      ddb:
-        Type: 'AWS::DynamoDB::Table'
-        Properties:
-          # No Tags, will fail 
-          SSESpecification:
-            SSEEnabled: true
-          Tags: []
-      ddb2:
-        Type: 'AWS::DynamoDB::Table'
-        Properties:
-          Tags:
-            - Key: PROD-DDB
-              Value: AppSelected
-          SSESpecification:
-            SSEEnabled: true
-            SSEType: KMS
-  expectations:
-    rules:
-      assert_all_resources_have_non_empty_tags: FAIL
-      dynamo_db_sse_on: SKIP
-      dynamo_db_sse_on_for_prod_only: SKIP

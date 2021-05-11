@@ -218,7 +218,7 @@ fn path_value_queries() -> Result<(), Error> {
     assert_eq!(selected.len(), 2);
 
     let get_att_refs =
-        r#"Resources.*.Properties[ SecurityGroupIds exists ].SecurityGroupIds[ 'Fn::GetAtt' exists ].'Fn::GetAtt'.*"#;
+        r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
     let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
     assert_eq!(selected.len(), 2);
@@ -227,7 +227,7 @@ fn path_value_queries() -> Result<(), Error> {
     //
     // Assignments
     //
-    let assignment = r#"let var = Resources.*.Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
+    let assignment = r#"let var = ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
     let let_statement = LetExpr::try_from(assignment)?;
     println!("{:?}", let_statement);
 
@@ -273,7 +273,7 @@ fn path_value_queries() -> Result<(), Error> {
 
 #[test]
 fn some_filter_tests() -> Result<(), Error> {
-    let query_str = r#"Resources.*.Properties.SecurityGroups[ 'Fn::GetAtt' exists ].'Fn::GetAtt'"#;
+    let query_str = r#"some Resources.*.Properties.SecurityGroups[*].'Fn::GetAtt'"#;
     let resources_str = r#"{
         Resources: {
             ec2: {
@@ -299,7 +299,7 @@ fn some_filter_tests() -> Result<(), Error> {
 
 #[test]
 fn it_support_evaluation_tests() -> Result<(), Error> {
-    let tags = r#"Tags[ this == { Key: "Hi", Value: "There" } ]"#;
+    let tags = r#"Tags[ _ == { Key: "Hi", Value: "There" } ]"#;
     let parsed_tags = AccessQuery::try_from(tags)?;
     let values = r#"{
         Tags: [

@@ -291,9 +291,9 @@ impl QueryResolver for PathAwareValue {
         }
 
         match &query[0] {
-            QueryPart::This => {
+            QueryPart::It => {
                 self.select(all, &query[1..], resolver)
-            }
+            },
 
             QueryPart::Key(key) => {
                 match key.parse::<i32>() {
@@ -417,9 +417,6 @@ impl QueryResolver for PathAwareValue {
                     },
 
                     PathAwareValue::Map((_path, map)) => {
-                        if map.is_empty() {
-                            return self.map_some_or_error_all(all, query);
-                        }
                         let values: Vec<&PathAwareValue> = map.values.values().collect();
                         let mut resolved = Vec::with_capacity(values.len());
                         for each in values {
@@ -497,8 +494,18 @@ impl QueryResolver for PathAwareValue {
                         for each in vec {
                             let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
                             match conjunctions.evaluate(each, resolver) {
-                                Err(Error(ErrorKind::RetrievalError(_))) |
-                                Err(Error(ErrorKind::IncompatibleRetrievalError(_))) => continue,
+                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                    if all {
+                                        return Err(Error::new(ErrorKind::RetrievalError(e)))
+                                    }
+                                    // Else treat is like a filter
+                                },
+                                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
+                                    if all {
+                                        return Err(Error::new(ErrorKind::IncompatibleRetrievalError(e)))
+                                    }
+                                    // Else treat is like a filter
+                                },
                                 Err(e) => return Err(e),
                                 Ok(status) => {
                                     match status {
@@ -525,12 +532,7 @@ impl QueryResolver for PathAwareValue {
                         let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
                         conjunctions.evaluate(self, resolver)
                             .map_or_else(
-                                |e| match e {
-                                    Error(ErrorKind::RetrievalError(_)) |
-                                    Error(ErrorKind::IncompatibleRetrievalError(_)) => Ok(vec![]),
-
-                                    rest => Err(rest)
-                                },
+                                |e| self.map_error_or_empty(all, e),
                                 |status| {
                                     match status {
                                         Status::PASS => {
@@ -652,7 +654,7 @@ impl PathAwareValue {
     }
 
     pub(crate) fn accumulate<'v>(all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
-        if elements.is_empty() && all {
+        if elements.is_empty() && !query.is_empty() && all {
             return Err(Error::new(ErrorKind::RetrievalError(
                 format!("Remaining Query {}, No elements in array", SliceDisplay(query))
             )));
