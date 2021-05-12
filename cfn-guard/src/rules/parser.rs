@@ -795,6 +795,15 @@ fn some_keyword(input: Span) -> IResult<Span, bool> {
     ))(input)
 }
 
+fn this_keyword(input: Span) -> IResult<Span, QueryPart> {
+    preceded(zero_or_more_ws_or_comment,
+        alt((
+            value(QueryPart::This, tag("this")),
+            value(QueryPart::This, tag("THIS"))
+            ))
+    )(input)
+}
+
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
@@ -802,7 +811,8 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(tuple((
         opt(some_keyword),
         alt(
-            (value(QueryPart::It, preceded(zero_or_more_ws_or_comment, char('_'))),
+            (
+                this_keyword,
             map(
                 alt((var_name_access_inclusive, property_name)), |p| QueryPart::Key(p)))),
         opt(dotted_access))), |(any, first, remainder)| {
@@ -1004,7 +1014,7 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
                     dependent_rule: ct_type,
                     location,
                     negation: not.is_some(),
-                    comment: None
+                    custom_message: None
                 })
             ))
     }
@@ -1018,7 +1028,7 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
             dependent_rule: ct_type,
             location,
             negation: not.is_some(),
-            comment: Some(message.to_string()),
+            custom_message: Some(message.to_string()),
         })
     ))
 }

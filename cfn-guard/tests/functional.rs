@@ -60,7 +60,7 @@ mod tests {
                               {
                                 "eval_type": "Clause",
                                 "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
-                                "msg": "(DEFAULT: NO_MESSAGE)",
+                                "msg": "DEFAULT MESSAGE(PASS)",
                                 "from": null,
                                 "to": null,
                                 "status": "PASS",

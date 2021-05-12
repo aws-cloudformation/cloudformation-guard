@@ -54,7 +54,7 @@ pub(crate) struct LetExpr<'loc> {
 ///
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
-    It,
+    This,
     Key(String),
     MapKeyFilter(MapKeyFilterClause<'loc>),
     AllValues,
@@ -112,7 +112,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str("(map-key-filter-clause)")?;
             },
 
-            QueryPart::It => {
+            QueryPart::This => {
                 f.write_str("_")?;
             }
         }
@@ -156,7 +156,7 @@ pub(crate) struct MapKeyFilterClause<'loc> {
 pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
-    pub(crate) comment: Option<String>,
+    pub(crate) custom_message: Option<String>,
     pub(crate) location: FileLocation<'loc>
 }
 

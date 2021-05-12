@@ -291,9 +291,9 @@ impl QueryResolver for PathAwareValue {
         }
 
         match &query[0] {
-            QueryPart::It => {
+            QueryPart::This => {
                 self.select(all, &query[1..], resolver)
-            },
+            }
 
             QueryPart::Key(key) => {
                 match key.parse::<i32>() {

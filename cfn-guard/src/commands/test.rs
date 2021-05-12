@@ -94,14 +94,7 @@ or failure testing.
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => println!("Parse Error on ruleset file {}", e),
                         Ok(rules) => {
-                            match test_with_data(&data_test_files, &rules, verbose) {
-                                Ok(code) => {
-                                    exit_code = code;
-                                },
-                                Err(_) => {
-                                    exit_code = 5;
-                                }
-                            }
+                            exit_code = test_with_data(&data_test_files, &rules, verbose)?;
                         }
                     }
                 }

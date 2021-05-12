@@ -1797,7 +1797,7 @@ fn test_for_not_in() -> Result<()> {
 fn test_rule_with_range_test() -> Result<()> {
     let rule_str = r#"rule check_parameter_validity {
      InputParameter.TcpBlockedPorts[*] {
-         _ in r[0, 65535] <<[NON_COMPLIANT] Parameter TcpBlockedPorts has invalid value.>>
+         this in r[0, 65535] <<[NON_COMPLIANT] Parameter TcpBlockedPorts has invalid value.>>
      }
  }"#;
 

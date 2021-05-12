@@ -59,6 +59,7 @@ pub(crate) enum EvaluationType {
     ConditionBlock,
     Filter,
     Conjunction,
+    BlockClause,
     Clause
 }
 
@@ -72,6 +73,7 @@ impl std::fmt::Display for EvaluationType {
             EvaluationType::ConditionBlock => f.write_str("ConditionBlock")?,
             EvaluationType::Filter => f.write_str("Filter")?,
             EvaluationType::Conjunction => f.write_str("Conjunction")?,
+            EvaluationType::BlockClause => f.write_str("BlockClause")?,
             EvaluationType::Clause => f.write_str("Clause")?,
         }
         Ok(())

@@ -299,7 +299,7 @@ fn some_filter_tests() -> Result<(), Error> {
 
 #[test]
 fn it_support_evaluation_tests() -> Result<(), Error> {
-    let tags = r#"Tags[ _ == { Key: "Hi", Value: "There" } ]"#;
+    let tags = r#"Tags[ this == { Key: "Hi", Value: "There" } ]"#;
     let parsed_tags = AccessQuery::try_from(tags)?;
     let values = r#"{
         Tags: [
