@@ -1,7 +1,0 @@
-let vpc = planned_values.root_module.resources[
-    type == 'aws_vpc'
-]
-
-rule only_private_cidrs_allowed when %vpc !empty {
-    %vpc.values.cidr_block in [/^10\./, /^192\.168/]
-}

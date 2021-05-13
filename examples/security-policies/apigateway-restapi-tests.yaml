@@ -19,9 +19,11 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  Bool:
                     'aws:IsSecure': true
   expectations:
     rules:
@@ -34,12 +36,16 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  StringLike:
                     'aws:SourceVpc': 'vpc-1234567de'
+                  Bool:
                     'aws:IsSecure': true
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
   expectations:
     rules:
@@ -52,9 +58,11 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  Bool:
                     'aws:IsSecure': true
       apiGwPass:
         Type: 'AWS::ApiGateway::RestApi'
@@ -62,10 +70,13 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  Bool:
                     'aws:IsSecure': true
+                  StringLike:
                     'aws:SourceVpc': 'vpc-123456789'
   expectations:
     rules:
@@ -78,12 +89,16 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  StringLike:
                     'aws:SourceVpc': 'vpc-1234567de'
+                  Bool:
                     'aws:IsSecure': true
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
       apiGwPass2:
         Type: 'AWS::ApiGateway::RestApi'
@@ -91,10 +106,13 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  Bool:
                     'aws:IsSecure': true
+                  StringLike:
                     'aws:SourceVpc': 'vpc-123456789'
   expectations:
     rules:
@@ -107,10 +125,13 @@
           EndpointConfiguration: ["PRIVATE"]
           Policy:
             Statement:
-              - Action: Allow
+              - Action: '*'
+                Effect: Allow
                 Resource: ['*', "aws:"]
                 Condition:
+                  Bool:
                     'aws:IsSecure': true
+                  StringLike:
                     'aws:SourceVpc': 'vpc-123456789'
   expectations:
     rules:

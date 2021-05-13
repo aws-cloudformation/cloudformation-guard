@@ -10,9 +10,11 @@
 #       EndpointConfiguration: ["PRIVATE"]
 #       Policy:
 #         Statement:
-#           - Action: Allow
+#           - Action: '*'
+#             Effect: Allow
 #             Resource: ['*', "aws:"]
 #             Condition:
+#               Bool:
 #                 'aws:IsSecure': true
 # 
 #
@@ -40,7 +42,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
         #     aws:sourceVpc
         #
         some Policy.Statement[*] {
-            Condition[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
+            Condition.*[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
         }
     }
 }

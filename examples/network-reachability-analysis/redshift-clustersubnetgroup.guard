@@ -6,7 +6,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     # check that local references where indeed subnet type. FAIL otherwise
     %subnets.Type == 'AWS::EC2::Subnet'
     
-    # find all route tableis associated with the subnet 
+    # find all route tables associated with the subnet 
     let route_tables = some Resources.*[
         Type == 'AWS::EC2::SubnetRouteTableAssociation'
         Properties.SubnetId.Ref in %local_subnet_refs
