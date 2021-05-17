@@ -1,8 +1,0 @@
-let encryption_flag = false
-let allowed_azs = [us-east-1a,us-east-1b,us-east-1c]
-
-# Test comment
-AWS::EC2::Volume AvailabilityZone IN %allowed_azs << azs lorem ipsum
-AWS::EC2::Volume Encrypted == %encryption_flag << enc lorem ipsum
-AWS::EC2::Volume Size == 201 |OR| AWS::EC2::Volume Size == 199 << or lorem ipsum
-AWS::EC2::Volume ipsum == "true" << ipsum lorem ipsum

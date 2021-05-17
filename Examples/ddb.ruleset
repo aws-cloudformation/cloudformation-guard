@@ -1,1 +1,0 @@
-AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain

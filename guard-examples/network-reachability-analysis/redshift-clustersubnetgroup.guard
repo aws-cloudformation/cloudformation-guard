@@ -1,0 +1,29 @@
+let local_subnet_refs = some Resources.*[ Type == /Redshift::ClusterSubnetGroup/ ].Properties.SubnetIds[*].Ref
+let subnets = Resources.%local_subnet_refs
+
+rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
+
+    # check that local references where indeed subnet type. FAIL otherwise
+    %subnets.Type == 'AWS::EC2::Subnet'
+    
+    # find all route tables associated with the subnet 
+    let route_tables = some Resources.*[
+        Type == 'AWS::EC2::SubnetRouteTableAssociation'
+        Properties.SubnetId.Ref in %local_subnet_refs
+    ].Properties.RouteTableId.Ref
+
+    # let rts = Resources.%route_tables
+    Resources.%route_tables.Type == 'AWS::EC2::RouteTable'
+
+    # find all routes that have a gateway associated with it 
+    let gws_ids = some Resources.*[
+        Type == 'AWS::EC2::Route'
+        Properties.GatewayId.Ref exists
+        Properties.RouteTableId.Ref in %route_tables
+    ].Properties.GatewayId.Ref
+
+    let gws = Resources.%gws_ids
+
+    %gws.Type != 'AWS::EC2::InternetGateway'
+
+}
