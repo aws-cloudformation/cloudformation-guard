@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/aws-cloudformation/cloudformation-guard"
 documentation = "https://github.com/aws-cloudformation/cloudformation-guard/blob/main/README.md"
 readme = "README.md"
-keywords = ["policy-as-code", "cloudformation", "guard", "cfn-guard", "security", "compliance", "governance", "JSON", "YAML"]
+keywords = ["policy-as-code", "guard", "cfn-guard", "security", "compliance"]
 
 [lib]
 name = "cfn_guard"
