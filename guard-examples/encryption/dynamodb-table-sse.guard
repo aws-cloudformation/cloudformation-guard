@@ -78,7 +78,7 @@ rule dynamo_db_sse_on_for_prod_only when dynamo_db_sse_on
     ]
     
     #
-    # Skip the enforcement if there were no such DDB Tables
+    # Skip the evaluation if there were no such DDB Tables
     #
     when %only_prod_ddb !empty {        
         %only_prod_ddb {
