@@ -1,2 +1,0 @@
-AWS::IAM::Role AssumeRolePolicyDocument.Statement.*.Action == sts:AssumeRole
-# Test comment

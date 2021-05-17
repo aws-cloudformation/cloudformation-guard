@@ -1,0 +1,34 @@
+#
+# For all EC2 Instances specified in the Template that have network interfaces 
+# associated with them
+#
+let nifs = Resources.*[ 
+    Type == 'AWS::EC2::Instance'  
+    Properties.NetworkInterfaces[*] !empty 
+]
+
+#
+# Rule Intent
+# ----
+#
+# Ensure that all EC2 instance resources that do have NetworkInterfaces 
+# does not allow public IP address to be associated at launch.
+#
+rule prevent_ec2_with_public_ip when %nifs !empty {
+    %nifs.AssociatePublicIpAddress == false
+}
+
+let eip_resources = Resources.*[ Type == 'AWS::EC2::EIP' ]
+
+#
+# Rule Intent
+# ----
+#
+# For all EIPs specified in the template, ensure that it does not 
+# have an instance ID associated with it, or in other words no EIP 
+# has been assigned to any EC2 instance
+#
+rule prevent_eip_associations_with_ec2 when %eip_resources !empty {
+    %eip_resources.Properties.InstanceId !exists
+}
+

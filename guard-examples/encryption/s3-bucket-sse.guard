@@ -1,0 +1,9 @@
+let s3_buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+let allowed_algos = ["aws:kms"]
+
+rule s3_buckets_allowed_sse_algorithm when %s3_buckets !empty {
+    let encryption = %s3_buckets.Properties.BucketEncryption
+    %encryption exists
+    %encryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm in %allowed_algos
+
+}

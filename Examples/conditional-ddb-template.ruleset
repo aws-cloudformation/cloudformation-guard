@@ -1,3 +1,0 @@
-# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-product-attribute-reference.html
-AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy == Retain
-AWS::DynamoDB::Table if Tags == /.*PROD.*/ then .DeletionPolicy != Retain

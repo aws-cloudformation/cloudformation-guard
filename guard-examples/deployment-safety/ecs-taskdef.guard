@@ -1,0 +1,118 @@
+#
+# Select as ECS TaskDefinitions from the template 
+#
+let ecs_tasks = Resources.*[
+    Type == 'AWS::ECS::TaskDefinition'
+]
+
+#
+# Select a subset of TaskDefinitions whose TaskRoleArn is a Fn::Gett Ref
+#
+let task_role_refs = some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
+
+#
+# Select subset of TaskDefinitions that has a direct reference (a string) 
+# to an arn
+#
+let task_role_shared = %ecs_tasks[
+    Properties.TaskRoleArn is_string
+]
+
+#
+# Select a subset of TaskDefinitions whose ExecutionRoleArn is a Fn::Gett Ref
+#
+let execution_role_refs = some %ecs_tasks.Properties.ExecutionRoleArn.'Fn::GetAtt'[0]
+
+#
+# Select subset of TaskDefinitions that has a direct reference (a string) 
+# to an arn
+#
+let execution_role_shared = %ecs_tasks[
+    Properties.ExecutionRoleArn is_string
+]
+
+#
+# Rule Intent
+# ----
+#
+# ALL ECS Task Definition must have both TaskRoleArn and Execution Role Arn 
+# specified
+#
+rule all_ecs_tasks_must_have_task_end_execution_roles 
+    when %ecs_tasks !empty 
+{
+    %ecs_tasks.Properties {
+        TaskRoleArn exists
+        ExecutionRoleArn exists
+    }
+}
+
+#
+# Rule Intent
+# ----
+#
+# when all_ecs_tasks_must_have_task_end_execution_roles == PASS
+# a) ALL TaskRoleArn that have an Fn::Get, ensure that they are defined in the same stack
+# b) That they are of Type IAM::Role 
+# c) A permissions boundary does exist for these roles
+#
+rule check_ecs_task_role_refs_are_local 
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %task_role_refs !empty
+{
+    let iam_references = Resources.%task_role_refs
+    %iam_references {
+        Type == 'AWS::IAM::Role'
+        Properties.PermissionsBoundary exists
+    }
+}
+
+#
+# Rule Intent
+# ----
+#
+# when all_ecs_tasks_must_have_task_end_execution_roles == PASS
+# a) ALL ExecutionRoleArn that have an Fn::Get, ensure that they are defined in the same stack
+# b) That they are of type IAM::Role 
+# c) A permissions boundary does exist for these roles
+#
+rule check_ecs_execution_role_refs_are_local 
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %execution_role_refs !empty
+{
+    let iam_references = Resources.%execution_role_refs
+    %iam_references {
+        Type == 'AWS::IAM::Role'
+        Properties.PermissionsBoundary exists
+    }
+}
+
+#
+# Rule Intent
+# ----
+#
+# when all_ecs_tasks_must_have_task_end_execution_roles == PASS
+# a) ALL task definitions that have a direct arn reference, must
+#    be allowed only for SharedExecutionRoles 
+#
+rule check_ecs_task_role_refs_are_shared
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %task_role_shared !empty
+{
+    %task_role_shared.Metadata.SharedExectionRole exists
+}
+
+#
+# Rule Intent
+# ----
+#
+# when all_ecs_tasks_must_have_task_end_execution_roles == PASS
+# a) ALL task definitions that have a direct arn reference, must
+#    be allowed only for SharedExecutionRoles for Execution role
+#
+rule check_ecs_execution_role_refs_are_shared
+    when all_ecs_tasks_must_have_task_end_execution_roles
+         %execution_role_shared !empty
+{
+    %execution_role_shared.Metadata.SharedExectionRole exists
+}

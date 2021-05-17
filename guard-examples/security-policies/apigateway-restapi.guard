@@ -1,0 +1,48 @@
+#
+# Select from Resources section of the template all ApiGateway resources 
+# present in the template. Sample template, the filter below will select 
+# /Resources/apiGw/ from the sample template below
+# 
+# Resources:
+#   apiGw:
+#     Type: 'AWS::ApiGateway::RestApi'
+#     Properties:
+#       EndpointConfiguration: ["PRIVATE"]
+#       Policy:
+#         Statement:
+#           - Action: '*'
+#             Effect: Allow
+#             Resource: ['*', "aws:"]
+#             Condition:
+#               Bool:
+#                 'aws:IsSecure': true
+# 
+#
+let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
+
+#
+# Rule intent 
+# a) All ApiGateway instances deployed must be private 
+# b) All ApiGateway instances must have atleast one IAM policy condition key to allow access from a VPC
+#
+# Expectations:
+# 1) SKIP when there are not API Gateway instances in the template
+# 2) PASS when ALL ApiGateway instances MUST be "PRIVATE" and 
+#              ALL ApiGateway instances MUST have one IAM Condition key with aws:sourceVpc or aws:SourceVpc
+# 3) FAIL otherwise
+#
+rule check_rest_api_is_private_and_has_access when %api_gws !empty {
+    %api_gws.Properties {
+        #
+        # ALL ApiGateways must be PRIVATE, checking with EndpointConfiguration
+        #
+        EndpointConfiguration == ["PRIVATE"]
+
+        # ALL ApiGateways must have atleast one IAM statement that has Condition keys with 
+        #     aws:sourceVpc
+        #
+        some Policy.Statement[*] {
+            Condition.*[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
+        }
+    }
+}

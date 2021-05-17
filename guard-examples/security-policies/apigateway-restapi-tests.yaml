@@ -1,0 +1,138 @@
+---
+- input:
+    Resources: {}
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: SKIP
+- input:
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: FAIL
+- input:
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  Bool:
+                    'aws:IsSecure': true
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: FAIL
+- input:
+    Resources:
+      apiGwFAILButMustPass:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  StringLike:
+                    'aws:SourceVpc': 'vpc-1234567de'
+                  Bool:
+                    'aws:IsSecure': true
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: PASS
+- input:
+    Resources:
+      apiGwFail:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  Bool:
+                    'aws:IsSecure': true
+      apiGwPass:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  Bool:
+                    'aws:IsSecure': true
+                  StringLike:
+                    'aws:SourceVpc': 'vpc-123456789'
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: FAIL
+- input:
+    Resources:
+      apiGwPass1:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  StringLike:
+                    'aws:SourceVpc': 'vpc-1234567de'
+                  Bool:
+                    'aws:IsSecure': true
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+      apiGwPass2:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  Bool:
+                    'aws:IsSecure': true
+                  StringLike:
+                    'aws:SourceVpc': 'vpc-123456789'
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: PASS
+- input:
+    Resources:
+      apiGw:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+          EndpointConfiguration: ["PRIVATE"]
+          Policy:
+            Statement:
+              - Action: '*'
+                Effect: Allow
+                Resource: ['*', "aws:"]
+                Condition:
+                  Bool:
+                    'aws:IsSecure': true
+                  StringLike:
+                    'aws:SourceVpc': 'vpc-123456789'
+  expectations:
+    rules:
+      check_rest_api_is_private_and_has_access: PASS

@@ -1,8 +1,0 @@
-/target
-**/*.rs.bk
-*.iml
-.project
-.vscode
-.DS_Store
-.idea
-*~
