@@ -1,6 +1,6 @@
 [workspace]
 
 members = [
-    "cfn-guard",
-    "cfn-guard-lambda"
+    "guard",
+    "guard-lambda"
 ]
