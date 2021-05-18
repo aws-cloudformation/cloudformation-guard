@@ -3,8 +3,11 @@
 ## Recommended Readings
 
 [AWS CloudFormation Guard](../README.md) 
+
 [Guard: Clauses](CLAUSES.md)
+
 [Guard: Query and Filtering](QUERY_AND_FILTERING.md)
+
 
 ## What are variables?
 
@@ -99,7 +102,6 @@ In the example above, you are using the variable `ecs_tasks` to store the inform
 ## Variable Scope
 
 **Scope** refers to the visibility of variables defined in a rules file. As pointed out earlier, variables in Guard are single shot assignments. Also, there can only be one same named variable defined within the context of a scope. Broadly speaking, there are three places where a variable can be declared: file level, rule level and block level. Let’s take a look at those in sections below.
-Broadly speaking, there are three places where a variable can be declared:
 
 ### File level
 
