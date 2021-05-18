@@ -1,4 +1,4 @@
-# Guard: Query and Filtering    
+# Guard: Query and Filtering
 
 This chapter is very foundational for writing effective Guard policy rules. Since this is a more advanced topic, readers are encouraged to complete [AWS CloudFormation Guard](../README.md) introduction and [Guard: Clauses](CLAUSES.md) document. Let’s begin.
 
