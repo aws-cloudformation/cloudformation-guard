@@ -224,7 +224,7 @@ SUBCOMMANDS:
 
 ##### Ubuntu
 
-The CLI tool for cfn-guard is available from GitHub release. Grab the latest release from our [releases](https://github.com/aws-cloudformation/cloudformation-guard/release) page. 
+The CLI tool for cfn-guard is available from GitHub release. Grab the latest release from our [releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) page. 
 
 ```bash
 $ wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/VERSION/cfn-guard-v2-ubuntu-latest.tar.gz
