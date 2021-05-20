@@ -28,7 +28,7 @@ Resources:
   EcsTask:
     Type: 'AWS::ECS::TaskDefinition'
     Properties:
-      TaskRoleArn: '`arn:aws:iam::123456789012:role/my-role-name`'
+      TaskRoleArn: 'arn:aws:iam::123456789012:role/my-role-name'
 ```
 
 *Sample Guard rule*:
