@@ -153,36 +153,21 @@ These tenets help guide the development of the Guard DSL:
 
 ##### MacOS
 
+By default this is builds for macOS-10 (Catalina). It has been tested to work on macOS-11 (BigSpur). See [OS Matix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
+
 1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
 2. Cut-n-paste the commands below (change version=X for other versions)
- ```bash
-curl -fsSLI -o /dev/null -w %{url_effective} https://github.com/aws-cloudformation/cloudformation-guard/releases/latest | \
-awk -F '/' '{print $NF}' | awk -F '.' '{ print $1 "\n" $0 }' | \
-while read major; read version; do
-mkdir -p ~/.guard/$major ~/.guard/bin && \
-wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$version/cfn-guard-v$major-macos-latest.tar.gz -O /tmp/guard.tar.gz && \
-tar -C ~/.guard/$major -xzf /tmp/guard.tar.gz && \
-ln -sf ~/.guard/$major/cfn-guard-v$major-macos-latest/cfn-guard ~/.guard/bin && \
-~/.guard/bin/cfn-guard help && \
-echo "Set PATH to PATH=${PATH}/:~/.guard/bin"
-done
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
+Remember to add `~/.guard/bin/` to your `$PATH`.
 
 ##### Ubuntu
 
 1. Open any terminal of your choice
 2. Cut-n-paste the commands below (change version=X for other versions)
 ```bash
-curl -fsSLI -o /dev/null -w %{url_effective} https://github.com/aws-cloudformation/cloudformation-guard/releases/latest | \
-awk -F '/' '{print $NF}' | awk -F '.' '{ print $1 "\n" $0 }' | \
-while read major; read version; do
-mkdir -p ~/.guard/$major ~/.guard/bin && \
-wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$version/cfn-guard-v$major-ubuntu-latest.tar.gz -O /tmp/guard.tar.gz && \
-tar -C ~/.guard/$major -xzf /tmp/guard.tar.gz && \
-ln -sf ~/.guard/$major/cfn-guard-v$major-ubuntu-latest/cfn-guard ~/.guard/bin && \
-~/.guard/bin/cfn-guard help && \
-echo "Set PATH to PATH=${PATH}/:~/.guard/bin"
-done
+$ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
 
 Remember to add `~/.guard/bin/` to your `$PATH`.
