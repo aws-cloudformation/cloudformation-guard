@@ -1,5 +1,5 @@
 use super::*;
-use crate::migrate::parser::{Clause, BaseRule, PropertyComparison, CmpOperator, OldGuardValues, ConditionalRule};
+use crate::migrate::parser::{Clause, BaseRule, PropertyComparison, CmpOperator, OldGuardValues, ConditionalRule, TypeName};
 use crate::rules::values::Value;
 use crate::rules::parser::rules_file;
 
@@ -11,7 +11,7 @@ fn test_get_resource_types_in_ruleset() {
             rules: vec![
                 Rule::Basic(
                     BaseRule{
-                        type_name: String::from("AWS::S3::Bucket"),
+                        type_name: TypeName {type_name: String::from("AWS::S3::Bucket")},
                         property_comparison: PropertyComparison {
                             property_path: String::from("Path.To.Property"),
                             operator: CmpOperator::Eq,
@@ -22,7 +22,7 @@ fn test_get_resource_types_in_ruleset() {
                 ),
                 Rule::Conditional(
                     ConditionalRule {
-                        type_name: String::from("AWS::S3::BucketPolicy"),
+                        type_name: TypeName {type_name: String::from("AWS::S3::BucketPolicy")},
                         when_condition: PropertyComparison {
                             property_path: String::from("Path.To.Property"),
                             operator: CmpOperator::Eq,
@@ -37,7 +37,7 @@ fn test_get_resource_types_in_ruleset() {
                 ),
                 Rule::Basic(
                     BaseRule{
-                        type_name: String::from("AWS::S3::Bucket"),
+                        type_name: TypeName {type_name: String::from("AWS::S3::Bucket")},
                         property_comparison: PropertyComparison {
                             property_path: String::from("Path.To.Property"),
                             operator: CmpOperator::Eq,
@@ -52,7 +52,7 @@ fn test_get_resource_types_in_ruleset() {
             rules: vec![
                 Rule::Basic(
                     BaseRule{
-                        type_name: String::from("AWS::EC2::Instance"),
+                        type_name: TypeName {type_name: String::from("AWS::EC2::Instance")},
                         property_comparison: PropertyComparison {
                             property_path: String::from("Path.To.Property"),
                             operator: CmpOperator::Eq,
@@ -83,6 +83,21 @@ fn test_migrate_rules() -> Result<()> {
     );
     let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
     let result = migrate_rules(rule_lines).unwrap();
+    let span = crate::rules::parser::Span::new_extra(&result, "");
+    rules_file(span)?;
+    Ok(())
+}
+
+#[test]
+fn test_migrate_rules_disjunction() -> Result<()> {
+    let old_ruleset = String::from(
+        "let encryption_flag = true \n AWS::EC2::Volume Encrypted == %encryption_flag \n AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 50"
+    );
+    let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
+    let result = migrate_rules(rule_lines).unwrap();
+
+    println!("{}", result);
+
     let span = crate::rules::parser::Span::new_extra(&result, "");
     rules_file(span)?;
     Ok(())

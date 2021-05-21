@@ -10,6 +10,7 @@ use nom::character::complete::{space0, space1};
 use std::hash::{Hash, Hasher};
 use std::fmt;
 use std::fmt::Display;
+use std::collections::HashMap;
 
 #[cfg(test)]
 #[path = "parser_tests.rs"]
@@ -98,9 +99,20 @@ impl Display for PropertyComparison {
     }
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Hash)]
+pub(crate) struct TypeName {
+    pub type_name: String
+}
+
+impl Display for TypeName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.type_name.to_lowercase().replace("::", "_"))
+    }
+}
+
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct BaseRule {
-    pub(crate) type_name: String,
+    pub(crate) type_name: TypeName,
     pub(crate) property_comparison: PropertyComparison,
     pub(crate) custom_message: Option<String>
 }
@@ -109,10 +121,10 @@ impl Display for BaseRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.custom_message {
             Some(message) => {
-                write!(f, "%{}.{} <<{}>>", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison, message)
+                write!(f, "%{}.{} <<{}>>", self.type_name, self.property_comparison, message)
             },
             None => {
-                write!(f, "%{}.{}", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison)
+                write!(f, "%{}.{}", self.type_name, self.property_comparison)
             }
         }
     }
@@ -120,14 +132,14 @@ impl Display for BaseRule {
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct ConditionalRule {
-    pub type_name: String,
+    pub type_name: TypeName,
     pub when_condition: PropertyComparison,
     pub check_condition: PropertyComparison
 }
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name.to_lowercase().replace("::", "_"), self.when_condition);
-        writeln!(f, "\t\t%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition);
+        writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name, self.when_condition);
+        writeln!(f, "\t\t%{}[ {} ].{}", self.type_name, self.when_condition, self.check_condition);
         write!(f, "\t}}")
     }
 }
@@ -138,6 +150,15 @@ pub(crate) enum Rule {
     Conditional(ConditionalRule),
     Basic(BaseRule)
 }
+
+impl Rule {
+    fn is_basic(&self) -> bool {
+        match self {
+            Rule::Basic(base) => true,
+            _ => false,
+        }
+    }
+}
 impl Display for Rule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -147,13 +168,51 @@ impl Display for Rule {
     }
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Hash)]
+pub(crate) struct Dedup_anchor {
+    pub type_name: TypeName,
+    pub property: String,
+}
+
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct Clause {
     pub(crate) rules: Vec<Rule>
 }
 impl Display for Clause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let result: Vec<String> = self.rules.clone().into_iter().map(|rule| format!("{}", rule)).collect();
+
+        let mut property_to_rules = HashMap::new();
+        let cloned_rules = self.rules.clone();
+        for rule in cloned_rules.iter() {
+            match rule {
+                Rule::Conditional(conditional) => { },
+                Rule::Basic(base) => {
+                    property_to_rules.entry(Dedup_anchor{
+                        type_name: TypeName{type_name: format!("{}",base.type_name)},
+                        property: format!("{}", base.property_comparison.property_path)})
+                        .or_insert_with(Vec::new).push(rule);
+                }
+            }
+        }
+        let mut result= Vec::new();
+
+        for (anchor,rules) in property_to_rules.into_iter() {
+            if rules.len() == 1 {
+                result.push(format!("{}", rules[0]))
+            } else {
+                let anchor_value = anchor.type_name;
+                let mut result_for_key= Vec::new();
+                for(rule) in rules.iter() {
+                    match rule {
+                        Rule::Conditional(conditional) => { },
+                        Rule::Basic(base) => {
+                            result_for_key.push(format!("{}",&base.property_comparison))
+                        }
+                    }
+                }
+                result.push(format!("%{} {{ {} }}", anchor_value, result_for_key.join(" or ")));
+            }
+        }
         write!(f, "{}", result.join(" or "))
     }
 }

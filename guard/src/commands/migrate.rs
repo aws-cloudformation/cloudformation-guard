@@ -89,8 +89,8 @@ pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Resul
         if let RuleLineType::Clause(clause) = rule.clone() {
             clause.rules.into_iter().for_each(|rule|
                 match rule {
-                    Rule::Basic(basic_rule) => { resource_types.insert(basic_rule.type_name); },
-                    Rule::Conditional(conditional_rule) => { resource_types.insert(conditional_rule.type_name); }
+                    Rule::Basic(basic_rule) => { resource_types.insert(format!("{}",basic_rule.type_name)); },
+                    Rule::Conditional(conditional_rule) => { resource_types.insert(format!("{}",conditional_rule.type_name)); }
                 }
             );
         }

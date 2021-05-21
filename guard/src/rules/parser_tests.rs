@@ -2920,7 +2920,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("AWS::Resource::Type")
+            TypeName{type_name: String::from("AWS::Resource::Type")}
         )),
         Ok((
             unsafe {
@@ -2931,7 +2931,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("Custom::Resource")
+            TypeName{type_name: String::from("Custom::Resource")}
         )),
         Ok((
             unsafe {
@@ -2942,7 +2942,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("AWS::Module::Type")
+            TypeName{type_name: String::from("AWS::Module::Type")}
         )),
         Err(nom::Err::Error(
             ParserError {
@@ -2995,7 +2995,7 @@ fn test_type_block() {
                 )
             },
             TypeBlock {
-                type_name: String::from("AWS::EC2::Instance"),
+                type_name: String::from("aws_ec2_instance"),
                 conditions: None,
                 block: Block {
                     assignments: vec![
@@ -3076,7 +3076,7 @@ fn test_type_block() {
                 )
             },
             TypeBlock {
-                type_name: String::from("AWS::EC2::Instance"),
+                type_name: String::from("aws_ec2_instance"),
                 conditions: None,
                 block: Block {
                     assignments: vec![],
@@ -3116,7 +3116,7 @@ fn test_type_block() {
                 )
             },
             TypeBlock {
-                type_name: String::from("AWS::EC2::Instance"),
+                type_name: String::from("aws_ec2_instance"),
                 conditions: Some(vec![
                     vec![
                         WhenGuardClause::Clause(
@@ -3207,7 +3207,7 @@ fn test_rule_block() {
 }"#
     ];
 
-    let type_name = "AWS::EC2::Instance";
+    let type_name = "aws_ec2_instance";
 
     let expectations = [
         Ok((
@@ -3544,7 +3544,7 @@ fn test_try_from_rule_block() -> Result<(), Error> {
 
                     RuleClause::TypeBlock(
                         TypeBlock {
-                            type_name: String::from("AWS::S3::Bucket"),
+                            type_name: String::from("aws_s3_bucket"),
                             conditions: None,
                             block: Block {
                                 assignments: vec![],
@@ -3752,7 +3752,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
 
             conjunctions: vec![
                 vec![RuleClause::TypeBlock(TypeBlock {
-                    type_name: String::from("AWS::AmazonMQ::Broker"),
+                    type_name: String::from("aws_amazonmq_broker"),
                     conditions: None,
                     block: Block {
                         assignments: vec![],
@@ -3778,7 +3778,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     }
                 })],
                 vec![RuleClause::TypeBlock(TypeBlock {
-                    type_name: String::from("AWS::AmazonMQ::Broker"),
+                    type_name: String::from("aws_amazonmq_broker"),
                     conditions: None,
                     block: Block {
                         assignments: vec![],
@@ -3804,7 +3804,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     }
                 })],
                 vec![RuleClause::TypeBlock(TypeBlock {
-                    type_name: String::from("AWS::ApiGateway::Method"),
+                    type_name: String::from("aws_apigateway_method"),
                     conditions: None,
                     block: Block {
                         assignments: vec![],
@@ -3830,7 +3830,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     }
                 }),
                  RuleClause::TypeBlock(TypeBlock {
-                     type_name: String::from("AWS::ApiGateway::Method"),
+                     type_name: String::from("aws_apigateway_method"),
                      conditions: None,
                      block: Block {
                          assignments: vec![],

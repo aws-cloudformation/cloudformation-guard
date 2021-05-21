@@ -25,6 +25,7 @@ use crate::rules::errors::Error;
 use std::fmt::Formatter;
 use indexmap::map::IndexMap;
 use std::convert::TryFrom;
+use crate::migrate::parser::TypeName;
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
@@ -1268,7 +1269,7 @@ fn block<'loc, T, P>(clause_parser: P) -> impl Fn(Span<'loc>) -> IResult<Span<'l
     }
 }
 
-pub(crate) fn type_name(input: Span) -> IResult<Span, String> {
+pub(crate) fn type_name(input: Span) -> IResult<Span, TypeName> {
     match tuple((
         terminated(var_name, tag("::")),
         terminated(var_name, tag("::")),
@@ -1276,7 +1277,8 @@ pub(crate) fn type_name(input: Span) -> IResult<Span, String> {
     ))(input) {
         Ok((remaining, parts)) => {
             let (remaining, _skip_module) = opt(tag("::MODULE"))(remaining)?;
-            Ok((remaining, format!("{}::{}::{}", parts.0, parts.1, parts.2)))
+            Ok((remaining, TypeName {
+                type_name: format!("{}::{}::{}", parts.0, parts.1, parts.2)}))
         },
         Err(nom::Err::Error(_e)) => {
             // custom resource might only have one separator
@@ -1284,7 +1286,8 @@ pub(crate) fn type_name(input: Span) -> IResult<Span, String> {
                 terminated(var_name, tag("::")),
                 var_name
             ))(input)?;
-            Ok((remaining, format!("{}::{}", parts.0, parts.1)))
+            Ok((remaining, TypeName {
+                type_name: format!("{}::{}", parts.0, parts.1)}))
         },
         Err(e) => return Err(e)
     }
@@ -1325,7 +1328,7 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
 
     Ok((input, TypeBlock {
         conditions: when_conditions,
-        type_name: name,
+        type_name: format!("{}", name),
         block: Block {
             assignments: assignments,
             conjunctions: clauses,

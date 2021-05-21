@@ -216,7 +216,7 @@ fn test_base_rule() {
     assert_eq!(
         base_rule(from_str2(example)),
         Ok((span, BaseRule{
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             property_comparison: prop_comparison,
             custom_message: None
         }))
@@ -243,7 +243,7 @@ fn test_conditional_rule() {
     assert_eq!(
         conditional_rule(from_str2(example)),
         Ok((span, ConditionalRule{
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             when_condition,
             check_condition
         }))
@@ -269,14 +269,14 @@ fn test_clause_with_message() {
     };
     let conditional_rule = Rule::Conditional(
         ConditionalRule {
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             when_condition,
             check_condition
         }
     );
     let basic_rule_1 = Rule::Basic(
         BaseRule{
-            type_name: String::from("AWS::EC2::Instance"),
+            type_name: TypeName{type_name: String::from("AWS::EC2::Instance")},
             property_comparison: PropertyComparison {
                 property_path: String::from("InstanceType"),
                 operator: CmpOperator::Eq,
@@ -287,7 +287,7 @@ fn test_clause_with_message() {
     );
     let basic_rule_2 = Rule::Basic(
         BaseRule {
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             property_comparison: PropertyComparison {
                 property_path: String::from("BucketName"),
                 operator: CmpOperator::Eq,
@@ -332,14 +332,14 @@ fn test_parse_rules_file() {
     };
     let conditional_rule = Rule::Conditional(
         ConditionalRule {
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             when_condition,
             check_condition
         }
     );
     let basic_rule_1 = Rule::Basic(
         BaseRule{
-            type_name: String::from("AWS::EC2::Instance"),
+            type_name: TypeName{type_name: String::from("AWS::EC2::Instance")},
             property_comparison: PropertyComparison {
                 property_path: String::from("InstanceType"),
                 operator: CmpOperator::Eq,
@@ -351,7 +351,7 @@ fn test_parse_rules_file() {
     let basic_rule_clone = basic_rule_1.clone();
     let basic_rule_2 = Rule::Basic(
         BaseRule {
-            type_name: String::from("AWS::S3::Bucket"),
+            type_name: TypeName{type_name: String::from("AWS::S3::Bucket")},
             property_comparison: PropertyComparison {
                 property_path: String::from("BucketName"),
                 operator: CmpOperator::Eq,
@@ -392,6 +392,15 @@ fn test_parse_rules_file_rule_error() {
     );
 }
 
+#[test]
+fn test_disjunction_clause() {
+    let example = "let encryption_flag = true \n AWS::EC2::Volume Encrypted == %encryption_flag \n AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 50";
+    let actual_rules = parse_rules_file(&String::from(example), &String::from("file_name")).unwrap();
+
+    for (k) in actual_rules.iter() {
+        println!("key={}", k);
+    }
+}
 
 fn make_empty_span(offset: usize) -> Span<'static> {
     unsafe { Span::new_from_raw_offset(offset, 1, "", "") }
