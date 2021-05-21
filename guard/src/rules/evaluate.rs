@@ -129,6 +129,43 @@ fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&
     Ok(elevated)
 }
 
+fn is_mixed_values_results(incoming: &[&PathAwareValue]) -> bool {
+    let mut non_list_elem = false;
+    let mut list_elem_present = false;
+    for each in incoming {
+        match each {
+            PathAwareValue::List((_, _)) => {
+                list_elem_present = true;
+                continue;
+            },
+
+            _ =>  {
+                non_list_elem = true;
+                continue;
+            }
+        }
+    }
+    non_list_elem && list_elem_present
+}
+
+fn merge_mixed_results<'a>(incoming: &'a [&PathAwareValue]) -> Vec<&'a PathAwareValue> {
+    let mut merged = Vec::with_capacity(incoming.len());
+    for each in incoming {
+        match each {
+            PathAwareValue::List((_, l)) => {
+                for inner in l {
+                    merged.push(inner);
+                }
+            },
+
+            rest => {
+                merged.push(rest);
+            }
+        }
+    }
+    merged
+}
+
 fn compare<F>(lhs: &Vec<&PathAwareValue>,
               _lhs_query: &[QueryPart<'_>],
               rhs: &Vec<&PathAwareValue>,
@@ -141,23 +178,34 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
         return Ok((Status::FAIL, None, None))
     }
 
-    let lhs_elem = lhs[0];
-    let rhs_elem = rhs[0];
+    let lhs = if is_mixed_values_results(lhs) {
+        merge_mixed_results(lhs)
+    } else {
+        lhs.to_vec()
+    };
+    let rhs = if is_mixed_values_results(rhs) {
+        merge_mixed_results(rhs)
+    } else {
+        rhs.to_vec()
+    };
+
+    let lhs_elem_has_list = lhs[0].is_list();
+    let rhs_elem_has_list = rhs[0].is_list();
 
     //
     // What are possible comparisons
     //
-    if !lhs_elem.is_list() && !rhs_elem.is_list() {
-        match compare_loop(lhs, rhs, compare, any, atleast_one) {
+    if !lhs_elem_has_list && !rhs_elem_has_list {
+        match compare_loop(&lhs, &rhs, compare, any, atleast_one) {
             Ok((true, _, _)) => Ok((Status::PASS, None, None)),
             Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
             Err(e) => Err(e)
         }
     }
-    else if lhs_elem.is_list() && !rhs_elem.is_list() {
-        for elevated in elevate_inner(lhs)? {
+    else if lhs_elem_has_list && !rhs_elem_has_list {
+        for elevated in elevate_inner(&lhs)? {
             if let Ok((cmp, from, to)) = compare_loop(
-                &elevated, rhs, |f, s| compare(f, s), any, atleast_one) {
+                &elevated, &rhs, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
                     return Ok((Status::FAIL, from, to))
                 }
@@ -165,10 +213,10 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
         }
         Ok((Status::PASS, None, None))
     }
-    else if !lhs_elem.is_list() && rhs_elem.is_list() {
-        for elevated in elevate_inner(rhs)? {
+    else if !lhs_elem_has_list && rhs_elem_has_list {
+        for elevated in elevate_inner(&rhs)? {
             if let Ok((cmp, from, to)) = compare_loop(
-                lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
+                &lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
                     return Ok((Status::FAIL, from, to))
                 }
@@ -177,18 +225,10 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
         Ok((Status::PASS, None, None))
     }
     else {
-        for elevated_lhs in elevate_inner(lhs)? {
-            for elevated_rhs in elevate_inner(rhs)? {
-                if let Ok((cmp, from, to)) = compare_loop(
-                    &elevated_lhs, &elevated_rhs, |f, s| compare(f, s), any, atleast_one) {
-                    if !cmp {
-                        return Ok((Status::FAIL, from, to))
-                    }
-                }
-
-            }
+        match compare_loop(&lhs, &rhs, compare, any, atleast_one)? {
+            (true, _, _) => Ok((Status::PASS, None, None)),
+            (false, left, right) => Ok((Status::FAIL, left, right))
         }
-        Ok((Status::PASS, None, None))
     }
 }
 

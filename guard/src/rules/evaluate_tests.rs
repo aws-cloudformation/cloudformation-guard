@@ -1397,6 +1397,139 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
 }
 
 #[test]
+fn test_compare_lists() -> Result<()> {
+    let root = Path::root();
+    let value = PathAwareValue::List((
+        root.clone(),
+        vec![
+            PathAwareValue::Int((root.clone(), 1)),
+            PathAwareValue::Int((root.clone(), 2))
+        ]));
+    let lhs = vec![&value];
+    let rhs = vec![&value];
+
+    let query = [];
+    let r = super::compare(
+        &lhs,
+        &query,
+        &rhs,
+        None,
+        super::super::path_value::compare_eq,
+        false,
+        false
+    )?;
+    assert_eq!(r.0, Status::PASS);
+    Ok(())
+}
+
+#[test]
+fn test_compare_rulegen() -> Result<()> {
+    let rulegen_created = r###"
+let aws_ec2_securitygroup_resources = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+rule aws_ec2_securitygroup when %aws_ec2_securitygroup_resources !empty {
+  %aws_ec2_securitygroup_resources.Properties.SecurityGroupEgress == [{"CidrIp":"0.0.0.0/0","IpProtocol":-1},{"CidrIpv6":"::/0","IpProtocol":-1}]
+}"###;
+    let template = r###"
+Resources:
+
+  # SecurityGroups
+  ## Alb Security Groups
+
+  rFrontendAppSpecificSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Frontend Security Group
+      GroupName: secgrp-frontend
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: -1
+        - CidrIpv6: "::/0"
+          IpProtocol: -1
+      VpcId: vpc-123abc
+    "###;
+    let rules = RulesFile::try_from(rulegen_created)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let root = RootScope::new(&rules, &value);
+    let status = rules.evaluate(&value, &root)?;
+    assert_eq!(status, Status::PASS);
+    Ok(())
+}
+
+#[test]
+fn test_guard_10_compatibility_and_diff() -> Result<()> {
+    let value_str = r###"
+    Statement:
+      - Principal: ['*', 's3:*']
+    "###;
+    let value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let dummy = DummyEval{};
+
+    //
+    // Evaluation differences with 1.0 for Statement.*.Principal == '*'
+    //
+    // Guard 1.0 this would PASS with at-least one semantics for the payload above. This is where docs
+    // need to be consulted to understand that == is at-least-one and != is ALL. Due to this decision certain
+    // expressions like ensure that all AWS::EC2::Volume Encrypted == true, could not be specified
+    //
+    // In Guard 2.0 this would FAIL. The reason being that Guard 2.0 goes for explicitness in specifying
+    // clauses. By default it asserts for ALL semantics. If you expecting to match at-least one or more
+    // you must use SOME keyword that would evaluate correctly. With this type of support expressions
+    // like
+    //
+    //        AWS::EC2::Volume Properties.Encrypted == true
+    //
+    // can be correctly done.
+    //
+    // At the same time
+    //
+    //         AWS::EC2::Volume SOME Properties.Encrypted == true
+    //
+    // to match 1 or more can be specified.
+    //
+    // And finally
+    //
+    //       AWS::EC2::Volume Properties {
+    //             Encrypted !EXISTS or
+    //             Encrypted == true
+    //       }
+    //
+    // can be correctly specified. This also makes the intent clear to both the rule author and
+    // auditor what was acceptable, that it is okay that Encrypted was not specified as an attribute
+    // or if specified must be true. This makes it clear to the reader/auditor rather than guess
+    // at how Guard engine evaluates. The evaluation engine is dumb and stupid, defaults to working
+    // one way consistently ALL. Needs to told explicitly to do otherwise
+    //
+
+    let clause_str = r#"Statement.*.Principal == '*'"#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::FAIL);
+
+    let clause_str = r#"SOME Statement.*.Principal == '*'"#;
+    let clause = GuardClause::try_from(clause_str)?;
+    let dummy = DummyEval{};
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+    let value_str = r###"
+    Statement:
+      - Principal: aws
+      - Principal: ['*', 's3:*']
+    "###;
+    let value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    //
+    // Evaluate the SOME clause again, it must pass with ths value as well
+    //
+    let status = clause.evaluate(&value, &dummy)?;
+    assert_eq!(status, Status::PASS);
+
+
+    Ok(())
+}
+
+#[test]
 fn block_evaluation() -> Result<()> {
     let value_str = r#"
     Resources:

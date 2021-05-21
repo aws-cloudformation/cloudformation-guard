@@ -108,10 +108,16 @@ impl Path {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct MapValue {
     keys: Vec<PathAwareValue>,
     values: indexmap::IndexMap<String, PathAwareValue>,
+}
+
+impl PartialEq for MapValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.values == other.values
+    }
 }
 
 impl MapValue {
