@@ -141,7 +141,7 @@ These tenets help guide the development of the Guard DSL:
 
 * **Query & Filtering:** Queries support simple decimal dotted format syntax to access properties in the hierarchical data. Arrays/Collections are accessed using `[]` . Map or Struct’s values can use `*` for accessing values for all keys. All collections can be further narrowed to target specific instances inside the collection using filtering. To learn more read [Guard: Query and Filtering](docs/QUERY_AND_FILTERING.md)
 
-* **Variables, Projections, and Query Interpolation:** Guard supports single shot assignment to variables using a **`let`** keyword for assignment. All variable assignments resulting from a query is a list (result set). One can also assign static literals to variables. Variables are assessed using a prefix **`%`** and can be used inside the Query for interpolation. To learn more read [Guard: Query, Projection and Interpolation](QUERY_PROJECTION_AND_INTERPOLATION.md)
+* **Variables, Projections, and Query Interpolation:** Guard supports single shot assignment to variables using a **`let`** keyword for assignment. All variable assignments resulting from a query is a list (result set). One can also assign static literals to variables. Variables are assessed using a prefix **`%`** and can be used inside the Query for interpolation. To learn more read [Guard: Query, Projection and Interpolation](docs/QUERY_PROJECTION_AND_INTERPOLATION.md)
 
 * **Complex Composition**: As stated earlier, clauses can be expressed in Conjunctive Normal Form. Clauses on separates lines are ANDs. Disjunctions are expressed using the `or|OR` keyword. You can group clauses in a named rule. You can then use named rules in other rules to create more advanced compositions. Furthermore, you can have multiple files containing named rules that together form a category of checks for a specific compliance like “ensure encryption at rest”. To learn more read [Guard: Complex Composition](docs/COMPLEX_COMPOSITION.md)
 
@@ -224,7 +224,7 @@ SUBCOMMANDS:
 
 ##### Ubuntu
 
-The CLI tool for cfn-guard is available from GitHub release. Grab the latest release from our [releases](https://github.com/aws-cloudformation/cloudformation-guard/release) page. 
+The CLI tool for cfn-guard is available from GitHub release. Grab the latest release from our [releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) page. 
 
 ```bash
 $ wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/VERSION/cfn-guard-v2-ubuntu-latest.tar.gz
