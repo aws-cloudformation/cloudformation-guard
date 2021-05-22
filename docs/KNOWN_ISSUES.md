@@ -2,7 +2,7 @@
 
 No software is perfect, here is a list of known issues /gotchas that is worth noting with potential workarounds when you do encounter them (and for some, where you don’t really have a solution) 
 
-1. Queries assigned to variables (see [Guard: Variable, Projections and Interpolations](QUERY_PROJECTTION_AND_INTERPOLATION.md)) can be accessed using two forms when defining clauses, E.g. `let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]`
+1. Queries assigned to variables (see [Guard: Variable, Projections and Interpolations](QUERY_PROJECTION_AND_INTERPOLATION.md)) can be accessed using two forms when defining clauses, E.g. `let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]`
     
 ```
 %api_gws.Properties.EndpointConfiguration.Types[*] == "PRIVATE"` 
