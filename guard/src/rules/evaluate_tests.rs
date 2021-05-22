@@ -1470,22 +1470,18 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     //
     // Guard 1.0 this would PASS with at-least one semantics for the payload above. This is where docs
     // need to be consulted to understand that == is at-least-one and != is ALL. Due to this decision certain
-    // expressions like ensure that all AWS::EC2::Volume Encrypted == true, could not be specified
+    // expressions like ensure that ALL AWS::EC2::Volume Encrypted == true, could not be specified
     //
     // In Guard 2.0 this would FAIL. The reason being that Guard 2.0 goes for explicitness in specifying
     // clauses. By default it asserts for ALL semantics. If you expecting to match at-least one or more
-    // you must use SOME keyword that would evaluate correctly. With this type of support expressions
-    // like
+    // you must use SOME keyword that would evaluate correctly. With this support in 2.0 we can
+    // support ALL expressions like
     //
     //        AWS::EC2::Volume Properties.Encrypted == true
     //
-    // can be correctly done.
-    //
-    // At the same time
+    // At the same time, one can explicitly express at-least-one or more semantics using SOME
     //
     //         AWS::EC2::Volume SOME Properties.Encrypted == true
-    //
-    // to match 1 or more can be specified.
     //
     // And finally
     //
@@ -1495,10 +1491,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     //       }
     //
     // can be correctly specified. This also makes the intent clear to both the rule author and
-    // auditor what was acceptable, that it is okay that Encrypted was not specified as an attribute
-    // or if specified must be true. This makes it clear to the reader/auditor rather than guess
-    // at how Guard engine evaluates. The evaluation engine is dumb and stupid, defaults to working
-    // one way consistently ALL. Needs to told explicitly to do otherwise
+    // auditor what was acceptable. Here, it is okay that accept Encrypted was not specified
+    // as an attribute or when specified it must be true. This makes it clear to the reader/auditor
+    // rather than guess at how Guard engine evaluates.
+    //
+    // The evaluation engine is purposefully dumb and stupid, defaults to working
+    // one way consistently enforcing ALL semantics. Needs to told explicitly to do otherwise
     //
 
     let clause_str = r#"Statement.*.Principal == '*'"#;
