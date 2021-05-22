@@ -255,7 +255,7 @@ Resources:
 
 ## Validating Multiple Rules against Multiple Data Files
 
-Guard is purpose-built for policy definition and evaluation on structured JSON- and YAML- formatted data. For better maintainability of rules, rule authors can write rules into multiple files and section them however they see fit and still be able to validate multiple rule files against a data file or multiple data files. The cfn-guard validate command can take a directory of files for the `--data` and `--rules` options. More information can be found in the [cfn-guard README](../cfn-guard/README.md).
+Guard is purpose-built for policy definition and evaluation on structured JSON- and YAML- formatted data. For better maintainability of rules, rule authors can write rules into multiple files and section them however they see fit and still be able to validate multiple rule files against a data file or multiple data files. The cfn-guard validate command can take a directory of files for the `--data` and `--rules` options. More information can be found in the [cfn-guard README](../guard/README.md).
 
 ```bash
 cfn-guard validate --data /path/to/dataDirectory --rules /path/to/ruleDirectory
