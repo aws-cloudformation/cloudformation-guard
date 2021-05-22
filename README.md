@@ -153,7 +153,7 @@ These tenets help guide the development of the Guard DSL:
 
 ##### MacOS
 
-By default this is builds for macOS-10 (Catalina). It has been tested to work on macOS-11 (BigSpur). See [OS Matix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
+By default this is built for macOS-10 (Catalina). It has been tested to work on macOS-11 (BigSpur). See [OS Matix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
 
 1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
 2. Cut-n-paste the commands below (change version=X for other versions)
