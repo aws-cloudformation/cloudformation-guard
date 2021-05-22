@@ -28,7 +28,7 @@ Resources:
   EcsTask:
     Type: 'AWS::ECS::TaskDefinition'
     Properties:
-      TaskRoleArn: '`arn:aws:iam::123456789012:role/my-role-name`'
+      TaskRoleArn: 'arn:aws:iam::123456789012:role/my-role-name'
 ```
 
 *Sample Guard rule*:
@@ -233,15 +233,15 @@ Resources:
 *Sample Guard rule:*
 
 ```
-`# Select as ECS TaskDefinitions from the template `
+# Select as ECS TaskDefinitions from the template
 let ecs_tasks = Resources.*[
     Type == 'AWS::ECS::TaskDefinition'
 ]
 
-`# Select a subset of TaskDefinitions whose TaskRoleArn is a Fn::Gett Ref`
+# Select a subset of TaskDefinitions whose TaskRoleArn is a Fn::Gett Ref
 let task_role_refs = some %ecs_tasks.Properties.TaskRoleArn.'Fn::GetAtt'[0]
 
-`# Select a subset of TaskDefinitions whose ExecutionRoleArn is a Fn::Gett Ref`
+# Select a subset of TaskDefinitions whose ExecutionRoleArn is a Fn::Gett Ref
 let execution_role_refs = some %ecs_tasks.Properties.ExecutionRoleArn.'Fn::GetAtt'[0]
 
 # Verifies #1 defined requirement
