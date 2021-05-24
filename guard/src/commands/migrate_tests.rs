@@ -95,9 +95,6 @@ fn test_migrate_rules_disjunction() -> Result<()> {
     );
     let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
     let result = migrate_rules(rule_lines).unwrap();
-
-    println!("{}", result);
-
     let span = crate::rules::parser::Span::new_extra(&result, "");
     rules_file(span)?;
     Ok(())
