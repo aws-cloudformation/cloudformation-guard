@@ -183,9 +183,11 @@ impl Display for Clause {
 
         let mut property_to_rules = HashMap::new();
         let cloned_rules = self.rules.clone();
+        let mut result= Vec::new();
+
         for rule in cloned_rules.iter() {
             match rule {
-                Rule::Conditional(conditional) => { },
+                Rule::Conditional(conditional) => { result.push(format!("{}", rule)) },
                 Rule::Basic(base) => {
                     property_to_rules.entry(Dedup_anchor{
                         type_name: TypeName{type_name: format!("{}",base.type_name)},
@@ -194,7 +196,6 @@ impl Display for Clause {
                 }
             }
         }
-        let mut result= Vec::new();
 
         for (anchor,rules) in property_to_rules.into_iter() {
             if rules.len() == 1 {
@@ -204,13 +205,13 @@ impl Display for Clause {
                 let mut result_for_key= Vec::new();
                 for(rule) in rules.iter() {
                     match rule {
-                        Rule::Conditional(conditional) => { },
+                        Rule::Conditional(conditional) => {},
                         Rule::Basic(base) => {
                             result_for_key.push(format!("{}",&base.property_comparison))
                         }
                     }
                 }
-                result.push(format!("%{} {{ {} }}", anchor_value, result_for_key.join(" or ")));
+                result.push(format!("%{} {{\n\t\t{}\n\t}}", anchor_value, result_for_key.join(" or ")));
             }
         }
         write!(f, "{}", result.join(" or "))

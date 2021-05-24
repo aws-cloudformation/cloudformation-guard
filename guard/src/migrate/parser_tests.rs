@@ -302,8 +302,9 @@ fn test_clause_with_message() {
         rules: vec![conditional_rule, basic_rule_1, basic_rule_2]
     };
 
+    let parsed_rules = rule_line(from_str2(example));
     assert_eq!(
-        rule_line(from_str2(example)),
+        parsed_rules,
         Ok((span,RuleLineType::Clause(clause)))
     );
 }
@@ -393,13 +394,73 @@ fn test_parse_rules_file_rule_error() {
 }
 
 #[test]
-fn test_disjunction_clause() {
+fn test_disjunction_basic_clauses() {
     let example = "let encryption_flag = true \n AWS::EC2::Volume Encrypted == %encryption_flag \n AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 50";
     let actual_rules = parse_rules_file(&String::from(example), &String::from("file_name")).unwrap();
 
-    for (k) in actual_rules.iter() {
-        println!("key={}", k);
-    }
+    let encryption_rule = Rule::Basic(
+        BaseRule{
+            type_name: TypeName{type_name: String::from("AWS::EC2::Volume")},
+            property_comparison: PropertyComparison {
+                property_path: String::from("Encrypted"),
+                operator: CmpOperator::Eq,
+                comparison_value: OldGuardValues::Value(Value::String(String::from("%encryption_flag")))
+            },
+            custom_message: None
+        }
+    );
+
+    let volume_size_100 = Rule::Basic(
+        BaseRule{
+            type_name: TypeName{type_name: String::from("AWS::EC2::Volume")},
+            property_comparison: PropertyComparison {
+                property_path: String::from("Size"),
+                operator: CmpOperator::Eq,
+                comparison_value: OldGuardValues::Value(Value::Int(100))
+            },
+            custom_message: None
+        }
+    );
+
+    let volume_size_50 = Rule::Basic(
+        BaseRule{
+            type_name: TypeName{type_name: String::from("AWS::EC2::Volume")},
+            property_comparison: PropertyComparison {
+                property_path: String::from("Size"),
+                operator: CmpOperator::Eq,
+                comparison_value: OldGuardValues::Value(Value::Int(50))
+            },
+            custom_message: None
+        }
+    );
+
+    let expected_rules = vec![
+        RuleLineType::Assignment(Assignment {
+            var_name: String::from("encryption_flag"),
+            value: OldGuardValues::Value(Value::Bool(true))
+        }),
+        RuleLineType::Clause(Clause {
+            rules: vec![encryption_rule]
+        }),
+        RuleLineType::Clause(Clause {
+            rules: vec![volume_size_100, volume_size_50]
+        })
+    ];
+
+    let actual_rule_str: Vec<String> = actual_rules.clone().into_iter().map(|rule| format!("{}", rule)).collect();
+    let migrated_rule_str = format!("{}", actual_rule_str.join("\n"));
+
+    let expected_rule_str = "\tlet encryption_flag = true\n%aws_ec2_volume.Properties.Encrypted == \"%encryption_flag\"\n%aws_ec2_volume {\n\t\tProperties.Size == 100 or Properties.Size == 50\n\t}";
+
+    assert_eq!(
+        actual_rules,
+        expected_rules
+    );
+
+    assert_eq!(
+        expected_rule_str,
+        migrated_rule_str
+    )
 }
 
 fn make_empty_span(offset: usize) -> Span<'static> {
