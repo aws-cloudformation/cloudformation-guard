@@ -1328,7 +1328,7 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
 
     Ok((input, TypeBlock {
         conditions: when_conditions,
-        type_name: format!("{}", name),
+        type_name: format!("{}", name.type_name),
         block: Block {
             assignments: assignments,
             conjunctions: clauses,
