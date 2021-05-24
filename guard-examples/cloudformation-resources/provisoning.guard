@@ -1,0 +1,15 @@
+# All resources MUST specify a typeName which adheres to this Regular Expression
+# See https://github.com/aws-cloudformation/cloudformation-resource-schema#resource-type-name
+rule ensure_valid_typeName {
+    # The CloudFormation CLI should catch this too.
+    typeName == /^[a-zA-Z0-9]{2,64}::[a-zA-Z0-9]{2,64}::[a-zA-Z0-9]{2,64}$/
+}
+
+# If the resource type does not contain create, read, and delete handlers, CloudFormation cannot
+# actually provision the resource.
+# See https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/resource-type-develop.html#resource-type-develop-implement-handlers
+rule ensure_resource_is_provisionable {
+    handlers.create exists
+    handlers.read exists
+    handlers.delete exists
+}
