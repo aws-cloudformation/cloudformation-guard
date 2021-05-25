@@ -149,6 +149,29 @@ These tenets help guide the development of the Guard DSL:
 
 ### Installation
 
+#### Installation from Pre-Built Release Binaries
+
+##### MacOS
+
+By default this is built for macOS-10 (Catalina). It has been tested to work on macOS-11 (BigSpur). See [OS Matix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
+
+1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
+2. Cut-n-paste the commands below (change version=X for other versions)
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
+```
+Remember to add `~/.guard/bin/` to your `$PATH`.
+
+##### Ubuntu
+
+1. Open any terminal of your choice
+2. Cut-n-paste the commands below (change version=X for other versions)
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
+```
+
+Remember to add `~/.guard/bin/` to your `$PATH`.
+
 #### Installation of Rust and Cargo
 
 ##### Ubuntu/MacOS: Install Rust and Cargo
@@ -219,25 +242,6 @@ SUBCOMMANDS:
                   rules and data files. The directory being pointed to must contain only data files,
                   or rules files.
 ```
-
-#### Installation from Pre-Built Release Binaries
-
-##### Ubuntu
-
-The CLI tool for cfn-guard is available from GitHub release. Grab the latest release from our [releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) page. 
-
-```bash
-$ wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/VERSION/cfn-guard-v2-ubuntu-latest.tar.gz
-$ tar -xvf cfn-guard-v2-ubuntu-latest.tar.gz
-$ cd ./cfn-guard-v2-ubuntu-latest
-$ ./cfn-guard help
-```
-
-You can then move the installed executable to the directory of your choosing, so it is on your `$PATH`.
-
-##### MacOS
-
-Binaries are also available for Mac [releases](https://github.com/aws-cloudformation/cloudformation-guard/releases) in a tarball. The instructions are the same as Ubuntu.
 
 ### How does Guard CLI work?
 
