@@ -406,4 +406,4 @@ rule rule_name_E when rule_name_D {
 }
 ```
 
-The above styles of compositions will be discussed in-depth in the [Guard: Complex Composition](COMPOSITION.md) document.
+The above styles of compositions will be discussed in-depth in the [Guard: Complex Composition](COMPLEX_COMPOSITION.md) document.
