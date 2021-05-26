@@ -4,7 +4,7 @@ use clap::{App, Arg, ArgMatches};
 use crate::command::Command;
 use crate::commands::files::read_file_content;
 use crate::rules::Result;
-use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule};
+use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule, TypeName};
 use std::fs::File;
 use std::fmt::Write as FmtWrite;
 use std::io::Write as IoWrite;
@@ -83,14 +83,14 @@ impl Command for Migrate {
     }
 }
 
-pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<String>> {
+pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<TypeName>> {
     let mut resource_types = HashSet::new();
     for rule in rules {
         if let RuleLineType::Clause(clause) = rule.clone() {
             clause.rules.into_iter().for_each(|rule|
                 match rule {
-                    Rule::Basic(basic_rule) => { resource_types.insert(format!("{}",basic_rule.type_name)); },
-                    Rule::Conditional(conditional_rule) => { resource_types.insert(format!("{}",conditional_rule.type_name)); }
+                    Rule::Basic(basic_rule) => { resource_types.insert(basic_rule.type_name); },
+                    Rule::Conditional(conditional_rule) => { resource_types.insert(conditional_rule.type_name); }
                 }
             );
         }
@@ -106,7 +106,7 @@ pub (crate) fn migrate_rules(rules: Vec<RuleLineType>) -> Result<String> {
     // write assignments for every resource type
     writeln!(&mut migrated_rules, "rule migrated_rules {{")?;
     for resource_type in resource_types {
-        writeln!(&mut migrated_rules, "\tlet {} = Resources.*[ Type == \"{}\" ]", resource_type.to_lowercase().replace("::", "_"), resource_type)?;
+        writeln!(&mut migrated_rules, "\tlet {} = Resources.*[ Type == \"{}\" ]", resource_type, resource_type.type_name)?;
     }
     for rule in rules {
         writeln!(&mut migrated_rules, "\t{}", rule)?;

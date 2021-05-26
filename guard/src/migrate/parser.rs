@@ -31,7 +31,6 @@ impl Display for OldGuardValues {
     }
 }
 
-
 impl Hash for OldGuardValues {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
@@ -46,7 +45,6 @@ pub(crate) struct Assignment {
     pub(in crate::migrate) var_name: String,
     pub(in crate::migrate) value: OldGuardValues
 }
-
 impl Display for Assignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "\tlet {} = {}", self.var_name, self.value)
@@ -65,7 +63,6 @@ pub(crate) enum CmpOperator {
     Le,
     Ge
 }
-
 impl Display for CmpOperator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -87,7 +84,6 @@ pub(crate) struct PropertyComparison {
     pub operator: CmpOperator,
     pub comparison_value: OldGuardValues,
 }
-
 impl Display for PropertyComparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.property_path.starts_with(".") {
@@ -99,11 +95,10 @@ impl Display for PropertyComparison {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Hash)]
+#[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Clone, Hash)]
 pub(crate) struct TypeName {
     pub type_name: String
 }
-
 impl Display for TypeName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.type_name.to_lowercase().replace("::", "_"))
@@ -116,7 +111,6 @@ pub(crate) struct BaseRule {
     pub(crate) property_comparison: PropertyComparison,
     pub(crate) custom_message: Option<String>
 }
-
 impl Display for BaseRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.custom_message {
@@ -149,15 +143,6 @@ impl Display for ConditionalRule {
 pub(crate) enum Rule {
     Conditional(ConditionalRule),
     Basic(BaseRule)
-}
-
-impl Rule {
-    fn is_basic(&self) -> bool {
-        match self {
-            Rule::Basic(base) => true,
-            _ => false,
-        }
-    }
 }
 impl Display for Rule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

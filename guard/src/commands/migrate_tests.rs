@@ -64,7 +64,10 @@ fn test_get_resource_types_in_ruleset() {
             ]
         })
     ];
-    let expected_resource_types = vec![String::from("aws_ec2_instance"), String::from("aws_s3_bucket"), String::from("aws_s3_bucketpolicy")];
+    let expected_resource_types = vec![
+        TypeName{type_name: String::from("aws_ec2_instance")},
+        TypeName{type_name: String::from("aws_s3_bucket")},
+        TypeName{type_name: String::from("aws_s3_bucketpolicy")}];
 
     let result_resource_types = get_resource_types_in_ruleset(&rules).unwrap();
     assert_eq!(expected_resource_types, result_resource_types)
@@ -96,6 +99,16 @@ fn test_migrate_rules_disjunction() -> Result<()> {
     let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
     let result = migrate_rules(rule_lines).unwrap();
     let span = crate::rules::parser::Span::new_extra(&result, "");
+
+    let expected_rule = String::from("rule migrated_rules {
+	let aws_ec2_volume = Resources.*[ Type == \"AWS::EC2::Volume\" ]
+		let encryption_flag = true
+	%aws_ec2_volume.Properties.Encrypted == \"%encryption_flag\"
+	%aws_ec2_volume {
+		Properties.Size == 100 or Properties.Size == 50
+	}
+}\n");
+    assert_eq!(result, expected_rule);
     rules_file(span)?;
     Ok(())
 }
