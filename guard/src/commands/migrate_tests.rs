@@ -65,9 +65,9 @@ fn test_get_resource_types_in_ruleset() {
         })
     ];
     let expected_resource_types = vec![
-        TypeName{type_name: String::from("aws_ec2_instance")},
-        TypeName{type_name: String::from("aws_s3_bucket")},
-        TypeName{type_name: String::from("aws_s3_bucketpolicy")}];
+        TypeName{type_name: String::from("AWS::EC2::Instance")},
+        TypeName{type_name: String::from("AWS::S3::Bucket")},
+        TypeName{type_name: String::from("AWS::S3::BucketPolicy")}];
 
     let result_resource_types = get_resource_types_in_ruleset(&rules).unwrap();
     assert_eq!(expected_resource_types, result_resource_types)
