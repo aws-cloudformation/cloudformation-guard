@@ -27,7 +27,7 @@ pub fn validate_and_return_json(
                 Ok(root) => {
                     let root_context = RootScope::new(&rules, &root);
                     let stacker = StackTracker::new(&root_context);
-                    let reporter = ConsoleReporter::new(stacker, true, true, false);
+                    let reporter = ConsoleReporter::new(stacker, "lambda-run","lambda-payload", true, true, false);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
                     return Ok(json_result);

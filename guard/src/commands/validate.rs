@@ -60,12 +60,10 @@ or rules files.
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
         let file = app.value_of("rules").unwrap();
-        let cmp = if app.is_present("alphabetical") {
-            alpabetical
-        } else if app.is_present("last-modified") {
+        let cmp = if app.is_present("last-modified") {
             last_modified
         } else {
-            regular_ordering
+            alpabetical
         };
 
         let data_files = match app.value_of("data") {
@@ -108,13 +106,14 @@ or rules files.
                         Err(e) => {
                             println!("Parsing error handling rule file = {}, Error = {}",
                                      rule_file_name.underline(), e);
+                            println!("---");
                             exit_code = 5;
                             continue;
                         },
 
                         Ok(rules) => {
                             match evaluate_against_data_input(
-                                &data_files, &rules, verbose, print_json, show_clause_failures)? {
+                                &data_files, &rules, &rule_file_name, verbose, print_json, show_clause_failures)? {
                                 Status::SKIP | Status::PASS => continue,
                                 Status::FAIL => {
                                     exit_code = 5;
@@ -147,7 +146,7 @@ pub fn validate_and_return_json(
                 Ok(root) => {
                     let root_context = RootScope::new(&rules, &root);
                     let stacker = StackTracker::new(&root_context);
-                    let reporter = ConsoleReporter::new(stacker, true, true, false);
+                    let reporter = ConsoleReporter::new(stacker, "lambda-function", "input-payload", true, true, false);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
                     return Ok(json_result);
@@ -162,6 +161,8 @@ pub fn validate_and_return_json(
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
+    rules_file_name: &'r str,
+    data_file_name: &'r str,
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
@@ -247,8 +248,9 @@ fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
     failed
 }
 
-fn print_failing_clause(rule: &StatusContext, longest: usize) {
-    print!("{rule:<0$}", longest+4, rule=rule.context);
+fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
+    print!("{file}/{rule:<0$}", longest+4, file=rules_file_name, rule=rule.context);
+    let longest = rules_file_name.len() + longest;
     let mut first = true;
     for (index, matched) in find_all_failing_clauses(rule).iter().enumerate() {
         let matched = *matched;
@@ -286,9 +288,11 @@ fn print_failing_clause(rule: &StatusContext, longest: usize) {
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
+            rules_file_name,
+            data_file_name,
             verbose,
             print_json,
             show_clause_failures,
@@ -310,9 +314,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
             println!("{}", serialized_user);
         }
         else {
-            print!("{}", "Summary Report".underline());
-            println!(" Overall File Status = {}", colored_string(top.status));
-
+            println!("{} Status = {}", self.data_file_name.underline(), colored_string(top.status));
             let longest = top.children.iter()
                 .max_by(|f, s| {
                     (*f).context.len().cmp(&(*s).context.len())
@@ -328,16 +330,16 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                     });
 
             println!("{}", "PASS/SKIP rules".bold());
-            Self::print_partition(&rest, longest);
+            Self::print_partition(&self.rules_file_name, &rest, longest);
 
             if !failed.is_empty() {
                 println!("{}", "FAILED rules".bold());
-                Self::print_partition(&failed, longest);
+                Self::print_partition(&self.rules_file_name, &failed, longest);
 
                 if self.show_clause_failures {
                     println!("{}", "Clause Failure Summary".bold());
                     for each in failed {
-                        print_failing_clause(each, longest);
+                        print_failing_clause(self.rules_file_name, each, longest);
                     }
                 }
             }
@@ -348,12 +350,13 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                     print_context(each, 1);
                 }
             }
-       }
+            println!("---");
+        }
     }
 
-    fn print_partition(part: &Vec<&StatusContext>, longest: usize) {
+    fn print_partition(rules_file_name: &str, part: &Vec<&StatusContext>, longest: usize) {
         for container in part {
-            println!("{context:<0$}{status}", longest+4, context=(*container).context, status=colored_string((*container).status));
+            println!("{filename}/{context:<0$}{status}", longest+4, filename=rules_file_name, context=(*container).context, status=colored_string((*container).status));
         }
 
     }
@@ -388,22 +391,22 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_input(data_files: &[(String, String)], rules: &RulesFile<'_>, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<Status> {
-    let iterator: Result<Vec<PathAwareValue>> = data_files.iter().map(|(content, _name)|
+fn evaluate_against_data_input(data_files: &[(String, String)], rules: &RulesFile<'_>, rules_file_name: &str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<Status> {
+    let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
         match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(value) => PathAwareValue::try_from(value),
+            Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
             Err(_) => {
                 let value = serde_yaml::from_str::<serde_json::Value>(content)?;
-                PathAwareValue::try_from(value)
+                Ok((PathAwareValue::try_from(value)?, name.as_str()))
             }
         }
     ).collect();
 
     let mut overall = Status::PASS;
-    for each in iterator? {
+    for (each, data_file_name) in iterator? {
         let root_context = RootScope::new(rules, &each);
         let stacker = StackTracker::new(&root_context);
-        let reporter = ConsoleReporter::new(stacker, verbose, print_json, show_clause_failures);
+        let reporter = ConsoleReporter::new(stacker, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
         let appender = MetadataAppender{delegate: &reporter, root_context: &each};
         let status = rules.evaluate(&each, &appender)?;
         reporter.report();
