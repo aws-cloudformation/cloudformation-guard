@@ -404,7 +404,7 @@ fn test_disjunction_basic_clauses() {
             property_comparison: PropertyComparison {
                 property_path: String::from("Encrypted"),
                 operator: CmpOperator::Eq,
-                comparison_value: OldGuardValues::Value(Value::String(String::from("%encryption_flag")))
+                comparison_value: OldGuardValues::VariableAccess(String::from("encryption_flag"))
             },
             custom_message: None
         }
@@ -447,20 +447,10 @@ fn test_disjunction_basic_clauses() {
         })
     ];
 
-    let actual_rule_str: Vec<String> = actual_rules.clone().into_iter().map(|rule| format!("{}", rule)).collect();
-    let migrated_rule_str = format!("{}", actual_rule_str.join("\n"));
-
-    let expected_rule_str = "\tlet encryption_flag = true\n%aws_ec2_volume.Properties.Encrypted == \"%encryption_flag\"\n%aws_ec2_volume {\n\t\tProperties.Size == 100 or Properties.Size == 50\n\t}";
-
     assert_eq!(
         actual_rules,
         expected_rules
     );
-
-    assert_eq!(
-        expected_rule_str,
-        migrated_rule_str
-    )
 }
 
 fn make_empty_span(offset: usize) -> Span<'static> {

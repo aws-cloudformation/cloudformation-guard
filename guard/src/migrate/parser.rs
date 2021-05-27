@@ -47,12 +47,12 @@ pub(crate) struct Assignment {
 }
 impl Display for Assignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\tlet {} = {}", self.var_name, self.value)
+        write!(f, "let {} = {}", self.var_name, self.value)
     }
 }
 
 
-#[derive(PartialEq, Debug, Clone, Hash, Copy)]
+#[derive(Eq, PartialEq, Debug, Clone, Hash, Copy)]
 pub(crate) enum CmpOperator {
     Eq,
     Ne,
@@ -115,10 +115,10 @@ impl Display for BaseRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.custom_message {
             Some(message) => {
-                write!(f, "%{}.{} <<{}>>", self.type_name, self.property_comparison, message)
+                write!(f, "{} <<{}>>", self.property_comparison, message)
             },
             None => {
-                write!(f, "%{}.{}", self.type_name, self.property_comparison)
+                write!(f, "{}", self.property_comparison)
             }
         }
     }
@@ -134,7 +134,10 @@ impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name, self.when_condition);
         writeln!(f, "\t\t%{}[ {} ].{}", self.type_name, self.when_condition, self.check_condition);
-        write!(f, "\t}}")
+        write!(f, "\t}}");
+        writeln!(f, "when {} {{", self.when_condition);
+        writeln!(f, "            {}", self.check_condition);
+        writeln!(f, "        }}")
     }
 }
 
@@ -153,52 +156,16 @@ impl Display for Rule {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Hash)]
-pub(crate) struct Dedup_anchor {
-    pub type_name: TypeName,
-    pub property: String,
-}
-
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct Clause {
     pub(crate) rules: Vec<Rule>
 }
+
+impl Eq for Clause {}
+
 impl Display for Clause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
-        let mut property_to_rules = HashMap::new();
-        let cloned_rules = self.rules.clone();
-        let mut result= Vec::new();
-
-        for rule in cloned_rules.iter() {
-            match rule {
-                Rule::Conditional(conditional) => { result.push(format!("{}", rule)) },
-                Rule::Basic(base) => {
-                    property_to_rules.entry(Dedup_anchor{
-                        type_name: TypeName{type_name: format!("{}",base.type_name)},
-                        property: format!("{}", base.property_comparison.property_path)})
-                        .or_insert_with(Vec::new).push(rule);
-                }
-            }
-        }
-
-        for (anchor,rules) in property_to_rules.into_iter() {
-            if rules.len() == 1 {
-                result.push(format!("{}", rules[0]))
-            } else {
-                let anchor_value = anchor.type_name;
-                let mut result_for_key= Vec::new();
-                for(rule) in rules.iter() {
-                    match rule {
-                        Rule::Conditional(conditional) => {},
-                        Rule::Basic(base) => {
-                            result_for_key.push(format!("{}",&base.property_comparison))
-                        }
-                    }
-                }
-                result.push(format!("%{} {{\n\t\t{}\n\t}}", anchor_value, result_for_key.join(" or ")));
-            }
-        }
+        let result: Vec<String> = self.rules.clone().into_iter().map(|rule| format!("{}", rule)).collect();
         write!(f, "{}", result.join(" or "))
     }
 }
@@ -225,10 +192,9 @@ impl Display for RuleLineType {
 
 // variable-dereference =  ("%" variable) / ("%{" variable "}" ); Regular and environment variables, respectively
 pub (crate) fn parse_variable_dereference(input: Span) -> IResult<Span, String> {
-    preceded(space0, alt((
+    delimited(space0, alt((
         delimited(tag("%{"), var_name, tag("}")),
-        var_name_access
-    )))(input)
+        var_name_access)), space0)(input)
 }
 
 // take until "<<" if a custom message exists in the rule. otherwise, take until end of rule ("|OR|" or rest of span)

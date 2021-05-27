@@ -100,14 +100,44 @@ fn test_migrate_rules_disjunction() -> Result<()> {
     let result = migrate_rules(rule_lines).unwrap();
     let span = crate::rules::parser::Span::new_extra(&result, "");
 
-    let expected_rule = String::from("rule migrated_rules {
-	let aws_ec2_volume = Resources.*[ Type == \"AWS::EC2::Volume\" ]
-		let encryption_flag = true
-	%aws_ec2_volume.Properties.Encrypted == \"%encryption_flag\"
-	%aws_ec2_volume {
-		Properties.Size == 100 or Properties.Size == 50
-	}
-}\n");
+    let expected_rule = String::from("let encryption_flag = true
+let aws_ec2_volume = Resources.*[ Type == \"AWS::EC2::Volume\" ]
+rule aws_ec2_volume_checks WHEN %aws_ec2_volume NOT EMPTY {
+    %aws_ec2_volume {
+        Properties.Encrypted == %encryption_flag
+        Properties.Size == 100 or Properties.Size == 50
+    }
+}
+\n");
+    assert_eq!(result, expected_rule);
+    rules_file(span)?;
+    Ok(())
+}
+
+#[test]
+fn test_migrate_rules_different_types() -> Result<()> {
+    let old_ruleset = String::from(
+        "let encryption_flag = true \n AWS::S3::Bucket Encrypted == %encryption_flag \n AWS::EC2::Volume Size == 50"
+    );
+    let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
+    let result = migrate_rules(rule_lines).unwrap();
+    let span = crate::rules::parser::Span::new_extra(&result, "");
+
+    let expected_rule = String::from("let encryption_flag = true
+let aws_ec2_volume = Resources.*[ Type == \"AWS::EC2::Volume\" ]
+rule aws_ec2_volume_checks WHEN %aws_ec2_volume NOT EMPTY {
+    %aws_ec2_volume {
+        Properties.Size == 50
+    }
+}
+
+let aws_s3_bucket = Resources.*[ Type == \"AWS::S3::Bucket\" ]
+rule aws_s3_bucket_checks WHEN %aws_s3_bucket NOT EMPTY {
+    %aws_s3_bucket {
+        Properties.Encrypted == %encryption_flag
+    }
+}
+\n");
     assert_eq!(result, expected_rule);
     rules_file(span)?;
     Ok(())
