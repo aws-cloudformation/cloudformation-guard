@@ -18,6 +18,65 @@ Where Guard rule is an umbrella term for clause, query block, `when` block or na
 
 1. Named rule blocks allow for re-usability, improved composition, and reduced verbosity and repetition. This document will focus on demonstrating these features of named rule blocks in-depth.
 
+## Clause evaluation
+
+Clauses are evaluated on the entire query result. Let us look at some examples to understand this better.
+
+```
+let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+
+rule check_s3_bucket when %s3_buckets !empty {
+  %s3_buckets.Properties.AccessControl exists               << Clause 1 >>
+  %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
+}
+```
+
+In the above example `check_s3_bucket` block evaluates to the following,
+- When the input template has S3 buckets,
+  - All S3 buckets should have `AccessControl` property defined **AND** All S3 buckets should have `LoggingConfiguration` defined.
+
+Let us look at the next example where `Clause 1` and `Clause 2` are joined using disjunction to solidify your understanding,
+
+<pre>
+let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+
+rule check_s3_bucket when %s3_buckets !empty {
+  %s3_buckets.Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
+  %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
+}
+</pre>
+
+In the above example `check_s3_bucket` block evaluates to the following,
+- When the input template has S3 buckets,
+  - All S3 buckets should have `AccessControl` property defined **OR** All S3 buckets should have `LoggingConfiguration` defined.
+
+> Important things to note from both the above examples,
+> - `Clause 1` will evaluate to `true` only if `AccessControl` property is defined for all S3 buckets in `s3_buckets`.
+> - `Clause 2` is evaluated only after `Clause 1` is evaluated.
+> - `Clause 2` will evaluate to `true` only if `LoggingConfiguration` property is defined for all S3 buckets in `s3_buckets`.
+
+The clauses in the above examples can be referred to as **Independent Clauses** with reference to all S3 buckets as each of `Clause 1` and `Clause 2` are independently evaluated for all S3 buckets as a single unit.
+
+You might be wondering, how do we write a set of rules that checks if every S3 bucket in a template either has the `AccessControl` property defined or the `LoggingConfiguration` property defined. This can be achieved from what we learned from the [Guard: Context-Aware Evaluations, this and Loops](CONTEXTAWARE_EVALUATIONS_AND_LOOPS.md) document.
+
+```
+let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+ 
+rule check_s3_bucket when %s3_buckets !empty {
+  %s3_buckets {
+    Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
+    Properties.LoggingConfiguration exists        << Clause 2 >>
+  }
+}
+```
+
+In the above example `check_s3_bucket` block evaluates to the following,
+- When the input template has S3 buckets,
+  - For each S3 bucket in `s3_buckets`,
+    - `AccessControl` property should be defined **OR** `LoggingConfiguration` property should be defined.
+
+The clauses in the above example can be referred to as **Conjoined Clauses** with reference to all S3 buckets as `Clause 1` and `Clause 2` are conjointly evaluated for each S3 bucket.
+
 ## Complex Composition with Named Rule Blocks
 
 There are two styles of composition where named rule blocks can demonstrate its capability for re-usability, improved composition, and reduced verbosity:
@@ -270,4 +329,3 @@ cfn-guard validate --data ~/CloudFormation/templates --rules ~/GuardRules/encryp
 ```
 
 We are currently working on a feature which might offer rule reusability across multiple files. More details to come as we make progress on the feature.
-
