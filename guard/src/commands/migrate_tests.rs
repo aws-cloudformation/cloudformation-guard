@@ -141,6 +141,7 @@ rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
         }
     }
 }
+
 "#);
     println!("{}", result);
     assert_eq!(result, expected_rule);
