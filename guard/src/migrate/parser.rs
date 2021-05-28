@@ -133,8 +133,8 @@ pub(crate) struct ConditionalRule {
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name, self.when_condition);
-        writeln!(f, "\t\t%{}[ {} ].{}", self.type_name, self.when_condition, self.check_condition);
-        write!(f, "\t}}");
+        writeln!(f, "        %{}[ {} ].{}", self.type_name, self.when_condition, self.check_condition);
+        write!(f, "    }}");
         writeln!(f, "when {} {{", self.when_condition);
         writeln!(f, "            {}", self.check_condition);
         writeln!(f, "        }}")
