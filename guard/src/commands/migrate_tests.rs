@@ -74,25 +74,33 @@ fn test_get_resource_types_in_ruleset() {
 }
 
 #[test]
-fn test_migrate_rules() -> Result<()> {
+fn test_migrate_conditional_rules() -> Result<()> {
     let old_ruleset = String::from(
         r#"
-        AWS::S3::Bucket WHEN .property.path.* IN ["a", "b", "c"] CHECK BucketName.Encryption == "Enabled"
         let my_variable = true
+        AWS::EC2::Instance WHEN InstanceType == "m2.large" CHECK .Encryption == %my_variable"#);
 
-        # this is a comment
-        AWS::EC2::Instance InstanceType == "m2.large"
-        AWS::S3::Bucket BucketName == /Encrypted/ << Buckets should be encrypted, or instance type large, or property path in a,b,c |OR| AWS::EC2::Instance WHEN InstanceType == "m2.large" CHECK .DeletionPolicy == Retain |OR| AWS::S3::Bucket Properties.Foo.Bar == 2 << this must equal 2"#,
-    );
     let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
     let result = migrate_rules(rule_lines).unwrap();
     let span = crate::rules::parser::Span::new_extra(&result, "");
     rules_file(span)?;
+
+    let expected_rule = String::from("let my_variable = true
+let aws_ec2_instance = Resources.*[ Type == \"AWS::EC2::Instance\" ]
+rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
+    %aws_ec2_instance {
+        when Properties.InstanceType == \"m2.large\" {
+            Encryption == %my_variable
+        }
+    }
+}
+\n");
+    assert_eq!(result, expected_rule);
     Ok(())
 }
 
 #[test]
-fn test_migrate_rules_disjunction() -> Result<()> {
+fn test_migrate_basic_rules_disjunction() -> Result<()> {
     let old_ruleset = String::from(
         "let encryption_flag = true \n AWS::EC2::Volume Encrypted == %encryption_flag \n AWS::EC2::Volume Size == 100 |OR| AWS::EC2::Volume Size == 50"
     );
@@ -109,6 +117,32 @@ rule aws_ec2_volume_checks WHEN %aws_ec2_volume NOT EMPTY {
     }
 }
 \n");
+    assert_eq!(result, expected_rule);
+    rules_file(span)?;
+    Ok(())
+}
+
+#[test]
+fn test_migrate_conditional_rules_disjunction() -> Result<()> {
+    let old_ruleset = String::from(
+        r#"AWS::EC2::Instance WHEN InstanceType == "m2.large" CHECK .DeletionPolicy == Retain |OR| AWS::EC2::Instance WHEN InstanceType == "t2.micro" CHECK .Encrypted == true"#
+    );
+    let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
+    let result = migrate_rules(rule_lines).unwrap();
+    let span = crate::rules::parser::Span::new_extra(&result, "");
+
+    let expected_rule = String::from(r#"let aws_ec2_instance = Resources.*[ Type == "AWS::EC2::Instance" ]
+rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
+    %aws_ec2_instance {
+        when Properties.InstanceType == "m2.large" {
+            DeletionPolicy == "Retain"
+        } or when Properties.InstanceType == "t2.micro" {
+            Encrypted == true
+        }
+    }
+}
+"#);
+    println!("{}", result);
     assert_eq!(result, expected_rule);
     rules_file(span)?;
     Ok(())
@@ -135,6 +169,50 @@ let aws_s3_bucket = Resources.*[ Type == \"AWS::S3::Bucket\" ]
 rule aws_s3_bucket_checks WHEN %aws_s3_bucket NOT EMPTY {
     %aws_s3_bucket {
         Properties.Encrypted == %encryption_flag
+    }
+}
+\n");
+    assert_eq!(result, expected_rule);
+    rules_file(span)?;
+    Ok(())
+}
+
+#[test]
+fn test_migrate_basic_rules_with_custom_messages() -> Result<()> {
+    let old_ruleset = String::from(
+        r#"AWS::S3::Bucket Foo.Bar == 2 << this must equal 2"#
+    );
+    let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
+    let result = migrate_rules(rule_lines).unwrap();
+    let span = crate::rules::parser::Span::new_extra(&result, "");
+
+    let expected_rule = String::from("let aws_s3_bucket = Resources.*[ Type == \"AWS::S3::Bucket\" ]
+rule aws_s3_bucket_checks WHEN %aws_s3_bucket NOT EMPTY {
+    %aws_s3_bucket {
+        Properties.Foo.Bar == 2 <<this must equal 2>>
+    }
+}
+\n");
+    assert_eq!(result, expected_rule);
+    rules_file(span)?;
+    Ok(())
+}
+
+#[test]
+fn test_migrate_disjunction_basic_and_conditional() -> Result<()> {
+    let old_ruleset = String::from(
+        r#"AWS::EC2::Instance WHEN InstanceType == "m2.large" CHECK .DeletionPolicy == Retain |OR| AWS::EC2::Instance InstanceType == "t2.micro" << Deletion policy for m2.large"#
+    );
+    let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
+    let result = migrate_rules(rule_lines).unwrap();
+    let span = crate::rules::parser::Span::new_extra(&result, "");
+
+    let expected_rule = String::from("let aws_ec2_instance = Resources.*[ Type == \"AWS::EC2::Instance\" ]
+rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
+    %aws_ec2_instance {
+        when Properties.InstanceType == \"m2.large\" {
+            DeletionPolicy == \"Retain\"
+        } or Properties.InstanceType == \"t2.micro\" <<Deletion policy for m2.large>>
     }
 }
 \n");

@@ -2,8 +2,7 @@ use super::*;
 use crate::rules::parser::{from_str2, Span};
 
 use indexmap::map::IndexMap;
-
-
+use crate::rules::values::Value::Bool;
 
 
 #[test]
@@ -444,6 +443,63 @@ fn test_disjunction_basic_clauses() {
         }),
         RuleLineType::Clause(Clause {
             rules: vec![volume_size_100, volume_size_50]
+        })
+    ];
+
+    assert_eq!(
+        actual_rules,
+        expected_rules
+    );
+}
+
+#[test]
+fn test_disjunction_conditional_clauses() {
+    let example = r#"AWS::EC2::Instance WHEN InstanceType == "m2.large" CHECK .DeletionPolicy == Retain |OR| AWS::EC2::Instance WHEN InstanceType == "t2.micro" CHECK .Encrypted == true"#;
+    let actual_rules = parse_rules_file(&String::from(example), &String::from("file_name")).unwrap();
+
+    let m2_when_condition = PropertyComparison{
+        property_path: String::from("InstanceType"),
+        operator: CmpOperator::Eq,
+        comparison_value: OldGuardValues::Value(Value::String(String::from("m2.large")))
+    };
+
+    let m2_check_condition = PropertyComparison{
+        property_path: String::from(".DeletionPolicy"),
+        operator: CmpOperator::Eq,
+        comparison_value: OldGuardValues::Value(Value::String(String::from("Retain")))
+    };
+
+    let m2_conditional_rule = Rule::Conditional(
+        ConditionalRule {
+            type_name: TypeName{type_name: String::from("AWS::EC2::Instance")},
+            when_condition: m2_when_condition,
+            check_condition: m2_check_condition
+        }
+    );
+
+    let t2_when_condition = PropertyComparison{
+        property_path: String::from("InstanceType"),
+        operator: CmpOperator::Eq,
+        comparison_value: OldGuardValues::Value(Value::String(String::from("t2.micro")))
+    };
+
+    let t2_check_condition = PropertyComparison{
+        property_path: String::from(".Encrypted"),
+        operator: CmpOperator::Eq,
+        comparison_value: OldGuardValues::Value(Value::Bool(true))
+    };
+
+    let t2_conditional_rule = Rule::Conditional(
+        ConditionalRule {
+            type_name: TypeName{type_name: String::from("AWS::EC2::Instance")},
+            when_condition: t2_when_condition,
+            check_condition: t2_check_condition
+        }
+    );
+
+    let expected_rules = vec![
+        RuleLineType::Clause(Clause {
+            rules: vec![m2_conditional_rule, t2_conditional_rule]
         })
     ];
 

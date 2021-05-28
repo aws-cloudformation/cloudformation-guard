@@ -132,12 +132,9 @@ pub(crate) struct ConditionalRule {
 }
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name, self.when_condition);
-        writeln!(f, "        %{}[ {} ].{}", self.type_name, self.when_condition, self.check_condition);
-        write!(f, "    }}");
         writeln!(f, "when {} {{", self.when_condition);
         writeln!(f, "            {}", self.check_condition);
-        writeln!(f, "        }}")
+        write!(f, "        }}")
     }
 }
 
@@ -191,6 +188,7 @@ impl Display for RuleLineType {
 
 
 // variable-dereference =  ("%" variable) / ("%{" variable "}" ); Regular and environment variables, respectively
+// Remove leading and trailing spaces using delimited to correctly parse values
 pub (crate) fn parse_variable_dereference(input: Span) -> IResult<Span, String> {
     delimited(space0, alt((
         delimited(tag("%{"), var_name, tag("}")),
