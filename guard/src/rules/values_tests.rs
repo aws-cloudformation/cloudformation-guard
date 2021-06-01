@@ -135,7 +135,7 @@ fn test_query_on_value() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
         }
 
         fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
@@ -224,7 +224,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
+        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
         }
 
         fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {

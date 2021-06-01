@@ -54,7 +54,7 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
+    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
     }
 
     fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
@@ -147,10 +147,10 @@ impl<'r> EvaluationContext for Reporter<'r> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
         println!("{} {} {:?}", eval_type, context, status);
         self.0.end_evaluation(
-            eval_type, context, msg, from, to, status
+            eval_type, context, msg, from, to, status, cmp
         )
     }
 
@@ -897,8 +897,8 @@ impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
-        self.0.end_evaluation(eval_type, context, msg, from, to, status);
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
+        self.0.end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -1799,8 +1799,8 @@ impl<'a> EvaluationContext for Tracker<'a> {
         self.root.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
-        self.root.end_evaluation(eval_type, context, msg, from, to, status.clone());
+    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
+        self.root.end_evaluation(eval_type, context, msg, from, to, status.clone(), cmp);
         if eval_type == EvaluationType::Rule {
             match self.expected.get(context) {
                 Some(e) => {
@@ -2094,7 +2094,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
             todo!()
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
@@ -2159,7 +2159,7 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
             self.root.rule_status(rule_name)
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
@@ -2177,7 +2177,7 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
                     _ => {}
                 }
             }
-            self.root.end_evaluation(eval_type, context, msg, from, to, status)
+            self.root.end_evaluation(eval_type, context, msg, from, to, status, cmp)
         }
 
         fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {

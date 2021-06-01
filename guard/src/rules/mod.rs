@@ -14,6 +14,7 @@ use crate::rules::path_value::PathAwareValue;
 use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
 use serde::{Serialize};
+use crate::rules::values::CmpOperator;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -87,7 +88,16 @@ pub(crate) trait EvaluationContext {
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>);
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        comparator: Option<(CmpOperator, bool)>
+    );
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }
