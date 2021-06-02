@@ -17,8 +17,8 @@ fn main() -> Result<(), Error>{
             .version("2.0")
             .about(r#"
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
-  policy-as-code as rules to validate against any structed hierarchical data (like JSON/YAML).
-  Rules are composed of clauses expressed using Conjuctive Normal Form
+  policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
+  Rules are composed of clauses expressed using Conjunctive Normal Form
   (fancy way of saying it is a logical AND of OR clauses). Guard has deep
   integration with CloudFormation templates for evaluation but is a general tool
   that equally works for any JSON- and YAML- data."#);
