@@ -189,6 +189,9 @@ impl Display for RuleLineType {
 
 // variable-dereference =  ("%" variable) / ("%{" variable "}" ); Regular and environment variables, respectively
 // Remove leading and trailing spaces using delimited to correctly parse values
+// In absence of the logic to strip the white spaces, the string for a variable reference
+// will get incorrectly parsed as a OldGuardValues::Value instead of a OldGuardValues::VariableAccess
+// causing the display to print extra quotes for the variable
 pub (crate) fn parse_variable_dereference(input: Span) -> IResult<Span, String> {
     delimited(space0, alt((
         delimited(tag("%{"), var_name, tag("}")),

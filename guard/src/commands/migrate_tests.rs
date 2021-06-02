@@ -83,7 +83,6 @@ fn test_migrate_conditional_rules() -> Result<()> {
     let rule_lines = parse_rules_file(&old_ruleset, &String::from("test-file")).unwrap();
     let result = migrate_rules(rule_lines).unwrap();
     let span = crate::rules::parser::Span::new_extra(&result, "");
-    rules_file(span)?;
 
     let expected_rule = String::from("let my_variable = true
 let aws_ec2_instance = Resources.*[ Type == \"AWS::EC2::Instance\" ]
@@ -95,7 +94,7 @@ rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
     }
 }
 \n");
-    assert_eq!(result, expected_rule);
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
 
@@ -117,8 +116,7 @@ rule aws_ec2_volume_checks WHEN %aws_ec2_volume NOT EMPTY {
     }
 }
 \n");
-    assert_eq!(result, expected_rule);
-    rules_file(span)?;
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
 
@@ -143,9 +141,7 @@ rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
 }
 
 "#);
-    println!("{}", result);
-    assert_eq!(result, expected_rule);
-    rules_file(span)?;
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
 
@@ -173,8 +169,7 @@ rule aws_s3_bucket_checks WHEN %aws_s3_bucket NOT EMPTY {
     }
 }
 \n");
-    assert_eq!(result, expected_rule);
-    rules_file(span)?;
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
 
@@ -194,8 +189,7 @@ rule aws_s3_bucket_checks WHEN %aws_s3_bucket NOT EMPTY {
     }
 }
 \n");
-    assert_eq!(result, expected_rule);
-    rules_file(span)?;
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
 
@@ -217,7 +211,6 @@ rule aws_ec2_instance_checks WHEN %aws_ec2_instance NOT EMPTY {
     }
 }
 \n");
-    assert_eq!(result, expected_rule);
-    rules_file(span)?;
+    assert_eq!(rules_file(span).unwrap(), rules_file(crate::rules::parser::Span::new_extra(&expected_rule, "")).unwrap());
     Ok(())
 }
