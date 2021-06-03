@@ -203,7 +203,6 @@ fn test_query_on_value() -> Result<()> {
     }
     "###;
     let type_block = TypeBlock::try_from(block)?;
-    //let root = BlockScope::new(&type_block.block, &value, &dummy);
     let status = type_block.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 

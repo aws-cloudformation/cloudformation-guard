@@ -2920,7 +2920,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("AWS::Resource::Type")
+            TypeName{type_name: String::from("AWS::Resource::Type")}
         )),
         Ok((
             unsafe {
@@ -2931,7 +2931,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("Custom::Resource")
+            TypeName{type_name: String::from("Custom::Resource")}
         )),
         Ok((
             unsafe {
@@ -2942,7 +2942,7 @@ fn test_type_name() {
                     ""
                 )
             },
-            String::from("AWS::Module::Type")
+            TypeName{type_name: String::from("AWS::Module::Type")}
         )),
         Err(nom::Err::Error(
             ParserError {

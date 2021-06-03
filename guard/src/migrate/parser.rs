@@ -10,6 +10,7 @@ use nom::character::complete::{space0, space1};
 use std::hash::{Hash, Hasher};
 use std::fmt;
 use std::fmt::Display;
+use std::collections::HashMap;
 
 #[cfg(test)]
 #[path = "parser_tests.rs"]
@@ -30,7 +31,6 @@ impl Display for OldGuardValues {
     }
 }
 
-
 impl Hash for OldGuardValues {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
@@ -45,15 +45,14 @@ pub(crate) struct Assignment {
     pub(in crate::migrate) var_name: String,
     pub(in crate::migrate) value: OldGuardValues
 }
-
 impl Display for Assignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\tlet {} = {}", self.var_name, self.value)
+        write!(f, "let {} = {}", self.var_name, self.value)
     }
 }
 
 
-#[derive(PartialEq, Debug, Clone, Hash, Copy)]
+#[derive(Eq, PartialEq, Debug, Clone, Hash, Copy)]
 pub(crate) enum CmpOperator {
     Eq,
     Ne,
@@ -64,7 +63,6 @@ pub(crate) enum CmpOperator {
     Le,
     Ge
 }
-
 impl Display for CmpOperator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -86,7 +84,6 @@ pub(crate) struct PropertyComparison {
     pub operator: CmpOperator,
     pub comparison_value: OldGuardValues,
 }
-
 impl Display for PropertyComparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.property_path.starts_with(".") {
@@ -98,21 +95,30 @@ impl Display for PropertyComparison {
     }
 }
 
+#[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Clone, Hash)]
+pub(crate) struct TypeName {
+    pub type_name: String
+}
+impl Display for TypeName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.type_name.to_lowercase().replace("::", "_"))
+    }
+}
+
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct BaseRule {
-    pub(crate) type_name: String,
+    pub(crate) type_name: TypeName,
     pub(crate) property_comparison: PropertyComparison,
     pub(crate) custom_message: Option<String>
 }
-
 impl Display for BaseRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.custom_message {
             Some(message) => {
-                write!(f, "%{}.{} <<{}>>", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison, message)
+                write!(f, "{} <<{}>>", self.property_comparison, message)
             },
             None => {
-                write!(f, "%{}.{}", self.type_name.to_lowercase().replace("::", "_"), self.property_comparison)
+                write!(f, "{}", self.property_comparison)
             }
         }
     }
@@ -120,15 +126,15 @@ impl Display for BaseRule {
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub(crate) struct ConditionalRule {
-    pub type_name: String,
+    pub type_name: TypeName,
     pub when_condition: PropertyComparison,
     pub check_condition: PropertyComparison
 }
 impl Display for ConditionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "when %{}[ {} ] not EMPTY {{", self.type_name.to_lowercase().replace("::", "_"), self.when_condition);
-        writeln!(f, "\t\t%{}[ {} ].{}", self.type_name.to_lowercase().replace("::", "_"), self.when_condition, self.check_condition);
-        write!(f, "\t}}")
+        writeln!(f, "when {} {{", self.when_condition);
+        writeln!(f, "            {}", self.check_condition);
+        write!(f, "        }}")
     }
 }
 
@@ -151,6 +157,9 @@ impl Display for Rule {
 pub(crate) struct Clause {
     pub(crate) rules: Vec<Rule>
 }
+
+impl Eq for Clause {}
+
 impl Display for Clause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let result: Vec<String> = self.rules.clone().into_iter().map(|rule| format!("{}", rule)).collect();
@@ -179,11 +188,14 @@ impl Display for RuleLineType {
 
 
 // variable-dereference =  ("%" variable) / ("%{" variable "}" ); Regular and environment variables, respectively
+// Remove leading and trailing spaces using delimited to correctly parse values
+// In absence of the logic to strip the white spaces, the string for a variable reference
+// will get incorrectly parsed as a OldGuardValues::Value instead of a OldGuardValues::VariableAccess
+// causing the display to print extra quotes for the variable
 pub (crate) fn parse_variable_dereference(input: Span) -> IResult<Span, String> {
-    preceded(space0, alt((
+    delimited(space0, alt((
         delimited(tag("%{"), var_name, tag("}")),
-        var_name_access
-    )))(input)
+        var_name_access)), space0)(input)
 }
 
 // take until "<<" if a custom message exists in the rule. otherwise, take until end of rule ("|OR|" or rest of span)
