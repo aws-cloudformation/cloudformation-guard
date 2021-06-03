@@ -78,6 +78,7 @@ The pseudo code in java for the above example is a follows,
 ```
 boolean isAccessControlExists = true;
 boolean isLoggingConfigurationExists = true;
+boolean result = true;
 
 for each_s3_bucket in s3_buckets {
     if (each_s3_bucket.Properties.AccessControl == null) {
@@ -88,8 +89,10 @@ for each_s3_bucket in s3_buckets {
         isLoggingConfigurationExists = false;
     }
 
-    return isAccessControlExists && isLoggingConfigurationExists
+    result = result && (isAccessControlExists && isLoggingConfigurationExists)
 }
+
+return result
 ```
 
 In the above example,
@@ -97,7 +100,7 @@ In the above example,
 1. `Clause 1` is evaluated on `AccessControl` property of the first S3 bucket in `%s3_buckets`.
 1. `Clause 2` is evaluated after evaluation of `Clause 1` for that same S3 bucket.
 1. `Clause 2` is evaluated on `LoggingConfiguration` property of that same S3 bucket.
-1. Steps 2 to 4 are executed in that order for the remaining S3 buckets in `%s3_buckets` one after the other until there are no more S3 buckets in `%s3_buckets`.
+1. Steps 2 through 4 are executed in that order for the remaining S3 buckets in `%s3_buckets` one after the other until there are no more S3 buckets in `%s3_buckets`.
 
 ### Example 1 vs Example 2
 
@@ -121,13 +124,13 @@ boolean isAccessControlExists = true;
 boolean isLoggingConfigurationExists = true;
 
 for each_s3_bucket in s3_buckets {
-    if (eachS3Bucket.properties.accessControl == null) {
+    if (each_s3_bucket.Properties.AccessControl == null) {
         isAccessControlExists = false;
     }
 }
 
 for each_s3_bucket in s3_buckets {
-    if (eachS3Bucket.properties.loggingConfiguration == null) {
+    if (each_s3_bucket.Properties.LoggingConfiguration == null) {
         isLoggingConfigurationExists = false;
     }
 }
@@ -153,6 +156,7 @@ The pseudo code in java for the above example is a follows,
 ```
 boolean isAccessControlExists = true;
 boolean isLoggingConfigurationExists = true;
+boolean result = true;
 
 for each_s3_bucket in s3_buckets {
     if (each_s3_bucket.Properties.AccessControl == null) {
@@ -163,8 +167,10 @@ for each_s3_bucket in s3_buckets {
         isLoggingConfigurationExists = false;
     }
 
-    return isAccessControlExists || isLoggingConfigurationExists
+    result = result && (isAccessControlExists || isLoggingConfigurationExists)
 }
+
+return result
 ```
 
 ### Example 3 vs Example 4
