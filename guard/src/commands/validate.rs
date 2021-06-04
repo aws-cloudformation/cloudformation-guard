@@ -80,10 +80,10 @@ or rules files.
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
                 .possible_values(&["json","yaml","single-line-summary"])
                 .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name("show-summary-table").long("show-summary-table").takes_value(true).use_delimiter(true).multiple(true)
+            .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
                 .default_value("all")
-                .help("control if the summary table needs to be displayed. --show-summary-table all (default) or --show-summary-table pass,fail (only show rules that did pass/fail) or --show-summary-table none (to turn it off)")
+                .help("control if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
             )
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
@@ -155,7 +155,7 @@ or rules files.
             None => OutputFormatType::SingleLineSummary
         };
 
-        let summary_type: BitFlags<SummaryType> = app.values_of("show-summary-table").map_or(
+        let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
             SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP,
             |v| {
                 v.fold(BitFlags::empty(), |mut st, elem| {

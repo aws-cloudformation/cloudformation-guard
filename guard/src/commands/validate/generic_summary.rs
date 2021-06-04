@@ -74,66 +74,15 @@ impl GenericRenderer for SingleLineSummary {
     fn render(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
-              _data_file_name: &str,
+              data_file_name: &str,
               resources: HashMap<String, Vec<NameInfo<'_>>>,
               longest_rule_len: usize) -> crate::rules::Result<()> {
 
-        writeln!(writer, "{}", "Single Line Summary".underline())?;
+        writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
         for (_rule, clauses) in resources {
-            for info in clauses {
-                let (did_or_didnt, operation, cmp) = match &info.comparison {
-                    Some((cmp, not)) => {
-                        if *not {
-                            ("did", format!("NOT {}", cmp), Some(cmp))
-                        } else {
-                            ("did not", format!("{}", cmp), Some(cmp))
-                        }
-                    },
-                    None => {
-                        ("did not", "NONE".to_string(), None)
-                    }
-                };
-                match cmp {
-                    None => {
-                        // Block Clause retrieval error
-                        writeln!(writer, "{0}/{1:<2$}{3} failed due to retrieval error, stopped at [{4}]. Error = [{5}]",
-                                 rules_file_name,
-                                 info.rule,
-                                 longest_rule_len+4,
-                                 operation,
-                                 info.from,
-                                 info.message.replace("\n", ";"))?;
-                    },
-
-                    Some(cmp) => {
-                        if cmp.is_unary() {
-                            writeln!(writer, "{0}/{1:<2$}{3} failed on value [{4}] at path {5}. Error Message [{6}]",
-                                     rules_file_name,
-                                     info.rule,
-                                     longest_rule_len+4,
-                                     operation,
-                                     info.from,
-                                     info.path,
-                                     info.message.replace("\n", ";"))?;
-                        }
-                        else {
-                            writeln!(writer, "{0}/{1:<2$}{3} failed for value [{4}] at path {7} {5} match with [{6}]. Error Message [{8}]",
-                                     rules_file_name,
-                                     info.rule,
-                                     longest_rule_len + 4,
-                                     operation,
-                                     info.from,
-                                     did_or_didnt,
-                                     match &info.to { Some(v) => v, None => &serde_json::Value::Null },
-                                     info.path,
-                                     info.message.replace("\n", ";"))?;
-                        }
-
-                    }
-
-                }
-            }
+            super::common::print_name_info(writer, &clauses, longest_rule_len, rules_file_name)?;
         }
+        writeln!(writer, "-");
         Ok(())
     }
 }

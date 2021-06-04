@@ -97,59 +97,8 @@ impl super::common::GenericRenderer for SingleLineRenderer {
         writeln!(writer, "Evaluation against template {}, number of resource failures = {}", template_file_name, by_resource_name.len())?;
         writeln!(writer, "-")?;
         for (resource, info) in by_resource_name.iter() {
-            writeln!(writer, "Resource {}, failed due to the following checks", resource)?;
-            for each in info {
-                let (did_or_didnt, operation, cmp) = match &each.comparison {
-                    Some((cmp, not)) => {
-                        if *not {
-                            ("did", format!("NOT {}", cmp), Some(cmp))
-                        } else {
-                            ("did not", format!("{}", cmp), Some(cmp))
-                        }
-                    },
-                    None => {
-                        ("did not", "NONE".to_string(), None)
-                    }
-                };
-                match cmp {
-                    None => {
-                        // Block Clause retrieval error
-                        writeln!(writer, "{0}/{1:<2$}{3} failed due to retrieval error, stopped at [{4}]. Error Message = [{5}]",
-                                 rules_file_name,
-                                 each.rule,
-                                 longest_rule_len+4,
-                                 operation,
-                                 each.from,
-                                 each.message.replace("\n", ";"))?;
-                    },
-
-                    Some(cmp) => {
-                        if cmp.is_unary() {
-                            writeln!(writer, "{0}/{1:<2$}{3} failed on value [{4}] at path {5}. Error Message [{6}]",
-                                     rules_file_name,
-                                     each.rule,
-                                     longest_rule_len+4,
-                                     operation,
-                                     each.from,
-                                     each.path,
-                                     each.message.replace("\n", ";"))?;
-                        }
-                        else {
-                            writeln!(writer, "{0}/{1:<2$}{3} failed on value [{4}] at property path {5} {6} match with [{7}]. Error Message [{8}]",
-                                     rules_file_name,
-                                     each.rule,
-                                     longest_rule_len+4,
-                                     operation,
-                                     each.from,
-                                     each.path,
-                                     did_or_didnt,
-                                     match &each.to { Some(v) => v, None => &serde_json::Value::Null },
-                                     each.message.replace("\n", ";"))?;
-                        }
-                    }
-
-                }
-            }
+            writeln!(writer, "Resource {} failed due to the following checks", resource)?;
+            super::common::print_name_info(writer, info, longest_rule_len, rules_file_name)?;
             writeln!(writer, "-")?;
         }
         Ok(())

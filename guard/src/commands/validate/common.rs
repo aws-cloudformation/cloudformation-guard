@@ -14,8 +14,8 @@ use std::convert::TryInto;
 pub(super) struct NameInfo<'a> {
     pub(super) rule: &'a str,
     pub(super) path: String,
-    pub(super) from: serde_json::Value,
-    pub(super) to: Option<serde_json::Value>,
+    pub(super) provided: serde_json::Value,
+    pub(super) expected: Option<serde_json::Value>,
     pub(super) comparison: Option<(CmpOperator, bool)>,
     pub(super) message: String
 }
@@ -81,8 +81,8 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str, each_failing_clause: &St
     Ok(NameInfo {
         rule: rule_name,
         path,
-        from,
-        to: match &each_failing_clause.to {
+        provided: from,
+        expected: match &each_failing_clause.to {
             Some(to) => {
                 let (_, val): (String, serde_json::Value) = to.try_into()?;
                 Some(val)
@@ -130,5 +130,67 @@ pub(super) fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusCo
         }
     }
     failed
+}
+
+pub(super) fn print_name_info(writer: &mut dyn Write,
+                              info: &[NameInfo<'_>],
+                              longest_rule_len: usize,
+                              rules_file_name: &str) -> crate::rules::Result<()> {
+    for each in info {
+        let (did_or_didnt, operation, cmp) = match &each.comparison {
+            Some((cmp, not)) => {
+                if *not {
+                    ("did", format!("NOT {}", cmp), Some(cmp))
+                } else {
+                    ("did not", format!("{}", cmp), Some(cmp))
+                }
+            },
+            None => {
+                ("did not", "NONE".to_string(), None)
+            }
+        };
+        // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
+        match cmp {
+            None => {
+                // Block Clause retrieval error
+                writeln!(writer, "{rules}/{rule:<pad$}{operation} failed due to retrieval error, stopped at value [{provided}]. Error Message = [{msg}]",
+                         rules=rules_file_name,
+                         rule=each.rule,
+                         pad=longest_rule_len+4,
+                         operation=operation,
+                         provided=each.provided,
+                         msg=each.message.replace("\n", ";"))?;
+            },
+
+            Some(cmp) => {
+                if cmp.is_unary() {
+                    writeln!(writer, "{rules}/{rule:<pad$}{operation} failed at property path {path} on value [{provided}]. Error Message [{msg}]",
+                             rules=rules_file_name,
+                             rule=each.rule,
+                             pad=longest_rule_len+4,
+                             operation=operation,
+                             provided=each.provided,
+                             path=each.path,
+                             msg=each.message.replace("\n", ";"))?;
+                }
+                else {
+                    // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
+                    writeln!(writer, "{rules}/{rule:<pad$}{operation} failed at property path {path} because provided value [{provided}] {did_or_didnt} match with expected value [{expected}]. Error Message [{msg}]",
+                             rules=rules_file_name,
+                             rule=each.rule,
+                             pad=longest_rule_len+4,
+                             operation=operation,
+                             provided=each.provided,
+                             path=each.path,
+                             did_or_didnt=did_or_didnt,
+                             expected=match &each.expected { Some(v) => v, None => &serde_json::Value::Null },
+                             msg=each.message.replace("\n", ";"))?;
+                }
+            }
+
+        }
+    }
+
+    Ok(())
 }
 
