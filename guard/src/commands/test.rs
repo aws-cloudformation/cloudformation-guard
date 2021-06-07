@@ -109,6 +109,7 @@ struct TestExpectations {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TestSpec {
+    name: Option<serde_json::Value>,
     input: serde_json::Value,
     expectations: TestExpectations,
 }
@@ -137,6 +138,9 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                     rules.evaluate(&root, &stacker)?;
                     let expectations = each.expectations.rules;
                     let stack = stacker.stack();
+                    if !each.name.is_none() {
+                        println!("Test Case: {}", each.name.unwrap());
+                    }
                     for each in &stack[0].children {
                         match expectations.get(&each.context) {
                             Some(value) => {

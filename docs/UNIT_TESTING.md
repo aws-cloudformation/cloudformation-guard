@@ -14,7 +14,8 @@ All unit testing files are YAML/JSON formatted files. Each test file can contain
 
 ```yaml
 ---
-- input:
+- name: <TEST NAME>
+  input:
     <SAMPLE INPUT>
   expectations:
     rules:
@@ -112,7 +113,8 @@ First, you should test expectations starting from empty input and progressively 
 
 ```yaml
 ---
-- input: {}
+- name: MyTest  
+  input: {}
   expectations:
     rules:
       check_rest_api_is_private: SKIP
@@ -129,6 +131,7 @@ cfn-guard test                                 \
 The output you see is `PASS` for the test. 
 
 ```bash
+Test Case: "MyTest"
 PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
 ```
 
@@ -136,11 +139,13 @@ Now let us extend the testing to include empty resources:
 
 ```yaml
 ---
-- input: {}
+- name: MyTest1
+  input: {}
   expectations:
     rules:
       check_rest_api_is_private: SKIP
-- input:
+- name: MyTest2
+  input:
      Resources: {}
   expectations:
     rules:
@@ -150,7 +155,9 @@ Now let us extend the testing to include empty resources:
 Now you can re-run the test and should see:
 
 ```bash
+Test Case: "MyTest1"
 PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
+Test Case: "MyTest2"
 PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
 ```
 
@@ -158,23 +165,27 @@ You can now add an Amazon API Gateway resource type that was missing `Properties
 
 ```yaml
 ---
-- input: {}
+- name: MyTest1
+  input: {}
   expectations:
     rules:
       check_rest_api_is_private: SKIP
-- input:
+- name: MyTest2
+  input:
      Resources: {}
   expectations:
     rules:
       check_rest_api_is_private: SKIP
-- input:
+- name: MyTest3
+  input:
     Resources: 
       apiGw:
         Type: AWS::ApiGateway::RestApi
   expectations:
     rules:
       check_rest_api_is_private: FAIL
-- input:
+- name: MyTest4
+  input:
     Resources: 
       apiGw:
         Type: AWS::ApiGateway::RestApi
@@ -189,9 +200,13 @@ You can now add an Amazon API Gateway resource type that was missing `Properties
 and a sample run you should see:
 
 ```bash
+Test Case: "MyTest1"
 PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
+Test Case: "MyTest2"
 PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
+Test Case: "MyTest3"
 PASS Expected Rule = check_rest_api_is_private, Status = FAIL, Got Status = FAIL
+Test Case: "MyTest4"
 PASS Expected Rule = check_rest_api_is_private, Status = PASS, Got Status = PASS
 ```
 
@@ -201,24 +216,29 @@ When testing you can specify the `--verbose` flag that lets you inspect evaluati
 
 ```yaml
 ---
-#- input: {}
+---
+#- name: "MyTest1"
+#  input: {}
 #  expectations:
 #    rules:
-#      check_rest_api_is_private_and_has_access: SKIP
-#- input:
-#     Resources: {}
+#      check_rest_api_is_private: SKIP
+#- name: "MyTest2"
+#  input:
+#    Resources: {}
 #  expectations:
 #    rules:
-#      check_rest_api_is_private_and_has_access: SKIP
-#- input:
-#    Resources: 
+#      check_rest_api_is_private: SKIP
+#- name: "MyTest3"
+#  input:
+#    Resources:
 #      apiGw:
 #        Type: AWS::ApiGateway::RestApi
 #  expectations:
 #    rules:
-#      check_rest_api_is_private_and_has_access: FAIL
-- input:
-    Resources: 
+#      check_rest_api_is_private: FAIL
+- name: "MyTest4"
+  input:
+    Resources:
       apiGw:
         Type: AWS::ApiGateway::RestApi
         Properties:
@@ -241,6 +261,7 @@ cfn-guard test                                 \
 Here is the output from that run:
 
 ```bash
+Test Case: "MyTest4"
 PASS Expected Rule = check_rest_api_is_private, Status = PASS, Got Status = PASS
 Rule(check_rest_api_is_private, PASS)
     |  Message: DEFAULT MESSAGE(PASS)
@@ -260,7 +281,8 @@ This is bit dense, but the key observation is the line that says `Clause(Locatio
 that states that the check did PASS. The example also showed the case where `Types` was expected to be an array, but a single value was given. Guard will still evaluate and still provide a correct result. Now you should add a test case for `FAIL`ure.  You can add this to the end of the test file.
 
 ```yaml
-- input:
+- name: "MyTest"
+  input:
     Resources: 
       apiGw:
         Type: AWS::ApiGateway::RestApi
@@ -275,21 +297,24 @@ that states that the check did PASS. The example also showed the case where `Typ
 Now let us run the `test` command again:
 
 ```bash
+Test Case: "MyTest"
+PASS Expected Rule = check_rest_api_is_private, Status = FAIL, Got Status = FAIL
 Rule(check_rest_api_is_private, FAIL)
     |  Message: DEFAULT MESSAGE(FAIL)
     Condition(check_rest_api_is_private, PASS)
         |  Message: DEFAULT MESSAGE(PASS)
-        Clause(Clause(Location[file:api_gateway_private.guard, line:20, column:37], Check: %api_gws NOT EMPTY ), PASS)
+        Clause(Clause(Location[file:../../../Guard tests/rules.guard, line:3, column:37], Check: %api_gws NOT EMPTY ), PASS)
             |  From: Map((Path("/Resources/apiGw"), MapValue { keys: [String((Path("/Resources/apiGw/Type"), "Type")), String((Path("/Resources/apiGw/Properties"), "Properties"))], values: {"Type": String((Path("/Resources/apiGw/Type"), "AWS::ApiGateway::RestApi")), "Properties": Map((Path("/Resources/apiGw/Properties"), MapValue { keys: [String((Path("/Resources/apiGw/Properties/EndpointConfiguration"), "EndpointConfiguration"))], values: {"EndpointConfiguration": Map((Path("/Resources/apiGw/Properties/EndpointConfiguration"), MapValue { keys: [String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types"), "Types"))], values: {"Types": List((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types"), [String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/0"), "PRIVATE")), String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/1"), "REGIONAL"))]))} }))} }))} }))
             |  Message: DEFAULT MESSAGE(PASS)
-    BlockClause(Block[Location[file:api_gateway_private.guard, line:21, column:3]], FAIL)
+    BlockClause(Block[Location[file:../../../Guard tests/rules.guard, line:4, column:3]], FAIL)
         |  Message: DEFAULT MESSAGE(FAIL)
         Conjunction(cfn_guard::rules::exprs::GuardClause, FAIL)
             |  Message: DEFAULT MESSAGE(FAIL)
-            Clause(Clause(Location[file:api_gateway_private.guard, line:22, column:5], Check: Properties.EndpointConfiguration.Types[*]  EQUALS String("PRIVATE")), FAIL)
+            Clause(Clause(Location[file:../../../Guard tests/rules.guard, line:5, column:5], Check: Properties.EndpointConfiguration.Types[*]  EQUALS String("PRIVATE")), FAIL)
                 |  From: String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/1"), "REGIONAL"))
-                |  To: String((Path("api_gateway_private.guard/22/5/Clause/"), "PRIVATE"))
+                |  To: String((Path("../../../Guard tests/rules.guard/5/5/Clause/"), "PRIVATE"))
                 |  Message: (DEFAULT: NO_MESSAGE)
+
 ```
 
 The check fails as `REGIONAL` was not expected. 
