@@ -1,4 +1,4 @@
-use crate::commands::validate::Renderer;
+use crate::commands::validate::Reporter;
 use std::io::Write;
 use crate::commands::tracker::StatusContext;
 use crate::rules::Status;
@@ -48,8 +48,8 @@ fn print_partition(writer: &mut dyn Write,
 }
 
 
-impl<'r> Renderer for SummaryTable<'r> {
-    fn render(&self,
+impl<'r> Reporter for SummaryTable<'r> {
+    fn report(&self,
               writer: &mut dyn Write,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],

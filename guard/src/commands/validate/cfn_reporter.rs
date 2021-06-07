@@ -8,8 +8,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::{OutputFormatType, Renderer};
-use crate::commands::validate::common::{find_all_failing_clauses, NameInfo, GenericRenderer, StructuredSummary, StructureType};
+use crate::commands::validate::{OutputFormatType, Reporter};
+use crate::commands::validate::common::{find_all_failing_clauses, NameInfo, GenericReporter, StructuredSummary, StructureType};
 use crate::rules::errors::{Error, ErrorKind};
 
 use super::EvaluationType;
@@ -19,32 +19,32 @@ lazy_static! {
 }
 
 #[derive(Debug)]
-pub(crate) struct CfnRender<'a> {
+pub(crate) struct CfnReporter<'a> {
     data_file_name: &'a str,
     rules_file_name: &'a str,
     output_format_type: OutputFormatType,
-    render: Box<dyn GenericRenderer>,
+    render: Box<dyn GenericReporter>,
 }
 
-impl<'a> CfnRender<'a> {
+impl<'a> CfnReporter<'a> {
     pub(crate) fn new<'r>(data_file_name: &'r str,
                           rules_file_name: &'r str,
-                          output_format_type: OutputFormatType) -> CfnRender<'r> {
-        CfnRender {
+                          output_format_type: OutputFormatType) -> CfnReporter<'r> {
+        CfnReporter {
             data_file_name,
             rules_file_name,
             output_format_type,
             render: match output_format_type {
-                OutputFormatType::SingleLineSummary => Box::new(SingleLineRenderer{}) as Box<dyn GenericRenderer>,
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericRenderer>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericRenderer>,
+                OutputFormatType::SingleLineSummary => Box::new(SingleLineRenderer{}) as Box<dyn GenericReporter>,
+                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
         }
     }
 }
 
-impl<'a> Renderer for CfnRender<'a> {
-    fn render(&self,
+impl<'a> Reporter for CfnReporter<'a> {
+    fn report(&self,
               writer: &mut dyn Write,
               failed_rules: &[&StatusContext],
               _passed: &[&StatusContext],
@@ -77,7 +77,7 @@ impl<'a> Renderer for CfnRender<'a> {
                     }
                 }
             }
-            self.render.render(writer, self.rules_file_name, self.data_file_name, by_resource_name, longest_rule_name)?;
+            self.render.report(writer, self.rules_file_name, self.data_file_name, by_resource_name, longest_rule_name)?;
         }
         Ok(())
     }
@@ -86,8 +86,8 @@ impl<'a> Renderer for CfnRender<'a> {
 #[derive(Debug)]
 struct SingleLineRenderer {}
 
-impl super::common::GenericRenderer for SingleLineRenderer {
-    fn render(&self,
+impl super::common::GenericReporter for SingleLineRenderer {
+    fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
               template_file_name: &str,

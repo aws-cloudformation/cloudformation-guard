@@ -20,10 +20,10 @@ use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
 
-mod cfn_renderer;
 mod generic_summary;
 mod common;
 mod summary_table;
+mod cfn_reporter;
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -38,8 +38,8 @@ pub(crate) enum OutputFormatType {
     YAML
 }
 
-pub(crate) trait Renderer: Debug {
-    fn render(&self,
+pub(crate) trait Reporter : Debug {
+    fn report(&self,
               writer: &mut Write,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
@@ -249,7 +249,7 @@ pub fn validate_and_return_json(
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
-    reporters: &'r Vec<Box<dyn Renderer + 'r>>,
+    reporters: &'r Vec<Box<dyn Reporter + 'r>>,
     rules_file_name: &'r str,
     data_file_name: &'r str,
     verbose: bool,
@@ -340,7 +340,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Renderer + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Reporter + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -382,8 +382,8 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                         _ => false
                     });
 
-            for each_renderer in self.reporters {
-                each_renderer.render(
+            for each_reporter in self.reporters {
+                each_reporter.report(
                     &mut output,
                     &failed,
                     &rest,
@@ -461,18 +461,18 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 
     let mut overall = Status::PASS;
     for (each, data_file_name) in iterator? {
-        let mut reporters= match data_type {
+        let mut reporters = match data_type {
             Type::CFNTemplate =>
                 vec![
-                    Box::new(cfn_renderer::CfnRender::new(data_file_name, rules_file_name, output)) as Box<dyn Renderer>],
+                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
             Type::Generic =>
                 vec![
-                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Renderer>],
+                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
         };
         if !summary_table.is_empty() {
             reporters.insert(
                 0, Box::new(
-                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Renderer>);
+                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
         }
         let root_context = RootScope::new(rules, &each);
         let stacker = StackTracker::new(&root_context);

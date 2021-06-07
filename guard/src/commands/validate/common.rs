@@ -20,8 +20,8 @@ pub(super) struct NameInfo<'a> {
     pub(super) message: String
 }
 
-pub(super) trait GenericRenderer : Debug {
-    fn render(&self,
+pub(super) trait GenericReporter: Debug {
+    fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,
@@ -55,8 +55,8 @@ struct DataOutput<'a> {
     failed: HashMap<String, Vec<NameInfo<'a>>>
 }
 
-impl GenericRenderer for StructuredSummary {
-    fn render(&self,
+impl GenericReporter for StructuredSummary {
+    fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,

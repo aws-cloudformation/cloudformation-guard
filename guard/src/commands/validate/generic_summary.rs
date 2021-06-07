@@ -6,7 +6,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::{OutputFormatType, Renderer};
+use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::find_all_failing_clauses;
 use crate::rules::EvaluationType;
 
@@ -17,7 +17,7 @@ pub(crate) struct GenericSummary<'a> {
     data_file_name: &'a str,
     rules_file_name: &'a str,
     output_format_type: OutputFormatType,
-    renderer: Box<dyn GenericRenderer + 'a>,
+    renderer: Box<dyn GenericReporter + 'a>,
 }
 
 impl<'a> GenericSummary<'a> {
@@ -29,16 +29,16 @@ impl<'a> GenericSummary<'a> {
             rules_file_name,
             output_format_type,
             renderer: match output_format_type {
-                OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericRenderer>,
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericRenderer>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericRenderer>,
+                OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
+                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
         }
     }
 }
 
-impl<'a> Renderer for GenericSummary<'a> {
-    fn render(&self,
+impl<'a> Reporter for GenericSummary<'a> {
+    fn report(&self,
               writer: &mut dyn Write,
               failed_rules: &[&StatusContext],
               _passed_or_skipped: &[&StatusContext],
@@ -61,7 +61,7 @@ impl<'a> Renderer for GenericSummary<'a> {
                     }
                 }
             }
-            self.renderer.render(writer, self.rules_file_name, self.data_file_name, by_rule, longest_rule_name)?;
+            self.renderer.report(writer, self.rules_file_name, self.data_file_name, by_rule, longest_rule_name)?;
         }
         Ok(())
     }
@@ -70,8 +70,8 @@ impl<'a> Renderer for GenericSummary<'a> {
 #[derive(Debug)]
 struct SingleLineSummary{}
 
-impl GenericRenderer for SingleLineSummary {
-    fn render(&self,
+impl GenericReporter for SingleLineSummary {
+    fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,
