@@ -4,14 +4,15 @@ use clap::{App, Arg, ArgMatches};
 use crate::command::Command;
 use crate::commands::files::read_file_content;
 use crate::rules::Result;
-use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule};
+use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule, TypeName, Clause};
 use std::fs::File;
 use std::fmt::Write as FmtWrite;
 use std::io::Write as IoWrite;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use crate::rules::errors::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::str::FromStr;
+use itertools::Itertools;
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
@@ -83,7 +84,52 @@ impl Command for Migrate {
     }
 }
 
-pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<String>> {
+pub(crate) fn migrated_rules_by_type(rules: &[RuleLineType],
+                                     by_type: &HashMap<TypeName, indexmap::IndexSet<&Clause>>) -> Result<String> {
+    let mut migrated = String::new();
+    for rule in rules {
+        if let RuleLineType::Assignment(assignment) = rule {
+            writeln!(&mut migrated, "{}", assignment);
+        }
+    }
+
+    let mut types = by_type.keys().map(|elem| elem.clone()).collect_vec();
+    types.sort();
+    for each_type in &types {
+        writeln!(&mut migrated, "let {} = Resources.*[ Type == \"{}\" ]", each_type, each_type.type_name);
+        writeln!(&mut migrated, "rule {name}_checks WHEN %{name} NOT EMPTY {{", name=each_type);
+        writeln!(&mut migrated, "    %{} {{", each_type);
+        for each_clause in by_type.get(each_type).unwrap() {
+            writeln!(&mut migrated, "        {}", *each_clause);
+        }
+        writeln!(&mut migrated, "    }}\n}}\n");
+    }
+    Ok(migrated)
+}
+
+pub(crate) fn aggregate_by_type(rules: &Vec<RuleLineType>) -> HashMap<TypeName, indexmap::IndexSet<&Clause>> {
+    let mut by_type = HashMap::with_capacity(rules.len());
+    for rule in rules {
+        if let RuleLineType::Clause(clause) = rule {
+            for each in &clause.rules {
+                match each {
+                    Rule::Basic(br) => {
+                        by_type.entry(br.type_name.clone()).or_insert(indexmap::IndexSet::new())
+                            .insert(clause);
+                    },
+                    Rule::Conditional(br) => {
+                        by_type.entry(br.type_name.clone()).or_insert(indexmap::IndexSet::new())
+                            .insert(clause);
+                    }
+                }
+
+            }
+        }
+    }
+    by_type
+}
+
+pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<TypeName>> {
     let mut resource_types = HashSet::new();
     for rule in rules {
         if let RuleLineType::Clause(clause) = rule.clone() {
@@ -101,16 +147,8 @@ pub (crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Resul
 }
 
 pub (crate) fn migrate_rules(rules: Vec<RuleLineType>) -> Result<String> {
-    let mut migrated_rules = String::new();
-    let resource_types = get_resource_types_in_ruleset(&rules).unwrap();
-    // write assignments for every resource type
-    writeln!(&mut migrated_rules, "rule migrated_rules {{")?;
-    for resource_type in resource_types {
-        writeln!(&mut migrated_rules, "\tlet {} = Resources.*[ Type == \"{}\" ]", resource_type.to_lowercase().replace("::", "_"), resource_type)?;
-    }
-    for rule in rules {
-        writeln!(&mut migrated_rules, "\t{}", rule)?;
-    }
-    writeln!(&mut migrated_rules, "}}")?;
+    let aggr_by_type = aggregate_by_type(&rules);
+    let migrated_rules = migrated_rules_by_type(&rules, &aggr_by_type)?;
+
     Ok(migrated_rules)
 }
