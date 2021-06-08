@@ -104,7 +104,7 @@ In the above example,
 
 ### Example 1 vs Example 2
 
-There is clearly a difference in the style of execution between Example 1 and Example 2. The clauses in Example 1 can be referred to as **Independent Clause Composition** with respect to S3 buckets in `%s3_buckets` and the clauses in Example 2 can be referred to as **Conjoined Clause Composition** with respect to S3 buckets in `%s3_buckets`. But looking at the pseudo code and the execution order description you can observe that the outcomes of both the examples are the same. However if the conjunction between `Clause 1` and `Clause 2` is switched to disjunction the outcomes would be different. Let us look at Example 1 and Example 2 with conjunction between `Clause 1` and `Clause 2`.
+There is clearly a difference in the style of execution between Example 1 and Example 2. The clauses in Example 1 can be referred to as **Independent Clause Composition** with respect to S3 buckets in `%s3_buckets` and the clauses in Example 2 can be referred to as **Conjoined Clause Composition** with respect to S3 buckets in `%s3_buckets`. But looking at the pseudocode and the execution order description you can observe that the outcomes of both the examples are the same. However if the conjunction between `Clause 1` and `Clause 2` is switched to disjunction the outcomes would be different. Let us look at Example 1 and Example 2 with conjunction between `Clause 1` and `Clause 2`.
 
 ### Example 3 - Example 1 with disjunction between clauses
 
@@ -175,7 +175,7 @@ return result
 
 ### Example 3 vs Example 4
 
-You can clearly see from the psuedo code for Example 3 and Example 4 that the order of evaluation in case of disjunction between `Clause 1` and `Clause 2` changes the outcome. From the above examples it is clear that using Conjoined Clause Composition allows you to write programatically intutive rules. We recommend using Conjoined Clause Composition over Independent Clause Composition for most cases.
+You can clearly see from the pseudocode for Example 3 and Example 4 that the order of evaluation in case of disjunction between `Clause 1` and `Clause 2` changes the outcome. From the above examples it is clear that using Conjoined Clause Composition allows you to write programatically intutive rules. We recommend using Conjoined Clause Composition over Independent Clause Composition for most cases.
 
 ## Complex Composition with Named Rule Blocks
 
