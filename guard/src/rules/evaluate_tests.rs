@@ -1372,15 +1372,15 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     //
     // match any one rhs = false, at-least-one = false
     //
-    let (result, _first, _with) = compare_loop(
+    let (result, _results) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, false, false
     )?;
     assert_eq!(result, false);
 
     //
-    // match any one rhs = false, at-least-one = false
+    // match any one rhs = false, at-least-one = true
     //
-    let (result, _first, _with) = compare_loop(
+    let (result, _results) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, false, true
     )?;
     assert_eq!(result, true);
@@ -1388,10 +1388,42 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     //
     // match any one rhs = true, at-least-one = false
     //
-    let (result, _first, _with) = compare_loop(
+    let (result, _results) = compare_loop(
         &lhs_values, &rhs_values, path_value::compare_eq, true, false
     )?;
     assert_eq!(result, false);
+
+    Ok(())
+}
+
+#[test]
+fn test_compare_loop_all() -> Result<()> {
+    let root = Path::root();
+    let lhs = [
+        PathAwareValue::String((root.clone(), "aws:isSecure".to_string())),
+        PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
+    ];
+    let rhs = [
+        PathAwareValue::Regex((root.clone(), "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())),
+    ];
+
+    let lhs_values = lhs.iter().collect::<Vec<&PathAwareValue>>();
+    let rhs_values = rhs.iter().collect::<Vec<&PathAwareValue>>();
+
+    let results = super::compare_loop_all(&lhs_values, &rhs_values, path_value::compare_eq, false)?;
+    //
+    // One result for each LHS value
+    //
+    assert_eq!(results.len(), 2);
+    let (outcome, from, to) = &results[0];
+    assert_eq!(*outcome, false);
+    assert_eq!(from, &Some(lhs[0].clone()));
+    assert_eq!(to, &Some(rhs[0].clone()));
+
+    let (outcome, from, to) = &results[1];
+    assert_eq!(*outcome, true);
+    assert_eq!(from, &None);
+    assert_eq!(to, &None);
 
     Ok(())
 }
@@ -2026,5 +2058,138 @@ fn test_inner_when_skipped() -> Result<()> {
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
+    Ok(())
+}
+
+#[test]
+fn test_multiple_valued_clause_reporting() -> Result<()> {
+    let rule = r###"
+    rule name_check { Resources.*.Properties.Name == /NAME/ }
+    "###;
+
+    let value = r###"
+    Resources:
+      second:
+        Properties:
+          Name: FAILEDMatch
+      first:
+        Properties:
+          Name: MatchNAME
+      matches:
+        Properties:
+          Name: MatchNAME
+      failed:
+        Properties:
+          Name: FAILEDMatch
+    "###;
+
+    #[derive(Debug, Clone)]
+    struct Reporter {};
+    impl EvaluationContext for Reporter {
+        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+            todo!()
+        }
+
+        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+            todo!()
+        }
+
+        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+            if eval_type == EvaluationType::Clause {
+                match &status {
+                    Some(Status::FAIL) => {
+                        assert_eq!(from.is_some(), true);
+                        assert_eq!(to.is_some(), true);
+                        let path_val = from.unwrap();
+                        let path = path_val.self_path();
+                        assert_eq!(path.0.contains("/second") || path.0.contains("/failed"), true);
+                    },
+                    Some(Status::PASS) => {
+                        assert_eq!(from, None);
+                        assert_eq!(to, None);
+                        assert_eq!(msg.contains("DEFAULT"), true);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        }
+    }
+
+    let rules = Rule::try_from(rule)?;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
+    let reporter = Reporter{};
+    let status = rules.evaluate(&values, &reporter)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
+    let rule = r###"
+    let resources = Resources.*
+    rule name_check { %resources.Properties.Name == /NAME/ }
+    "###;
+
+    let value = r###"
+    Resources:
+      second:
+        Properties:
+          Name: FAILEDMatch
+      first:
+        Properties:
+          Name: MatchNAME
+      matches:
+        Properties:
+          Name: MatchNAME
+      failed:
+        Properties:
+          Name: FAILEDMatch
+    "###;
+
+    struct Reporter<'a> { root: &'a dyn EvaluationContext };
+    impl<'a> EvaluationContext for Reporter<'a> {
+        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+            self.root.resolve_variable(variable)
+        }
+
+        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+            self.root.rule_status(rule_name)
+        }
+
+        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+            if eval_type == EvaluationType::Clause {
+                match &status {
+                    Some(Status::FAIL) => {
+                        assert_eq!(from.is_some(), true);
+                        assert_eq!(to.is_some(), true);
+                        let path_val = from.as_ref().unwrap();
+                        let path = path_val.self_path();
+                        assert_eq!(path.0.contains("/second") || path.0.contains("/failed"), true);
+                    },
+                    Some(Status::PASS) => {
+                        assert_eq!(from, None);
+                        assert_eq!(to, None);
+                        assert_eq!(msg.contains("DEFAULT"), true);
+                    }
+                    _ => {}
+                }
+            }
+            self.root.end_evaluation(eval_type, context, msg, from, to, status)
+        }
+
+        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+            self.root.start_evaluation(eval_type, context)
+        }
+    }
+
+    let rules = RulesFile::try_from(rule)?;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
+    let root = RootScope::new(&rules, &values);
+    let reporter = Reporter{ root: &root };
+    let status = rules.evaluate(&values, &reporter)?;
+    assert_eq!(status, Status::FAIL);
     Ok(())
 }

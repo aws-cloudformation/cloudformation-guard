@@ -166,6 +166,7 @@ impl PartialEq for PathAwareValue {
                     false
                 }
             },
+            (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
 
             //
             // Range checks

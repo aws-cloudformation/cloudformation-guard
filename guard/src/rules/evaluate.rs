@@ -69,47 +69,53 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
-    -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
-    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
-    let (cmp, from, to) = 'outer: loop {
-        'lhs:
-        for lhs_value in lhs {
-            for rhs_value in rhs {
-                let check = compare(*lhs_value, *rhs_value)?;
-                if check && atleast_one {
-                    break 'outer (true, Some(*lhs_value), Some(*rhs_value));
-                }
-
-                if any_one_rhs && check {
+fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool)
+    -> Result<Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+{
+    let mut results = Vec::with_capacity(lhs.len());
+    'lhs: for lhs_value in lhs {
+        for rhs_value in rhs {
+            let check = compare(*lhs_value, *rhs_value)?;
+            if check {
+                results.push((true, None, None));
+                if any_one_rhs {
                     continue 'lhs
                 }
+            }
+            else {
+                results.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
+            }
+        }
+    }
+    Ok(results)
+}
 
-                if !any_one_rhs && !check && !atleast_one {
-                    break 'outer (false, Some(*lhs_value), Some(*rhs_value));
+fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
+    -> Result<(bool, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
+    let results = compare_loop_all(lhs, rhs, compare, any_one_rhs)?;
+    let overall = 'outer: loop {
+        for (each, _, _) in results.iter() {
+            if atleast_one {
+                if *each {
+                    break 'outer true
                 }
             }
-            //
-            // We are only hear in the "all" case when all of them checked out. For the any case
-            // it would be a failure to be here
-            //
-            if any_one_rhs && !atleast_one {
-                break 'outer (false, Some(*lhs_value), None)
+            else {
+                if !*each {
+                    break 'outer false
+                }
             }
         }
         if atleast_one {
-            break (false, None, None)
-        } else {
-            break (true, None, None)
+            break 'outer false
+        }
+        else {
+            break 'outer true
         }
     };
-    Ok((cmp, match from {
-        None => None,
-        Some(p) => Some(p.clone()),
-    }, match to {
-        None => None,
-        Some(p) => Some(p.clone())
-    }))
+    Ok((overall, results))
 }
 
 fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&'a PathAwareValue>>> {
@@ -171,11 +177,11 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
               rhs: &Vec<&PathAwareValue>,
               _rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool, atleast_one: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
+              any: bool, atleast_one: bool) -> Result<(Status, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::FAIL, None, None))
+        return Ok((Status::FAIL, vec![]))
     }
 
     let lhs = if is_mixed_values_results(lhs) {
@@ -197,37 +203,37 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     //
     if !lhs_elem_has_list && !rhs_elem_has_list {
         match compare_loop(&lhs, &rhs, compare, any, atleast_one) {
-            Ok((true, _, _)) => Ok((Status::PASS, None, None)),
-            Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
+            Ok((true, outcomes)) => Ok((Status::PASS, outcomes)),
+            Ok((false, outcomes)) => Ok((Status::FAIL, outcomes)),
             Err(e) => Err(e)
         }
     }
     else if lhs_elem_has_list && !rhs_elem_has_list {
         for elevated in elevate_inner(&lhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, outcomes)) = compare_loop(
                 &elevated, &rhs, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, outcomes))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, vec![]))
     }
     else if !lhs_elem_has_list && rhs_elem_has_list {
         for elevated in elevate_inner(&rhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, outcomes)) = compare_loop(
                 &lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, outcomes))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, vec![]))
     }
     else {
         match compare_loop(&lhs, &rhs, compare, any, atleast_one)? {
-            (true, _, _) => Ok((Status::PASS, None, None)),
-            (false, left, right) => Ok((Status::FAIL, left, right))
+            (true, _) => Ok((Status::PASS, vec![])),
+            (false, outcomes) => Ok((Status::FAIL, outcomes))
         }
     }
 }
@@ -273,9 +279,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate<'s>(&self,
                 context: &'s PathAwareValue,
                 var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        let guard_loc = format!("{}", self);
-                                //SliceDisplay(&self.access_clause.query));
-        let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
         //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
@@ -393,6 +396,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         };
 
         if let Some(r) = result {
+            let guard_loc = format!("{}", self);
+            let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
             let message = match &clause.access_clause.custom_message {
                 Some(msg) => msg,
                 None => "(DEFAULT: NO_MESSAGE)"
@@ -412,15 +417,21 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None =>
+            None => {
+                let guard_loc = format!("{}", self);
+                let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
+                let message = match &clause.access_clause.custom_message {
+                    Some(msg) => msg,
+                    None => "(DEFAULT: NO_MESSAGE)"
+                };
                 if all {
                     return Ok(auto_reporter.status(Status::FAIL)
-                                  .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
-                }
-                else {
+                        .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                } else {
                     return Ok(auto_reporter.status(Status::FAIL)
                         .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
                 }
+            }
             Some(l) => l,
         };
 
@@ -464,7 +475,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             }
         };
 
-        let (result, from, to) =
+        let (result, outcomes) =
             match &clause.access_clause.comparator.0 {
             //
             // ==, !=
@@ -560,13 +571,16 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         };
 
-        let message = match &clause.access_clause.custom_message {
-            Some(msg) => msg,
-            None => "(DEFAULT: NO_MESSAGE)"
-        };
-        auto_reporter.comparison(result, from, to);
-        if result == Status::FAIL {
-            auto_reporter.message(message.to_string());
+        for (outcome, from, to) in outcomes {
+            let guard_loc = format!("{}", self);
+            let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
+            auto_reporter.status(if outcome { Status::PASS } else { Status::FAIL });
+            if !outcome {
+                auto_reporter.from(from).to(to).message(match &clause.access_clause.custom_message {
+                    Some(msg) => msg.clone(),
+                    None => "DEFAULT MESSAGE(FAIL)".to_string()
+                });
+            }
         }
         Ok(result)
     }

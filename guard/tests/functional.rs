@@ -89,7 +89,7 @@ mod tests {
                               {
                                 "eval_type": "Clause",
                                 "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
-                                "msg": "(DEFAULT: NO_MESSAGE)",
+                                "msg": "DEFAULT MESSAGE(FAIL)",
                                 "from": {
                                   "String": [
                                     "/Resources/VPC/Properties/AuthorizationType",
@@ -118,12 +118,11 @@ mod tests {
             );
 
         // Remove white spaces from expected and calculated result for easy comparison.
-        expected.retain(|c| !c.is_whitespace());
-
         let mut serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
-        println!("{}", serialized);
-        serialized.retain(|c| !c.is_whitespace());
-
+        let expected = serde_json::from_str::<serde_json::Value>(&expected).ok().unwrap();
+        let serialized = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
+        println!("{}", serde_yaml::to_string(&serialized).ok().unwrap());
+        println!("{}", serde_yaml::to_string(&expected).ok().unwrap());
         assert_eq!(expected, serialized);
     }
 
