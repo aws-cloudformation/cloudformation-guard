@@ -36,22 +36,22 @@ when %s3_buckets !empty {
 The pseudocode for the above example is a follows,
 
 ```
-boolean isAccessControlExists = true;
-boolean isLoggingConfigurationExists = true;
+boolean isAccessControlExists = true
+boolean isLoggingConfigurationExists = true
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.AccessControl == null) {
-        isAccessControlExists = false;
-    }
-}
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.AccessControl == null then
+        isAccessControlExists = false
+    end if
+end for
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.LoggingConfiguration == null) {
-        isLoggingConfigurationExists = false;
-    }
-}
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.LoggingConfiguration == null then
+        isLoggingConfigurationExists = false
+    end if
+end for
 
-return isAccessControlExists && isLoggingConfigurationExists
+return isAccessControlExists and isLoggingConfigurationExists
 ```
 
 In the above example,
@@ -73,24 +73,24 @@ when %s3_buckets !empty {
 }
 ```
 
-The pseudo code in java for the above example is a follows,
+The pseudocode for the above example is a follows,
 
 ```
-boolean isAccessControlExists = true;
-boolean isLoggingConfigurationExists = true;
-boolean result = true;
+isAccessControlExists = true
+isLoggingConfigurationExists = true
+result = true
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.AccessControl == null) {
-        isAccessControlExists = false;
-    }
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.AccessControl == null then
+        isAccessControlExists = false
+    end of
 
-    if (each_s3_bucket.Properties.LoggingConfiguration == null) {
-        isLoggingConfigurationExists = false;
-    }
+    if each_s3_bucket.Properties.LoggingConfiguration == null then
+        isLoggingConfigurationExists = false
+    end if
 
-    result = result && (isAccessControlExists && isLoggingConfigurationExists)
-}
+    result = result and (isAccessControlExists and isLoggingConfigurationExists)
+end for
 
 return result
 ```
@@ -117,25 +117,25 @@ when %s3_buckets !empty {
 }
 ```
 
-The pseudo code in java for the above example is a follows,
+The pseudocode for the above example is a follows,
 
 ```
-boolean isAccessControlExists = true;
-boolean isLoggingConfigurationExists = true;
+isAccessControlExists = true
+isLoggingConfigurationExists = true
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.AccessControl == null) {
-        isAccessControlExists = false;
-    }
-}
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.AccessControl == null then
+        isAccessControlExists = false
+    end if
+end for
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.LoggingConfiguration == null) {
-        isLoggingConfigurationExists = false;
-    }
-}
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.LoggingConfiguration == null then
+        isLoggingConfigurationExists = false
+    end if
+end for
 
-return isAccessControlExists || isLoggingConfigurationExists
+return isAccessControlExists or isLoggingConfigurationExists
 ```
 
 ### Example 4 - Example 2 with disjunction between clauses
@@ -151,24 +151,24 @@ when %s3_buckets !empty {
 }
 ```
 
-The pseudo code in java for the above example is a follows,
+The pseudocode for the above example is a follows,
 
 ```
-boolean isAccessControlExists = true;
-boolean isLoggingConfigurationExists = true;
-boolean result = true;
+isAccessControlExists = true
+isLoggingConfigurationExists = true
+result = true
 
-for each_s3_bucket in s3_buckets {
-    if (each_s3_bucket.Properties.AccessControl == null) {
-        isAccessControlExists = false;
-    }
+for each_s3_bucket in s3_buckets do
+    if each_s3_bucket.Properties.AccessControl == null then
+        isAccessControlExists = false
+    end if
 
-    if (each_s3_bucket.Properties.LoggingConfiguration == null) {
-        isLoggingConfigurationExists = false;
-    }
+    if each_s3_bucket.Properties.LoggingConfiguration == null then
+        isLoggingConfigurationExists = false
+    end if
 
-    result = result && (isAccessControlExists || isLoggingConfigurationExists)
-}
+    result = result and (isAccessControlExists or isLoggingConfigurationExists)
+end for
 
 return result
 ```
