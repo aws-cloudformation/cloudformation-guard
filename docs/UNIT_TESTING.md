@@ -131,8 +131,10 @@ cfn-guard test                                 \
 The output you see is `PASS` for the test. 
 
 ```bash
-Test Case: "MyTest"
-PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
+Test Case #1
+Name: "MyTest"
+  PASS Rules:
+    check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
 ```
 
 Now let us extend the testing to include empty resources:
@@ -155,10 +157,15 @@ Now let us extend the testing to include empty resources:
 Now you can re-run the test and should see:
 
 ```bash
-Test Case: "MyTest1"
-PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
-Test Case: "MyTest2"
-PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
+Test Case #1
+Name: "MyTest1"
+  PASS Rules:
+    check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
+
+Test Case #2
+Name: "MyTest2"
+  PASS Rules:
+    check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
 ```
 
 You can now add an Amazon API Gateway resource type that was missing `Properties` (This isn’t a valid CFN template, but nonetheless testing that the rule works correctly even for these malformed inputs is useful.), and one that satisfies only `EndpointConfiguration` attribute and has no policy statements defined. You should expect this to `FAIL`. Here is the testing you should have: 
@@ -200,14 +207,24 @@ You can now add an Amazon API Gateway resource type that was missing `Properties
 and a sample run you should see:
 
 ```bash
-Test Case: "MyTest1"
-PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
-Test Case: "MyTest2"
-PASS Expected Rule = check_rest_api_is_private, Status = SKIP, Got Status = SKIP
-Test Case: "MyTest3"
-PASS Expected Rule = check_rest_api_is_private, Status = FAIL, Got Status = FAIL
-Test Case: "MyTest4"
-PASS Expected Rule = check_rest_api_is_private, Status = PASS, Got Status = PASS
+Test Case #1
+Name: "MyTest1"
+  PASS Rules:
+    check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
+
+Test Case #2
+Name: "MyTest2"
+  PASS Rules:
+    check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
+
+Test Case #3
+  PASS Rules:
+    check_rest_api_is_private: Expected = FAIL, Evaluated = FAIL
+
+Test Case #4
+Name: "MyTest4"
+  PASS Rules:
+    check_rest_api_is_private: Expected = PASS, Evaluated = PASS
 ```
 
 ### How do I know that `EndpointConfiguration` check did indeed succeed for PASS case?
@@ -261,8 +278,10 @@ cfn-guard test                                 \
 Here is the output from that run:
 
 ```bash
-Test Case: "MyTest4"
-PASS Expected Rule = check_rest_api_is_private, Status = PASS, Got Status = PASS
+Test Case #1
+Name: "MyTest4"
+  PASS Rules:
+    check_rest_api_is_private: Expected = PASS, Evaluated = PASS
 Rule(check_rest_api_is_private, PASS)
     |  Message: DEFAULT MESSAGE(PASS)
     Condition(check_rest_api_is_private, PASS)
@@ -297,22 +316,24 @@ that states that the check did PASS. The example also showed the case where `Typ
 Now let us run the `test` command again:
 
 ```bash
-Test Case: "MyTest"
-PASS Expected Rule = check_rest_api_is_private, Status = FAIL, Got Status = FAIL
+Test Case #1
+Name: "MyTest"
+  PASS Rules:
+    check_rest_api_is_private: Expected = FAIL, Evaluated = FAIL
 Rule(check_rest_api_is_private, FAIL)
     |  Message: DEFAULT MESSAGE(FAIL)
     Condition(check_rest_api_is_private, PASS)
         |  Message: DEFAULT MESSAGE(PASS)
-        Clause(Clause(Location[file:../../../Guard tests/rules.guard, line:3, column:37], Check: %api_gws NOT EMPTY ), PASS)
+        Clause(Clause(Location[file:api_gateway_private.guard, line:3, column:37], Check: %api_gws NOT EMPTY ), PASS)
             |  From: Map((Path("/Resources/apiGw"), MapValue { keys: [String((Path("/Resources/apiGw/Type"), "Type")), String((Path("/Resources/apiGw/Properties"), "Properties"))], values: {"Type": String((Path("/Resources/apiGw/Type"), "AWS::ApiGateway::RestApi")), "Properties": Map((Path("/Resources/apiGw/Properties"), MapValue { keys: [String((Path("/Resources/apiGw/Properties/EndpointConfiguration"), "EndpointConfiguration"))], values: {"EndpointConfiguration": Map((Path("/Resources/apiGw/Properties/EndpointConfiguration"), MapValue { keys: [String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types"), "Types"))], values: {"Types": List((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types"), [String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/0"), "PRIVATE")), String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/1"), "REGIONAL"))]))} }))} }))} }))
             |  Message: DEFAULT MESSAGE(PASS)
-    BlockClause(Block[Location[file:../../../Guard tests/rules.guard, line:4, column:3]], FAIL)
+    BlockClause(Block[Location[file:api_gateway_private.guard, line:4, column:3]], FAIL)
         |  Message: DEFAULT MESSAGE(FAIL)
         Conjunction(cfn_guard::rules::exprs::GuardClause, FAIL)
             |  Message: DEFAULT MESSAGE(FAIL)
-            Clause(Clause(Location[file:../../../Guard tests/rules.guard, line:5, column:5], Check: Properties.EndpointConfiguration.Types[*]  EQUALS String("PRIVATE")), FAIL)
+            Clause(Clause(Location[file:api_gateway_private.guard, line:5, column:5], Check: Properties.EndpointConfiguration.Types[*]  EQUALS String("PRIVATE")), FAIL)
                 |  From: String((Path("/Resources/apiGw/Properties/EndpointConfiguration/Types/1"), "REGIONAL"))
-                |  To: String((Path("../../../Guard tests/rules.guard/5/5/Clause/"), "PRIVATE"))
+                |  To: String((Path("api_gateway_private.guard/5/5/Clause/"), "PRIVATE"))
                 |  Message: (DEFAULT: NO_MESSAGE)
 
 ```
