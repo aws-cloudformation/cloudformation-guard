@@ -176,7 +176,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                             }
                         }
                     }
-                    print_test_report(&by_result);
+                    print_test_case_report(&by_result);
                     test_counter += 1;
                 }
             }
@@ -185,7 +185,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
     Ok(exit_code)
 }
 
-pub (crate) fn print_test_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
+pub (crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
 
     let mut results = by_result.keys().map(|elem| elem.clone()).collect_vec();
     results.sort(); // Deterministic order of results
@@ -196,4 +196,5 @@ pub (crate) fn print_test_report(by_result: &HashMap<String, indexmap::IndexSet<
             println!("    {}", *each_case);
         }
     }
+    println!();
 }
