@@ -218,6 +218,7 @@ Name: "MyTest2"
     check_rest_api_is_private: Expected = SKIP, Evaluated = SKIP
 
 Test Case #3
+Name: "MyTest3"
   PASS Rules:
     check_rest_api_is_private: Expected = FAIL, Evaluated = FAIL
 
