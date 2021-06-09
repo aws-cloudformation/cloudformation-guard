@@ -117,6 +117,7 @@ struct TestSpec {
 
 fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool) -> Result<i32> {
     let mut exit_code = 0;
+    let mut test_counter = 1;
     for specs in iterate_over(test_data_files, |data, path| {
         match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
             Ok(spec) => {
@@ -139,9 +140,12 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                     rules.evaluate(&root, &stacker)?;
                     let expectations = each.expectations.rules;
                     let stack = stacker.stack();
+
+                    println!("Test Case #{}", test_counter);
                     if !each.name.is_none() {
-                        println!("Test Case: {}", each.name.unwrap());
+                        println!("Name: {}", each.name.unwrap());
                     }
+
                     let mut by_result = HashMap::new();
                     for each in &stack[0].children {
                         match expectations.get(&each.context) {
@@ -168,11 +172,12 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                 }
                             },
                             None => {
-                                println!("  No Test expectations was set for Rule {}", each.context)
+                                println!("  No Test expectation was set for Rule {}", each.context)
                             }
                         }
                     }
                     print_test_report(&by_result);
+                    test_counter += 1;
                 }
             }
         }
