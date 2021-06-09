@@ -5,6 +5,7 @@ use crate::rules::Status;
 use colored::*;
 use itertools::Itertools;
 use enumflags2::{bitflags, BitFlags};
+use crate::commands::validate::common::colored_string;
 
 #[bitflags]
 #[repr(u8)]
@@ -51,6 +52,7 @@ fn print_partition(writer: &mut dyn Write,
 impl<'r> Reporter for SummaryTable<'r> {
     fn report(&self,
               writer: &mut dyn Write,
+              status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize) -> crate::rules::Result<()> {
@@ -63,6 +65,7 @@ impl<'r> Reporter for SummaryTable<'r> {
                 _ => false
             });
 
+        writeln!(writer, "{} Status = {}", self.data_file_name, colored_string(status))?;
         if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
             writeln!(writer, "{}", "SKIP rules".bold());
             print_partition(writer, self.rules_file_name, &skipped, longest_rule_name)?;
@@ -78,6 +81,8 @@ impl<'r> Reporter for SummaryTable<'r> {
             writeln!(writer, "{}", "FAILED rules".bold());
             print_partition(writer, self.rules_file_name, failed_rules, longest_rule_name)?;
         }
+
+        writeln!(writer, "---")?;
 
         Ok(())
     }

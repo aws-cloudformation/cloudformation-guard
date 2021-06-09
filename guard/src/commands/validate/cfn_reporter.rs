@@ -13,6 +13,7 @@ use crate::commands::validate::common::{find_all_failing_clauses, NameInfo, Gene
 use crate::rules::errors::{Error, ErrorKind};
 
 use super::EvaluationType;
+use crate::rules::Status;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)/(?P<rest>.*$)").ok().unwrap();
@@ -46,6 +47,7 @@ impl<'a> CfnReporter<'a> {
 impl<'a> Reporter for CfnReporter<'a> {
     fn report(&self,
               writer: &mut dyn Write,
+              _status: Option<Status>,
               failed_rules: &[&StatusContext],
               _passed: &[&StatusContext],
               longest_rule_name: usize) -> crate::rules::Result<()> {

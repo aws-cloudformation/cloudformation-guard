@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::find_all_failing_clauses;
-use crate::rules::EvaluationType;
+use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
 
@@ -40,6 +40,7 @@ impl<'a> GenericSummary<'a> {
 impl<'a> Reporter for GenericSummary<'a> {
     fn report(&self,
               writer: &mut dyn Write,
+              _status: Option<Status>,
               failed_rules: &[&StatusContext],
               _passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize) -> crate::rules::Result<()> {

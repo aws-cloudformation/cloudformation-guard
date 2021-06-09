@@ -19,6 +19,8 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
+use std::path::PathBuf;
+use std::str::FromStr;
 
 mod generic_summary;
 mod common;
@@ -41,6 +43,7 @@ pub(crate) enum OutputFormatType {
 pub(crate) trait Reporter : Debug {
     fn report(&self,
               writer: &mut Write,
+              status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize,
@@ -106,13 +109,19 @@ or rules files.
 
         let data_files = match app.value_of("data") {
             Some(file_or_dir) => {
+                let base = PathBuf::from_str(file_or_dir)?;
                 let selected = get_files(file_or_dir, cmp)?;
                 let mut streams = Vec::with_capacity(selected.len());
                 for each in selected {
                     let mut context = String::new();
                     let mut reader = BufReader::new(File::open(each.as_path())?);
                     reader.read_to_string(&mut context)?;
-                    streams.push((context, each.to_str().map_or("".to_string(), |p| p.to_string())));
+                    let path = each.as_path();
+                    let relative = match path.strip_prefix(base.as_path()) {
+                        Ok(p) => format!("{}", p.display()),
+                        Err(_) => format!("{}", path.display()),
+                    };
+                    streams.push((context, relative));
                 }
                 streams
             },
@@ -174,9 +183,14 @@ or rules files.
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
 
+        let base = PathBuf::from_str(file)?;
         let files = get_files(file, cmp)?;
         let mut exit_code = 0;
-        for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
+        for each_file_content in iterate_over(&files, |content, file|
+            Ok((content, match file.strip_prefix(&base) {
+                Ok(path) => format!("{}", path.display()),
+                Err(_) => format!("{}", file.display()),
+            }))) {
             match each_file_content {
                 Err(e) => println!("Unable read content from file {}", e),
                 Ok((file_content, rule_file_name)) => {
@@ -385,6 +399,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
+                    top.status.clone(),
                     &failed,
                     &rest,
                     longest
