@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker};
 use serde::{Serialize, Deserialize};
+use itertools::Itertools;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}
@@ -49,6 +50,7 @@ or failure testing.
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+        let mut exit_code = 0;
         let file = app.value_of("rules-file").unwrap();
         let data = app.value_of("test-data").unwrap();
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
@@ -80,7 +82,6 @@ or failure testing.
             )))
         }
 
-        let mut exit_code = 0;
         let ruleset = vec![path];
         for rules in iterate_over(&ruleset, |content, file| {
             Ok((content, file.to_str().unwrap_or("").to_string()))
@@ -141,6 +142,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                     if !each.name.is_none() {
                         println!("Test Case: {}", each.name.unwrap());
                     }
+                    let mut by_result = HashMap::new();
                     for each in &stack[0].children {
                         match expectations.get(&each.context) {
                             Some(value) => {
@@ -149,13 +151,15 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                     Ok(status) => {
                                         let got = each.status.unwrap();
                                         if status != got {
-                                            println!("FAILED Expected Rule = {}, Status = {}, Got Status = {}",
-                                                     each.context, status, got);
+                                            by_result.entry(String::from("FAILED")).or_insert(indexmap::IndexSet::new())
+                                                .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
+                                                                             each.context, status, got)));
                                             exit_code = 7;
                                         }
                                         else {
-                                            println!("PASS Expected Rule = {}, Status = {}, Got Status = {}",
-                                                     each.context, status, got);
+                                            by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
+                                                .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
+                                                                             each.context, status, got)));
                                         }
                                         if verbose {
                                             super::validate::print_context(each, 1);
@@ -163,12 +167,12 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                     }
                                 }
                             },
-
                             None => {
-                                println!("No Test expectations was set for Rule {}", each.context)
+                                println!("  No Test expectations was set for Rule {}", each.context)
                             }
                         }
                     }
+                    print_test_report(&by_result);
                 }
             }
         }
@@ -176,3 +180,15 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
     Ok(exit_code)
 }
 
+pub (crate) fn print_test_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
+
+    let mut results = by_result.keys().map(|elem| elem.clone()).collect_vec();
+    results.sort(); // Deterministic order of results
+
+    for result in &results {
+        println!("  {} Rules:", result);
+        for each_case in by_result.get(result).unwrap() {
+            println!("    {}", *each_case);
+        }
+    }
+}
