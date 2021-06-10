@@ -36,7 +36,8 @@ impl<'a> CfnReporter<'a> {
             rules_file_name,
             output_format_type,
             render: match output_format_type {
-                OutputFormatType::SingleLineSummary => Box::new(SingleLineRenderer{}) as Box<dyn GenericReporter>,
+                OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
+                OutputFormatType::SingleLineSummaryBlock => Box::new(SingleLineBlockReporter {}) as Box<dyn GenericReporter>,
                 OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
@@ -86,9 +87,9 @@ impl<'a> Reporter for CfnReporter<'a> {
 }
 
 #[derive(Debug)]
-struct SingleLineRenderer {}
+struct SingleLineBlockReporter {}
 
-impl super::common::GenericReporter for SingleLineRenderer {
+impl super::common::GenericReporter for SingleLineBlockReporter {
     fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
@@ -96,13 +97,37 @@ impl super::common::GenericReporter for SingleLineRenderer {
               by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,
               longest_rule_len: usize) -> crate::rules::Result<()>
     {
-        writeln!(writer, "Evaluation against template {}, number of resource failures = {}", template_file_name, by_resource_name.len())?;
-        writeln!(writer, "-")?;
+        writeln!(writer, "Evaluation of rules {} against template {}, number of resource failures = {}",
+                 rules_file_name, template_file_name, by_resource_name.len())?;
+        writeln!(writer, "--");
         for (resource, info) in by_resource_name.iter() {
-            writeln!(writer, "Resource {} failed due to the following checks", resource)?;
-            super::common::print_name_info(writer, info, longest_rule_len, rules_file_name)?;
-            writeln!(writer, "-")?;
+            writeln!(writer, "Resource [{}] was not compliant with the following checks", resource)?;
+            super::common::print_name_info(writer, "", info, longest_rule_len, rules_file_name)?;
+            writeln!(writer, "-");
         }
+        writeln!(writer, "--")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct SingleLineReporter {}
+
+impl super::common::GenericReporter for SingleLineReporter {
+    fn report(&self,
+              writer: &mut dyn Write,
+              rules_file_name: &str,
+              template_file_name: &str,
+              by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,
+              longest_rule_len: usize) -> crate::rules::Result<()> {
+        writeln!(writer, "Evaluation of rules {} against template {}, number of resource failures = {}",
+                 rules_file_name, template_file_name, by_resource_name.len())?;
+        writeln!(writer, "--");
+        for (resource, info) in by_resource_name.iter() {
+            let prefix = format!("Resource [{}] in template [{}] was not compliant with ", resource, template_file_name);
+            super::common::print_name_info(writer, &prefix, info, longest_rule_len, rules_file_name)?;
+        }
+        writeln!(writer, "--")?;
         Ok(())
     }
 }

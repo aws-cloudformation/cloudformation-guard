@@ -30,6 +30,7 @@ impl<'a> GenericSummary<'a> {
             output_format_type,
             renderer: match output_format_type {
                 OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
+                OutputFormatType::SingleLineSummaryBlock => Box::new(SingleLineSummaryBlock{}) as Box<dyn GenericReporter>,
                 OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
@@ -80,11 +81,33 @@ impl GenericReporter for SingleLineSummary {
               longest_rule_len: usize) -> crate::rules::Result<()> {
 
         writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
+        writeln!(writer, "--");
         for (_rule, clauses) in resources {
-            super::common::print_name_info(writer, &clauses, longest_rule_len, rules_file_name)?;
+            super::common::print_name_info(writer, "Violation of ", &clauses, longest_rule_len, rules_file_name)?;
         }
-        writeln!(writer, "-");
+        writeln!(writer, "--");
         Ok(())
     }
 }
 
+#[derive(Debug)]
+struct SingleLineSummaryBlock{}
+
+impl GenericReporter for SingleLineSummaryBlock {
+    fn report(&self,
+              writer: &mut dyn Write,
+              rules_file_name: &str,
+              data_file_name: &str,
+              resources: HashMap<String, Vec<NameInfo<'_>>>,
+              longest_rule_len: usize) -> crate::rules::Result<()> {
+
+        writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
+        writeln!(writer, "--");
+        for (rule, clauses) in resources {
+            writeln!(writer, "{} violations for rule {}", clauses.len(), rule);
+            super::common::print_name_info(writer, "Violation of ", &clauses, longest_rule_len, rules_file_name)?;
+        }
+        writeln!(writer, "--");
+        Ok(())
+    }
+}

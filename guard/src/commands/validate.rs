@@ -19,7 +19,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::str::FromStr;
 
 mod generic_summary;
@@ -36,6 +36,7 @@ pub(crate) enum Type {
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
+    SingleLineSummaryBlock,
     JSON,
     YAML
 }
@@ -81,7 +82,7 @@ or rules files.
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary"])
+                .possible_values(&["json","yaml","single-line-summary", "single-line-summary-block"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
@@ -107,6 +108,7 @@ or rules files.
             alpabetical
         };
 
+        let empty_path = Path::new("");
         let data_files = match app.value_of("data") {
             Some(file_or_dir) => {
                 let base = PathBuf::from_str(file_or_dir)?;
@@ -118,7 +120,10 @@ or rules files.
                     reader.read_to_string(&mut context)?;
                     let path = each.as_path();
                     let relative = match path.strip_prefix(base.as_path()) {
-                        Ok(p) => format!("{}", p.display()),
+                        Ok(p) => if p != empty_path {
+                            format!("{}", p.display())
+
+                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
                         Err(_) => format!("{}", path.display()),
                     };
                     streams.push((context, relative));
@@ -155,6 +160,9 @@ or rules files.
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
                 }
+                else if o == "single-line-summary-block" {
+                    OutputFormatType::SingleLineSummaryBlock
+                }
                 else if o == "json" {
                     OutputFormatType::JSON
                 }
@@ -188,7 +196,9 @@ or rules files.
         let mut exit_code = 0;
         for each_file_content in iterate_over(&files, |content, file|
             Ok((content, match file.strip_prefix(&base) {
-                Ok(path) => format!("{}", path.display()),
+                Ok(path) => if path == empty_path {
+                    format!("{}", file.file_name().unwrap().to_str().unwrap())
+                } else { format!("{}", path.display() )},
                 Err(_) => format!("{}", file.display()),
             }))) {
             match each_file_content {

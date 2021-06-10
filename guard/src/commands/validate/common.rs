@@ -133,56 +133,64 @@ pub(super) fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusCo
 }
 
 pub(super) fn print_name_info(writer: &mut dyn Write,
+                              prefix: &str,
                               info: &[NameInfo<'_>],
                               longest_rule_len: usize,
                               rules_file_name: &str) -> crate::rules::Result<()> {
     for each in info {
-        let (did_or_didnt, operation, cmp) = match &each.comparison {
+        let (cmp, not) = match &each.comparison {
             Some((cmp, not)) => {
                 if *not {
-                    ("did", format!("NOT {}", cmp), Some(cmp))
+                    (Some(cmp), *not)
                 } else {
-                    ("did not", format!("{}", cmp), Some(cmp))
+                    (Some(cmp), *not)
                 }
             },
             None => {
-                ("did not", "NONE".to_string(), None)
+                (None, false)
             }
         };
+        // CFN = Resource [<name>] was not compliant with [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
+        // General = Violation of [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
         // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
         match cmp {
             None => {
                 // Block Clause retrieval error
-                writeln!(writer, "{rules}/{rule:<pad$}{operation} failed due to retrieval error, stopped at value [{provided}]. Error Message = [{msg}]",
+                writeln!(writer, "{prefix}[{rules}/{rule:<pad$}] due to retrieval error, stopped at value [{provided}]. Error Message = [{msg}]",
+                         prefix=prefix,
                          rules=rules_file_name,
                          rule=each.rule,
                          pad=longest_rule_len+4,
-                         operation=operation,
                          provided=each.provided,
                          msg=each.message.replace("\n", ";"))?;
             },
 
             Some(cmp) => {
                 if cmp.is_unary() {
-                    writeln!(writer, "{rules}/{rule:<pad$}{operation} failed at property path {path} on value [{provided}]. Error Message [{msg}]",
+                    writeln!(writer, "{prefix}[{rules}/{rule}] for property [{path}], value {op}. Error Message [{msg}]",
+                             prefix=prefix,
                              rules=rules_file_name,
                              rule=each.rule,
-                             pad=longest_rule_len+4,
-                             operation=operation,
-                             provided=each.provided,
+                             op=match cmp {
+                                 CmpOperator::Exists => if not { "did not exist" } else { "existed" },
+                                 CmpOperator::Empty => if not { "was not empty"} else { "was empty" },
+                                 CmpOperator::IsList => if not { "was not a list " } else { "was list" },
+                                 CmpOperator::IsMap => if not { "was not a struct" } else { "was struct" },
+                                 CmpOperator::IsString => if not { "was not a string " } else { "was string" },
+                                 _ => unreachable!()
+                             },
                              path=each.path,
                              msg=each.message.replace("\n", ";"))?;
                 }
                 else {
                     // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
-                    writeln!(writer, "{rules}/{rule:<pad$}{operation} failed at property path {path} because provided value [{provided}] {did_or_didnt} match with expected value [{expected}]. Error Message [{msg}]",
+                    writeln!(writer, "{prefix}[{rules}/{rule}] for property [{path}] because provided value [{provided}] {did_or_didnt} match with expected value [{expected}]. Error Message [{msg}]",
+                             prefix=prefix,
                              rules=rules_file_name,
                              rule=each.rule,
-                             pad=longest_rule_len+4,
-                             operation=operation,
                              provided=each.provided,
                              path=each.path,
-                             did_or_didnt=did_or_didnt,
+                             did_or_didnt=if not { "did" } else { "did not" },
                              expected=match &each.expected { Some(v) => v, None => &serde_json::Value::Null },
                              msg=each.message.replace("\n", ";"))?;
                 }
