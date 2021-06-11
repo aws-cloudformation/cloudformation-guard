@@ -7,8 +7,23 @@ use crate::rules::path_value::Path;
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
 use std::io::Write;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+
+#[derive(Debug, PartialEq, Serialize)]
+pub(super) struct Comparison {
+    operator: CmpOperator,
+    not: bool,
+}
+
+impl From<(CmpOperator, bool)> for Comparison {
+    fn from(input: (CmpOperator, bool)) -> Self {
+        Comparison {
+            operator: input.0,
+            not: input.1
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct NameInfo<'a> {
@@ -16,8 +31,8 @@ pub(super) struct NameInfo<'a> {
     pub(super) path: String,
     pub(super) provided: serde_json::Value,
     pub(super) expected: Option<serde_json::Value>,
-    pub(super) comparison: Option<(CmpOperator, bool)>,
-    pub(super) message: String
+    pub(super) comparison: Option<Comparison>,
+    pub(super) message: String,
 }
 
 pub(super) trait GenericReporter: Debug {
@@ -25,7 +40,9 @@ pub(super) trait GenericReporter: Debug {
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,
-              resources: HashMap<String, Vec<NameInfo<'_>>>,
+              failed: HashMap<String, Vec<NameInfo<'_>>>,
+              passed: HashSet<String>,
+              skipped:HashSet<String>,
               longest_rule_len: usize) -> crate::rules::Result<()>;
 }
 
@@ -52,7 +69,9 @@ impl StructuredSummary {
 struct DataOutput<'a> {
     data_from: &'a str,
     rules_from: &'a str,
-    failed: HashMap<String, Vec<NameInfo<'a>>>
+    not_compliant: HashMap<String, Vec<NameInfo<'a>>>,
+    not_applicable: HashSet<String>,
+    compliant: HashSet<String>,
 }
 
 impl GenericReporter for StructuredSummary {
@@ -60,13 +79,18 @@ impl GenericReporter for StructuredSummary {
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,
-              resources: HashMap<String, Vec<NameInfo<'_>>>,
-              longest_rule_len: usize) -> crate::rules::Result<()> {
+              failed: HashMap<String, Vec<NameInfo<'_>>>,
+              passed: HashSet<String>,
+              skipped: HashSet<String>, longest_rule_len: usize) -> crate::rules::Result<()>
+    {
         let value = DataOutput {
             rules_from: rules_file_name,
             data_from: data_file_name,
-            failed: resources
+            not_compliant: failed,
+            compliant: passed,
+            not_applicable: skipped
         };
+
         match &self.hierarchy_type {
             StructureType::JSON => writeln!(writer, "{}", serde_json::to_string(&value)?),
             StructureType::YAML => writeln!(writer, "{}", serde_yaml::to_string(&value)?),
@@ -75,7 +99,8 @@ impl GenericReporter for StructuredSummary {
     }
 }
 
-pub(super) fn extract_name_info<'a>(rule_name: &'a str, each_failing_clause: &StatusContext) -> crate::rules::Result<NameInfo<'a>> {
+pub(super) fn extract_name_info<'a>(rule_name: &'a str,
+                                    each_failing_clause: &StatusContext) -> crate::rules::Result<NameInfo<'a>> {
     let value = each_failing_clause.from.as_ref().unwrap();
     let (path, from): (String, serde_json::Value) = value.try_into()?;
     Ok(NameInfo {
@@ -89,7 +114,10 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str, each_failing_clause: &St
             },
             None => None,
         },
-        comparison: each_failing_clause.comparator.clone(),
+        comparison: match each_failing_clause.comparator {
+            Some(input) => Some(input.into()),
+            None => None,
+        },
         message: each_failing_clause.msg.as_ref().map_or(
             "".to_string(), |e| if !e.contains("DEFAULT") { e.clone() } else { "".to_string() })
     })
@@ -132,23 +160,23 @@ pub(super) fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusCo
     failed
 }
 
-pub(super) fn print_name_info(writer: &mut dyn Write,
-                              prefix: &str,
-                              info: &[NameInfo<'_>],
-                              longest_rule_len: usize,
-                              rules_file_name: &str) -> crate::rules::Result<()> {
+pub(super) fn print_name_info<R, U, B>(
+    writer: &mut dyn Write,
+    info: &[NameInfo<'_>],
+    longest_rule_len: usize,
+    rules_file_name: &str,
+    data_file_name: &str,
+    retrieval_error: R,
+    unary_message: U,
+    binary_message: B) -> crate::rules::Result<()>
+    where R: Fn(&str, &str, &NameInfo<'_>) -> crate::rules::Result<String>,
+          U: Fn(&str, &str, &str, &NameInfo<'_>) -> crate::rules::Result<String>,
+          B: Fn(&str, &str, &str, &NameInfo<'_>) -> crate::rules::Result<String>
+{
     for each in info {
         let (cmp, not) = match &each.comparison {
-            Some((cmp, not)) => {
-                if *not {
-                    (Some(cmp), *not)
-                } else {
-                    (Some(cmp), *not)
-                }
-            },
-            None => {
-                (None, false)
-            }
+            Some(cmp) => (Some(cmp.operator), cmp.not),
+            None => (None, false)
         };
         // CFN = Resource [<name>] was not compliant with [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
         // General = Violation of [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
@@ -156,22 +184,17 @@ pub(super) fn print_name_info(writer: &mut dyn Write,
         match cmp {
             None => {
                 // Block Clause retrieval error
-                writeln!(writer, "{prefix}[{rules}/{rule:<pad$}] due to retrieval error, stopped at value [{provided}]. Error Message = [{msg}]",
-                         prefix=prefix,
-                         rules=rules_file_name,
-                         rule=each.rule,
-                         pad=longest_rule_len+4,
-                         provided=each.provided,
-                         msg=each.message.replace("\n", ";"))?;
+                writeln!(writer, "{}. Error Message [{}]",
+                         retrieval_error(rules_file_name, data_file_name, each)?, each.message.replace("\n", ";"))?;
             },
 
             Some(cmp) => {
                 if cmp.is_unary() {
-                    writeln!(writer, "{prefix}[{rules}/{rule}] for property [{path}], value {op}. Error Message [{msg}]",
-                             prefix=prefix,
-                             rules=rules_file_name,
-                             rule=each.rule,
-                             op=match cmp {
+                    writeln!(writer, "{}",
+                         unary_message(
+                             rules_file_name,
+                             data_file_name,
+                             match cmp {
                                  CmpOperator::Exists => if not { "did not exist" } else { "existed" },
                                  CmpOperator::Empty => if not { "was not empty"} else { "was empty" },
                                  CmpOperator::IsList => if not { "was not a list " } else { "was list" },
@@ -179,20 +202,20 @@ pub(super) fn print_name_info(writer: &mut dyn Write,
                                  CmpOperator::IsString => if not { "was not a string " } else { "was string" },
                                  _ => unreachable!()
                              },
-                             path=each.path,
-                             msg=each.message.replace("\n", ";"))?;
+                             each)?,
+                    )?;
+
                 }
                 else {
                     // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
-                    writeln!(writer, "{prefix}[{rules}/{rule}] for property [{path}] because provided value [{provided}] {did_or_didnt} match with expected value [{expected}]. Error Message [{msg}]",
-                             prefix=prefix,
-                             rules=rules_file_name,
-                             rule=each.rule,
-                             provided=each.provided,
-                             path=each.path,
-                             did_or_didnt=if not { "did" } else { "did not" },
-                             expected=match &each.expected { Some(v) => v, None => &serde_json::Value::Null },
-                             msg=each.message.replace("\n", ";"))?;
+                    writeln!(writer, "{}",
+                        binary_message(
+                            rules_file_name,
+                            data_file_name,
+                            if not { "did" } else { "did not" },
+                            each
+                        )?,
+                    )?;
                 }
             }
 

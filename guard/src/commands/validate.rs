@@ -36,7 +36,6 @@ pub(crate) enum Type {
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
-    SingleLineSummaryBlock,
     JSON,
     YAML
 }
@@ -82,7 +81,7 @@ or rules files.
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary", "single-line-summary-block"])
+                .possible_values(&["json","yaml","single-line-summary"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
@@ -159,9 +158,6 @@ or rules files.
             Some(o) =>
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
-                }
-                else if o == "single-line-summary-block" {
-                    OutputFormatType::SingleLineSummaryBlock
                 }
                 else if o == "json" {
                     OutputFormatType::JSON
@@ -504,7 +500,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
         let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
         let appender = MetadataAppender{delegate: &reporter, root_context: &each};
         let status = rules.evaluate(&each, &appender)?;
-        reporter.report();
+        reporter.report()?;
         if status == Status::FAIL {
             overall = Status::FAIL
         }

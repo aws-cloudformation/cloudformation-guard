@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
@@ -37,7 +37,6 @@ impl<'a> CfnReporter<'a> {
             output_format_type,
             render: match output_format_type {
                 OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
-                OutputFormatType::SingleLineSummaryBlock => Box::new(SingleLineBlockReporter {}) as Box<dyn GenericReporter>,
                 OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
@@ -50,9 +49,9 @@ impl<'a> Reporter for CfnReporter<'a> {
               writer: &mut dyn Write,
               _status: Option<Status>,
               failed_rules: &[&StatusContext],
-              _passed: &[&StatusContext],
+              passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize) -> crate::rules::Result<()> {
-        if !failed_rules.is_empty() {
+        let failed = if !failed_rules.is_empty() {
             let mut by_resource_name = HashMap::new();
             for each_failed_rule in failed_rules {
                 let failed = find_all_failing_clauses(each_failed_rule);
@@ -80,32 +79,18 @@ impl<'a> Reporter for CfnReporter<'a> {
                     }
                 }
             }
-            self.render.report(writer, self.rules_file_name, self.data_file_name, by_resource_name, longest_rule_name)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct SingleLineBlockReporter {}
-
-impl super::common::GenericReporter for SingleLineBlockReporter {
-    fn report(&self,
-              writer: &mut dyn Write,
-              rules_file_name: &str,
-              template_file_name: &str,
-              by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,
-              longest_rule_len: usize) -> crate::rules::Result<()>
-    {
-        writeln!(writer, "Evaluation of rules {} against template {}, number of resource failures = {}",
-                 rules_file_name, template_file_name, by_resource_name.len())?;
-        writeln!(writer, "--");
-        for (resource, info) in by_resource_name.iter() {
-            writeln!(writer, "Resource [{}] was not compliant with the following checks", resource)?;
-            super::common::print_name_info(writer, "", info, longest_rule_len, rules_file_name)?;
-            writeln!(writer, "-");
-        }
-        writeln!(writer, "--")?;
+            by_resource_name
+        } else { HashMap::new() };
+        let as_vec = passed_or_skipped.iter().map(|s| *s)
+            .collect::<Vec<&StatusContext>>();
+        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) = as_vec.iter()
+            .partition(|status| match status.status { // This uses the dereference deep trait of Rust
+                Some(Status::SKIP) => true,
+                _ => false
+            });
+        let skipped = skipped.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
+        let passed = passed.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
+        self.render.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
         Ok(())
     }
 }
@@ -117,17 +102,72 @@ impl super::common::GenericReporter for SingleLineReporter {
     fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
-              template_file_name: &str,
+              data_file_name: &str,
               by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,
+              passed: HashSet<String>,
+              skipped: HashSet<String>,
               longest_rule_len: usize) -> crate::rules::Result<()> {
-        writeln!(writer, "Evaluation of rules {} against template {}, number of resource failures = {}",
-                 rules_file_name, template_file_name, by_resource_name.len())?;
-        writeln!(writer, "--");
-        for (resource, info) in by_resource_name.iter() {
-            let prefix = format!("Resource [{}] in template [{}] was not compliant with ", resource, template_file_name);
-            super::common::print_name_info(writer, &prefix, info, longest_rule_len, rules_file_name)?;
+
+        writeln!(writer, "Evaluation of rules {} for template {}, number of resource failures = {}",
+                 rules_file_name, data_file_name, by_resource_name.len())?;
+        if !by_resource_name.is_empty() {
+            writeln!(writer, "--");
         }
-        writeln!(writer, "--")?;
+        for (resource, info) in by_resource_name.iter() {
+            super::common::print_name_info(
+                writer, &info, longest_rule_len, rules_file_name, data_file_name,
+                |_, _, info| {
+                    Ok(format!("Resource [{}] traversed until [{}] with [{}] for template [{}] wasn't compliant with [{}/{}] due to retrieval error. Error Message [{}]",
+                               resource,
+                               info.path,
+                               info.provided,
+                               data_file_name,
+                               rules_file_name,
+                               info.rule,
+                               info.message.replace("\n", ";")
+                    ))
+                },
+                |_, _, op_msg, info| {
+                    Ok(format!("Resource [{}] property [{}] with value [{}] {} for template [{}] wasn't compliant with [{}/{}]. Error Message [{}]",
+                               resource,
+                               info.path,
+                               info.provided,
+                               op_msg,
+                               data_file_name,
+                               rules_file_name,
+                               info.rule,
+                               info.message.replace("\n", ";")
+                    ))
+                },
+                |_, _, msg, info| {
+                    Ok(format!("Resource [{}] property [{}] with value [{}] {} match [{}] for template [{}] wasn't compliant with [{}/{}]. Error Message [{}]",
+                               resource,
+                               info.path,
+                               info.provided,
+                               msg,
+                               info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
+                               data_file_name,
+                               rules_file_name,
+                               info.rule,
+                               info.message.replace("\n", ";")
+                    ))
+                }
+
+            )?;
+        }
+        if !passed.is_empty() {
+            writeln!(writer, "--");
+        }
+        for pass in passed {
+            writeln!(writer, "Rule [{}/{}] was compliant for template [{}]", rules_file_name, pass, data_file_name);
+        }
+        if !skipped.is_empty() {
+            writeln!(writer, "--");
+        }
+        for skip in skipped {
+            writeln!(writer, "Rule [{}/{}] was not applicable for template [{}]", rules_file_name, skip, data_file_name);
+        }
+        writeln!(writer, "--");
         Ok(())
     }
 }

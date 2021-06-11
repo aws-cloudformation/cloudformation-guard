@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
@@ -11,6 +11,7 @@ use crate::commands::validate::common::find_all_failing_clauses;
 use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
+use itertools::Itertools;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary<'a> {
@@ -30,7 +31,6 @@ impl<'a> GenericSummary<'a> {
             output_format_type,
             renderer: match output_format_type {
                 OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
-                OutputFormatType::SingleLineSummaryBlock => Box::new(SingleLineSummaryBlock{}) as Box<dyn GenericReporter>,
                 OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
             }
@@ -43,9 +43,9 @@ impl<'a> Reporter for GenericSummary<'a> {
               writer: &mut dyn Write,
               _status: Option<Status>,
               failed_rules: &[&StatusContext],
-              _passed_or_skipped: &[&StatusContext],
+              passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize) -> crate::rules::Result<()> {
-        if !failed_rules.is_empty() {
+        let failed = if !failed_rules.is_empty() {
             let mut by_rule = HashMap::with_capacity(failed_rules.len());
             for each_failed_rule in failed_rules {
                 for each_failed_clause in find_all_failing_clauses(each_failed_rule) {
@@ -63,8 +63,21 @@ impl<'a> Reporter for GenericSummary<'a> {
                     }
                 }
             }
-            self.renderer.report(writer, self.rules_file_name, self.data_file_name, by_rule, longest_rule_name)?;
-        }
+            by_rule
+        } else {
+            HashMap::new()
+        };
+
+        let as_vec = passed_or_skipped.iter().map(|s| *s)
+            .collect::<Vec<&StatusContext>>();
+        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) = as_vec.iter()
+            .partition(|status| match status.status { // This uses the dereference deep trait of Rust
+                Some(Status::SKIP) => true,
+                _ => false
+            });
+        let skipped = skipped.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
+        let passed = passed.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
+        self.renderer.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
         Ok(())
     }
 }
@@ -72,40 +85,79 @@ impl<'a> Reporter for GenericSummary<'a> {
 #[derive(Debug)]
 struct SingleLineSummary{}
 
+fn retrieval_error_message(rules_file: &str, data_file: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
+    Ok(format!("Property traversed until [{path}] with [{value}] for data [{data}] wasn't compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
+       data=data_file,
+       rules=rules_file,
+       rule=info.rule,
+       path=info.path,
+       value=info.provided,
+       msg=info.message.replace("\n", ";"),
+    ))
+}
+
+fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
+    Ok(format!("Property [{path}] with [{value}] {op_msg} for data [{data}] wasn't compliant with [{rules}/{rule}]. Error Message [{msg}]",
+        path=info.path,
+        value=info.provided,
+        op_msg=op_msg,
+        data=data_file,
+        rules=rules_file,
+        rule=info.rule,
+        msg=info.message.replace("\n", ";"),
+    ))
+}
+
+fn binary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
+    Ok(format!("Property [{path}] with [{value}] {op_msg} match [{expected}] for data [{data}] wasn't compliant with [{rules}/{rule}]. Error Message [{msg}]",
+               path=info.path,
+               value=info.provided,
+               op_msg=op_msg,
+               data=data_file,
+               rules=rules_file,
+               rule=info.rule,
+               msg=info.message.replace("\n", ";"),
+               expected=info.expected.as_ref().map_or(&serde_json::Value::Null, |v| v)
+    ))
+}
+
 impl GenericReporter for SingleLineSummary {
     fn report(&self,
               writer: &mut dyn Write,
               rules_file_name: &str,
               data_file_name: &str,
-              resources: HashMap<String, Vec<NameInfo<'_>>>,
-              longest_rule_len: usize) -> crate::rules::Result<()> {
-
+              failed: HashMap<String, Vec<NameInfo<'_>>>,
+              passed: HashSet<String>,
+              skipped: HashSet<String>, longest_rule_len: usize) -> crate::rules::Result<()>
+    {
         writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
-        writeln!(writer, "--");
-        for (_rule, clauses) in resources {
-            super::common::print_name_info(writer, "Violation of ", &clauses, longest_rule_len, rules_file_name)?;
+        if !failed.is_empty() {
+            writeln!(writer, "--");
         }
-        writeln!(writer, "--");
-        Ok(())
-    }
-}
+        for (_rule, clauses) in failed {
+            super::common::print_name_info(
+                writer,
+                &clauses,
+                longest_rule_len,
+                rules_file_name,
+                data_file_name,
+                retrieval_error_message,
+                unary_error_message,
+                binary_error_message
+            )?;
+        }
+        if !passed.is_empty() {
+            writeln!(writer, "--");
+        }
+        for pass in passed {
+            writeln!(writer, "Rule [{}/{}] was compliant for data file [{}]", rules_file_name, pass, data_file_name);
+        }
 
-#[derive(Debug)]
-struct SingleLineSummaryBlock{}
-
-impl GenericReporter for SingleLineSummaryBlock {
-    fn report(&self,
-              writer: &mut dyn Write,
-              rules_file_name: &str,
-              data_file_name: &str,
-              resources: HashMap<String, Vec<NameInfo<'_>>>,
-              longest_rule_len: usize) -> crate::rules::Result<()> {
-
-        writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
-        writeln!(writer, "--");
-        for (rule, clauses) in resources {
-            writeln!(writer, "{} violations for rule {}", clauses.len(), rule);
-            super::common::print_name_info(writer, "Violation of ", &clauses, longest_rule_len, rules_file_name)?;
+        if !skipped.is_empty() {
+            writeln!(writer, "--");
+        }
+        for skip in skipped {
+            writeln!(writer, "Rule [{}/{}] was not applicable for data file [{}]", rules_file_name, skip, data_file_name);
         }
         writeln!(writer, "--");
         Ok(())
