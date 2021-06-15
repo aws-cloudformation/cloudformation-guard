@@ -29,7 +29,7 @@ main() {
                 err "unable to symlink to ~/.guard/bin directory"
             ~/.guard/bin/cfn-guard help ||
                 err "cfn-guard was not installed properly"
-            echo "Remember to SET PATH include PATH=${PATH}:~/.guard/bin"
+            echo "Remember to SET PATH include PATH=\${PATH}:~/.guard/bin"
         done
 }
 
