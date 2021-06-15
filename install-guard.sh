@@ -53,9 +53,8 @@ get_os_type() {
 
 
 get_latest_release() {
-    curl -fsSLI -o /dev/null -w %{url_effective} \
-        https://github.com/aws-cloudformation/cloudformation-guard/releases/latest |
-    awk -F '/' '{print $NF}' |
+    curl -fsSL https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest |
+    awk -F '"' '/tag_name/ { print $4 }' |
     awk -F '.' '{ print $1 "\n" $0 }'
 }
 
