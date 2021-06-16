@@ -5,8 +5,9 @@
 # to the latest one
 
 main() {
-    need_cmd curl
-    need_cmd wget
+    if ! ( check_cmd curl || check_cmd wget ); then
+        err "need 'curl' or 'wget' (command not found)"
+    fi
     need_cmd awk
     need_cmd mkdir
     need_cmd rm
@@ -20,7 +21,7 @@ main() {
             mkdir -p ~/.guard/$MAJOR_VER ~/.guard/bin ||
                 err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
             get_os_type
-            wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz -O /tmp/guard.tar.gz ||
+            download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz > /tmp/guard.tar.gz ||
                 err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz"
             tar -C ~/.guard/$MAJOR_VER -xzf /tmp/guard.tar.gz ||
                 err "unable to untar /tmp/guard.tar.gz"
@@ -28,7 +29,7 @@ main() {
                 err "unable to symlink to ~/.guard/bin directory"
             ~/.guard/bin/cfn-guard help ||
                 err "cfn-guard was not installed properly"
-            echo "Remember to SET PATH include PATH=${PATH}:~/.guard/bin"
+            echo "Remember to SET PATH include PATH=\${PATH}:~/.guard/bin"
         done
 }
 
@@ -53,14 +54,13 @@ get_os_type() {
 
 
 get_latest_release() {
-    curl -fsSLI -o /dev/null -w %{url_effective} \
-        https://github.com/aws-cloudformation/cloudformation-guard/releases/latest |
-    awk -F '/' '{print $NF}' |
+    download https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest |
+    awk -F '"' '/tag_name/ { print $4 }' |
     awk -F '.' '{ print $1 "\n" $0 }'
 }
 
 err() {
-    say "$1" >&2
+    echo "$1" >&2
     exit 1
 }
 
@@ -73,5 +73,15 @@ need_cmd() {
 check_cmd() {
     command -v "$1" > /dev/null 2>&1
 }
+
+download()
+{
+    if check_cmd curl; then
+        curl -fsSL "$1"
+    else
+        wget -qO- "$1"
+    fi
+}
+
 
 main
