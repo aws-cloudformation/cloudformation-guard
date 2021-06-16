@@ -184,8 +184,7 @@ pub(super) fn print_name_info<R, U, B>(
         match cmp {
             None => {
                 // Block Clause retrieval error
-                writeln!(writer, "{}. Error Message [{}]",
-                         retrieval_error(rules_file_name, data_file_name, each)?, each.message.replace("\n", ";"))?;
+                writeln!(writer, "{}", retrieval_error(rules_file_name, data_file_name, each)?)?;
             },
 
             Some(cmp) => {

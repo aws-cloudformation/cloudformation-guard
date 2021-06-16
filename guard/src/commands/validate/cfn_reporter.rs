@@ -113,6 +113,10 @@ impl super::common::GenericReporter for SingleLineReporter {
         if !by_resource_name.is_empty() {
             writeln!(writer, "--");
         }
+        //
+        // Agreed on text
+        // Resource [NewVolume2] property [Properties.Encrypted] in template [template.json] is not compliant with [sg.guard/aws_ec2_volume_checks] because provided value [false] does not match with expected value [true]. Error Message [[EC2-008] : EC2 volumes should be encrypted]
+        //
         for (resource, info) in by_resource_name.iter() {
             super::common::print_name_info(
                 writer, &info, longest_rule_len, rules_file_name, data_file_name,
@@ -128,28 +132,28 @@ impl super::common::GenericReporter for SingleLineReporter {
                     ))
                 },
                 |_, _, op_msg, info| {
-                    Ok(format!("Resource [{}] property [{}] with value [{}] {} for template [{}] wasn't compliant with [{}/{}]. Error Message [{}]",
-                               resource,
-                               info.path,
-                               info.provided,
-                               op_msg,
-                               data_file_name,
-                               rules_file_name,
-                               info.rule,
-                               info.message.replace("\n", ";")
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error message [{msg}]",
+                               resource=resource,
+                               property=info.path,
+                               provided=info.provided,
+                               op_msg=op_msg,
+                               template=data_file_name,
+                               rules=rules_file_name,
+                               rule=info.rule,
+                               msg=info.message.replace("\n", ";")
                     ))
                 },
                 |_, _, msg, info| {
-                    Ok(format!("Resource [{}] property [{}] with value [{}] {} match [{}] for template [{}] wasn't compliant with [{}/{}]. Error Message [{}]",
-                               resource,
-                               info.path,
-                               info.provided,
-                               msg,
-                               info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
-                               data_file_name,
-                               rules_file_name,
-                               info.rule,
-                               info.message.replace("\n", ";")
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
+                               resource=resource,
+                               property=info.path,
+                               provided=info.provided,
+                               op_msg=msg,
+                               expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
+                               template=data_file_name,
+                               rules=rules_file_name,
+                               rule=info.rule,
+                               msg=info.message.replace("\n", ";")
                     ))
                 }
 
@@ -159,13 +163,13 @@ impl super::common::GenericReporter for SingleLineReporter {
             writeln!(writer, "--");
         }
         for pass in passed {
-            writeln!(writer, "Rule [{}/{}] was compliant for template [{}]", rules_file_name, pass, data_file_name);
+            writeln!(writer, "Rule [{}/{}] is compliant for template [{}]", rules_file_name, pass, data_file_name);
         }
         if !skipped.is_empty() {
             writeln!(writer, "--");
         }
         for skip in skipped {
-            writeln!(writer, "Rule [{}/{}] was not applicable for template [{}]", rules_file_name, skip, data_file_name);
+            writeln!(writer, "Rule [{}/{}] is not applicable for template [{}]", rules_file_name, skip, data_file_name);
         }
         writeln!(writer, "--");
         Ok(())

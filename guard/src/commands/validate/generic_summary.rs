@@ -86,20 +86,19 @@ impl<'a> Reporter for GenericSummary<'a> {
 struct SingleLineSummary{}
 
 fn retrieval_error_message(rules_file: &str, data_file: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
-    Ok(format!("Property traversed until [{path}] with [{value}] for data [{data}] wasn't compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
+    Ok(format!("Property traversed until [{path}] in data [{data}] is not compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
        data=data_file,
        rules=rules_file,
        rule=info.rule,
        path=info.path,
-       value=info.provided,
        msg=info.message.replace("\n", ";"),
     ))
 }
 
 fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
-    Ok(format!("Property [{path}] with [{value}] {op_msg} for data [{data}] wasn't compliant with [{rules}/{rule}]. Error Message [{msg}]",
+    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error Message [{msg}]",
         path=info.path,
-        value=info.provided,
+        provided=info.provided,
         op_msg=op_msg,
         data=data_file,
         rules=rules_file,
@@ -109,9 +108,9 @@ fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &N
 }
 
 fn binary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
-    Ok(format!("Property [{path}] with [{value}] {op_msg} match [{expected}] for data [{data}] wasn't compliant with [{rules}/{rule}]. Error Message [{msg}]",
+    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match expected value [{expected}]. Error Message [{msg}]",
                path=info.path,
-               value=info.provided,
+               provided=info.provided,
                op_msg=op_msg,
                data=data_file,
                rules=rules_file,
@@ -150,14 +149,14 @@ impl GenericReporter for SingleLineSummary {
             writeln!(writer, "--");
         }
         for pass in passed {
-            writeln!(writer, "Rule [{}/{}] was compliant for data file [{}]", rules_file_name, pass, data_file_name);
+            writeln!(writer, "Rule [{}/{}] is compliant for data [{}]", rules_file_name, pass, data_file_name);
         }
 
         if !skipped.is_empty() {
             writeln!(writer, "--");
         }
         for skip in skipped {
-            writeln!(writer, "Rule [{}/{}] was not applicable for data file [{}]", rules_file_name, skip, data_file_name);
+            writeln!(writer, "Rule [{}/{}] is not applicable for data [{}]", rules_file_name, skip, data_file_name);
         }
         writeln!(writer, "--");
         Ok(())
