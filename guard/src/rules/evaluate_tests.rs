@@ -1414,13 +1414,13 @@ fn test_compare_loop_all() -> Result<()> {
     //
     // One result for each LHS value
     //
-    assert_eq!(results.len(), 2);
-    let (outcome, from, to) = &results[0];
+    assert_eq!(results.1.len(), 2);
+    let (outcome, from, to) = &results.1[0];
     assert_eq!(*outcome, false);
     assert_eq!(from, &Some(lhs[0].clone()));
     assert_eq!(to, &Some(rhs[0].clone()));
 
-    let (outcome, from, to) = &results[1];
+    let (outcome, from, to) = &results.1[1];
     assert_eq!(*outcome, true);
     assert_eq!(from, &None);
     assert_eq!(to, &None);
@@ -2191,5 +2191,73 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
     let reporter = Reporter{ root: &root };
     let status = rules.evaluate(&values, &reporter)?;
     assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
+    let template = r###"
+    Resources:
+    MasterRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainMaster', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Master.PrivateIp
+    InternalRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainInternal', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Master.PrivateIp
+    SubdomainRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainDefault', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Infra1.PrivateIp
+    WildcardRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainWild', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Infra1.PrivateIp
+    "###;
+
+    let rules = r###"
+    let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
+    rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
+      %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
+      let targets = [["",["SubdomainWild",".","HostedZoneName"]], ["",["SubdomainInternal",".","HostedZoneName"]], ["",["SubdomainMaster",".","HostedZoneName"]], ["",["SubdomainDefault",".","HostedZoneName"]]]
+      %aws_route53_recordset_resources.Properties.Name IN %targets
+      %aws_route53_recordset_resources.Properties.Type == "A"
+      %aws_route53_recordset_resources.Properties.ResourceRecords IN [["Master.PrivateIp"], ["Infra1.PrivateIp"]]
+      %aws_route53_recordset_resources.Properties.TTL == "900"
+      %aws_route53_recordset_resources.Properties.HostedZoneName == "HostedZoneName"
+    }
+    "###;
+
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let rule_eval = RulesFile::try_from(rules)?;
+    let context = RootScope::new(&rule_eval, &value);
+    let status = rule_eval.evaluate(&value, &context)?;
+    assert_eq!(status, Status::PASS);
+
     Ok(())
 }

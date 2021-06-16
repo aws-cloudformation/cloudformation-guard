@@ -70,9 +70,10 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
 }
 
 fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool)
-    -> Result<Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>>
+    -> Result<(bool, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
+    let mut lhs_cmp = true;
     let mut results = Vec::with_capacity(lhs.len());
     'lhs: for lhs_value in lhs {
         for rhs_value in rhs {
@@ -85,34 +86,45 @@ fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, c
             }
             else {
                 results.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
+                if !any_one_rhs {
+                    lhs_cmp = false;
+                }
             }
         }
+        if any_one_rhs {
+            lhs_cmp = false;
+        }
     }
-    Ok(results)
+    Ok((lhs_cmp, results))
 }
 
 fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
     -> Result<(bool, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
-    let results = compare_loop_all(lhs, rhs, compare, any_one_rhs)?;
+    let (overall, results) = compare_loop_all(lhs, rhs, compare, any_one_rhs)?;
     let overall = 'outer: loop {
-        for (each, _, _) in results.iter() {
-            if atleast_one {
-                if *each {
-                    break 'outer true
+        if !overall {
+            for (each, _, _) in results.iter() {
+                if atleast_one {
+                    if *each {
+                        break 'outer true
+                    }
                 }
+                else {
+                    if !*each {
+                        break 'outer false
+                    }
+                }
+            }
+            if atleast_one {
+                break 'outer false
             }
             else {
-                if !*each {
-                    break 'outer false
-                }
+                break 'outer true
             }
         }
-        if atleast_one {
-            break 'outer false
-        }
         else {
-            break 'outer true
+            break true
         }
     };
     Ok((overall, results))
@@ -219,7 +231,7 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
         }
         Ok((Status::PASS, vec![]))
     }
-    else if !lhs_elem_has_list && rhs_elem_has_list {
+    else if (!lhs_elem_has_list || any) && rhs_elem_has_list {
         for elevated in elevate_inner(&rhs)? {
             if let Ok((cmp, outcomes)) = compare_loop(
                 &lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
