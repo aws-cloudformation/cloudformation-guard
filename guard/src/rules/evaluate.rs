@@ -432,10 +432,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             None => {
                 let guard_loc = format!("{}", self);
                 let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
-                let message = match &clause.access_clause.custom_message {
-                    Some(msg) => msg,
-                    None => "(DEFAULT: NO_MESSAGE)"
-                };
                 if all {
                     return Ok(auto_reporter.status(Status::FAIL)
                         .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())

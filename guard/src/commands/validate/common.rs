@@ -9,6 +9,8 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+use regex::Regex;
+use lazy_static::*;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -29,7 +31,7 @@ impl From<(CmpOperator, bool)> for Comparison {
 pub(super) struct NameInfo<'a> {
     pub(super) rule: &'a str,
     pub(super) path: String,
-    pub(super) provided: serde_json::Value,
+    pub(super) provided: Option<serde_json::Value>,
     pub(super) expected: Option<serde_json::Value>,
     pub(super) comparison: Option<Comparison>,
     pub(super) message: String,
@@ -99,28 +101,62 @@ impl GenericReporter for StructuredSummary {
     }
 }
 
+lazy_static! {
+    static ref PATH_FROM_MSG: Regex = Regex::new(r"path\s+=\s+(?P<path>[^ ]+)").ok().unwrap();
+}
+
 pub(super) fn extract_name_info<'a>(rule_name: &'a str,
                                     each_failing_clause: &StatusContext) -> crate::rules::Result<NameInfo<'a>> {
-    let value = each_failing_clause.from.as_ref().unwrap();
-    let (path, from): (String, serde_json::Value) = value.try_into()?;
-    Ok(NameInfo {
-        rule: rule_name,
-        path,
-        provided: from,
-        expected: match &each_failing_clause.to {
-            Some(to) => {
-                let (_, val): (String, serde_json::Value) = to.try_into()?;
-                Some(val)
+    if each_failing_clause.from.is_some() {
+        let value = each_failing_clause.from.as_ref().unwrap();
+        let (path, from): (String, serde_json::Value) = value.try_into()?;
+        Ok(NameInfo {
+            rule: rule_name,
+            path,
+            provided: Some(from),
+            expected: match &each_failing_clause.to {
+                Some(to) => {
+                    let (_, val): (String, serde_json::Value) = to.try_into()?;
+                    Some(val)
+                },
+                None => None,
             },
-            None => None,
-        },
-        comparison: match each_failing_clause.comparator {
-            Some(input) => Some(input.into()),
-            None => None,
-        },
-        message: each_failing_clause.msg.as_ref().map_or(
-            "".to_string(), |e| if !e.contains("DEFAULT") { e.clone() } else { "".to_string() })
-    })
+            comparison: match each_failing_clause.comparator {
+                Some(input) => Some(input.into()),
+                None => None,
+            },
+            message: each_failing_clause.msg.as_ref().map_or(
+                "".to_string(), |e| if !e.contains("DEFAULT") { e.clone() } else { "".to_string() })
+        })
+    }
+    else {
+        //
+        // This is crappy, but we are going to extract information from the retrieval error message
+        // see path_value.rs for retrieval error messages.
+        // TODO merge the query interface to retrieve partial results along with errored one ones and then
+        //      change this logic based on the reporting changes. Today we bail out for the first
+        //      retrieval error, fast fail semantics
+        //
+
+        //
+        // No from is how we indicate retrieval errors.
+        //
+        let (path, message) = each_failing_clause.msg.as_ref().map_or(("".to_string(), "".to_string()), |msg| {
+            match PATH_FROM_MSG.captures(msg) {
+                Some(cap) => (cap["path"].to_string(), msg.clone()),
+                None => ("".to_string(), msg.clone())
+            }
+        });
+
+        Ok(NameInfo {
+            rule: rule_name,
+            path,
+            provided: None,
+            expected: None,
+            comparison: None,
+            message
+        })
+    }
 }
 
 pub(super) fn colored_string(status: Option<Status>) -> ColoredString {

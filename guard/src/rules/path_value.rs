@@ -375,7 +375,7 @@ impl QueryResolver for PathAwareValue {
                     Ok(index) => {
                         match self {
                             PathAwareValue::List((_, list)) => {
-                                PathAwareValue::retrieve_index(index, list, query)
+                                PathAwareValue::retrieve_index(self, index, list, query)
                                     .map_or_else(|e| self.map_error_or_empty(all, e),
                                                  |val| val.select(all, &query[1..], resolver))
                             }
@@ -455,7 +455,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::Index(array_idx) => {
                 match self {
                     PathAwareValue::List((_path, vec)) => {
-                        PathAwareValue::retrieve_index(*array_idx, vec, query)
+                        PathAwareValue::retrieve_index(self, *array_idx, vec, query)
                             .map_or_else(|e| self.map_error_or_empty(all, e),
                                          |val| val.select(all, &query[1..], resolver))
 
@@ -468,7 +468,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::AllIndices => {
                 match self {
                     PathAwareValue::List((_path, elements)) => {
-                        PathAwareValue::accumulate(all, &query[1..], elements, resolver)
+                        PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
                     },
 
                     //
@@ -488,7 +488,7 @@ impl QueryResolver for PathAwareValue {
                     // Supporting old format
                     //
                     PathAwareValue::List((_path, elements)) => {
-                        PathAwareValue::accumulate(all, &query[1..], elements, resolver)
+                        PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
                     },
 
                     PathAwareValue::Map((_path, map)) => {
@@ -664,7 +664,7 @@ impl PathAwareValue {
     fn map_some_or_error_all(&self, all: bool, query: &[QueryPart<'_>]) -> Result<Vec<&PathAwareValue>, Error> {
         if all {
             Err(Error::new(ErrorKind::IncompatibleRetrievalError(
-                format!("Attempting to retrieve array index or key from map at Path = {}, Type was not an array/object {}, Remaining Query = {}",
+                format!("Attempting to retrieve array index or key from map at path = {} , Type was not an array/object {}, Remaining Query = {}",
                         self.self_value().0, self.type_info(), SliceDisplay(query))
             )))
         } else {
@@ -714,24 +714,24 @@ impl PathAwareValue {
         }
     }
 
-    pub(crate) fn retrieve_index<'v>(index: i32, list: &'v Vec<PathAwareValue>, query: &[QueryPart<'_>]) -> Result<&'v PathAwareValue, Error> {
+    pub(crate) fn retrieve_index<'v>(parent: &PathAwareValue, index: i32, list: &'v Vec<PathAwareValue>, query: &[QueryPart<'_>]) -> Result<&'v PathAwareValue, Error> {
         let check = if index >= 0 { index } else { -index } as usize;
         if check < list.len() {
             Ok(&list[check])
         } else {
             Err(Error::new(
                 ErrorKind::RetrievalError(
-                    format!("Array Index out of bounds on index = {} inside Array = {:?}, remaining query = {}",
-                            index, list, SliceDisplay(query))
+                    format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
+                           parent.self_path(), index, list, SliceDisplay(query))
                 )))
         }
 
     }
 
-    pub(crate) fn accumulate<'v>(all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
+    pub(crate) fn accumulate<'v>(parent: &PathAwareValue, all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
         if elements.is_empty() && !query.is_empty() && all {
             return Err(Error::new(ErrorKind::RetrievalError(
-                format!("Remaining Query {}, No elements in array", SliceDisplay(query))
+                format!("No entries for path = {} . Remaining Query {}", parent.self_path(), SliceDisplay(query))
             )));
         }
 

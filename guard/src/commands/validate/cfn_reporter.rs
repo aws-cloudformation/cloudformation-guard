@@ -53,26 +53,24 @@ impl<'a> Reporter for CfnReporter<'a> {
               longest_rule_name: usize) -> crate::rules::Result<()> {
         let failed = if !failed_rules.is_empty() {
             let mut by_resource_name = HashMap::new();
-            for each_failed_rule in failed_rules {
+            for (idx, each_failed_rule) in failed_rules.iter().enumerate() {
                 let failed = find_all_failing_clauses(each_failed_rule);
-                for each_failing_clause in failed {
+                for (clause_idx, each_failing_clause) in failed.iter().enumerate() {
                     match each_failing_clause.eval_type {
                         EvaluationType::Clause |
                         EvaluationType::BlockClause => {
-                            if each_failing_clause.from.is_some() {
-                                let mut resource_info = super::common::extract_name_info(
-                                    &each_failed_rule.context, each_failing_clause)?;
-                                let (resource_name, property_path) = match CFN_RESOURCES.captures(&resource_info.path) {
-                                    Some(caps) => {
-                                        (caps["name"].to_string(), caps["rest"].replace("/", "."))
-                                    },
-                                    None => return Err(Error::new(ErrorKind::IncompatibleRetrievalError(
-                                        "Expecting CFN Template format for errors".to_string()
-                                    )))
-                                };
-                                resource_info.path = property_path;
-                                by_resource_name.entry(resource_name).or_insert(Vec::new()).push(resource_info);
-                            }
+                            let mut resource_info = super::common::extract_name_info(
+                                &each_failed_rule.context, each_failing_clause)?;
+                            let (resource_name, property_path) = match CFN_RESOURCES.captures(&resource_info.path) {
+                                Some(caps) => {
+                                    (caps["name"].to_string(), caps["rest"].replace("/", "."))
+                                },
+                                None =>
+                                    (format!("Rule {} Resource {} {}", each_failed_rule.context, idx, clause_idx), "".to_string())
+
+                            };
+                            resource_info.path = property_path;
+                            by_resource_name.entry(resource_name).or_insert(Vec::new()).push(resource_info);
                         },
 
                         _ => unreachable!()
@@ -121,10 +119,9 @@ impl super::common::GenericReporter for SingleLineReporter {
             super::common::print_name_info(
                 writer, &info, longest_rule_len, rules_file_name, data_file_name,
                 |_, _, info| {
-                    Ok(format!("Resource [{}] traversed until [{}] with [{}] for template [{}] wasn't compliant with [{}/{}] due to retrieval error. Error Message [{}]",
+                    Ok(format!("Resource [{}] traversed until [{}] for template [{}] wasn't compliant with [{}/{}] due to retrieval error. Error Message [{}]",
                                resource,
                                info.path,
-                               info.provided,
                                data_file_name,
                                rules_file_name,
                                info.rule,
@@ -135,7 +132,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                     Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
-                               provided=info.provided,
+                               provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                op_msg=op_msg,
                                template=data_file_name,
                                rules=rules_file_name,
@@ -147,7 +144,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                     Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
-                               provided=info.provided,
+                               provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                op_msg=msg,
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,

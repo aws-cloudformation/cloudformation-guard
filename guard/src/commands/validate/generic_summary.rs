@@ -52,11 +52,9 @@ impl<'a> Reporter for GenericSummary<'a> {
                     match each_failed_clause.eval_type {
                         EvaluationType::Clause |
                         EvaluationType::BlockClause => {
-                            if each_failed_clause.from.is_some() {
-                                by_rule.entry(each_failed_rule.context.clone())
-                                    .or_insert(Vec::new())
-                                    .push(extract_name_info(&each_failed_rule.context, each_failed_clause)?);
-                            }
+                            by_rule.entry(each_failed_rule.context.clone())
+                                .or_insert(Vec::new())
+                                .push(extract_name_info(&each_failed_rule.context, each_failed_clause)?);
                         }
 
                         _ => {}
@@ -98,7 +96,7 @@ fn retrieval_error_message(rules_file: &str, data_file: &str, info: &NameInfo<'_
 fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
     Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error Message [{msg}]",
         path=info.path,
-        provided=info.provided,
+        provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
         op_msg=op_msg,
         data=data_file,
         rules=rules_file,
@@ -110,7 +108,7 @@ fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &N
 fn binary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
     Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match expected value [{expected}]. Error Message [{msg}]",
                path=info.path,
-               provided=info.provided,
+               provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                op_msg=op_msg,
                data=data_file,
                rules=rules_file,
