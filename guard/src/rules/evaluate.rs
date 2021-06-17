@@ -587,6 +587,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             let guard_loc = format!("{}", self);
             let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
             auto_reporter.status(if outcome { Status::PASS } else { Status::FAIL });
+            auto_reporter.cmp(clause.access_clause.comparator);
             if !outcome {
                 auto_reporter.from(from).to(to).message(match &clause.access_clause.custom_message {
                     Some(msg) => msg.clone(),
