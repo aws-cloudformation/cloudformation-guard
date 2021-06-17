@@ -17,24 +17,24 @@ main() {
 
     get_os_type
     get_latest_release |
-        while read MAJOR_VER; read VERSION; do
-            mkdir -p ~/.guard/$MAJOR_VER ~/.guard/bin ||
+        while read -r MAJOR_VER; read -r VERSION; do
+            mkdir -p ~/".guard/$MAJOR_VER" ~/.guard/bin ||
                 err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
             get_os_type
-            download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz > /tmp/guard.tar.gz ||
+            download "https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz" > /tmp/guard.tar.gz ||
                 err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz"
-            tar -C ~/.guard/$MAJOR_VER -xzf /tmp/guard.tar.gz ||
+            tar -C ~/".guard/$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
                 err "unable to untar /tmp/guard.tar.gz"
-            ln -sf ~/.guard/$MAJOR_VER/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest/cfn-guard ~/.guard/bin ||
+            ln -sf ~/".guard/$MAJOR_VER/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest/cfn-guard" ~/.guard/bin ||
                 err "unable to symlink to ~/.guard/bin directory"
-            ~/.guard/bin/cfn-guard help ||
+            ~/".guard/bin/cfn-guard" help ||
                 err "cfn-guard was not installed properly"
             echo "Remember to SET PATH include PATH=\${PATH}:~/.guard/bin"
         done
 }
 
 get_os_type() {
-    local _ostype="$(uname -s)"
+    _ostype="$(uname -s)"
     case "$_ostype" in
         Darwin)
             OS_TYPE="macos"
