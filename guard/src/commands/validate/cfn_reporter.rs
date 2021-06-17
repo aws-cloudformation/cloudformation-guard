@@ -59,6 +59,19 @@ impl<'a> Reporter for CfnReporter<'a> {
                     match each_failing_clause.eval_type {
                         EvaluationType::Clause |
                         EvaluationType::BlockClause => {
+                            if each_failing_clause.eval_type == EvaluationType::BlockClause {
+                                match &each_failing_clause.msg {
+                                    Some(msg) => {
+                                        if msg.contains("DEFAULT") {
+                                            continue;
+                                        }
+                                    },
+
+                                    None => {
+                                        continue;
+                                    }
+                                }
+                            }
                             let mut resource_info = super::common::extract_name_info(
                                 &each_failed_rule.context, each_failing_clause)?;
                             let (resource_name, property_path) = match CFN_RESOURCES.captures(&resource_info.path) {

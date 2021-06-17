@@ -728,7 +728,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
         let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
             Err(Error(ErrorKind::RetrievalError(e))) |
             Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
-                return Ok(report.from(Some(context.clone())).message(e).status(Status::FAIL).get_status())
+                return Ok(report.message(e).status(Status::FAIL).get_status())
             },
 
             Ok(v) => if v.is_empty() { // one or more

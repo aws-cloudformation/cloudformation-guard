@@ -52,6 +52,19 @@ impl<'a> Reporter for GenericSummary<'a> {
                     match each_failed_clause.eval_type {
                         EvaluationType::Clause |
                         EvaluationType::BlockClause => {
+                            if each_failed_clause.eval_type == EvaluationType::BlockClause {
+                                match &each_failed_clause.msg {
+                                    Some(msg) => {
+                                        if msg.contains("DEFAULT") {
+                                            continue;
+                                        }
+                                    },
+
+                                    None => {
+                                        continue;
+                                    }
+                                }
+                            }
                             by_rule.entry(each_failed_rule.context.clone())
                                 .or_insert(Vec::new())
                                 .push(extract_name_info(&each_failed_rule.context, each_failed_clause)?);
