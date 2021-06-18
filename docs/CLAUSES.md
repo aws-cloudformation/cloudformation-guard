@@ -274,6 +274,8 @@ All clauses above are combined using conjunction. As you can see, there is repet
 
 ## Blocks
 
+Clauses can be grouped into blocks. This section talks about the different block structures that can be used in Guard.
+
 ### Query blocks
 
 The above set of clauses can be written in block format as follows:
