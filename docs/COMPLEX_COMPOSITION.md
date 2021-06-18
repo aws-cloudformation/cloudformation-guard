@@ -4,34 +4,34 @@ This chapter is a more advanced topic. Readers are encouraged to read all the ot
 
 Let’s recall key learnings from the [Guard: Clauses](CLAUSES.md) document.
 
-1. Structure of a named rule block:
+1. Clauses are the foundational underpinning of Guard rules. Clauses are boolean statements which evaluate to a `true` (`PASS`)/ `false` (`FAIL`) and take the following format:
 
 ```
-rule <rule name> [when <condition>] {
-    Guard_rule_A
-    Guard_rule_B
-    ...
-}
+  <query> <operator> [query|value literal] [custom message]
 ```
 
-Where Guard rule is an umbrella term for clause, query block, `when` block or named rule block.
-
-Query blocks and named rule blocks allow for re-usability, improved composition, and reduced verbosity and repetition. This document will focus on demonstrating these features in-depth.
+2. Query blocks and named rule blocks allow for re-usability, improved composition, and reduced verbosity and repetition. This document will focus on demonstrating these features in-depth.
 
 ## Clause evaluation
 
-Each clause is an independent statement whose result is the evaluation on its entire query result based on the clause's scope. This is best explained with an example,
+Each clause is an independent statement in reference to the context in which they are declared. Let us look at the examples below to understand this better.
 
 ### Example 1
 
 ```
-let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
-
-when %s3_buckets !empty {
-  %s3_buckets.Properties.AccessControl exists               << Clause 1 >>
-  %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
-}
+1  let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+2
+3  when %s3_buckets !empty {
+4    %s3_buckets.Properties.AccessControl exists               << Clause 1 >>
+5    %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
+6  }
 ```
+
+In the above example,
+1. `Clause 1` and `Clause 2` are independent statements.
+1. `Clause 1` is evaluated on `AccessControl` property of all S3 buckets and the result of `Clause 1` is the cumulative result.
+1. `Clause 2` is evaluated after complete evaluation of `Clause 1`.
+1. `Clause 2` is evaluated on `LoggingConfiguration` property of all S3 buckets and the result of `Clause 2` is the cumulative result.
 
 The pseudocode for the above example is a follows,
 
@@ -41,37 +41,45 @@ boolean isLoggingConfigurationExists = true
 
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.AccessControl == null then
-        isAccessControlExists = false
+        isAccessControlExists = isAccessControlExists and false
+    else 
+        isAccessControlExists = isAccessControlExists and true
+    else 
     end if
 end for
 
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.LoggingConfiguration == null then
-        isLoggingConfigurationExists = false
+        isLoggingConfigurationExists = isLoggingConfigurationExists and false
+    else
+        isLoggingConfigurationExists = isLoggingConfigurationExists and true
     end if
 end for
 
 return isAccessControlExists and isLoggingConfigurationExists
 ```
 
-In the above example,
-1. `Clause 1` and `Clause 2` are independent statements.
-1. `Clause 1` is evaluated on `AccessControl` property of all S3 buckets and the result of `Clause 1` is the cumulative result of the evaluation.
-1. `Clause 2` is evaluated after complete evaluation of `Clause 1`.
-1. `Clause 2` is evaluated on `LoggingConfiguration` property of all S3 buckets and the result of `Clause 2` is the cumulative result of the evaluation.
-
 ### Example 2
 
 ```
-let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
-
-when %s3_buckets !empty {
-  %s3_buckets {
-    Properties.AccessControl exists               << Clause 1 >>
-    Properties.LoggingConfiguration exists        << Clause 2 >>
-  }
-}
+1  let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+2
+3  when %s3_buckets !empty {
+4    %s3_buckets {
+5      Properties.AccessControl exists               << Clause 1 >>
+6      Properties.LoggingConfiguration exists        << Clause 2 >>
+7    }
+8  }
 ```
+
+As you can see above the two clause have been grouped by a query block. Let us see how Example 2 is evaluated.
+
+In the above example,
+1. `Clause 1` and `Clause 2` are independent statements **within the scope of the query block**, i.e. for each S3 bucket in `%s3_buckets`.
+1. `Clause 1` is evaluated on `AccessControl` property of the first S3 bucket in `%s3_buckets`.
+1. `Clause 2` is evaluated after evaluation of `Clause 1` for that same S3 bucket.
+1. `Clause 2` is evaluated on `LoggingConfiguration` property of that same S3 bucket.
+1. Steps 2 through 4 are executed in that order for the remaining S3 buckets in `%s3_buckets` one after the other until there are no more S3 buckets in `%s3_buckets`.
 
 The pseudocode for the above example is a follows,
 
@@ -83,10 +91,14 @@ result = true
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.AccessControl == null then
         isAccessControlExists = false
+    else
+        isAccessControlExists = true
     end of
 
     if each_s3_bucket.Properties.LoggingConfiguration == null then
         isLoggingConfigurationExists = false
+    else
+        isLoggingConfigurationExists = true
     end if
 
     result = result and (isAccessControlExists and isLoggingConfigurationExists)
@@ -95,26 +107,19 @@ end for
 return result
 ```
 
-In the above example,
-1. `Clause 1` and `Clause 2` are independent statements **within the scope of the query block**, i.e. for each S3 bucket in `%s3_buckets`.
-1. `Clause 1` is evaluated on `AccessControl` property of the first S3 bucket in `%s3_buckets`.
-1. `Clause 2` is evaluated after evaluation of `Clause 1` for that same S3 bucket.
-1. `Clause 2` is evaluated on `LoggingConfiguration` property of that same S3 bucket.
-1. Steps 2 through 4 are executed in that order for the remaining S3 buckets in `%s3_buckets` one after the other until there are no more S3 buckets in `%s3_buckets`.
-
 ### Example 1 vs Example 2
 
-There is clearly a difference in the style of execution between Example 1 and Example 2. The clauses in Example 1 can be referred to as **Independent Clause Composition** with respect to S3 buckets in `%s3_buckets` and the clauses in Example 2 can be referred to as **Conjoined Clause Composition** with respect to S3 buckets in `%s3_buckets`. But looking at the pseudocode and the execution order description you can observe that the outcomes of both the examples are the same. However if the conjunction between `Clause 1` and `Clause 2` is switched to disjunction the outcomes would be different. Let us look at Example 1 and Example 2 with conjunction between `Clause 1` and `Clause 2`.
+There is clearly a difference in the evaluation of Example 1 and Example 2. The clauses in Example 1 can be referred to as **Independent Clause Composition** with respect to S3 buckets in `%s3_buckets` and the clauses in Example 2 can be referred to as **Conjoined Clause Composition** with respect to S3 buckets in `%s3_buckets`. But looking at the pseudocode you can observe that the outcomes of both the examples are the same. However if the conjunction between `Clause 1` and `Clause 2` is switched to disjunction the outcomes would be different. Let us look at Example 1 and Example 2 with conjunction between `Clause 1` and `Clause 2`.
 
 ### Example 3 - Example 1 with disjunction between clauses
 
 ```
-let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
-
-when %s3_buckets !empty {
-  %s3_buckets.Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
-  %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
-}
+1  let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+2
+3  when %s3_buckets !empty {
+4    %s3_buckets.Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
+5    %s3_buckets.Properties.LoggingConfiguration exists        << Clause 2 >>
+6  }
 ```
 
 The pseudocode for the above example is a follows,
@@ -125,13 +130,18 @@ isLoggingConfigurationExists = true
 
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.AccessControl == null then
-        isAccessControlExists = false
+        isAccessControlExists = isAccessControlExists and false
+    else 
+        isAccessControlExists = isAccessControlExists and true
+    else 
     end if
 end for
 
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.LoggingConfiguration == null then
-        isLoggingConfigurationExists = false
+        isLoggingConfigurationExists = isLoggingConfigurationExists and false
+    else
+        isLoggingConfigurationExists = isLoggingConfigurationExists and true
     end if
 end for
 
@@ -141,14 +151,14 @@ return isAccessControlExists or isLoggingConfigurationExists
 ### Example 4 - Example 2 with disjunction between clauses
 
 ```
-let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
-
-when %s3_buckets !empty {
-  %s3_buckets {
-    Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
-    Properties.LoggingConfiguration exists        << Clause 2 >>
-  }
-}
+1  let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+2
+3  when %s3_buckets !empty {
+4    %s3_buckets {
+5      Properties.AccessControl exists <b>OR</b>            << Clause 1 >>
+6      Properties.LoggingConfiguration exists        << Clause 2 >>
+7    }
+8  }
 ```
 
 The pseudocode for the above example is a follows,
@@ -161,10 +171,14 @@ result = true
 for each_s3_bucket in s3_buckets do
     if each_s3_bucket.Properties.AccessControl == null then
         isAccessControlExists = false
-    end if
+    else
+        isAccessControlExists = true
+    end of
 
     if each_s3_bucket.Properties.LoggingConfiguration == null then
         isLoggingConfigurationExists = false
+    else
+        isLoggingConfigurationExists = true
     end if
 
     result = result and (isAccessControlExists or isLoggingConfigurationExists)
