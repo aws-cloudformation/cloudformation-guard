@@ -168,7 +168,7 @@ Alternatively, you can install the latest version with [Homebrew](https://brew.s
 $ brew install cloudformation-guard
 ```
 
-In this way, you need not to modify your `$PATH`.
+You would not need to modify `$PATH` this way.
 
 ##### Ubuntu
 
