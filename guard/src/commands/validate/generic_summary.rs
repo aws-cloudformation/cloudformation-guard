@@ -107,7 +107,7 @@ fn retrieval_error_message(rules_file: &str, data_file: &str, info: &NameInfo<'_
 }
 
 fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
-    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error Message [{msg}]",
+    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because needed value at [{provided}] {op_msg}. Error Message [{msg}]",
         path=info.path,
         provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
         op_msg=op_msg,

@@ -230,11 +230,11 @@ pub(super) fn print_name_info<R, U, B>(
                              rules_file_name,
                              data_file_name,
                              match cmp {
-                                 CmpOperator::Exists => if not { "did not exist" } else { "existed" },
-                                 CmpOperator::Empty => if not { "was not empty"} else { "was empty" },
-                                 CmpOperator::IsList => if not { "was not a list " } else { "was list" },
-                                 CmpOperator::IsMap => if not { "was not a struct" } else { "was struct" },
-                                 CmpOperator::IsString => if not { "was not a string " } else { "was string" },
+                                 CmpOperator::Exists => if !not { "did not exist" } else { "existed" },
+                                 CmpOperator::Empty => if !not { "was not empty"} else { "was empty" },
+                                 CmpOperator::IsList => if !not { "was not a list " } else { "was list" },
+                                 CmpOperator::IsMap => if !not { "was not a struct" } else { "was struct" },
+                                 CmpOperator::IsString => if !not { "was not a string " } else { "was string" },
                                  _ => unreachable!()
                              },
                              each)?,

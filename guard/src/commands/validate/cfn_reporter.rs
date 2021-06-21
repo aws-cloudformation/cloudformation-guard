@@ -142,7 +142,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                     ))
                 },
                 |_, _, op_msg, info| {
-                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg}. Error message [{msg}]",
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because needed value at [{provided}] {op_msg}. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
                                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
