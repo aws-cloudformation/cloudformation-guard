@@ -162,6 +162,14 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-clo
 ```
 Remember to add `~/.guard/bin/` to your `$PATH`.
 
+Alternatively, you can install the latest version with [Homebrew](https://brew.sh/).
+
+```bash
+$ brew install cloudformation-guard
+```
+
+You would not need to modify `$PATH` this way.
+
 ##### Ubuntu
 
 1. Open any terminal of your choice
