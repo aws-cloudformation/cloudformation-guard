@@ -76,16 +76,19 @@ fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, c
     let mut lhs_cmp = true;
     let mut results = Vec::with_capacity(lhs.len());
     'lhs: for lhs_value in lhs {
+        let mut acc = Vec::with_capacity(lhs.len());
         for rhs_value in rhs {
             let check = compare(*lhs_value, *rhs_value)?;
             if check {
-                results.push((true, None, None));
                 if any_one_rhs {
+                    acc.clear();
+                    results.push((true, None, None));
                     continue 'lhs
                 }
+                acc.push((true, None, None));
             }
             else {
-                results.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
+                acc.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
                 if !any_one_rhs {
                     lhs_cmp = false;
                 }
@@ -94,6 +97,7 @@ fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, c
         if any_one_rhs {
             lhs_cmp = false;
         }
+        results.extend(acc)
     }
     Ok((lhs_cmp, results))
 }
