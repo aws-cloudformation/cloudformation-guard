@@ -15,14 +15,14 @@ use lazy_static::*;
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
     operator: CmpOperator,
-    not: bool,
+    not_operator_exists: bool,
 }
 
 impl From<(CmpOperator, bool)> for Comparison {
     fn from(input: (CmpOperator, bool)) -> Self {
         Comparison {
             operator: input.0,
-            not: input.1
+            not_operator_exists: input.1
         }
     }
 }
@@ -231,7 +231,7 @@ pub(super) fn print_name_info<R, U, B>(
 {
     for each in info {
         let (cmp, not) = match &each.comparison {
-            Some(cmp) => (Some(cmp.operator), cmp.not),
+            Some(cmp) => (Some(cmp.operator), cmp.not_operator_exists),
             None => (None, false)
         };
         // CFN = Resource [<name>] was not compliant with [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
