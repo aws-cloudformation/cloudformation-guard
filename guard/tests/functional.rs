@@ -22,7 +22,7 @@ mod tests {
             "#,
         );
         let rule = "AWS::ApiGateway::Method { Properties.AuthorizationType == \"NONE\"}";
-        let mut expected = String::from(
+        let expected =
             r#"
             [
               {
@@ -32,6 +32,7 @@ mod tests {
                 "from": null,
                 "to": null,
                 "status": "FAIL",
+                "comparator": null,
                 "children": [
                   {
                     "eval_type": "Type",
@@ -40,6 +41,7 @@ mod tests {
                     "from": null,
                     "to": null,
                     "status": "FAIL",
+                    "comparator": null,
                     "children": [
                       {
                         "eval_type": "Filter",
@@ -48,6 +50,7 @@ mod tests {
                         "from": null,
                         "to": null,
                         "status": "PASS",
+                        "comparator": null,
                         "children": [
                           {
                             "eval_type": "Conjunction",
@@ -56,6 +59,7 @@ mod tests {
                             "from": null,
                             "to": null,
                             "status": "PASS",
+                            "comparator": null,
                             "children": [
                               {
                                 "eval_type": "Clause",
@@ -64,6 +68,7 @@ mod tests {
                                 "from": null,
                                 "to": null,
                                 "status": "PASS",
+                                "comparator": ["Eq", false],
                                 "children": []
                               }
                             ]
@@ -77,6 +82,7 @@ mod tests {
                         "from": null,
                         "to": null,
                         "status": "FAIL",
+                        "comparator": null,
                         "children": [
                           {
                             "eval_type": "Conjunction",
@@ -85,6 +91,7 @@ mod tests {
                             "from": null,
                             "to": null,
                             "status": "FAIL",
+                            "comparator": null,
                             "children": [
                               {
                                 "eval_type": "Clause",
@@ -103,6 +110,7 @@ mod tests {
                                   ]
                                 },
                                 "status": "FAIL",
+                                "comparator": ["Eq", false],
                                 "children": []
                               }
                             ]
@@ -113,17 +121,11 @@ mod tests {
                   }
                 ]
               }
-            ]
-            "#,
-            );
-
-        // Remove white spaces from expected and calculated result for easy comparison.
-        let mut serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
-        let expected = serde_json::from_str::<serde_json::Value>(&expected).ok().unwrap();
-        let serialized = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
-        println!("{}", serde_yaml::to_string(&serialized).ok().unwrap());
-        println!("{}", serde_yaml::to_string(&expected).ok().unwrap());
-        assert_eq!(expected, serialized);
+            ]"#;
+        let serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
+        let result = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
+        let expected = serde_json::from_str::<serde_json::Value>(expected).ok().unwrap();
+        assert_eq!(expected, result);
     }
 
 }

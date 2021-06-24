@@ -76,16 +76,19 @@ fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, c
     let mut lhs_cmp = true;
     let mut results = Vec::with_capacity(lhs.len());
     'lhs: for lhs_value in lhs {
+        let mut acc = Vec::with_capacity(lhs.len());
         for rhs_value in rhs {
             let check = compare(*lhs_value, *rhs_value)?;
             if check {
-                results.push((true, None, None));
                 if any_one_rhs {
+                    acc.clear();
+                    results.push((true, None, None));
                     continue 'lhs
                 }
+                acc.push((true, None, None));
             }
             else {
-                results.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
+                acc.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
                 if !any_one_rhs {
                     lhs_cmp = false;
                 }
@@ -94,6 +97,7 @@ fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, c
         if any_one_rhs {
             lhs_cmp = false;
         }
+        results.extend(acc)
     }
     Ok((lhs_cmp, results))
 }
@@ -414,12 +418,12 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 Some(msg) => msg,
                 None => "(DEFAULT: NO_MESSAGE)"
             };
-            auto_reporter.status(r).from(
+            auto_reporter.cmp(self.access_clause.comparator).status(r).from(
                 match &lhs {
-                    None => None,
+                    None => Some(context.clone()),
                     Some(l) => if !l.is_empty() {
                         Some(l[0].clone())
-                    } else { None }
+                    } else { Some(context.clone()) }
                 }
             );
             if r == Status::FAIL {
@@ -432,10 +436,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             None => {
                 let guard_loc = format!("{}", self);
                 let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
-                let message = match &clause.access_clause.custom_message {
-                    Some(msg) => msg,
-                    None => "(DEFAULT: NO_MESSAGE)"
-                };
                 if all {
                     return Ok(auto_reporter.status(Status::FAIL)
                         .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
@@ -587,6 +587,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             let guard_loc = format!("{}", self);
             let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
             auto_reporter.status(if outcome { Status::PASS } else { Status::FAIL });
+            auto_reporter.cmp(clause.access_clause.comparator);
             if !outcome {
                 auto_reporter.from(from).to(to).message(match &clause.access_clause.custom_message {
                     Some(msg) => msg.clone(),
@@ -735,7 +736,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
             },
 
             Ok(v) => if v.is_empty() { // one or more
-                return Ok(report.message(format!("Query {} returned no results", SliceDisplay(&self.query.query))).status(Status::FAIL)
+                return Ok(report.from(Some(context.clone())).message(format!("Query {} returned no results", SliceDisplay(&self.query.query))).status(Status::FAIL)
                     .get_status())
             } else { v },
 
@@ -1015,7 +1016,8 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
                       _msg: String,
                       _from: Option<PathAwareValue>,
                       _to: Option<PathAwareValue>,
-                      status: Option<Status>) {
+                      status: Option<Status>,
+                      _cmp: Option<(CmpOperator, bool)>) {
         if EvaluationType::Rule == eval_type {
             let (name, _rule) = self.rule_by_name.get_key_value(context).unwrap();
             if let Some(status) = status {
@@ -1087,8 +1089,16 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 
 
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
-        self.parent.end_evaluation(eval_type, context, msg, from, to, status)
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>) {
+        self.parent.end_evaluation(eval_type, context, msg, from, to, status, cmp)
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -1104,6 +1114,7 @@ pub(super) struct AutoReport<'s> {
     status: Option<Status>,
     from: Option<PathAwareValue>,
     to: Option<PathAwareValue>,
+    cmp: Option<(CmpOperator, bool)>,
     message: Option<String>
 }
 
@@ -1127,6 +1138,7 @@ impl<'s> AutoReport<'s> {
             status: None,
             from: None,
             to: None,
+            cmp: None,
             message: None,
         }
     }
@@ -1136,10 +1148,11 @@ impl<'s> AutoReport<'s> {
         self
     }
 
-    pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>) -> &mut Self {
+    pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>, cmp: (CmpOperator, bool)) -> &mut Self {
         self.status = Some(status);
         self.from = from;
         self.to = to;
+        self.cmp = Some(cmp);
         self
     }
 
@@ -1150,6 +1163,11 @@ impl<'s> AutoReport<'s> {
 
     pub(super) fn to(&mut self, to: Option<PathAwareValue>) -> &mut Self {
         self.to = to;
+        self
+    }
+
+    pub(super) fn cmp(&mut self, cmp: (CmpOperator, bool)) -> &mut Self {
+        self.cmp = Some(cmp);
         self
     }
 
@@ -1178,7 +1196,8 @@ impl<'s> Drop for AutoReport<'s> {
             },
             self.from.clone(),
             self.to.clone(),
-            Some(status)
+            Some(status),
+            self.cmp
         )
     }
 }

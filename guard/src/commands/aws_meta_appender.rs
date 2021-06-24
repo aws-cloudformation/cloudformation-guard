@@ -2,6 +2,7 @@ use crate::rules::{EvaluationContext, Status, EvaluationType, Result};
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
 use crate::rules::exprs::{QueryPart, AccessQuery};
 use std::convert::TryFrom;
+use crate::rules::values::CmpOperator;
 
 pub(super) struct MetadataAppender<'d> {
     pub(super) delegate: &'d dyn EvaluationContext,
@@ -17,7 +18,16 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
         self.delegate.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>)
+    {
         let msg = if eval_type == EvaluationType::Clause {
             match status {
                 Some(status) => {
@@ -45,7 +55,7 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
             }
         }
         else { msg };
-        self.delegate.end_evaluation(eval_type, context, msg, from, to, status)
+        self.delegate.end_evaluation(eval_type, context, msg, from, to, status, cmp)
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
