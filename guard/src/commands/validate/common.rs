@@ -196,6 +196,26 @@ pub(super) fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusCo
     failed
 }
 
+pub(super) fn print_compliant_skipped_info(writer: &mut dyn Write,
+                                           passed: &HashSet<String>,
+                                           skipped: &HashSet<String>,
+                                           rules_file_name: &str,
+                                           data_file_name: &str) -> crate::rules::Result<()> {
+    if !passed.is_empty() {
+        writeln!(writer, "--")?;
+    }
+    for pass in passed {
+        writeln!(writer, "Rule [{}/{}] is compliant for template [{}]", rules_file_name, pass, data_file_name)?;
+    }
+    if !skipped.is_empty() {
+        writeln!(writer, "--")?;
+    }
+    for skip in skipped {
+        writeln!(writer, "Rule [{}/{}] is not applicable for template [{}]", rules_file_name, skip, data_file_name)?;
+    }
+    Ok(())
+}
+
 pub(super) fn print_name_info<R, U, B>(
     writer: &mut dyn Write,
     info: &[NameInfo<'_>],

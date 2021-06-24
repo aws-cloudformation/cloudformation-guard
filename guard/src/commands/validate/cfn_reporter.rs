@@ -169,19 +169,8 @@ impl super::common::GenericReporter for SingleLineReporter {
 
             )?;
         }
-        if !passed.is_empty() {
-            writeln!(writer, "--");
-        }
-        for pass in passed {
-            writeln!(writer, "Rule [{}/{}] is compliant for template [{}]", rules_file_name, pass, data_file_name);
-        }
-        if !skipped.is_empty() {
-            writeln!(writer, "--");
-        }
-        for skip in skipped {
-            writeln!(writer, "Rule [{}/{}] is not applicable for template [{}]", rules_file_name, skip, data_file_name);
-        }
-        writeln!(writer, "--");
+        super::common::print_compliant_skipped_info(writer, &passed, &skipped, rules_file_name, data_file_name)?;
+        writeln!(writer, "--")?;
         Ok(())
     }
 }

@@ -156,20 +156,8 @@ impl GenericReporter for SingleLineSummary {
                 binary_error_message
             )?;
         }
-        if !passed.is_empty() {
-            writeln!(writer, "--");
-        }
-        for pass in passed {
-            writeln!(writer, "Rule [{}/{}] is compliant for data [{}]", rules_file_name, pass, data_file_name);
-        }
-
-        if !skipped.is_empty() {
-            writeln!(writer, "--");
-        }
-        for skip in skipped {
-            writeln!(writer, "Rule [{}/{}] is not applicable for data [{}]", rules_file_name, skip, data_file_name);
-        }
-        writeln!(writer, "--");
+        super::common::print_compliant_skipped_info(writer, &passed, &skipped, rules_file_name, data_file_name)?;
+        writeln!(writer, "--")?;
         Ok(())
     }
 }
