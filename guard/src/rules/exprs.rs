@@ -220,11 +220,19 @@ pub(crate) struct Rule<'loc> {
     pub(crate) block: Block<'loc, RuleClause<'loc>>,
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ParameterizedRule<'loc> {
+    pub(crate) parameter_names: indexmap::IndexSet<String>,
+    pub(crate) rule: Rule<'loc>,
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RulesFile<'loc> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) guard_rules: Vec<Rule<'loc>>,
+    pub(crate) parameterized_rules: Vec<ParameterizedRule<'loc>>,
 }
+
 pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
 impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
