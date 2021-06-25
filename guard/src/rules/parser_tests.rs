@@ -4175,8 +4175,168 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
     let rules_file = rules_file(from_str2(s))?;
     assert_eq!(rules_file, RulesFile {
         assignments: vec![],
-        guard_rules: vec![default_rule]
+        guard_rules: vec![default_rule],
+        parameterized_rules: vec![],
     });
+    Ok(())
+}
+
+#[test]
+fn rule_parameters_parse_test() -> Result<(), Error> {
+    let parameters = "(statements, policy)";
+    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    assert_eq!(parsed_parameters.len(), 2);
+    assert_eq!(parsed_parameters, ["statements", "policy"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
+
+    let parameters = "(statements)";
+    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    assert_eq!(parsed_parameters.len(), 1);
+    assert_eq!(parsed_parameters, ["statements"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
+
+    let parameters = "( statements  , policy    )";
+    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    assert_eq!(parsed_parameters.len(), 2);
+    assert_eq!(parsed_parameters, ["statements", "policy"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
+
+    //
+    // Error cases
+    //
+    let parameters = "()";
+    let result = rule_parameter_names(from_str2(parameters));
+    assert_eq!(result.is_err(), true);
+    assert_eq!(result.err(), Some(nom::Err::Failure(ParserError {
+        context: "".to_string(),
+        kind: nom::error::ErrorKind::Alpha, // for var_name
+        span: unsafe {
+            Span::new_from_raw_offset(
+                1,
+                1,
+                ")",
+                ""
+            )
+        }
+    })));
+
+    let parameters = "statements";
+    let result = rule_parameter_names(from_str2(parameters));
+    assert_eq!(result.is_err(), true);
+    assert_eq!(result.err(), Some(nom::Err::Error(ParserError {
+        kind: nom::error::ErrorKind::Char, // no '('
+        context: "".to_string(),
+        span: unsafe {
+            Span::new_from_raw_offset(
+                0,
+                1,
+                "statements",
+                ""
+            )
+        }
+    })));
+
+    let parameters = "(statements";
+    let result = rule_parameter_names(from_str2(parameters));
+    assert_eq!(result.is_err(), true);
+    assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
+        kind: nom::error::ErrorKind::Char, // no ')'
+        context: "".to_string(),
+        span: unsafe {
+            Span::new_from_raw_offset(
+                "(statements".len(),
+                1,
+                "",
+                ""
+            )
+        }
+    })));
+
+    let parameters = "(statements,)"; // missing second parameter
+    let result = rule_parameter_names(from_str2(parameters));
+    assert_eq!(result.is_err(), true);
+    assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
+        kind: nom::error::ErrorKind::Alpha, // due to var_name
+        context: "".to_string(),
+        span: unsafe {
+            Span::new_from_raw_offset(
+                "(statements,".len(),
+                1,
+                ")",
+                ""
+            )
+        }
+    })));
+
+    Ok(())
+}
+
+#[test]
+fn parameterized_rule_parse_test() -> Result<(), Error> {
+    let params_rule = r#"
+    rule policy_checks(statements) {
+        %statements {
+            Effect == 'Allow'
+        }
+    }"#;
+
+    let parameterized_rule = ParameterizedRule::try_from(params_rule)?;
+    let mut parameters = indexmap::IndexSet::new();
+    parameters.insert("statements".to_string());
+    let expected = ParameterizedRule {
+        parameter_names: parameters,
+        rule: Rule {
+            rule_name: "policy_checks".to_string(),
+            conditions: None,
+            block: Block {
+                assignments: vec![],
+                conjunctions: Conjunctions::from([
+                    Disjunctions::from([
+                        RuleClause::Clause(
+                            GuardClause::BlockClause(BlockGuardClause {
+                                location: FileLocation {
+                                    file_name: "",
+                                    line: 3,
+                                    column: 9,
+                                },
+                                query: AccessQuery {
+                                    match_all: true,
+                                    query: vec![
+                                        QueryPart::Key("%statements".to_string())
+                                    ]
+                                },
+                                block: Block {
+                                    assignments: vec![],
+                                    conjunctions: Conjunctions::from([
+                                        Disjunctions::from([
+                                            GuardClause::Clause(GuardAccessClause {
+                                                negation: false,
+                                                access_clause: AccessClause {
+                                                    query: AccessQuery {
+                                                        query: vec![
+                                                            QueryPart::Key("Effect".to_string())
+                                                        ],
+                                                        match_all: true
+                                                    },
+                                                    location: FileLocation {
+                                                        file_name: "",
+                                                        line: 4,
+                                                        column: 13,
+                                                    },
+                                                    comparator: (CmpOperator::Eq, false),
+                                                    custom_message: None,
+                                                    compare_with: Some(LetValue::Value(Value::String("Allow".to_string())))
+                                                }
+                                            })
+                                        ])
+                                    ])
+                                }
+                            })
+                        )
+                    ])
+                ])
+            }
+        }
+    };
+    assert_eq!(parameterized_rule, expected);
+
     Ok(())
 }
 

@@ -3,7 +3,7 @@ use nom_locate::LocatedSpan;
 
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{char, multispace1, space0};
+use nom::character::complete::{char, multispace1, space0, multispace0};
 use nom::combinator::{map, value};
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, preceded};
@@ -1430,6 +1430,45 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     }))
 }
 
+//
+// parameter names
+//
+fn rule_parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
+    delimited(
+        char('('),
+        map(separated_nonempty_list(char(','),
+                                    cut(delimited(multispace0, var_name, multispace0))), |v| {
+            v.into_iter().collect::<indexmap::IndexSet<String>>()
+        }),
+        cut(char(')')))(input)
+}
+
+
+//
+// Parameterized Rule
+//
+fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
+    //
+    // rule is followed by space
+    //
+    let (input, _rule_keyword) = delimited(zero_or_more_ws_or_comment, tag("rule"), one_or_more_ws_or_comment)
+        (input)?;
+
+    let (input, rule_name) = cut(var_name)(input)?;
+    let (input, parameter_names) = rule_parameter_names(input)?;
+    let (input, (assignments, conjunctions)) =
+        cut(block(rule_block_clause))(input)?;
+
+    Ok((input, ParameterizedRule {
+        parameter_names,
+        rule: Rule {
+            rule_name,
+            block: Block { assignments, conjunctions },
+            conditions: None
+        }
+    }))
+}
+
 fn default_clauses(input: Span) -> IResult<Span, Disjunctions<GuardClause>> {
     let (input, disjunctions) = disjunction_clauses(
         input, clause, true)?;
@@ -1462,6 +1501,7 @@ enum Exprs<'loc> {
     DefaultWhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
     DefaultClause(Disjunctions<GuardClause<'loc>>),
     Rule(Rule<'loc>),
+    ParameterizedRule(ParameterizedRule<'loc>)
 }
 
 //
@@ -1472,6 +1512,7 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
         remove_whitespace_comments(
             alt((
                 map(assignment, Exprs::Assignment),
+                map(parameterized_rule_block, Exprs::ParameterizedRule),
                 map(rule_block, Exprs::Rule),
                 map(type_block_clauses, Exprs::DefaultTypeBlock),
                 when_block(single_clauses, alt((clause, rule_clause)), |c, b|
@@ -1489,10 +1530,12 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
     let mut global_assignments = Vec::with_capacity(exprs.len());
     let mut default_rule_clauses = Vec::with_capacity(exprs.len());
     let mut named_rules = Vec::with_capacity(exprs.len());
+    let mut parameterized_rules = Vec::with_capacity(exprs.len());
 
     for each in exprs {
         match each {
             Exprs::Rule(r) => named_rules.push(r),
+            Exprs::ParameterizedRule(p) => parameterized_rules.push(p),
             Exprs::Assignment(l) => global_assignments.push(l),
             Exprs::DefaultClause(clause_disjunctions) => default_rule_clauses.push(clause_disjunctions.into_iter().map(|clause| RuleClause::Clause(clause)).collect()),
             Exprs::DefaultTypeBlock(disjunctions) => default_rule_clauses.push(disjunctions.into_iter().map(|type_block| RuleClause::TypeBlock(type_block)).collect()),
@@ -1514,7 +1557,8 @@ pub(crate) fn rules_file(input: Span) -> std::result::Result<RulesFile, Error> {
 
     Ok(RulesFile {
         assignments: global_assignments,
-        guard_rules: named_rules
+        guard_rules: named_rules,
+        parameterized_rules,
     })
 
 }
@@ -1592,6 +1636,15 @@ impl<'a> TryFrom<&'a str> for Rule<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         Ok(rule_block(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for ParameterizedRule<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(parameterized_rule_block(span)?.1)
     }
 }
 
