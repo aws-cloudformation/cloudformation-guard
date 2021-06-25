@@ -348,13 +348,24 @@ Named rule blocks allow for re-usability, improved composition and remove verbos
 * `rule name` can be any string that is human-readable and ideally should uniquely identify a named rule block. It can be thought of as a label to the set of Guard rules it encapsulates where Guard rules is an umbrella term for clauses, query blocks, when blocks and named rule blocks. The `rule name` can be used to refer to the evaluation result of the set of Guard rules it encapsulates, this is what makes named rule blocks re-usable. It also helps provide context in the validate (provide links) and test (provide links) command output as to what exactly failed. The `rule name` is displayed along with it block’s evaluation status - `PASS`, `FAIL`, or `SKIP`, in the evaluation output of the rules file:
 
 ```
-# Sample output of an evaluation where check1, check2, and check3 are rule names.
-_Summary__ __Report_ Overall File Status = **FAIL**
-**PASS/****SKIP** **rules**
-check1 **SKIP**
-check2 **PASS**
-**FAILED rules**
-check3 **FAIL**
+# Sample output of an evaluation where,
+# - data.yaml is the data file name.
+# - rules.guard is the rules file name.
+# - check1, check2, and check3 are rule names.
+data.yaml Status = PASS
+SKIP rules
+check3                                  SKIP
+PASS rules
+check2                                  PASS
+check3                                  PASS
+---
+Evaluation of rules rules.guard against data data.yaml
+--
+Rule [rules.guard/check2] is compliant for data [data.yaml]
+Rule [rules.guard/check3] is compliant for data [data.yaml]
+--
+Rule [rules.guard/check1] is not applicable for data [data.yaml]
+--
 ```
 
 * Named rule blocks can also be evaluated conditionally by specifying the `when` keyword followed with a `condition` after the `rule name`.
