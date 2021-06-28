@@ -659,7 +659,8 @@ impl<'loc> Evaluate for GuardClause<'loc> {
                         Ok(skip_block.status(Status::SKIP).get_status())
                     }
                 }
-            }
+            },
+            GuardClause::ParameterizedNamedRule(_) => unimplemented!()
         }
     }
 }

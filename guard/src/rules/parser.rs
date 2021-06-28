@@ -1007,6 +1007,16 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
 
     let (remaining, not) = opt(not)(input)?;
     let (remaining, ct_type) = var_name(remaining)?;
+    let (remaining, parameters) = opt(
+        delimited(
+            char('('),
+            separated_nonempty_list(char(','),
+                                    delimited(
+                                        multispace0,
+                                        cut(access), multispace0)),
+            cut(char(')'))
+        )
+    )(remaining)?;
 
     //
     // we peek to preserve the input, if it is or, space+newline or comment
@@ -1018,14 +1028,27 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
         preceded(space0, value((), char('{'))),
         value((), or_join),
     )))(remaining) {
-        return
-            Ok((same, GuardClause::NamedRule(
-                GuardNamedRuleClause {
-                    dependent_rule: ct_type,
-                    location,
-                    negation: not.is_some(),
-                    custom_message: None
-                })
+        return Ok((same,
+                match parameters {
+                    Some(parameters) => GuardClause::ParameterizedNamedRule(
+                        ParameterizedNamedRuleClause {
+                            parameters,
+                            named_rule: GuardNamedRuleClause {
+                                dependent_rule: ct_type,
+                                location,
+                                negation: not.is_some(),
+                                custom_message: None
+                            }
+                        }
+                    ),
+                    None => GuardClause::NamedRule(
+                        GuardNamedRuleClause {
+                            dependent_rule: ct_type,
+                            location,
+                            negation: not.is_some(),
+                            custom_message: None
+                        })
+                }
             ))
     }
 
