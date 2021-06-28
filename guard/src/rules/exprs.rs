@@ -177,9 +177,16 @@ pub(crate) struct WhenGuardBlockClause<'loc> {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct ParameterizedNamedRuleClause<'loc> {
+    pub(crate) parameters: Vec<AccessQuery<'loc>>,
+    pub(crate) named_rule: GuardNamedRuleClause<'loc>,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
+    ParameterizedNamedRule(ParameterizedNamedRuleClause<'loc>),
     BlockClause(BlockGuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
 }
