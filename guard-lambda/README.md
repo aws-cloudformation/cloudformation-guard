@@ -28,7 +28,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
     [target.x86_64-unknown-linux-musl]
     linker = "x86_64-linux-musl-gcc"
     ```
-1. Ensure you're in the `cfn-guard-lambda` directory
+1. Ensure you're in the `guard-lambda` directory
 1. Run `cargo build --release --target x86_64-unknown-linux-musl`. For [a custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html), AWS Lambda looks for an executable called `bootstrap` in the deployment package zip. Rename the generated `cfn-lambda` executable to `bootstrap` and add it to a zip archive.
 1. Run `cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap`.
 1. Run the following command to submit cfn-guard as a AWS Lambda to your account:
