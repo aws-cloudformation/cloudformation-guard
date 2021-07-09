@@ -48,18 +48,19 @@ aws lambda create-function --function-name cfnGuard \
 To invoke the submitted cfn-guard as a Lambda function run:
 
 ```bash
-aws lambda invoke --function-name rustTest \
-  --payload '{"data": "<input data>", "rules" : "<input rules>"}' \
+aws lambda invoke --function-name cfnGuard \
+  --payload "{"data": "<input data>", "rules" : ["<input rules 1>", "<input rules 2>", ...]}" \
   output.json
 ```
+The above works for AWS CLI version 1. If you are planning to use the AWS CLI version 2 please refer to the [Migrating from AWS CLI version 1 to version 2 document](https://docs.aws.amazon.com/cli/latest/userguide/cliv2-migration.html#cliv2-migration-binaryparam) for changes required to the above command.
 
 ## Calling the Lambda Function
 
 ### Request Structure
 
 Requests to `cfn-guard-lambda` require the two following fields:
-* `data` - The string version of the YAML or JSON template
-* `rules` - The string version of the rule set file
+* `data` - String version of the YAML or JSON template
+* `rules` - List of string version of the rules file
 
 
 ## FAQs
