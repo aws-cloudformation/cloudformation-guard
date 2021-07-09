@@ -23,6 +23,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 ### Mac/Ubuntu
 
 1. Install and configure the [dependencies](#dependencies).
+1. Run `rustup target add x86_64-unknown-linux-musl`.
 1. If you're on a Mac, add the following to `~/.cargo/config`:
     ```
     [target.x86_64-unknown-linux-musl]
@@ -34,7 +35,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 1. Run the following command to submit cfn-guard as a AWS Lambda to your account:
 
 ```bash
-aws lambda create-function --function-name cfnGuard \
+aws lambda create-function --function-name cfnGuardLambda \
  --handler guard.handler \
  --zip-file fileb://./lambda.zip \
  --runtime provided \
@@ -43,25 +44,30 @@ aws lambda create-function --function-name cfnGuard \
  --tracing-config Mode=Active
 ```
 
-## To build and run post-install
+## Calling the AWS Lambda Function
 
-To invoke the submitted cfn-guard as a Lambda function run:
+## Payload Structure
+
+The payload JSON to `cfn-guard-lambda` requires the following two fields:
+* `data` - String version of the YAML or JSON structured data
+* `rules` - List of string version of rules files that you want to run your YAML or JSON structured data against.
+
+## Invoking `cfn-guard-lambda`
+
+To invoke the submitted cfn-guard as a AWS Lambda function run:
 
 ```bash
-aws lambda invoke --function-name cfnGuard \
+aws lambda invoke --function-name cfnGuardLambda \
   --payload "{"data": "<input data>", "rules" : ["<input rules 1>", "<input rules 2>", ...]}" \
   output.json
 ```
 The above works for AWS CLI version 1. If you are planning to use the AWS CLI version 2 please refer to the [Migrating from AWS CLI version 1 to version 2 document](https://docs.aws.amazon.com/cli/latest/userguide/cliv2-migration.html#cliv2-migration-binaryparam) for changes required to the above command.
 
-## Calling the Lambda Function
+### Example
 
-### Request Structure
-
-Requests to `cfn-guard-lambda` require the two following fields:
-* `data` - String version of the YAML or JSON template
-* `rules` - List of string version of the rules file
-
+```bash
+aws lambda invoke --function-name cfnGuard --payload '{"data": "{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}}}", "rules" : [ "Resources.*[ Type == /EC2::Volume/ ].Properties.Encrypted == false" ]}' output.json
+```
 
 ## FAQs
 
