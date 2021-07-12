@@ -63,7 +63,7 @@ mod tests {
                             "children": [
                               {
                                 "eval_type": "Clause",
-                                "context": "Clause(Location[file:, line:1, column:14], Check: Type  EQUALS String(\"AWS::ApiGateway::Method\"))",
+                                "context": " Type EQUALS  String((Path(\"\"), \"AWS::ApiGateway::Method\"))",
                                 "msg": "DEFAULT MESSAGE(PASS)",
                                 "from": null,
                                 "to": null,
@@ -95,7 +95,7 @@ mod tests {
                             "children": [
                               {
                                 "eval_type": "Clause",
-                                "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
+                                "context": " Properties.AuthorizationType EQUALS  String((Path(\"\"), \"NONE\"))",
                                 "msg": "DEFAULT MESSAGE(FAIL)",
                                 "from": {
                                   "String": [
@@ -105,7 +105,7 @@ mod tests {
                                 },
                                 "to": {
                                   "String": [
-                                    "lambda/1/27/Clause/",
+                                    "",
                                     "NONE"
                                   ]
                                 },

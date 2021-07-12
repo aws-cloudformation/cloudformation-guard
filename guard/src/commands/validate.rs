@@ -21,6 +21,10 @@ use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
+use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope};
+use crate::rules::eval::eval_rules_file;
+use crate::rules::{ RecordType, NamedStatus };
+use std::collections::HashMap;
 
 mod generic_summary;
 mod common;
@@ -42,12 +46,19 @@ pub(crate) enum OutputFormatType {
 
 pub(crate) trait Reporter : Debug {
     fn report(&self,
-              writer: &mut Write,
+              writer: &mut dyn Write,
               status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize,
     ) -> Result<()>;
+
+    fn report_eval(
+        &self,
+        write: &mut dyn Write,
+        status: Status,
+        root_record: &EventRecord<'_>
+    ) -> Result<()> { Ok(()) }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -78,6 +89,8 @@ or rules files.
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
             .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("new_eval_engine_version").long("new-eval-engine-version").short("n").takes_value(false)
+                .help("uses the new engine for evaluation. This parameter will allow customers to evaluate new changes before migrating"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
@@ -186,6 +199,7 @@ or rules files.
 
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
+        let new_version_eval_engine = app.is_present("new_eval_engine_version");
 
         let base = PathBuf::from_str(file)?;
         let files = get_files(file, cmp)?;
@@ -220,6 +234,7 @@ or rules files.
                                 verbose,
                                 print_json,
                                 show_clause_failures,
+                                new_version_eval_engine,
                                 summary_type.clone())? {
                                 Status::SKIP | Status::PASS => continue,
                                 Status::FAIL => {
@@ -281,6 +296,32 @@ fn indent_spaces(indent: usize) {
     for _idx in 0..indent {
         print!("{}", INDENT)
     }
+}
+
+//
+// https://vallentin.dev/2019/05/14/pretty-print-tree
+//
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool)
+{
+    let prefix_current = if last { "`- " } else { "|- " };
+    println!(
+        "{}{}{}",
+        prefix,
+        prefix_current,
+        current);
+
+    let prefix_child = if last { "   " } else { "|  " };
+    let prefix = prefix + prefix_child;
+    if !current.children.is_empty() {
+        let last_child = current.children.len() - 1;
+        for (i, child) in current.children.iter().enumerate() {
+            pprint_tree(child, prefix.clone(), i == last_child);
+        }
+    }
+}
+
+pub(super) fn print_verbose_tree(root: &EventRecord<'_>) {
+    pprint_tree(root, "".to_string(), true);
 }
 
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
@@ -469,6 +510,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                                    verbose: bool,
                                    print_json: bool,
                                    show_clause_failures: bool,
+                                   new_engine_version: bool,
                                    summary_table: BitFlags<SummaryType>) -> Result<Status> {
     let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
         match serde_json::from_str::<serde_json::Value>(content) {
@@ -481,6 +523,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
     ).collect();
 
     let mut overall = Status::PASS;
+    let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
     for (each, data_file_name) in iterator? {
         let mut reporters = match data_type {
             Type::CFNTemplate =>
@@ -495,14 +538,28 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                 0, Box::new(
                     summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
         }
-        let root_context = RootScope::new(rules, &each);
-        let stacker = StackTracker::new(&root_context);
-        let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
-        let appender = MetadataAppender{delegate: &reporter, root_context: &each};
-        let status = rules.evaluate(&each, &appender)?;
-        reporter.report()?;
-        if status == Status::FAIL {
-            overall = Status::FAIL
+
+        if new_engine_version {
+            let root_scope = root_scope(&rules, &each)?;
+            let tracker = RecordTracker::new(&root_scope);
+            let status = eval_rules_file(rules, &tracker)?;
+            let root_record = tracker.extract();
+            for each in &reporters {
+                (*each).report_eval(&mut write_output, status, &root_record)?
+            }
+            if verbose {
+                print_verbose_tree(&root_record);
+            }
+        } else {
+            let root_context = RootScope::new(rules, &each);
+            let stacker = StackTracker::new(&root_context);
+            let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
+            let appender = MetadataAppender { delegate: &reporter, root_context: &each };
+            let status = rules.evaluate(&each, &appender)?;
+            reporter.report()?;
+            if status == Status::FAIL {
+                overall = Status::FAIL
+            }
         }
     }
     Ok(overall)

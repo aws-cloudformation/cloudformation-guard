@@ -254,7 +254,7 @@ fn path_value_queries() -> Result<(), Error> {
                     match_all: false
                 },
                 compare_with: Some(LetValue::Value(
-                    Value::try_from("[/aa/, /bb/]")?
+                    PathAwareValue::try_from("[/aa/, /bb/]")?
                 )),
                 location: FileLocation {
                     line: 1,

@@ -11,7 +11,7 @@ use serde::{Serialize, Deserialize};
 use std::fmt;
 use std::fmt::Display;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
     Eq,
     In,
@@ -71,7 +71,7 @@ pub enum Value {
     Float(f64),
     Char(char),
     List(Vec<Value>),
-    Map(IndexMap<String, Value>),
+    Map(indexmap::IndexMap<String, Value>),
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
     RangeChar(RangeType<char>),
