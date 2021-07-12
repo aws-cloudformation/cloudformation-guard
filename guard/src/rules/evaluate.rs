@@ -4,7 +4,7 @@ use std::fmt::Formatter;
 
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status, EvalContext};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenConditions, WhenGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
@@ -254,31 +254,31 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     }
 }
 
-impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(
-            format_args!(
-                "Clause({}, Check: {} {} {} {})",
-                self.access_clause.location,
-                SliceDisplay(&self.access_clause.query.query),
-                if self.access_clause.comparator.1 { "NOT" } else { "" },
-                self.access_clause.comparator.0,
-                match &self.access_clause.compare_with {
-                    Some(v) => {
-                        match v {
-                            // TODO add Display for Value
-                            LetValue::Value(val) => format!("{:?}", val),
-                            LetValue::AccessClause(qry) => format!("{}", SliceDisplay(&qry.query)),
-
-                        }
-                    },
-                    None => "".to_string()
-                },
-            )
-        )?;
-        Ok(())
-    }
-}
+//impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
+//    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//        f.write_fmt(
+//            format_args!(
+//                "Clause({}, Check: {} {} {} {})",
+//                self.access_clause.location,
+//                SliceDisplay(&self.access_clause.query.query),
+//                if self.access_clause.comparator.1 { "NOT" } else { "" },
+//                self.access_clause.comparator.0,
+//                match &self.access_clause.compare_with {
+//                    Some(v) => {
+//                        match v {
+//                            // TODO add Display for Value
+//                            LetValue::Value(val) => format!("{:?}", val),
+//                            LetValue::AccessClause(qry) => format!("{}", SliceDisplay(&qry.query)),
+//
+//                        }
+//                    },
+//                    None => "".to_string()
+//                },
+//            )
+//        )?;
+//        Ok(())
+//    }
+//}
 
 pub(super) fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
@@ -290,6 +290,7 @@ pub(super) fn invert_closure<F>(f: F, clause_not: bool, not: bool) -> impl Fn(&P
         Ok(r)
     }
 }
+
 
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate<'s>(&self,
@@ -361,7 +362,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
             (CmpOperator::Eq, not) =>
                 match &clause.access_clause.compare_with {
-                    Some(LetValue::Value(Value::Null)) =>
+                    Some(LetValue::Value(PathAwareValue::Null(_))) =>
                         match &lhs {
                             None => Some(negation_status(true, not, clause.negation)),
                             Some(_) => Some(negation_status(false, not, clause.negation)),
@@ -456,12 +457,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             Some(expr) => {
                 match expr {
                     LetValue::Value(v) => {
-                        let path = format!("{}/{}/{}/Clause/",
-                            clause.access_clause.location.file_name,
-                            clause.access_clause.location.line,
-                            clause.access_clause.location.column);
-                        let path = super::path_value::Path(path);
-                        Some(vec![PathAwareValue::try_from((v, path))?])
+                        Some(vec![v])
                     },
 
                     _ => None,
@@ -479,8 +475,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             (None, None)
         };
 
-        let rhs = match &rhs_local {
-            Some(local) => local.iter().collect::<Vec<&PathAwareValue>>(),
+        let rhs = match rhs_local {
+            Some(local) => local,
             None => match rhs_resolved {
                 Some(resolved) => resolved,
                 None => unreachable!()
@@ -915,12 +911,12 @@ impl<'loc> Evaluate for RulesFile<'loc> {
 
 
 fn extract_variables<'s, 'loc>(expressions: &'s Vec<LetExpr<'loc>>,
-                               vars: &mut HashMap<&'s str, PathAwareValue>,
+                               vars: &mut HashMap<&'s str, &'s PathAwareValue>,
                                queries: &mut HashMap<&'s str, &'s AccessQuery<'loc>>) -> Result<()> {
     for each in expressions {
         match &each.value {
             LetValue::Value(v) => {
-                vars.insert(&each.var, PathAwareValue::try_from((v, Path::try_from("rules_file/")?))?);
+                vars.insert(&each.var, v);
             },
 
             LetValue::AccessClause(query) => {
@@ -937,7 +933,7 @@ pub(crate) struct RootScope<'s, 'loc> {
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'loc>>,
     variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s PathAwareValue>>>,
-    literals: HashMap<&'s str, PathAwareValue>,
+    literals: HashMap<&'s str, &'s PathAwareValue>,
     rule_by_name: HashMap<&'s str, &'s Rule<'loc>>,
     rule_statues: std::cell::RefCell<HashMap<&'s str, Status>>,
 }
@@ -1034,7 +1030,7 @@ pub(crate) struct BlockScope<'s, T> {
     block_type: &'s Block<'s, T>,
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'s>>,
-    literals: HashMap<&'s str, PathAwareValue>,
+    literals: HashMap<&'s str, &'s PathAwareValue>,
     variables: std::cell::RefCell<HashMap<&'s str, Vec<&'s PathAwareValue>>>,
     parent: &'s dyn EvaluationContext,
 }

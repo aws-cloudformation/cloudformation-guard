@@ -4,8 +4,7 @@ use std::convert::{TryFrom, TryInto};
 // Std Libraries
 //
 use std::fmt::Formatter;
-use std::fmt::Write;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 
 use crate::rules::evaluate::{AutoReport, resolve_query};
@@ -19,12 +18,13 @@ use super::exprs::{QueryPart, SliceDisplay};
 //
 use super::values::*;
 use crate::rules::exprs::LetValue;
+use std::hash::{Hash, Hasher};
 
 //
 // crate level
 //
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct Path(pub(crate) String);
 
 impl std::fmt::Display for Path {
@@ -108,10 +108,10 @@ impl Path {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MapValue {
-    keys: Vec<PathAwareValue>,
-    values: indexmap::IndexMap<String, PathAwareValue>,
+    pub(crate) keys: Vec<PathAwareValue>,
+    pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
 }
 
 impl PartialEq for MapValue {
@@ -120,6 +120,8 @@ impl PartialEq for MapValue {
     }
 }
 
+impl Eq for MapValue {}
+
 impl MapValue {
     pub(crate) fn is_empty(&self) -> bool {
         self.values.is_empty()
@@ -127,7 +129,7 @@ impl MapValue {
 }
 
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum PathAwareValue {
     Null(Path),
     String((Path, String)),
@@ -142,6 +144,54 @@ pub(crate) enum PathAwareValue {
     RangeFloat((Path, RangeType<f64>)),
     RangeChar((Path, RangeType<char>)),
 }
+
+impl Hash for PathAwareValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            PathAwareValue::String((_, s))        |
+            PathAwareValue::Regex((_, s))               => { s.hash(state); },
+
+            PathAwareValue::Char((_, c))                 => { c.hash(state); },
+            PathAwareValue::Int((_, i))                   => { i.hash(state); },
+            PathAwareValue::Null(_)                              => { "NULL".hash(state); },
+            PathAwareValue::Float((_, f))                 => { (*f as u64).hash(state); }
+
+            PathAwareValue::RangeChar((_, r)) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            },
+
+            PathAwareValue::RangeInt((_, r)) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            },
+
+            PathAwareValue::RangeFloat((_, r)) => {
+                (r.lower as u64).hash(state);
+                (r.upper as u64).hash(state);
+                r.inclusive.hash(state);
+            },
+
+            PathAwareValue::Bool((_, b)) => { b.hash(state); },
+
+            PathAwareValue::List((_, l)) => {
+                for each in l {
+                    each.hash(state);
+                }
+            },
+
+            PathAwareValue::Map((_, map)) => {
+                for (key, value) in map.values.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            },
+        }
+    }
+}
+
 
 impl PartialEq for PathAwareValue {
     fn eq(&self, other: &Self) -> bool {
@@ -193,6 +243,8 @@ impl PartialEq for PathAwareValue {
         }
     }
 }
+
+impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
     type Error = Error;
@@ -531,10 +583,9 @@ impl QueryResolver for PathAwareValue {
                                 }
                             },
 
-                            LetValue::Value(v) => {
-                                let path_value = PathAwareValue::try_from((v, path.clone()))?;
+                            LetValue::Value(path_value) => {
                                 for key in map.keys.iter() {
-                                    if key == &path_value {
+                                    if key == path_value {
                                         match key {
                                             PathAwareValue::String((_, v)) => {
                                                 selected.push(map.values.get(v).unwrap());
@@ -771,7 +822,75 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     let (reg, s) = match (first, second) {
         (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => (regex::Regex::new(r.as_str())?, s.as_str()),
         (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => (regex::Regex::new(r.as_str())?, s.as_str()),
-        (_,_) => return Ok(first == second),
+
+        (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => return Ok(s1 == s2),
+
+        (PathAwareValue::Map((_, map)), PathAwareValue::Map((_, map2))) => {
+            return Ok('result: loop {
+                if map.values.len() == map2.values.len() {
+                    for (key, value) in map.values.iter() {
+                        match map2.values.get(key) {
+                            Some(value2) => {
+                                if !compare_eq(value, value2)? {
+                                    break 'result false;
+                                }
+                            },
+
+                            None => {
+                                break 'result false;
+                            }
+                        }
+                    }
+                    break 'result true;
+                }
+                break 'result false;
+            })
+        },
+
+        (PathAwareValue::List((_, list)), PathAwareValue::List((_, list2))) => {
+            return Ok('result: loop {
+                //
+                // Order does matter
+                //
+                if list.len() == list2.len() {
+                    for (left, right) in list.iter().zip(list2.iter()) {
+                        if !compare_eq(left, right)? {
+                            break 'result false;
+                        }
+                    }
+                    break 'result true;
+                }
+                break 'result false;
+            })
+        },
+
+        (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => {
+            return Ok(b1 == b2)
+        },
+
+        (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => {
+            return Ok(r == s)
+        },
+
+        //
+        // Range checks
+        //
+        (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
+            return Ok(value.is_within(r))
+        },
+
+        (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
+            return Ok(value.is_within(r))
+        },
+
+        (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
+            return Ok(value.is_within(r))
+        },
+
+        (_, _) => return match compare_values(first, second)? {
+            Ordering::Equal => Ok(true),
+            _ => Ok(false)
+        }
     };
     Ok(reg.is_match(s))
 }

@@ -2,7 +2,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status};
+use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult};
 use crate::rules::path_value::Path;
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use regex::Regex;
 use lazy_static::*;
+use crate::rules::eval_context::EventRecord;
+use crate::rules::errors::{Error, ErrorKind};
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -35,6 +37,21 @@ pub(super) struct NameInfo<'a> {
     pub(super) expected: Option<serde_json::Value>,
     pub(super) comparison: Option<Comparison>,
     pub(super) message: String,
+    pub(super) error: Option<String>
+}
+
+impl<'a> Default for NameInfo<'a> {
+    fn default() -> Self {
+        NameInfo {
+            rule: "",
+            path: "".to_string(),
+            provided: None,
+            expected: None,
+            comparison: None,
+            message: "".to_string(),
+            error: None
+        }
+    }
 }
 
 pub(super) trait GenericReporter: Debug {
@@ -105,6 +122,124 @@ lazy_static! {
     static ref PATH_FROM_MSG: Regex = Regex::new(r"path\s+=\s+(?P<path>[^ ]+)").ok().unwrap();
 }
 
+pub(super) fn find_failing_clauses<'record, 'value>(
+    current: &'record EventRecord<'value>) -> Vec<&'record EventRecord<'value>>
+{
+    match &current.container {
+
+        Some(RecordType::Filter(_)) |
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => vec![],
+
+        Some(RecordType::ClauseValueCheck(_)) => vec![current],
+
+        _ => {
+            let mut acc = Vec::new();
+            for child in &current.children {
+                acc.extend(find_failing_clauses(child));
+            }
+            acc
+        }
+    }
+}
+
+pub(super) fn extract_name_info_from_record<'record, 'value>(
+    rule_name: &'record str,
+    clause: &'record EventRecord<'value>) -> crate::rules::Result<NameInfo<'record>>
+{
+    Ok(match &clause.container {
+        Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(missing))) =>
+            NameInfo {
+                error: missing.message.clone(),
+                message: missing.custom_message.as_ref().map_or("".to_string(), |m| m.clone()),
+                rule: rule_name,
+                ..Default::default()
+            },
+
+        Some(RecordType::ClauseValueCheck(ClauseCheck::MissingBlockValue(missing))) =>
+            NameInfo {
+                rule: rule_name,
+                error: missing.message.clone(),
+                message: missing.custom_message.as_ref().map_or("".to_string(), |s| s.clone()),
+                path: missing.from.unresolved_traversed_to().map_or("".to_string(), |s| s.self_path().0.clone()),
+                ..Default::default()
+            },
+
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(check))) => {
+            match &check.value.from {
+                QueryResult::Resolved(res) => {
+                    let (path, provided) :(String, serde_json::Value) = (*res).try_into()?;
+                    NameInfo {
+                        rule: rule_name,
+                        comparison: Some(check.comparison.into()),
+                        error: check.value.message.clone(),
+                        message: check.value.custom_message.as_ref().map_or("".to_string(), |msg| msg.clone()),
+                        provided: Some(provided),
+                        path,
+                        ..Default::default()
+                    }
+                },
+
+                QueryResult::UnResolved(unres) => {
+                    let (path, provided) :(String, serde_json::Value) = unres.traversed_to.try_into()?;
+                    NameInfo {
+                        rule: rule_name,
+                        comparison: Some(check.comparison.into()),
+                        error: Some(check.value.message.as_ref().map_or(unres.reason.as_ref().map_or(
+                            "".to_string(), |r| r.clone()), |msg| msg.clone())),
+                        message: check.value.custom_message.as_ref().map_or("".to_string(), |msg| msg.clone()),
+                        provided: Some(provided),
+                        path,
+                        ..Default::default()
+                    }
+                }
+            }
+        }
+
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) => {
+            match &check.from {
+                QueryResult::Resolved(res) => {
+                    let (path, provided) :(String, serde_json::Value) = (*res).try_into()?;
+                    let (_, expected) :(String, serde_json::Value) = check.to.as_ref().unwrap().resolved().unwrap().try_into()?;
+                    NameInfo {
+                        rule: rule_name,
+                        comparison: Some(check.comparison.into()),
+                        error: check.message.clone(),
+                        message: check.custom_message.as_ref().map_or("".to_string(), |msg| msg.clone()),
+                        provided: Some(provided),
+                        expected: Some(expected),
+                        path,
+                        ..Default::default()
+                    }
+
+                },
+
+                QueryResult::UnResolved(unres) => {
+                    let (path, provided) :(String, serde_json::Value) = unres.traversed_to.try_into()?;
+                    NameInfo {
+                        rule: rule_name,
+                        comparison: Some(check.comparison.into()),
+                        error: Some(check.message.as_ref().map_or(unres.reason.as_ref().map_or(
+                            "".to_string(), |r| r.clone()), |msg| msg.clone())),
+                        message: check.custom_message.as_ref().map_or("".to_string(), |msg| msg.clone()),
+                        provided: Some(provided),
+                        path,
+                        ..Default::default()
+                    }
+                }
+            }
+        }
+
+        Some(RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck)) =>
+            NameInfo {
+                rule: rule_name,
+                comparison: Some(Comparison{not_operator_exists: false, operator: CmpOperator::Empty}),
+                ..Default::default()
+            },
+
+        _ => unreachable!()
+    })
+}
+
 pub(super) fn extract_name_info<'a>(rule_name: &'a str,
                                     each_failing_clause: &StatusContext) -> crate::rules::Result<NameInfo<'a>> {
     if each_failing_clause.from.is_some() {
@@ -126,7 +261,8 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str,
                 None => None,
             },
             message: each_failing_clause.msg.as_ref().map_or(
-                "".to_string(), |e| if !e.contains("DEFAULT") { e.clone() } else { "".to_string() })
+                "".to_string(), |e| if !e.contains("DEFAULT") { e.clone() } else { "".to_string() }),
+            error: None
         })
     }
     else {
@@ -141,7 +277,7 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str,
         //
         // No from is how we indicate retrieval errors.
         //
-        let (path, message) = each_failing_clause.msg.as_ref().map_or(("".to_string(), "".to_string()), |msg| {
+        let (path, error) = each_failing_clause.msg.as_ref().map_or(("".to_string(), "".to_string()), |msg| {
             match PATH_FROM_MSG.captures(msg) {
                 Some(cap) => (cap["path"].to_string(), msg.clone()),
                 None => ("".to_string(), msg.clone())
@@ -151,10 +287,8 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str,
         Ok(NameInfo {
             rule: rule_name,
             path,
-            provided: None,
-            expected: None,
-            comparison: None,
-            message
+            error: Some(error),
+            ..Default::default()
         })
     }
 }
@@ -237,13 +371,17 @@ pub(super) fn print_name_info<R, U, B>(
         // CFN = Resource [<name>] was not compliant with [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
         // General = Violation of [<rule-name>] for property [<path>] because provided value [<value>] did not match expected value [<value>]. Error Message [<msg>]
         // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
-        match cmp {
-            None => {
+        match each.error {
+            Some(_) => {
                 // Block Clause retrieval error
                 writeln!(writer, "{}", retrieval_error(rules_file_name, data_file_name, each)?)?;
             },
 
-            Some(cmp) => {
+            None => {
+                let (cmp, not) = match &each.comparison {
+                    Some(cmp) => (cmp.operator, cmp.not_operator_exists),
+                    None => return Err(Error::new(ErrorKind::MissingValue("Comparison must be present for this".to_string())))
+                };
                 if cmp.is_unary() {
                     writeln!(writer, "{}",
                          unary_message(

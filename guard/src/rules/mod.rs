@@ -4,7 +4,9 @@ pub(crate) mod exprs;
 pub(crate) mod parser;
 pub(crate) mod values;
 pub(crate) mod path_value;
-
+pub(crate) mod eval_context;
+pub(crate) mod eval;
+pub(crate) mod display;
 
 use errors::Error;
 
@@ -15,6 +17,7 @@ use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
 use serde::{Serialize};
 use crate::rules::values::CmpOperator;
+use crate::rules::exprs::{QueryPart, GuardAccessClause};
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -64,6 +67,11 @@ pub(crate) enum EvaluationType {
     Clause
 }
 
+pub(crate) struct RuleEvalResult<'rules> {
+    name: &'rules str,
+
+}
+
 impl std::fmt::Display for EvaluationType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -81,6 +89,186 @@ impl std::fmt::Display for EvaluationType {
     }
 }
 
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct UnResolved<'value> {
+    pub(crate) traversed_to: &'value PathAwareValue,
+    pub(crate) remaining_query: String,
+    pub(crate) reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) enum QueryResult<'value> {
+    Resolved(&'value PathAwareValue),
+    UnResolved(UnResolved<'value>),
+}
+
+impl<'value> QueryResult<'value> {
+    pub(crate) fn resolved(&self) -> Option<&'value PathAwareValue> {
+        if let QueryResult::Resolved(res) = self {
+            return Some(*res)
+        }
+        None
+    }
+
+    pub(crate) fn unresolved_traversed_to(&self) -> Option<&'value PathAwareValue> {
+        if let QueryResult::UnResolved(res) = self {
+            return Some(res.traversed_to)
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ComparisonClauseCheck<'value> {
+    pub(crate) comparison: (CmpOperator, bool),
+    pub(crate) from: QueryResult<'value>,
+    pub(crate) to: Option<QueryResult<'value>>, // happens with from is unresolved
+    pub(crate) message: Option<String>,
+    pub(crate) custom_message: Option<String>,
+    pub(crate) status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ValueCheck<'value> {
+    pub(crate) from: QueryResult<'value>,
+    pub(crate) message: Option<String>,
+    pub(crate) custom_message: Option<String>,
+    pub(crate) status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct UnaryValueCheck<'value> {
+    pub(crate) value: ValueCheck<'value>,
+    pub(crate) comparison: (CmpOperator, bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct MissingValueCheck<'value> {
+    pub(crate) rule: &'value str,
+    pub(crate) message: Option<String>,
+    pub(crate) custom_message: Option<String>,
+    pub(crate) status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) enum ClauseCheck<'value> {
+    Success,
+    Comparison(ComparisonClauseCheck<'value>),
+    Unary(UnaryValueCheck<'value>),
+    NoValueForEmptyCheck,
+    DependentRule(MissingValueCheck<'value>),
+    MissingBlockValue(ValueCheck<'value>)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct TypeBlockCheck<'value> {
+    pub(crate) type_name: &'value str,
+    pub(crate) block: BlockCheck,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct BlockCheck {
+    pub(crate) at_least_one_matches: bool,
+    pub(crate) status: Status,
+    pub(crate) message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct NamedStatus<'value> {
+    pub(crate) name: &'value str,
+    pub(crate) status: Status,
+}
+
+pub(crate) enum RecordType<'value> {
+    //
+    // has as many child events for RuleCheck as there are rules in the file
+    //
+    FileCheck(NamedStatus<'value>),
+
+    //
+    // has one optional RuleCondition check if when condition is present
+    // has as many child events for each
+    // TypeCheck | WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    //
+    RuleCheck(NamedStatus<'value>),
+
+    //
+    // has as many child events for each GuardClauseBlockCheck | Disjunction
+    //
+    RuleCondition(Status),
+
+    //
+    // has one optional TypeCondition event if when condition is present
+    // has one TypeBlock for the block associated
+    //
+    TypeCheck(TypeBlockCheck<'value>),
+
+    //
+    // has as many child events for each GuardClauseBlockCheck | Disjunction
+    //
+    TypeCondition(Status),
+
+    //
+    // has as many child events for each Type value discovered
+    // WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    //
+    TypeBlock(Status),
+
+    //
+    // has many child events for
+    // WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    //
+    Filter(Status),
+
+    //
+    // has one WhenCondition event
+    // has as many child events for each
+    // WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    //
+    WhenCheck(BlockCheck),
+
+    //
+    // has as many child events for each GuardClauseBlockCheck | Disjunction
+    //
+    WhenCondition(Status),
+
+    //
+    // has as many child events for each
+    // TypeCheck | WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    // TypeCheck is only present as a part of the RuleBlock
+    // Used for a IN operator event as well as IN is effectively a short-form for ORs
+    //
+    Disjunction(BlockCheck),  // in operator is a short-form for Disjunctions
+
+    //
+    // has as many child events for each
+    // WhenCheck | BlockGuardCheck | Disjunction | GuardClauseBlockCheck
+    //
+    BlockGuardCheck(BlockCheck),
+
+    //
+    // has as many child events for each ClauseValueCheck
+    //
+    GuardClauseBlockCheck(BlockCheck),
+
+    //
+    // one per value check, unary or binary
+    //
+    ClauseValueCheck(ClauseCheck<'value>)
+}
+
+pub(crate) trait EvalContext<'value> {
+    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>>;
+    //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
+    fn root(&self) -> &'value PathAwareValue;
+    fn rule_status(&self, rule_name: &str) -> Result<Status>;
+    fn start_record(&self, context: &str) -> Result<()>;
+    fn end_record(&self, context: &str, record: RecordType<'value>) -> Result<()>;
+    fn resolve_variable(&self, variable_name: &str) -> Result<Vec<QueryResult<'value>>>;
+    fn add_variable_capture_key(&self, variable_name: &str, key: &'value PathAwareValue) -> Result<()> { Ok(()) }
+    fn add_variable_capture_index(&self, variable_name: &str, index: &'value PathAwareValue) -> Result<()> { Ok(()) }
+}
 
 pub(crate) trait EvaluationContext {
     fn resolve_variable(&self,

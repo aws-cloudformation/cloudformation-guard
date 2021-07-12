@@ -26,6 +26,7 @@ use std::fmt::Formatter;
 use indexmap::map::IndexMap;
 use std::convert::TryFrom;
 use crate::migrate::parser::TypeName;
+use crate::rules::path_value::{PathAwareValue, Path};
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
@@ -736,7 +737,7 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
         )
     )(input)?;
     let (input, with) = cut(preceded(zero_or_more_ws_or_comment, alt((
-        map( parse_value, LetValue::Value),
+        map( parse_value, |value| LetValue::Value(PathAwareValue::try_from(value).unwrap())),
         map( preceded(zero_or_more_ws_or_comment, access), LetValue::AccessClause),
     ))))(input)?;
     let (input, _close) = cut(close_array)(input)?;
@@ -820,7 +821,10 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
 
         let query_parts = match remainder {
             Some(mut parts) => {
-                parts.insert(0, first);
+                parts.insert(0, first.clone());
+                if first.is_variable() && parts.get(1) != Some(&QueryPart::AllIndices) {
+                    parts.insert(1, QueryPart::AllIndices);
+                }
                 parts
             },
 
@@ -889,7 +893,7 @@ fn clause_with_map<'loc, A, M, T: 'loc>(input: Span<'loc>,
                         map(tuple((
                             parse_value, preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             move |(rhs, msg)| {
-                                (Some(LetValue::Value(rhs)), msg.map(String::from).or(None))
+                                (Some(LetValue::Value(PathAwareValue::try_from(rhs).unwrap())), msg.map(String::from).or(None))
                             }),
                         map(tuple((
                             preceded(zero_or_more_ws_or_comment, access),
@@ -928,12 +932,17 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     };
 
     let (input, query) = access(input)?;
+    let (input, not_empty) = opt(
+        value(true, preceded(
+            zero_or_more_ws_or_comment, tuple((not, empty)))))
+        (input)?;
     let (input, (assignments, conjunctions)) = block(clause)(input)?;
     Ok((input, GuardClause::BlockClause(BlockGuardClause {
         query, block: Block {
             assignments, conjunctions,
         },
-        location
+        location,
+        not_empty: not_empty.map_or(false, std::convert::identity),
     })))
 }
 
@@ -1168,7 +1177,7 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
     match parse_value(input) {
         Ok((input, value)) => Ok((input, LetExpr {
             var: var_name,
-            value: LetValue::Value(value)
+            value: LetValue::Value(PathAwareValue::try_from(value).unwrap())
         })),
 
         Err(nom::Err::Error(_)) => {
@@ -1299,6 +1308,11 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
     //
     // Start must be a type name like "AWS::SQS::Queue"
     //
+    let location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
     let (input, name) = type_name(input)?;
 
     //
@@ -1326,13 +1340,37 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
             }
         };
 
+
     Ok((input, TypeBlock {
         conditions: when_conditions,
         type_name: format!("{}", name.type_name),
         block: Block {
             assignments: assignments,
             conjunctions: clauses,
-        }
+        },
+        query: vec![
+            QueryPart::Key("Resources".to_string()),
+            QueryPart::AllValues,
+            QueryPart::Filter(Conjunctions::from([
+                Disjunctions::from([
+                    GuardClause::Clause(GuardAccessClause {
+                        negation: false,
+                        access_clause: AccessClause {
+                            query: AccessQuery {
+                                query: vec![
+                                    QueryPart::Key("Type".to_string())
+                                ],
+                                match_all: true
+                            },
+                            custom_message: None,
+                            location,
+                            compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), name.type_name.clone())))),
+                            comparator: (CmpOperator::Eq, false)
+                        }
+                    })
+                ])
+            ]))
+        ]
     }))
 }
 

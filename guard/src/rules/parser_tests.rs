@@ -829,7 +829,7 @@ fn to_query_part(vec: Vec<&str>) -> Vec<QueryPart> {
 }
 
 fn to_string_vec<'loc>(list: &[&str]) -> Vec<QueryPart<'loc>> {
-    list.iter()
+    let mut list = list.iter()
         .map(|part|
             if *part == "*" {
                 QueryPart::AllValues
@@ -837,7 +837,11 @@ fn to_string_vec<'loc>(list: &[&str]) -> Vec<QueryPart<'loc>> {
             else {
                 QueryPart::Key(String::from(*part))
             })
-        .collect()
+        .collect::<Vec<QueryPart>>();
+    if list[0].is_variable() {
+        list.insert(1, QueryPart::AllIndices);
+    }
+    list
 }
 
 #[test]
@@ -1245,6 +1249,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::AllIndices,
                 QueryPart::Key("type".to_string()),
             ], match_all: true },
         )),
@@ -1262,6 +1267,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::AllIndices,
                 QueryPart::AllValues,
                 QueryPart::Key("type".to_string()),
                 QueryPart::Index(0),
@@ -1281,6 +1287,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::AllIndices,
                 QueryPart::Key("%type".to_string()),
                 QueryPart::AllValues,
             ], match_all: true },
@@ -1299,6 +1306,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::AllIndices,
                 QueryPart::Key("%type".to_string()),
                 QueryPart::AllValues,
                 QueryPart::Key("port".to_string())
@@ -1318,6 +1326,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
+                QueryPart::AllIndices,
                 QueryPart::AllValues,
             ], match_all: true },
         )),
@@ -1344,7 +1353,7 @@ fn test_access() {
                                 ], match_all: true },
                                 comparator: (CmpOperator::Eq, false),
                                 custom_message: None,
-                                compare_with: Some(LetValue::Value(Value::String(String::from("cfn")))),
+                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(Value::String(String::from("cfn"))).unwrap()).unwrap())),
                                 location: FileLocation {
                                     line: 1,
                                     column: "engine[".len() as u32 + 1,
@@ -1674,7 +1683,7 @@ fn test_keys_keyword() {
             },
             QueryPart::MapKeyFilter(MapKeyFilterClause {
                 comparator: (CmpOperator::Eq, false),
-                compare_with: LetValue::Value(Value::Regex("aws:S".to_string())),
+                compare_with: LetValue::Value(PathAwareValue::try_from(Value::Regex("aws:S".to_string())).unwrap()),
             })
         )),
 
@@ -1691,7 +1700,7 @@ fn test_keys_keyword() {
             },
             QueryPart::MapKeyFilter(MapKeyFilterClause {
                 comparator: (CmpOperator::Eq, true),
-                compare_with: LetValue::Value(Value::String("aws:IsSecure".to_string())),
+                compare_with: LetValue::Value(PathAwareValue::try_from(Value::String("aws:IsSecure".to_string())).unwrap()),
             }),
         )),
 
@@ -1981,7 +1990,7 @@ fn test_clause_success() {
             let dotted = to_string_vec(&dotted);
             let dotted = AccessQuery { query: dotted, match_all: true };
 
-            let rhs_value = parse_value(from_str2(*each_rhs)).unwrap().1;
+            let rhs_value = PathAwareValue::try_from(parse_value(from_str2(*each_rhs)).unwrap().1).unwrap();
             testing_access_with_cmp(&separators, &comparators,
                                     *each_lhs, *each_rhs,
                                     || dotted.clone(),
@@ -2082,7 +2091,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap()).unwrap()).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
@@ -2117,7 +2126,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(Value::Regex("AWS::RDS".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap()).unwrap()).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
@@ -2151,7 +2160,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(Value::String("RETAIN".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(Value::String("RETAIN".to_string())).unwrap()).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("deletion_policy"))], match_all: true },
                                     custom_message: None,
@@ -2559,7 +2568,7 @@ fn test_clauses() {
                                     column: 1,
                                     line: 2,
                                 },
-                                compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
+                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
                                 query: AccessQuery{ query: "configurations.containers.*.image".split(".")
                                     .map(|s| if s == "*" { QueryPart::AllValues } else { QueryPart::Key(s.to_string()) }).collect(), match_all: true },
                                 custom_message: None,
@@ -2609,7 +2618,7 @@ fn test_clauses() {
                         GuardAccessClause {
                             access_clause: AccessClause {
                                 location: FileLocation { file_name: "", column: 16, line: 4 },
-                                compare_with: Some(LetValue::Value(Value::Regex("httpd:2.4".to_string()))),
+                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
                                 query: AccessQuery{ query: "configurations.containers[*].image".split(".").map( |part|
                                     if part.contains('[') {
                                         vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices]
@@ -2745,7 +2754,7 @@ fn test_assignments() {
             },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::Value(Value::Int(10))
+                value: LetValue::Value(PathAwareValue::try_from(Value::Int(10)).unwrap())
             }
         )),
 
@@ -2761,9 +2770,9 @@ fn test_assignments() {
             },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::Value(Value::List(vec![
+                value: LetValue::Value(PathAwareValue::try_from(Value::List(vec![
                     Value::Int(10), Value::Int(20)
-                ]))
+                ])).unwrap())
             }
         )),
 
@@ -2828,7 +2837,7 @@ fn test_assignments() {
             },
             LetExpr {
                 var: String::from("ENGINE_LOGS"),
-                value: LetValue::Value(engines)
+                value: LetValue::Value(PathAwareValue::try_from(engines).unwrap())
             }
         )),
 
@@ -2868,9 +2877,9 @@ fn test_assignments() {
                                     GuardClause::Clause(
                                         GuardAccessClause {
                                             access_clause: AccessClause {
-                                                compare_with: Some(LetValue::Value(Value::List(
+                                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::List(
                                                     vec![Value::Regex(String::from("AWS::RDS::DBCluster")),
-                                                         Value::Regex(String::from("AWS::RDS::GlobalCluster"))]))),
+                                                         Value::Regex(String::from("AWS::RDS::GlobalCluster"))])).unwrap())),
                                                 query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                                 custom_message: None,
                                                 comparator: (CmpOperator::In, false),
@@ -3019,11 +3028,11 @@ fn test_type_block() {
                                         comparator: (CmpOperator::In, false),
                                         custom_message: None,
                                         compare_with: Some(LetValue::Value(
-                                            Value::List(vec![
+                                            PathAwareValue::try_from(Value::List(vec![
                                                 Value::String(String::from("keyName")),
                                                 Value::String(String::from("keyName2")),
                                                 Value::String(String::from("keyName3")),
-                                            ])
+                                            ])).unwrap()
                                         )),
                                         location: FileLocation {
                                             file_name: "",
@@ -3045,10 +3054,10 @@ fn test_type_block() {
                                         comparator: (CmpOperator::In, true),
                                         custom_message: None,
                                         compare_with: Some(LetValue::Value(
-                                            Value::List(vec![
+                                            PathAwareValue::try_from(Value::List(vec![
                                                 Value::String(String::from("keyNameIs")),
                                                 Value::String(String::from("notInthis")),
-                                            ])
+                                            ])).unwrap()
                                         )),
                                         location: FileLocation {
                                             file_name: "",
@@ -3062,7 +3071,35 @@ fn test_type_block() {
 
                         ]),
                     ])
-                }
+                },
+                query: vec![
+                    QueryPart::Key("Resources".to_string()),
+                    QueryPart::AllValues,
+                    QueryPart::Filter(Conjunctions::from([
+                        Disjunctions::from([
+                            GuardClause::Clause(GuardAccessClause {
+                                negation: false,
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![
+                                            QueryPart::Key("Type".to_string())
+                                        ],
+                                        match_all: true
+                                    },
+                                    custom_message: None,
+                                    location: FileLocation {
+                                        column: 1,
+                                        line: 1,
+                                        file_name: ""
+                                    },
+                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                    comparator: (CmpOperator::Eq, false)
+                                }
+                            })
+                        ])
+                    ]))
+                ]
+
             }
         )),
 
@@ -3094,7 +3131,7 @@ fn test_type_block() {
                                             column: ("AWS::EC2::Instance ".len() + 1) as u32,
                                             line: 1
                                         },
-                                        compare_with: Some(LetValue::Value(Value::Regex("EC2_KEY".to_string()))),
+                                        compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("EC2_KEY".to_string())).unwrap())),
                                         custom_message: None
                                     },
                                     negation: false,
@@ -3102,7 +3139,34 @@ fn test_type_block() {
                             ),
                         ]
                     ]
-                }
+                },
+                query: vec![
+                    QueryPart::Key("Resources".to_string()),
+                    QueryPart::AllValues,
+                    QueryPart::Filter(Conjunctions::from([
+                        Disjunctions::from([
+                            GuardClause::Clause(GuardAccessClause {
+                                negation: false,
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![
+                                            QueryPart::Key("Type".to_string())
+                                        ],
+                                        match_all: true
+                                    },
+                                    custom_message: None,
+                                    location: FileLocation {
+                                        column: 1,
+                                        line: 1,
+                                        file_name: ""
+                                    },
+                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                    comparator: (CmpOperator::Eq, false)
+                                }
+                            })
+                        ])
+                    ]))
+                ]
             }
         )),
 
@@ -3131,7 +3195,7 @@ fn test_type_block() {
                                         column: 25,
                                         line: 1
                                     },
-                                    compare_with: Some(LetValue::Value(Value::String(String::from("m4.xlarge")))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String(String::from("m4.xlarge"))).unwrap())),
                                     custom_message: None
                                 },
                                 negation: false
@@ -3161,7 +3225,34 @@ fn test_type_block() {
                                 }
                             ),
                         ]]
-                }
+                },
+                query: vec![
+                    QueryPart::Key("Resources".to_string()),
+                    QueryPart::AllValues,
+                    QueryPart::Filter(Conjunctions::from([
+                        Disjunctions::from([
+                            GuardClause::Clause(GuardAccessClause {
+                                negation: false,
+                                access_clause: AccessClause {
+                                    query: AccessQuery {
+                                        query: vec![
+                                            QueryPart::Key("Type".to_string())
+                                        ],
+                                        match_all: true
+                                    },
+                                    custom_message: None,
+                                    location: FileLocation {
+                                        column: 1,
+                                        line: 1,
+                                        file_name: ""
+                                    },
+                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                    comparator: (CmpOperator::Eq, false)
+                                }
+                            })
+                        ])
+                    ]))
+                ]
 
             }
 
@@ -3230,7 +3321,7 @@ fn test_rule_block() {
                                     query: AccessQuery{ query: vec![
                                         QueryPart::Key("stage".to_string())
                                     ], match_all: true },
-                                    compare_with: Some(LetValue::Value(Value::String("prod".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String("prod".to_string())).unwrap())),
                                     location: FileLocation {
                                         file_name: "",
                                         line: 1,
@@ -3247,10 +3338,10 @@ fn test_rule_block() {
                         LetExpr {
                             var: String::from("ec2_instance_types"),
                             value: LetValue::Value(
-                                Value::List(vec![
+                                PathAwareValue::try_from( Value::List(vec![
                                     Value::Regex("^t*".to_string()),
                                     Value::Regex("^m*".to_string())
-                                ])
+                                ])).unwrap()
                             )
                         }
                     ],
@@ -3299,7 +3390,36 @@ fn test_rule_block() {
                                             )
                                         ])
                                     ])
-                                }
+                                },
+
+                                query: vec![
+                                    QueryPart::Key("Resources".to_string()),
+                                    QueryPart::AllValues,
+                                    QueryPart::Filter(Conjunctions::from([
+                                        Disjunctions::from([
+                                            GuardClause::Clause(GuardAccessClause {
+                                                negation: false,
+                                                access_clause: AccessClause {
+                                                    query: AccessQuery {
+                                                        query: vec![
+                                                            QueryPart::Key("Type".to_string())
+                                                        ],
+                                                        match_all: true
+                                                    },
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        column: 5,
+                                                        line: 8,
+                                                        file_name: ""
+                                                    },
+                                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                                    comparator: (CmpOperator::Eq, false)
+                                                }
+                                            })
+                                        ])
+                                    ]))
+                                ]
+
                             })
                         ]),
                         Disjunctions::from([
@@ -3326,6 +3446,7 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
+                                                            QueryPart::AllIndices,
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string())
                                                         ], match_all: true },
@@ -3348,11 +3469,12 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
+                                                            QueryPart::AllIndices,
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("device_name".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
-                                                        compare_with: Some(LetValue::Value(Value::Regex("^/dev/ebs-".to_string()))),
+                                                        compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("^/dev/ebs-".to_string())).unwrap())),
                                                         custom_message: None,
                                                         location: FileLocation {
                                                             file_name: "",
@@ -3370,12 +3492,13 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
+                                                            QueryPart::AllIndices,
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("encrypted".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
-                                                        compare_with: Some(LetValue::Value(Value::Bool(true))),
+                                                        compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Bool(true)).unwrap())),
                                                         custom_message: None,
                                                         location: FileLocation {
                                                             file_name: "",
@@ -3393,12 +3516,13 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
+                                                            QueryPart::AllIndices,
                                                             QueryPart::AllValues,
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("delete_on_termination".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
-                                                        compare_with: Some(LetValue::Value(Value::Bool(true))),
+                                                        compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Bool(true)).unwrap())),
                                                         custom_message: None,
                                                         location: FileLocation {
                                                             file_name: "",
@@ -3411,7 +3535,34 @@ fn test_rule_block() {
                                             ),
                                         ]),
                                     ]),
-                                }
+                                },
+                                query: vec![
+                                    QueryPart::Key("Resources".to_string()),
+                                    QueryPart::AllValues,
+                                    QueryPart::Filter(Conjunctions::from([
+                                        Disjunctions::from([
+                                            GuardClause::Clause(GuardAccessClause {
+                                                negation: false,
+                                                access_clause: AccessClause {
+                                                    query: AccessQuery {
+                                                        query: vec![
+                                                            QueryPart::Key("Type".to_string())
+                                                        ],
+                                                        match_all: true
+                                                    },
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        column: 5,
+                                                        line: 14,
+                                                        file_name: ""
+                                                    },
+                                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                                    comparator: (CmpOperator::Eq, false)
+                                                }
+                                            })
+                                        ])
+                                    ]))
+                                ]
                             }),
                             RuleClause::TypeBlock(TypeBlock {
                                 type_name: type_name.to_string(),
@@ -3431,7 +3582,7 @@ fn test_rule_block() {
                                                             QueryPart::Key("device_name".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
-                                                        compare_with: Some(LetValue::Value(Value::Regex("^/dev/sdc-\\d".to_string()))),
+                                                        compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("^/dev/sdc-\\d".to_string())).unwrap())),
                                                         custom_message: None,
                                                         location: FileLocation {
                                                             file_name: "",
@@ -3444,8 +3595,34 @@ fn test_rule_block() {
                                             ),
                                         ])
                                     ])
-                                }
-
+                                },
+                                query: vec![
+                                    QueryPart::Key("Resources".to_string()),
+                                    QueryPart::AllValues,
+                                    QueryPart::Filter(Conjunctions::from([
+                                        Disjunctions::from([
+                                            GuardClause::Clause(GuardAccessClause {
+                                                negation: false,
+                                                access_clause: AccessClause {
+                                                    query: AccessQuery {
+                                                        query: vec![
+                                                            QueryPart::Key("Type".to_string())
+                                                        ],
+                                                        match_all: true
+                                                    },
+                                                    custom_message: None,
+                                                    location: FileLocation {
+                                                        column: 5,
+                                                        line: 21,
+                                                        file_name: ""
+                                                    },
+                                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::EC2::Instance".to_string())))),
+                                                    comparator: (CmpOperator::Eq, false)
+                                                }
+                                            })
+                                        ])
+                                    ]))
+                                ]
                             })
                         ])
                     ]),
@@ -3561,9 +3738,9 @@ fn test_try_from_rule_block() -> Result<(), Error> {
                                                     ], match_all: true },
                                                     comparator: (CmpOperator::In, false),
                                                     compare_with: Some(LetValue::Value(
-                                                        Value::List(
+                                                        PathAwareValue::try_from(Value::List(
                                                             vec![Value::String(String::from("ExternalS3Approved"))]
-                                                        )
+                                                        )).unwrap()
                                                     )),
                                                     custom_message: None,
                                                     location: FileLocation {
@@ -3576,7 +3753,34 @@ fn test_try_from_rule_block() -> Result<(), Error> {
                                         )
                                     ])
                                 ])
-                            }
+                            },
+                            query: vec![
+                                QueryPart::Key("Resources".to_string()),
+                                QueryPart::AllValues,
+                                QueryPart::Filter(Conjunctions::from([
+                                    Disjunctions::from([
+                                        GuardClause::Clause(GuardAccessClause {
+                                            negation: false,
+                                            access_clause: AccessClause {
+                                                query: AccessQuery {
+                                                    query: vec![
+                                                        QueryPart::Key("Type".to_string())
+                                                    ],
+                                                    match_all: true
+                                                },
+                                                custom_message: None,
+                                                location: FileLocation {
+                                                    column: 9,
+                                                    line: 4,
+                                                    file_name: ""
+                                                },
+                                                compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::S3::Bucket".to_string())))),
+                                                comparator: (CmpOperator::Eq, false)
+                                            }
+                                        })
+                                    ])
+                                ]))
+                            ]
                         }
                     )
                 ])
@@ -3682,7 +3886,7 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
                     line: 1,
                     file_name: ""
                 },
-                compare_with: Some(LetValue::Value(Value::Regex("\\{\\{resolve:secretsmanager".to_string()))),
+                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("\\{\\{resolve:secretsmanager".to_string())).unwrap())),
                 comparator: (CmpOperator::Eq, false),
                 custom_message: None,
                 query: AccessQuery{ query: vec![QueryPart::This], match_all: true }
@@ -3764,7 +3968,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                         match_all: true
                                     },
                                     comparator: (CmpOperator::Eq, false),
-                                    compare_with: Some(LetValue::Value(Value::Bool(false))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Bool(false)).unwrap())),
                                     custom_message: Some(String::from("Version upgrades should be enabled to receive security updates")),
                                     location: FileLocation {
                                         line: 2,
@@ -3775,7 +3979,34 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                 negation: false
                             })]
                         ]
-                    }
+                    },
+                    query: vec![
+                        QueryPart::Key("Resources".to_string()),
+                        QueryPart::AllValues,
+                        QueryPart::Filter(Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        query: AccessQuery {
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ],
+                                            match_all: true
+                                        },
+                                        custom_message: None,
+                                        location: FileLocation {
+                                            column: 5,
+                                            line: 2,
+                                            file_name: ""
+                                        },
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::AmazonMQ::Broker".to_string())))),
+                                        comparator: (CmpOperator::Eq, false)
+                                    }
+                                })
+                            ])
+                        ]))
+                    ]
                 })],
                 vec![RuleClause::TypeBlock(TypeBlock {
                     type_name: String::from("AWS::AmazonMQ::Broker"),
@@ -3790,7 +4021,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                         match_all: true
                                     },
                                     comparator: (CmpOperator::Eq, false),
-                                    compare_with: Some(LetValue::Value(Value::Bool(false))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Bool(false)).unwrap())),
                                     custom_message: Some(String::from("CMKs should be used instead of AWS-provided KMS keys")),
                                     location: FileLocation {
                                         line: 3,
@@ -3801,7 +4032,34 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                 negation: false
                             })]
                         ]
-                    }
+                    },
+                    query: vec![
+                        QueryPart::Key("Resources".to_string()),
+                        QueryPart::AllValues,
+                        QueryPart::Filter(Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        query: AccessQuery {
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ],
+                                            match_all: true
+                                        },
+                                        custom_message: None,
+                                        location: FileLocation {
+                                            column: 5,
+                                            line: 3,
+                                            file_name: ""
+                                        },
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::AmazonMQ::Broker".to_string())))),
+                                        comparator: (CmpOperator::Eq, false)
+                                    }
+                                })
+                            ])
+                        ]))
+                    ]
                 })],
                 vec![RuleClause::TypeBlock(TypeBlock {
                     type_name: String::from("AWS::ApiGateway::Method"),
@@ -3816,7 +4074,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                         match_all: true
                                     },
                                     comparator: (CmpOperator::Eq, false),
-                                    compare_with: Some(LetValue::Value(Value::String(String::from("ApiGatewayBadBot.RootResourceId")))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String(String::from("ApiGatewayBadBot.RootResourceId"))).unwrap())),
                                     custom_message: Some(String::from("Should be root resource id")),
                                     location: FileLocation {
                                         line: 4,
@@ -3827,7 +4085,34 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                 negation: false
                             })]
                         ]
-                    }
+                    },
+                    query: vec![
+                        QueryPart::Key("Resources".to_string()),
+                        QueryPart::AllValues,
+                        QueryPart::Filter(Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        query: AccessQuery {
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ],
+                                            match_all: true
+                                        },
+                                        custom_message: None,
+                                        location: FileLocation {
+                                            column: 5,
+                                            line: 4,
+                                            file_name: ""
+                                        },
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::ApiGateway::Method".to_string())))),
+                                        comparator: (CmpOperator::Eq, false)
+                                    }
+                                })
+                            ])
+                        ]))
+                    ]
                 }),
                  RuleClause::TypeBlock(TypeBlock {
                      type_name: String::from("AWS::ApiGateway::Method"),
@@ -3842,7 +4127,7 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                          match_all: true
                                      },
                                      comparator: (CmpOperator::Eq, false),
-                                     compare_with: Some(LetValue::Value(Value::String(String::from("ApiGatewayBadBotResource")))),
+                                     compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String(String::from("ApiGatewayBadBotResource"))).unwrap())),
                                      custom_message: None,
                                      location: FileLocation {
                                          line: 4,
@@ -3853,7 +4138,34 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                                  negation: false
                              })]
                          ]
-                     }
+                     },
+                     query: vec![
+                         QueryPart::Key("Resources".to_string()),
+                         QueryPart::AllValues,
+                         QueryPart::Filter(Conjunctions::from([
+                             Disjunctions::from([
+                                 GuardClause::Clause(GuardAccessClause {
+                                     negation: false,
+                                     access_clause: AccessClause {
+                                         query: AccessQuery {
+                                             query: vec![
+                                                 QueryPart::Key("Type".to_string())
+                                             ],
+                                             match_all: true
+                                         },
+                                         custom_message: None,
+                                         location: FileLocation {
+                                             column: 123,
+                                             line: 4,
+                                             file_name: ""
+                                         },
+                                         compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::ApiGateway::Method".to_string())))),
+                                         comparator: (CmpOperator::Eq, false)
+                                     }
+                                 })
+                             ])
+                         ]))
+                     ]
                  })]
             ]
 
@@ -3881,6 +4193,7 @@ fn some_clause_parse() -> Result<(), Error> {
                     match_all: false,
                     query: vec![
                         QueryPart::Key("%api_gws".to_string()),
+                        QueryPart::AllIndices,
                         QueryPart::Key("Properties".to_string()),
                         QueryPart::Key("Policy".to_string()),
                         QueryPart::Key("Statement".to_string()),
@@ -3889,7 +4202,7 @@ fn some_clause_parse() -> Result<(), Error> {
                         QueryPart::MapKeyFilter(
                             MapKeyFilterClause {
                                 comparator: (CmpOperator::Eq, false),
-                                compare_with: LetValue::Value(Value::Regex("aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string()))
+                                compare_with: LetValue::Value(PathAwareValue::try_from(Value::Regex("aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())).unwrap())
                             }
                         )
                     ]
@@ -3938,12 +4251,12 @@ fn it_support_test() -> Result<(), Error> {
                                         column: 7,
                                         line: 1
                                     },
-                                    compare_with: Some(LetValue::Value(Value::Map(
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Map(
                                         make_linked_hashmap(vec![
                                             ("Key", Value::String("Hi".to_string())),
                                             ("Value", Value::String("There".to_string()))
-                                        ])
-                                    )))
+                                        ]))).unwrap()
+                                    ))
                                 }
                             }
                         )
@@ -3997,7 +4310,7 @@ fn test_block_properties()-> Result<(), Error> {
                                         line: 2,
                                         column: 9,
                                     },
-                                    compare_with: Some(LetValue::Value(Value::String("Deny".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String("Deny".to_string())).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     custom_message: None
                                 },
@@ -4020,7 +4333,7 @@ fn test_block_properties()-> Result<(), Error> {
                                         line: 3,
                                         column: 9,
                                     },
-                                    compare_with: Some(LetValue::Value(Value::String("*".to_string()))),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String("*".to_string())).unwrap())),
                                     comparator: (CmpOperator::Eq, true),
                                     custom_message: None
                                 },
@@ -4030,7 +4343,8 @@ fn test_block_properties()-> Result<(), Error> {
                     ])
 
                 ]
-            }
+            },
+            not_empty: false
         }
     );
     assert_eq!(block_clause, expected);
@@ -4126,5 +4440,11 @@ fn when_inside_when_parse_test() -> Result<(), Error> {
 fn is_list_check_parser_bug() -> Result<(), Error> {
     let bug_test = "some %normal_managed_policies.Properties.PolicyDocument.Statement[ Action is_list ]";
     let _access = AccessQuery::try_from(bug_test)?;
+    Ok(())
+}
+
+#[test]
+fn does_this_work() -> Result<(), Error> {
+    let query = AccessQuery::try_from(r#"Resources[ keys == /s3/ ][ Type == "AWS::S3::BucketPolicy" ]"#)?.query;
     Ok(())
 }

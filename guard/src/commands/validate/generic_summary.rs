@@ -8,10 +8,11 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::find_all_failing_clauses;
-use crate::rules::{EvaluationType, Status};
+use crate::rules::{EvaluationType, Status, RecordType, NamedStatus};
 
 use super::common::*;
 use itertools::Itertools;
+use crate::rules::eval_context::EventRecord;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary<'a> {
@@ -91,6 +92,45 @@ impl<'a> Reporter for GenericSummary<'a> {
         self.renderer.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
         Ok(())
     }
+
+    fn report_eval(
+        &self,
+        write: &mut dyn Write,
+        status: Status,
+        root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
+        let mut longest_rule_name = 0;
+        let mut failed = HashMap::new();
+        let mut skipped = HashSet::new();
+        let mut success = HashSet::new();
+        for each_rule in &root_record.children {
+            if let Some(RecordType::RuleCheck(NamedStatus{status, name})) = &each_rule.container {
+                if name.len() > longest_rule_name {
+                    longest_rule_name = name.len();
+                }
+                match status {
+                    Status::FAIL => {
+                        let mut clauses = Vec::new();
+                        for each_clause in find_failing_clauses(each_rule) {
+                            clauses.push(extract_name_info_from_record(*name, each_clause)?);
+                        }
+                        failed.insert(name.to_string(), clauses);
+                    },
+
+                    Status::PASS => {
+                        success.insert(name.to_string());
+                    },
+
+                    Status::SKIP => {
+                        skipped.insert(name.to_string());
+                    }
+                }
+            }
+        }
+
+        self.renderer.report(write, self.rules_file_name, self.data_file_name, failed, success, skipped, longest_rule_name)?;
+        Ok(())
+    }
+
 }
 
 #[derive(Debug)]
@@ -102,7 +142,7 @@ fn retrieval_error_message(rules_file: &str, data_file: &str, info: &NameInfo<'_
        rules=rules_file,
        rule=info.rule,
        path=info.path,
-       msg=info.message.replace("\n", ";"),
+       msg=info.error.as_ref().map_or("", |s| s)
     ))
 }
 
