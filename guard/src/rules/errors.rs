@@ -34,7 +34,7 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
         },
 
         ErrorKind::ParseError(err) => {
-            format!("Parser Error when parsing rules file {}", err)
+            format!("Parser Error when parsing {}", err)
         },
 
         ErrorKind::RegexError(err) => {

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgMatches, ArgGroup};
 use colored::*;
 
 use crate::command::Command;
@@ -19,6 +19,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
+use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
 
@@ -53,6 +54,14 @@ pub(crate) trait Reporter : Debug {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
 
+#[derive(Deserialize, Debug)]
+pub(crate) struct Payload {
+    #[serde(rename = "rules")]
+    list_of_rules: Vec<String>,
+    #[serde(rename = "data")]
+    list_of_data: Vec<String>,
+}
+
 impl Validate {
     pub(crate) fn new() -> Self {
         Validate{}
@@ -76,18 +85,24 @@ Note - When pointing the command to a directory, the directory may not contain a
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files"))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a data file or dir for data files in JSON or YAML").conflicts_with("payload"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
                 .possible_values(&["json","yaml","single-line-summary"])
-                .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
+                .default_value("single-line-summary")
+                .help("Specify the format in which the output should be displayed"))
+            .arg(Arg::with_name("show-summary").long("show-summary").short("S").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
                 .default_value("all")
-                .help("control if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
-            )
+                .help("Controls if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)"))
+            .arg(Arg::with_name("payload").long("payload").short("P")
+                .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
+                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
+            .group(ArgGroup::with_name("required_flags")
+                .args(&["rules", "payload"])
+                .required(true))
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
             .arg(Arg::with_name("alphabetical").long("alphabetical").short("a").required(false).help("Validate files in a directory ordered alphabetically"))
@@ -100,55 +115,17 @@ or rules files.
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file = app.value_of("rules").unwrap();
-        let cmp = if app.is_present("last-modified") {
-            last_modified
-        } else {
-            alpabetical
-        };
-
-        let empty_path = Path::new("");
-        let data_files = match app.value_of("data") {
-            Some(file_or_dir) => {
-                let base = PathBuf::from_str(file_or_dir)?;
-                let selected = get_files(file_or_dir, cmp)?;
-                let mut streams = Vec::with_capacity(selected.len());
-                for each in selected {
-                    let mut context = String::new();
-                    let mut reader = BufReader::new(File::open(each.as_path())?);
-                    reader.read_to_string(&mut context)?;
-                    let path = each.as_path();
-                    let relative = match path.strip_prefix(base.as_path()) {
-                        Ok(p) => if p != empty_path {
-                            format!("{}", p.display())
-
-                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                        Err(_) => format!("{}", path.display()),
-                    };
-                    streams.push((context, relative));
-                }
-                streams
-            },
-            None => {
-                let mut context = String::new();
-                let mut reader = BufReader::new(std::io::stdin());
-                reader.read_to_string(&mut context);
-                vec![(context, "STDIN".to_string())]
-            }
-        };
-
         let verbose = if app.is_present("verbose") {
             true
         } else {
             false
         };
 
-        let data_type = match app.value_of("type")  {
+        let data_type = match app.value_of("type") {
             Some(t) =>
                 if t == "CFNTemplate" {
                     Type::CFNTemplate
-                }
-                else {
+                } else {
                     Type::Generic
                 },
             None => Type::Generic
@@ -158,11 +135,9 @@ or rules files.
             Some(o) =>
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
-                }
-                else if o == "json" {
+                } else if o == "json" {
                     OutputFormatType::JSON
-                }
-                else {
+                } else {
                     OutputFormatType::YAML
                 }
             None => OutputFormatType::SingleLineSummary
@@ -177,7 +152,7 @@ or rules files.
                         "fail" => st.insert(SummaryType::FAIL),
                         "skip" => st.insert(SummaryType::SKIP),
                         "none" => return BitFlags::empty(),
-                        "all"  => st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP),
+                        "all" => st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP),
                         _ => unreachable!()
                     };
                     st
@@ -187,44 +162,124 @@ or rules files.
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
 
-        let base = PathBuf::from_str(file)?;
-        let files = get_files(file, cmp)?;
         let mut exit_code = 0;
-        for each_file_content in iterate_over(&files, |content, file|
-            Ok((content, match file.strip_prefix(&base) {
-                Ok(path) => if path == empty_path {
-                    format!("{}", file.file_name().unwrap().to_str().unwrap())
-                } else { format!("{}", path.display() )},
-                Err(_) => format!("{}", file.display()),
-            }))) {
-            match each_file_content {
-                Err(e) => println!("Unable read content from file {}", e),
-                Ok((file_content, rule_file_name)) => {
-                    let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                    match crate::rules::parser::rules_file(span) {
-                        Err(e) => {
-                            println!("Parsing error handling rule file = {}, Error = {}",
-                                     rule_file_name.underline(), e);
-                            println!("---");
-                            exit_code = 5;
-                            continue;
-                        },
+        if app.is_present("rules") {
+            let file = app.value_of("rules").unwrap();
 
-                        Ok(rules) => {
-                            match evaluate_against_data_input(
-                                data_type,
-                                output_type,
-                                &data_files,
-                                &rules,
-                                &rule_file_name,
-                                verbose,
-                                print_json,
-                                show_clause_failures,
-                                summary_type.clone())? {
-                                Status::SKIP | Status::PASS => continue,
-                                Status::FAIL => {
-                                    exit_code = 5;
+            let cmp = if app.is_present("last-modified") {
+                last_modified
+            } else {
+                alpabetical
+            };
+
+            let files = get_files(file, cmp)?;
+
+            let empty_path = Path::new("");
+            let data_files = match app.value_of("data") {
+                Some(file_or_dir) => {
+                    let base = PathBuf::from_str(file_or_dir)?;
+                    let selected = get_files(file_or_dir, cmp)?;
+                    let mut streams = Vec::with_capacity(selected.len());
+                    for each in selected {
+                        let mut context = String::new();
+                        let mut reader = BufReader::new(File::open(each.as_path())?);
+                        reader.read_to_string(&mut context)?;
+                        let path = each.as_path();
+                        let relative = match path.strip_prefix(base.as_path()) {
+                            Ok(p) => if p != empty_path {
+                                format!("{}", p.display())
+                            } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                            Err(_) => format!("{}", path.display()),
+                        };
+                        streams.push((context, relative));
+                    }
+                    streams
+                },
+                None => {
+                    let mut context = String::new();
+                    let mut reader = BufReader::new(std::io::stdin());
+                    reader.read_to_string(&mut context);
+                    vec![(context, "STDIN".to_string())]
+                }
+            };
+            let base = PathBuf::from_str(file)?;
+            for each_file_content in iterate_over(&files, |content, file|
+                Ok((content, match file.strip_prefix(&base) {
+                    Ok(path) => if path == empty_path {
+                        format!("{}", file.file_name().unwrap().to_str().unwrap())
+                    } else { format!("{}", path.display()) },
+                    Err(_) => format!("{}", file.display()),
+                }))) {
+                match each_file_content {
+                    Err(e) => println!("Unable read content from file {}", e),
+                    Ok((file_content, rule_file_name)) => {
+                        let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
+                        match crate::rules::parser::rules_file(span) {
+                            Err(e) => {
+                                println!("Parsing error handling rules file = {}, Error = {}",
+                                         rule_file_name.underline(), e);
+                                println!("---");
+                                exit_code = 5;
+                                continue;
+                            },
+
+                            Ok(rules) => {
+                                match evaluate_against_data_input(
+                                    data_type,
+                                    output_type,
+                                    &data_files,
+                                    &rules,
+                                    &rule_file_name,
+                                    verbose,
+                                    print_json,
+                                    show_clause_failures,
+                                    summary_type.clone())? {
+                                    Status::SKIP | Status::PASS => continue,
+                                    Status::FAIL => {
+                                        exit_code = 5;
+                                    }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut context = String::new();
+            let mut reader = BufReader::new(std::io::stdin());
+            reader.read_to_string(&mut context);
+            let payload: Payload = match serde_json::from_str::<Payload>(&context) {
+                Ok(value) => value,
+                Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+            };
+            let data_collection: Vec<(String, String)> = payload.list_of_data.iter().enumerate().map(|(i, data)|(data.to_string(), format!("DATA_STDIN[{}]", i + 1))).collect();
+            let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
+
+            for (each_rules, location) in rules_collection {
+                let span = crate::rules::parser::Span::new_extra(&each_rules, &location);
+                match crate::rules::parser::rules_file(span) {
+                    Err(e) => {
+                        println!("Parsing error handling rules = {}, Error = {}",
+                                 location.underline(), e);
+                        println!("---");
+                        exit_code = 5;
+                        continue;
+                    },
+
+                    Ok(rules) => {
+                        match evaluate_against_data_input(
+                            data_type,
+                            output_type,
+                            &data_collection,
+                            &rules,
+                            &location,
+                            verbose,
+                            print_json,
+                            show_clause_failures,
+                            summary_type.clone())? {
+                            Status::SKIP | Status::PASS => continue,
+                            Status::FAIL => {
+                                exit_code = 5;
                             }
                         }
                     }
