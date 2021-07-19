@@ -31,9 +31,6 @@ Please supply:
 
 **NOTE: Please be sure that the templates, rules and logs you provide as part of your issue do not contain any sensitive information.**
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
-
 **Operating System:**
 [eg, MacOS, Windows, Ubuntu, etc]
 
