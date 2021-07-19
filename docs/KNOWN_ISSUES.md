@@ -38,3 +38,28 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     
 > **Workaround**: use the expanded form when using these functions. 
 6. Currently, for `string` literals, Guard does not support embedded escaped strings. We are tracking to resolve this issue soon.
+
+7. Currently, for resource keys, we only support alphanumeric literals. For example, if we have the following template:
+
+```asm
+key-with-dash: true
+``` 
+and a corresponding rule:
+
+```asm
+key-with-dash == true
+```
+
+The Guard evaluation errors out with the following message:
+```asm
+Parsing error handling rule file = rules.guard, Error = Parser Error when parsing rules file Parsing Error Error parsing file rules.guard at line 1 at column 1, when handling , fragment key-with-dash == true
+```
+
+```
+Workaround: Use quotes while referencing these keys, as follows:
+```
+
+```asm
+"key-with-dash" == true
+```
+
