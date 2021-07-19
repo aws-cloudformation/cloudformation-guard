@@ -1,0 +1,88 @@
+---
+- name: Allowed from CORRECT, expected PASS 
+  input:
+    Resources:
+      snsPolicy:
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+          PolicyDocument:
+            Statement: [
+              {
+                "Sid": "grant-1234-publish",
+                "Effect": "Allow",
+                "Principal": {
+                  "AWS": "111122223333"
+                },
+                "Action": ["sns:Publish"],
+                "Resource": "arn:aws:sns:us-east-2:444455556666:MyTopic"
+              }]
+  expectations:
+    rules:
+      sns_cross_account_only_allowed_accounts: PASS
+
+- name: 666677778888 account not in list, FAIL
+  input:
+    Resources:
+      snsPolicy:
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+          PolicyDocument:
+            Statement: [
+              {
+                "Sid": "grant-1234-publish",
+                "Effect": "Allow",
+                "Principal": {
+                  "AWS": ["111122223333", "666677778888"]
+                },
+                "Action": ["sns:Publish"],
+                "Resource": "arn:aws:sns:us-east-2:444455556666:MyTopic"
+              }]
+  expectations:
+    rules:
+      sns_cross_account_only_allowed_accounts: FAIL
+
+- name: Accesse via an AWS service, PASS expected as 444455556666 was allowed
+  input:
+    Resources:
+      snsPolicy:
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+          PolicyDocument:
+            Statement: [
+              {
+                  "Effect": "Allow",
+                  "Principal": { 
+                    "Service": "s3.amazonaws.com" 
+                  },
+                  "Action": "sns:Publish",
+                  "Resource": "arn:aws:sns:us-east-2:111122223333:MyTopic",
+                  "Condition": {
+                    "StringEquals": {
+                      "AWS:SourceAccount": "444455556666"
+                    }
+                  }
+              }]
+  expectations:
+    rules:
+      sns_cross_account_only_allowed_accounts: PASS
+
+- name: Accesse via an AWS service, FAIL expected as no Condition was specified to narrow
+  input:
+    Resources:
+      snsPolicy:
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+          PolicyDocument:
+            Statement: [
+              {
+                  "Effect": "Allow",
+                  "Principal": { 
+                    "Service": "s3.amazonaws.com" 
+                  },
+                  "Action": "sns:Publish",
+                  "Resource": "arn:aws:sns:us-east-2:111122223333:MyTopic",
+              }]
+  expectations:
+    rules:
+      sns_cross_account_only_allowed_accounts: FAIL
+

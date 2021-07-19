@@ -20,3 +20,12 @@ jobs:
       run: cargo build --release --verbose
     - name: Run tests
       run: cargo test --verbose
+  
+  shellcheck:
+    
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Shellcheck
+      run: shellcheck install-guard.sh

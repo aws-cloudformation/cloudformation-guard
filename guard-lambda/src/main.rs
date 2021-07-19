@@ -1,44 +1,47 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::error::Error;
-
 use cfn_guard;
-use lambda_runtime::{error::HandlerError, lambda, Context};
-use log::{self, info};
+use lambda_runtime::{handler_fn, Context, Error};
+use log::{self, LevelFilter, info};
 use serde_derive::{Deserialize, Serialize};
-use simple_logger;
+use simple_logger::SimpleLogger;
 
 #[derive(Deserialize, Debug)]
 struct CustomEvent {
     #[serde(rename = "data")]
     data: String,
     #[serde(rename = "rules")]
-    rules: String,
+    rules: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct CustomOutput {
-    message: String,
+    message: Vec<serde_json::Value>,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    simple_logger::init_with_level(log::Level::Info)?;
-    lambda!(call_cfn_guard);
+#[tokio::main]
+async fn main() -> Result<(), Error> {
 
+    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+    let func = handler_fn(call_cfn_guard);
+    lambda_runtime::run(func).await?;
     Ok(())
 }
 
-fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, HandlerError> {
-    info!("Template is [{}]", &e.data);
-    info!("Rule Set is [{}]", &e.rules);
-    let result = match cfn_guard::run_checks(&e.data, &e.rules)
-    {
-        Ok(t) => t,
-        Err(e) => (e.to_string()),
-    };
-
+pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
+    info!("Template is: [{}]", &e.data);
+    info!("Rule Set is: [{:?}]", &e.rules);
+    let mut results_vec = Vec::new();
+    for rule in e.rules.iter() {
+        let result = match cfn_guard::run_checks(&e.data, &rule) {
+            Ok(t) => t,
+            Err(e) => (e.to_string()),
+        };
+        let json_value: serde_json::Value = serde_json::from_str(&result)?;
+        results_vec.push(json_value)
+    }
     Ok(CustomOutput {
-        message: result,
+        message: results_vec,
     })
 }

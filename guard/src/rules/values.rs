@@ -27,6 +27,21 @@ pub enum CmpOperator {
     IsMap,
 }
 
+impl CmpOperator {
+    pub(crate) fn is_unary(&self) -> bool {
+        match self {
+            CmpOperator::Exists     |
+            CmpOperator::Empty      |
+            CmpOperator::IsString   |
+            CmpOperator::IsList     |
+            CmpOperator::IsMap          => true,
+            _                           => false
+        }
+    }
+
+    pub(crate) fn is_binary(&self) -> bool { !self.is_unary() }
+}
+
 impl std::fmt::Display for CmpOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

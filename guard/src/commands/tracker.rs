@@ -1,16 +1,19 @@
 use crate::rules::{EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
 use nom::lib::std::fmt::Formatter;
 use serde::{Serialize};
+use std::cell::Ref;
+use crate::rules::values::CmpOperator;
 
 #[derive(Serialize, Debug)]
-pub(super) struct StatusContext {
-    pub(super) eval_type: EvaluationType,
-    pub(super) context: String,
-    pub(super) msg: Option<String>,
-    pub(super) from: Option<PathAwareValue>,
-    pub(super) to: Option<PathAwareValue>,
-    pub(super) status: Option<Status>,
-    pub(super) children: Vec<StatusContext>,
+pub(crate) struct StatusContext {
+    pub(crate) eval_type: EvaluationType,
+    pub(crate) context: String,
+    pub(crate) msg: Option<String>,
+    pub(crate) from: Option<PathAwareValue>,
+    pub(crate) to: Option<PathAwareValue>,
+    pub(crate) status: Option<Status>,
+    pub(crate) comparator: Option<(CmpOperator, bool)>,
+    pub(crate) children: Vec<StatusContext>,
 }
 
 impl StatusContext {
@@ -22,6 +25,7 @@ impl StatusContext {
             msg: None,
             from: None,
             to: None,
+            comparator: None,
             children: vec![]
         }
     }
@@ -66,7 +70,8 @@ impl<'r> EvaluationContext for StackTracker<'r> {
                       msg: String,
                       from: Option<PathAwareValue>,
                       to: Option<PathAwareValue>,
-                      status: Option<Status>) {
+                      status: Option<Status>,
+                      cmp: Option<(CmpOperator, bool)>) {
 
         if self.stack.borrow().len() == 1 {
             match self.stack.borrow_mut().get_mut(0) {
@@ -75,6 +80,7 @@ impl<'r> EvaluationContext for StackTracker<'r> {
                     top.from = from.clone();
                     top.to = to.clone();
                     top.msg = Some(msg.clone());
+                    top.comparator = cmp.clone();
                 },
                 None => unreachable!()
             }
@@ -88,6 +94,7 @@ impl<'r> EvaluationContext for StackTracker<'r> {
                 stack.from = from.clone();
                 stack.to = to.clone();
                 stack.msg = Some(msg.clone());
+                stack.comparator = cmp.clone();
 
                 match self.stack.borrow_mut().last_mut() {
                     Some(cxt) =>  {
@@ -98,7 +105,7 @@ impl<'r> EvaluationContext for StackTracker<'r> {
             },
             None => {}
         }
-        self.root_context.end_evaluation(eval_type, context, msg, from, to, status);
+        self.root_context.end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
     fn start_evaluation(&self,

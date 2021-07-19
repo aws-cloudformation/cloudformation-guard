@@ -47,7 +47,7 @@ fn append_cdk_metadata_test() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
+        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
             assert_ne!(msg.as_str(), "");
             assert_eq!(msg.starts_with("FIRST PART"), true);
             assert_eq!(msg.len() > "FIRST PART".len(), true);
@@ -64,6 +64,6 @@ fn append_cdk_metadata_test() -> Result<()> {
     println!("{:?}", value);
     appender.end_evaluation(EvaluationType::Clause, "Clause",
                             "FIRST PART".to_string(),
-                            Some(value.clone()), None, Some(Status::FAIL));
+                            Some(value.clone()), None, Some(Status::FAIL), None);
     Ok(())
 }
