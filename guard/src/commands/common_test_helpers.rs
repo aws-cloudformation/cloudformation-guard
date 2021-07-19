@@ -1,6 +1,7 @@
 use crate::rules::{
     EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue
 };
+use crate::rules::values::CmpOperator;
 
 pub(super) struct DummyEval{}
 impl EvaluationContext for DummyEval {
@@ -12,7 +13,7 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>) {
+    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
     }
 
     fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {

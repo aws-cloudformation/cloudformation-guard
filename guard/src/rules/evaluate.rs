@@ -69,47 +69,69 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     if status { Status::PASS } else { Status::FAIL }
 }
 
-fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
-    -> Result<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>
-    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
-    let (cmp, from, to) = 'outer: loop {
-        'lhs:
-        for lhs_value in lhs {
-            for rhs_value in rhs {
-                let check = compare(*lhs_value, *rhs_value)?;
-                if check && atleast_one {
-                    break 'outer (true, Some(*lhs_value), Some(*rhs_value));
-                }
-
-                if any_one_rhs && check {
+fn compare_loop_all<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool)
+    -> Result<(bool, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+{
+    let mut lhs_cmp = true;
+    let mut results = Vec::with_capacity(lhs.len());
+    'lhs: for lhs_value in lhs {
+        let mut acc = Vec::with_capacity(lhs.len());
+        for rhs_value in rhs {
+            let check = compare(*lhs_value, *rhs_value)?;
+            if check {
+                if any_one_rhs {
+                    acc.clear();
+                    results.push((true, None, None));
                     continue 'lhs
                 }
-
-                if !any_one_rhs && !check && !atleast_one {
-                    break 'outer (false, Some(*lhs_value), Some(*rhs_value));
+                acc.push((true, None, None));
+            }
+            else {
+                acc.push((false, Some((*lhs_value).clone()), Some((*rhs_value).clone())));
+                if !any_one_rhs {
+                    lhs_cmp = false;
                 }
             }
-            //
-            // We are only hear in the "all" case when all of them checked out. For the any case
-            // it would be a failure to be here
-            //
-            if any_one_rhs && !atleast_one {
-                break 'outer (false, Some(*lhs_value), None)
+        }
+        if any_one_rhs {
+            lhs_cmp = false;
+        }
+        results.extend(acc)
+    }
+    Ok((lhs_cmp, results))
+}
+
+fn compare_loop<F>(lhs: &Vec<&PathAwareValue>, rhs: &Vec<&PathAwareValue>, compare: F, any_one_rhs: bool, atleast_one: bool)
+    -> Result<(bool, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
+    where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
+    let (overall, results) = compare_loop_all(lhs, rhs, compare, any_one_rhs)?;
+    let overall = 'outer: loop {
+        if !overall {
+            for (each, _, _) in results.iter() {
+                if atleast_one {
+                    if *each {
+                        break 'outer true
+                    }
+                }
+                else {
+                    if !*each {
+                        break 'outer false
+                    }
+                }
+            }
+            if atleast_one {
+                break 'outer false
+            }
+            else {
+                break 'outer true
             }
         }
-        if atleast_one {
-            break (false, None, None)
-        } else {
-            break (true, None, None)
+        else {
+            break true
         }
     };
-    Ok((cmp, match from {
-        None => None,
-        Some(p) => Some(p.clone()),
-    }, match to {
-        None => None,
-        Some(p) => Some(p.clone())
-    }))
+    Ok((overall, results))
 }
 
 fn elevate_inner<'a>(list_of_list: &'a Vec<&PathAwareValue>) -> Result<Vec<Vec<&'a PathAwareValue>>> {
@@ -171,11 +193,11 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
               rhs: &Vec<&PathAwareValue>,
               _rhs_query: Option<&[QueryPart<'_>]>,
               compare: F,
-              any: bool, atleast_one: bool) -> Result<(Status, Option<PathAwareValue>, Option<PathAwareValue>)>
+              any: bool, atleast_one: bool) -> Result<(Status, Vec<(bool, Option<PathAwareValue>, Option<PathAwareValue>)>)>
     where F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     if lhs.is_empty() || rhs.is_empty() {
-        return Ok((Status::FAIL, None, None))
+        return Ok((Status::FAIL, vec![]))
     }
 
     let lhs = if is_mixed_values_results(lhs) {
@@ -197,37 +219,37 @@ fn compare<F>(lhs: &Vec<&PathAwareValue>,
     //
     if !lhs_elem_has_list && !rhs_elem_has_list {
         match compare_loop(&lhs, &rhs, compare, any, atleast_one) {
-            Ok((true, _, _)) => Ok((Status::PASS, None, None)),
-            Ok((false, from, to)) => Ok((Status::FAIL, from, to)),
+            Ok((true, outcomes)) => Ok((Status::PASS, outcomes)),
+            Ok((false, outcomes)) => Ok((Status::FAIL, outcomes)),
             Err(e) => Err(e)
         }
     }
     else if lhs_elem_has_list && !rhs_elem_has_list {
         for elevated in elevate_inner(&lhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, outcomes)) = compare_loop(
                 &elevated, &rhs, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, outcomes))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, vec![]))
     }
-    else if !lhs_elem_has_list && rhs_elem_has_list {
+    else if (!lhs_elem_has_list || any) && rhs_elem_has_list {
         for elevated in elevate_inner(&rhs)? {
-            if let Ok((cmp, from, to)) = compare_loop(
+            if let Ok((cmp, outcomes)) = compare_loop(
                 &lhs, &elevated, |f, s| compare(f, s), any, atleast_one) {
                 if !cmp {
-                    return Ok((Status::FAIL, from, to))
+                    return Ok((Status::FAIL, outcomes))
                 }
             }
         }
-        Ok((Status::PASS, None, None))
+        Ok((Status::PASS, vec![]))
     }
     else {
         match compare_loop(&lhs, &rhs, compare, any, atleast_one)? {
-            (true, _, _) => Ok((Status::PASS, None, None)),
-            (false, left, right) => Ok((Status::FAIL, left, right))
+            (true, _) => Ok((Status::PASS, vec![])),
+            (false, outcomes) => Ok((Status::FAIL, outcomes))
         }
     }
 }
@@ -273,9 +295,6 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
     fn evaluate<'s>(&self,
                 context: &'s PathAwareValue,
                 var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        let guard_loc = format!("{}", self);
-                                //SliceDisplay(&self.access_clause.query));
-        let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
         //var_resolver.start_evaluation(EvaluationType::Clause, &guard_loc);
         let clause = self;
 
@@ -393,16 +412,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         };
 
         if let Some(r) = result {
+            let guard_loc = format!("{}", self);
+            let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
             let message = match &clause.access_clause.custom_message {
                 Some(msg) => msg,
                 None => "(DEFAULT: NO_MESSAGE)"
             };
-            auto_reporter.status(r).from(
+            auto_reporter.cmp(self.access_clause.comparator).status(r).from(
                 match &lhs {
-                    None => None,
+                    None => Some(context.clone()),
                     Some(l) => if !l.is_empty() {
                         Some(l[0].clone())
-                    } else { None }
+                    } else { Some(context.clone()) }
                 }
             );
             if r == Status::FAIL {
@@ -412,15 +433,17 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
         }
 
         let lhs = match lhs {
-            None =>
+            None => {
+                let guard_loc = format!("{}", self);
+                let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
                 if all {
                     return Ok(auto_reporter.status(Status::FAIL)
-                                  .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
-                }
-                else {
+                        .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
+                } else {
                     return Ok(auto_reporter.status(Status::FAIL)
                         .message(retrieve_error.map_or("".to_string(), |e| e)).get_status())
                 }
+            }
             Some(l) => l,
         };
 
@@ -464,7 +487,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             }
         };
 
-        let (result, from, to) =
+        let (result, outcomes) =
             match &clause.access_clause.comparator.0 {
             //
             // ==, !=
@@ -560,13 +583,17 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         };
 
-        let message = match &clause.access_clause.custom_message {
-            Some(msg) => msg,
-            None => "(DEFAULT: NO_MESSAGE)"
-        };
-        auto_reporter.comparison(result, from, to);
-        if result == Status::FAIL {
-            auto_reporter.message(message.to_string());
+        for (outcome, from, to) in outcomes {
+            let guard_loc = format!("{}", self);
+            let mut auto_reporter = AutoReport::new(EvaluationType::Clause, var_resolver, &guard_loc);
+            auto_reporter.status(if outcome { Status::PASS } else { Status::FAIL });
+            auto_reporter.cmp(clause.access_clause.comparator);
+            if !outcome {
+                auto_reporter.from(from).to(to).message(match &clause.access_clause.custom_message {
+                    Some(msg) => msg.clone(),
+                    None => "DEFAULT MESSAGE(FAIL)".to_string()
+                });
+            }
         }
         Ok(result)
     }
@@ -709,7 +736,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
             },
 
             Ok(v) => if v.is_empty() { // one or more
-                return Ok(report.message(format!("Query {} returned no results", SliceDisplay(&self.query.query))).status(Status::FAIL)
+                return Ok(report.from(Some(context.clone())).message(format!("Query {} returned no results", SliceDisplay(&self.query.query))).status(Status::FAIL)
                     .get_status())
             } else { v },
 
@@ -989,7 +1016,8 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
                       _msg: String,
                       _from: Option<PathAwareValue>,
                       _to: Option<PathAwareValue>,
-                      status: Option<Status>) {
+                      status: Option<Status>,
+                      _cmp: Option<(CmpOperator, bool)>) {
         if EvaluationType::Rule == eval_type {
             let (name, _rule) = self.rule_by_name.get_key_value(context).unwrap();
             if let Some(status) = status {
@@ -1061,8 +1089,16 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
 
 
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>) {
-        self.parent.end_evaluation(eval_type, context, msg, from, to, status)
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>) {
+        self.parent.end_evaluation(eval_type, context, msg, from, to, status, cmp)
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -1078,6 +1114,7 @@ pub(super) struct AutoReport<'s> {
     status: Option<Status>,
     from: Option<PathAwareValue>,
     to: Option<PathAwareValue>,
+    cmp: Option<(CmpOperator, bool)>,
     message: Option<String>
 }
 
@@ -1101,6 +1138,7 @@ impl<'s> AutoReport<'s> {
             status: None,
             from: None,
             to: None,
+            cmp: None,
             message: None,
         }
     }
@@ -1110,10 +1148,11 @@ impl<'s> AutoReport<'s> {
         self
     }
 
-    pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>) -> &mut Self {
+    pub(super) fn comparison(&mut self, status: Status, from: Option<PathAwareValue>, to: Option<PathAwareValue>, cmp: (CmpOperator, bool)) -> &mut Self {
         self.status = Some(status);
         self.from = from;
         self.to = to;
+        self.cmp = Some(cmp);
         self
     }
 
@@ -1124,6 +1163,11 @@ impl<'s> AutoReport<'s> {
 
     pub(super) fn to(&mut self, to: Option<PathAwareValue>) -> &mut Self {
         self.to = to;
+        self
+    }
+
+    pub(super) fn cmp(&mut self, cmp: (CmpOperator, bool)) -> &mut Self {
+        self.cmp = Some(cmp);
         self
     }
 
@@ -1152,7 +1196,8 @@ impl<'s> Drop for AutoReport<'s> {
             },
             self.from.clone(),
             self.to.clone(),
-            Some(status)
+            Some(status),
+            self.cmp
         )
     }
 }

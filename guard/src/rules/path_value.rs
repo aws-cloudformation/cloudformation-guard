@@ -1,10 +1,10 @@
 use std::cmp::Ordering;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 //
 // Std Libraries
 //
 use std::fmt::Formatter;
-
+use std::fmt::Write;
 use serde::Serialize;
 
 
@@ -166,6 +166,7 @@ impl PartialEq for PathAwareValue {
                     false
                 }
             },
+            (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
 
             //
             // Range checks
@@ -286,6 +287,74 @@ impl TryFrom<(&Value, Path)> for PathAwareValue {
     }
 }
 
+impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
+    type Error = Error;
+
+    fn try_into(self) -> std::result::Result<(String, serde_json::Value), Self::Error> {
+        let top = self.self_path().0.clone();
+        match self {
+            PathAwareValue::Null(_) => Ok((top, serde_json::Value::Null)),
+            PathAwareValue::String((_, s)) => Ok((top, serde_json::Value::String(s.clone()))),
+            PathAwareValue::Regex((_, r)) => Ok((top, serde_json::Value::String(format!("/{}/", r)))),
+            PathAwareValue::Bool((_, bool_)) => Ok((top, serde_json::Value::Bool(*bool_))),
+            PathAwareValue::Int((_, i64_)) => Ok((top, serde_json::Value::Number(serde_json::Number::from(*i64_)))),
+            PathAwareValue::Float((_, f64_)) => Ok((top, serde_json::Value::Number(
+                match serde_json::Number::from_f64(*f64_) {
+                    Some(num) => num,
+                    None => return Err(Error::new(ErrorKind::IncompatibleError(
+                        format!("Could not convert float {} to serde::Value::Number", *f64_)
+                    )))
+                }))),
+            PathAwareValue::Char((_, char_)) => Ok((top, serde_json::Value::String(char_.to_string()))),
+
+            PathAwareValue::List((_, list)) => {
+                let mut values = Vec::with_capacity(list.len());
+                for each in list {
+                    let (_, val): (String, serde_json::Value) = each.try_into()?;
+                    values.push(val);
+                }
+                Ok((top, serde_json::Value::Array(values)))
+            },
+
+            PathAwareValue::Map((_, map)) => {
+                let mut values = serde_json::Map::new();
+                for (key, value) in map.values.iter() {
+                    let (_, val): (String, serde_json::Value) = value.try_into()?;
+                    values.insert(key.clone(), val);
+                }
+                Ok((top, serde_json::Value::Object(values)))
+            },
+
+            PathAwareValue::RangeFloat((_, range_)) => {
+                let range_encoding = format!("{}{},{}{}",
+                                             if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
+                                             range_.lower, range_.upper,
+                                             if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                );
+                Ok((top, serde_json::Value::String(range_encoding)))
+            },
+
+            PathAwareValue::RangeChar((_, range_)) => {
+                let range_encoding = format!("{}{},{}{}",
+                                             if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
+                                             range_.lower, range_.upper,
+                                             if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                );
+                Ok((top, serde_json::Value::String(range_encoding)))
+            },
+
+            PathAwareValue::RangeInt((_, range_)) => {
+                let range_encoding = format!("{}{},{}{}",
+                           if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
+                           range_.lower, range_.upper,
+                           if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                );
+                Ok((top, serde_json::Value::String(range_encoding)))
+            },
+        }
+    }
+}
+
 pub(crate) trait QueryResolver {
     fn select(&self, all: bool, query: &[QueryPart<'_>], eval: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error>;
 }
@@ -306,7 +375,7 @@ impl QueryResolver for PathAwareValue {
                     Ok(index) => {
                         match self {
                             PathAwareValue::List((_, list)) => {
-                                PathAwareValue::retrieve_index(index, list, query)
+                                PathAwareValue::retrieve_index(self, index, list, query)
                                     .map_or_else(|e| self.map_error_or_empty(all, e),
                                                  |val| val.select(all, &query[1..], resolver))
                             }
@@ -386,7 +455,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::Index(array_idx) => {
                 match self {
                     PathAwareValue::List((_path, vec)) => {
-                        PathAwareValue::retrieve_index(*array_idx, vec, query)
+                        PathAwareValue::retrieve_index(self, *array_idx, vec, query)
                             .map_or_else(|e| self.map_error_or_empty(all, e),
                                          |val| val.select(all, &query[1..], resolver))
 
@@ -399,7 +468,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::AllIndices => {
                 match self {
                     PathAwareValue::List((_path, elements)) => {
-                        PathAwareValue::accumulate(all, &query[1..], elements, resolver)
+                        PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
                     },
 
                     //
@@ -419,7 +488,7 @@ impl QueryResolver for PathAwareValue {
                     // Supporting old format
                     //
                     PathAwareValue::List((_path, elements)) => {
-                        PathAwareValue::accumulate(all, &query[1..], elements, resolver)
+                        PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
                     },
 
                     PathAwareValue::Map((_path, map)) => {
@@ -595,7 +664,7 @@ impl PathAwareValue {
     fn map_some_or_error_all(&self, all: bool, query: &[QueryPart<'_>]) -> Result<Vec<&PathAwareValue>, Error> {
         if all {
             Err(Error::new(ErrorKind::IncompatibleRetrievalError(
-                format!("Attempting to retrieve array index or key from map at Path = {}, Type was not an array/object {}, Remaining Query = {}",
+                format!("Attempting to retrieve array index or key from map at path = {} , Type was not an array/object {}, Remaining Query = {}",
                         self.self_value().0, self.type_info(), SliceDisplay(query))
             )))
         } else {
@@ -645,24 +714,24 @@ impl PathAwareValue {
         }
     }
 
-    pub(crate) fn retrieve_index<'v>(index: i32, list: &'v Vec<PathAwareValue>, query: &[QueryPart<'_>]) -> Result<&'v PathAwareValue, Error> {
+    pub(crate) fn retrieve_index<'v>(parent: &PathAwareValue, index: i32, list: &'v Vec<PathAwareValue>, query: &[QueryPart<'_>]) -> Result<&'v PathAwareValue, Error> {
         let check = if index >= 0 { index } else { -index } as usize;
         if check < list.len() {
             Ok(&list[check])
         } else {
             Err(Error::new(
                 ErrorKind::RetrievalError(
-                    format!("Array Index out of bounds on index = {} inside Array = {:?}, remaining query = {}",
-                            index, list, SliceDisplay(query))
+                    format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
+                           parent.self_path(), index, list, SliceDisplay(query))
                 )))
         }
 
     }
 
-    pub(crate) fn accumulate<'v>(all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
+    pub(crate) fn accumulate<'v>(parent: &PathAwareValue, all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
         if elements.is_empty() && !query.is_empty() && all {
             return Err(Error::new(ErrorKind::RetrievalError(
-                format!("Remaining Query {}, No elements in array", SliceDisplay(query))
+                format!("No entries for path = {} . Remaining Query {}", parent.self_path(), SliceDisplay(query))
             )));
         }
 
@@ -678,8 +747,6 @@ impl PathAwareValue {
         Ok(accumulated)
 
     }
-
-
 }
 
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {

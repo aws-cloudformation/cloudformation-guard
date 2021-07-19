@@ -1,0 +1,61 @@
+let allowed_accounts = [ # we use regex over string, so that we can match inside ARNs as well
+    /111122223333/,
+    /444455556666/
+]
+
+rule sns_cross_account_only_allowed_accounts {
+    Resources.* 
+    {
+        when Type == 'AWS::SNS::TopicPolicy' 
+        {
+            Properties.PolicyDocument.Statement[*] 
+            {
+                when Effect         ==  "Allow"
+                {
+                    Action[*]       ==  /(sns|SNS):Publish/          # ensure that we do not sneak in other permission other than sns:Publish
+
+                    #
+                    # Check for different combinations. 
+                    # 
+                    # We are not using OR disjunction as all of these 
+                    # can ALL occur within the same statement and must be checked 
+                    # 
+                    when Principal is_string {
+                        Principal   in  %allowed_accounts                   # when used directly as a string for principal
+                    }
+
+                    when Principal.AWS exists {
+                        Principal.AWS[*] in %allowed_accounts               # when used for providing access from other accounts
+                    }
+
+                    # 
+                    # when accessed via any AWS service, one MUST specify a Condition with sourceAccount|Owner
+                    # Arn. 
+                    # 
+                    when Principal.Service exists {
+                        # 
+                        # when accessed via any AWS services, ensure that source account is only from allowed lists
+                        # We want to check StringEquals, StringLike, ArnEquals, ArnLike checks
+                        # 
+                        let expected_conditions = Condition[ keys == /String(Equals|Like)|Arn(Equals|Like)/ ].*
+
+                        # 
+                        # Ensure that these are specified, else it is an error 
+                        # 
+                        %expected_conditions not empty 
+
+                        # 
+                        # Then extract values against these (aws|AWS):[sS]ourceAccount, (aws|AWS):[sS]ourceOwner, (aws|AWS):[sS]ource(Arn|ARN)
+                        # 
+                        let source_accounts = %expected_conditions[ keys == /(aws|AWS):[sS]ource(Account|Owner|Arn|ARN)/ ].*
+
+                        # 
+                        # It is an error to not specify this. Ensure the ones specified match allowed accounts
+                        #
+                        %source_accounts in %allowed_accounts
+                    }
+                }
+            }
+        }
+    }
+}

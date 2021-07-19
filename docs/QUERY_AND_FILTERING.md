@@ -128,7 +128,7 @@ some %resources.Properties.Tags[*].Value == /^App/
 
 The two clauses (starting with `some`) expressed in the form shown above are considered *_independent_* clauses, and are evaluated separately.
 
-### Understanding difference between single clause and Bbock clause form
+### Understanding difference between single clause and Block clause form
 
 The two clauses shown above (starting with `some`) together are not equivalent to the block shown below:
 

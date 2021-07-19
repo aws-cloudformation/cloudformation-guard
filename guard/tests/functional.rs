@@ -22,7 +22,7 @@ mod tests {
             "#,
         );
         let rule = "AWS::ApiGateway::Method { Properties.AuthorizationType == \"NONE\"}";
-        let mut expected = String::from(
+        let expected =
             r#"
             [
               {
@@ -32,6 +32,7 @@ mod tests {
                 "from": null,
                 "to": null,
                 "status": "FAIL",
+                "comparator": null,
                 "children": [
                   {
                     "eval_type": "Type",
@@ -40,6 +41,7 @@ mod tests {
                     "from": null,
                     "to": null,
                     "status": "FAIL",
+                    "comparator": null,
                     "children": [
                       {
                         "eval_type": "Filter",
@@ -48,6 +50,7 @@ mod tests {
                         "from": null,
                         "to": null,
                         "status": "PASS",
+                        "comparator": null,
                         "children": [
                           {
                             "eval_type": "Conjunction",
@@ -56,6 +59,7 @@ mod tests {
                             "from": null,
                             "to": null,
                             "status": "PASS",
+                            "comparator": null,
                             "children": [
                               {
                                 "eval_type": "Clause",
@@ -64,6 +68,7 @@ mod tests {
                                 "from": null,
                                 "to": null,
                                 "status": "PASS",
+                                "comparator": ["Eq", false],
                                 "children": []
                               }
                             ]
@@ -77,6 +82,7 @@ mod tests {
                         "from": null,
                         "to": null,
                         "status": "FAIL",
+                        "comparator": null,
                         "children": [
                           {
                             "eval_type": "Conjunction",
@@ -85,11 +91,12 @@ mod tests {
                             "from": null,
                             "to": null,
                             "status": "FAIL",
+                            "comparator": null,
                             "children": [
                               {
                                 "eval_type": "Clause",
                                 "context": "Clause(Location[file:lambda, line:1, column:27], Check: Properties.AuthorizationType  EQUALS String(\"NONE\"))",
-                                "msg": "(DEFAULT: NO_MESSAGE)",
+                                "msg": "DEFAULT MESSAGE(FAIL)",
                                 "from": {
                                   "String": [
                                     "/Resources/VPC/Properties/AuthorizationType",
@@ -103,6 +110,7 @@ mod tests {
                                   ]
                                 },
                                 "status": "FAIL",
+                                "comparator": ["Eq", false],
                                 "children": []
                               }
                             ]
@@ -113,18 +121,11 @@ mod tests {
                   }
                 ]
               }
-            ]
-            "#,
-            );
-
-        // Remove white spaces from expected and calculated result for easy comparison.
-        expected.retain(|c| !c.is_whitespace());
-
-        let mut serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
-        println!("{}", serialized);
-        serialized.retain(|c| !c.is_whitespace());
-
-        assert_eq!(expected, serialized);
+            ]"#;
+        let serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
+        let result = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
+        let expected = serde_json::from_str::<serde_json::Value>(expected).ok().unwrap();
+        assert_eq!(expected, result);
     }
 
 }

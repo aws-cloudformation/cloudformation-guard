@@ -1,23 +1,54 @@
 use std::convert::TryFrom;
+use std::fmt::Debug;
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
 
 use clap::{App, Arg, ArgMatches};
 use colored::*;
 
 use crate::command::Command;
 use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
-use crate::commands::files::{alpabetical, get_files, last_modified, regular_ordering, iterate_over};
-use crate::rules::{Evaluate, EvaluationContext, Result, Status, EvaluationType};
+use crate::commands::aws_meta_appender::MetadataAppender;
+use crate::commands::files::{alpabetical, get_files, iterate_over, last_modified, regular_ordering};
+use crate::commands::tracker::{StackTracker, StatusContext};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-
-
 use crate::rules::path_value::PathAwareValue;
-use crate::commands::tracker::{StackTracker, StatusContext};
-use crate::commands::aws_meta_appender::MetadataAppender;
-use std::io::{BufReader, Read, Write};
-use std::fs::File;
-use std::io;
+use crate::rules::values::CmpOperator;
+use crate::commands::validate::summary_table::SummaryType;
+use enumflags2::{BitFlag, BitFlags};
+use std::path::{PathBuf, Path};
+use std::str::FromStr;
+
+mod generic_summary;
+mod common;
+mod summary_table;
+mod cfn_reporter;
+
+#[derive(Copy, Eq, Clone, Debug, PartialEq)]
+pub(crate) enum Type {
+    CFNTemplate,
+    Generic
+}
+
+#[derive(Copy, Eq, Clone, Debug, PartialEq)]
+pub(crate) enum OutputFormatType {
+    SingleLineSummary,
+    JSON,
+    YAML
+}
+
+pub(crate) trait Reporter : Debug {
+    fn report(&self,
+              writer: &mut Write,
+              status: Option<Status>,
+              failed_rules: &[&StatusContext],
+              passed_or_skipped: &[&StatusContext],
+              longest_rule_name: usize,
+    ) -> Result<()>;
+}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
@@ -47,6 +78,16 @@ or rules files.
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
             .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
+                .help("Specify the type of data file used for improved messaging"))
+            .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
+                .possible_values(&["json","yaml","single-line-summary"])
+                .help("Specify the type of data file used for improved messaging"))
+            .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
+                .possible_values(&["none", "all", "pass", "fail", "skip"])
+                .default_value("all")
+                .help("control if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
+            )
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
             .arg(Arg::with_name("alphabetical").long("alphabetical").short("a").required(false).help("Validate files in a directory ordered alphabetically"))
@@ -66,15 +107,25 @@ or rules files.
             alpabetical
         };
 
+        let empty_path = Path::new("");
         let data_files = match app.value_of("data") {
             Some(file_or_dir) => {
+                let base = PathBuf::from_str(file_or_dir)?;
                 let selected = get_files(file_or_dir, cmp)?;
                 let mut streams = Vec::with_capacity(selected.len());
                 for each in selected {
                     let mut context = String::new();
                     let mut reader = BufReader::new(File::open(each.as_path())?);
                     reader.read_to_string(&mut context)?;
-                    streams.push((context, each.to_str().map_or("".to_string(), |p| p.to_string())));
+                    let path = each.as_path();
+                    let relative = match path.strip_prefix(base.as_path()) {
+                        Ok(p) => if p != empty_path {
+                            format!("{}", p.display())
+
+                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                        Err(_) => format!("{}", path.display()),
+                    };
+                    streams.push((context, relative));
                 }
                 streams
             },
@@ -92,12 +143,60 @@ or rules files.
             false
         };
 
+        let data_type = match app.value_of("type")  {
+            Some(t) =>
+                if t == "CFNTemplate" {
+                    Type::CFNTemplate
+                }
+                else {
+                    Type::Generic
+                },
+            None => Type::Generic
+        };
+
+        let output_type = match app.value_of("output-format") {
+            Some(o) =>
+                if o == "single-line-summary" {
+                    OutputFormatType::SingleLineSummary
+                }
+                else if o == "json" {
+                    OutputFormatType::JSON
+                }
+                else {
+                    OutputFormatType::YAML
+                }
+            None => OutputFormatType::SingleLineSummary
+        };
+
+        let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
+            SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP,
+            |v| {
+                v.fold(BitFlags::empty(), |mut st, elem| {
+                    match elem {
+                        "pass" => st.insert(SummaryType::PASS),
+                        "fail" => st.insert(SummaryType::FAIL),
+                        "skip" => st.insert(SummaryType::SKIP),
+                        "none" => return BitFlags::empty(),
+                        "all"  => st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP),
+                        _ => unreachable!()
+                    };
+                    st
+                })
+            });
+
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
 
+        let base = PathBuf::from_str(file)?;
         let files = get_files(file, cmp)?;
         let mut exit_code = 0;
-        for each_file_content in iterate_over(&files, |content, file| Ok((content, file.to_str().unwrap_or("").to_string()))) {
+        for each_file_content in iterate_over(&files, |content, file|
+            Ok((content, match file.strip_prefix(&base) {
+                Ok(path) => if path == empty_path {
+                    format!("{}", file.file_name().unwrap().to_str().unwrap())
+                } else { format!("{}", path.display() )},
+                Err(_) => format!("{}", file.display()),
+            }))) {
             match each_file_content {
                 Err(e) => println!("Unable read content from file {}", e),
                 Ok((file_content, rule_file_name)) => {
@@ -113,7 +212,15 @@ or rules files.
 
                         Ok(rules) => {
                             match evaluate_against_data_input(
-                                &data_files, &rules, &rule_file_name, verbose, print_json, show_clause_failures)? {
+                                data_type,
+                                output_type,
+                                &data_files,
+                                &rules,
+                                &rule_file_name,
+                                verbose,
+                                print_json,
+                                show_clause_failures,
+                                summary_type.clone())? {
                                 Status::SKIP | Status::PASS => continue,
                                 Status::FAIL => {
                                     exit_code = 5;
@@ -146,7 +253,8 @@ pub fn validate_and_return_json(
                 Ok(root) => {
                     let root_context = RootScope::new(&rules, &root);
                     let stacker = StackTracker::new(&root_context);
-                    let reporter = ConsoleReporter::new(stacker, "lambda-function", "input-payload", true, true, false);
+                    let reporters = vec![];
+                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
                     rules.evaluate(&root, &reporter)?;
                     let json_result = reporter.get_result_json();
                     return Ok(json_result);
@@ -161,23 +269,12 @@ pub fn validate_and_return_json(
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
+    reporters: &'r Vec<Box<dyn Reporter + 'r>>,
     rules_file_name: &'r str,
     data_file_name: &'r str,
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
-}
-
-fn colored_string(status: Option<Status>) -> ColoredString {
-    let status = match status {
-        Some(s) => s,
-        None => Status::SKIP,
-    };
-    match status {
-        Status::PASS => "PASS".green(),
-        Status::FAIL => "FAIL".red().bold(),
-        Status::SKIP => "SKIP".yellow().bold(),
-    }
 }
 
 fn indent_spaces(indent: usize) {
@@ -187,7 +284,7 @@ fn indent_spaces(indent: usize) {
 }
 
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
-    let header = format!("{}({}, {})", cxt.eval_type, cxt.context, colored_string(cxt.status)).underline();
+    let header = format!("{}({}, {})", cxt.eval_type, cxt.context, common::colored_string(cxt.status)).underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -223,38 +320,13 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     }
 }
 
-fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
-    let mut failed = Vec::with_capacity(context.children.len());
-    for each in &context.children {
-        if each.status.map_or(false, |s| s == Status::FAIL) {
-            match each.eval_type {
-                EvaluationType::Clause |
-                EvaluationType::BlockClause => {
-                    failed.push(each);
-                    if each.eval_type == EvaluationType::BlockClause {
-                        failed.extend(find_all_failing_clauses(each));
-                    }
-                },
-
-                EvaluationType::Filter |
-                EvaluationType::Condition => {
-                    continue;
-                },
-
-                _ => failed.extend(find_all_failing_clauses(each))
-            }
-        }
-    }
-    failed
-}
-
 fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
     print!("{file}/{rule:<0$}", longest+4, file=rules_file_name, rule=rule.context);
     let longest = rules_file_name.len() + longest;
     let mut first = true;
-    for (index, matched) in find_all_failing_clauses(rule).iter().enumerate() {
+    for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
         let matched = *matched;
-        let header = format!("{}({})", colored_string(matched.status), matched.context).underline();
+        let header = format!("{}({})", common::colored_string(matched.status), matched.context).underline();
         if !first {
             print!("{space:>longest$}", space=" ", longest=longest+4)
         }
@@ -288,9 +360,10 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Reporter + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
+            reporters: renderers,
             rules_file_name,
             data_file_name,
             verbose,
@@ -305,16 +378,16 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
     }
 
-    fn report(self) {
+    fn report(self) -> crate::rules::Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
+        let mut output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             println!("{}", serialized_user);
         }
         else {
-            println!("{} Status = {}", self.data_file_name.underline(), colored_string(top.status));
             let longest = top.children.iter()
                 .max_by(|f, s| {
                     (*f).context.len().cmp(&(*s).context.len())
@@ -329,18 +402,20 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                         _ => false
                     });
 
-            println!("{}", "PASS/SKIP rules".bold());
-            Self::print_partition(&self.rules_file_name, &rest, longest);
+            for each_reporter in self.reporters {
+                each_reporter.report(
+                    &mut output,
+                    top.status.clone(),
+                    &failed,
+                    &rest,
+                    longest
+                )?;
+            }
 
-            if !failed.is_empty() {
-                println!("{}", "FAILED rules".bold());
-                Self::print_partition(&self.rules_file_name, &failed, longest);
-
-                if self.show_clause_failures {
-                    println!("{}", "Clause Failure Summary".bold());
-                    for each in failed {
-                        print_failing_clause(self.rules_file_name, each, longest);
-                    }
+            if self.show_clause_failures {
+                println!("{}", "Clause Failure Summary".bold());
+                for each in failed {
+                    print_failing_clause(self.rules_file_name, each, longest);
                 }
             }
 
@@ -350,15 +425,9 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                     print_context(each, 1);
                 }
             }
-            println!("---");
-        }
-    }
-
-    fn print_partition(rules_file_name: &str, part: &Vec<&StatusContext>, longest: usize) {
-        for container in part {
-            println!("{filename}/{context:<0$}{status}", longest+4, filename=rules_file_name, context=(*container).context, status=colored_string((*container).status));
         }
 
+        Ok(())
     }
 }
 
@@ -379,8 +448,9 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
                       msg: String,
                       from: Option<PathAwareValue>,
                       to: Option<PathAwareValue>,
-                      status: Option<Status>) {
-        self.root_context.end_evaluation(eval_type, context, msg, from, to, status);
+                      status: Option<Status>,
+                      cmp: Option<(CmpOperator, bool)>) {
+        self.root_context.end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
     fn start_evaluation(&self,
@@ -391,7 +461,15 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_input(data_files: &[(String, String)], rules: &RulesFile<'_>, rules_file_name: &str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Result<Status> {
+fn evaluate_against_data_input<'r>(data_type: Type,
+                                   output: OutputFormatType,
+                                   data_files: &'r [(String, String)],
+                                   rules: &RulesFile<'_>,
+                                   rules_file_name: &'r str,
+                                   verbose: bool,
+                                   print_json: bool,
+                                   show_clause_failures: bool,
+                                   summary_table: BitFlags<SummaryType>) -> Result<Status> {
     let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
         match serde_json::from_str::<serde_json::Value>(content) {
             Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
@@ -404,12 +482,25 @@ fn evaluate_against_data_input(data_files: &[(String, String)], rules: &RulesFil
 
     let mut overall = Status::PASS;
     for (each, data_file_name) in iterator? {
+        let mut reporters = match data_type {
+            Type::CFNTemplate =>
+                vec![
+                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
+            Type::Generic =>
+                vec![
+                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
+        };
+        if !summary_table.is_empty() {
+            reporters.insert(
+                0, Box::new(
+                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
+        }
         let root_context = RootScope::new(rules, &each);
         let stacker = StackTracker::new(&root_context);
-        let reporter = ConsoleReporter::new(stacker, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
+        let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
         let appender = MetadataAppender{delegate: &reporter, root_context: &each};
         let status = rules.evaluate(&each, &appender)?;
-        reporter.report();
+        reporter.report()?;
         if status == Status::FAIL {
             overall = Status::FAIL
         }
