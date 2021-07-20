@@ -1,0 +1,67 @@
+# Auto-generated names are a CloudFormation best practice.
+# Resource Providers can use generateResourceIdentifier from IdentifierUtils (or equivalent)
+# This does not fail (yet?) for places where ${Resource}Name is a required property
+rule ensure_name_is_optional when required !empty {
+    required[*] {
+        this != 'Name'
+    }
+}
+
+# ReplacementStrategy should not be delete_then_create, except with very good reasons.
+# This breaks customers expectations of how Rollbacks work
+rule ensure_default_replacementStrategy when replacementStrategy exists {
+    replacementStrategy == 'create_then_delete'
+}
+
+# URLs should use https
+rule ensure_sourceUrl_uses_https when sourceUrl exists {
+    sourceUrl == /^https:/
+}
+
+# URLs should use https
+rule ensure_documentationUrl_uses_https when documentationUrl exists {
+    documentationUrl == /^https:/
+}
+
+# If a Tags property is defined, it should follow the same configuration as other resources
+# See https://github.com/aws-cloudformation/cloudformation-cli/blob/master/examples/schema/aws.common.types.v1.json
+# The common types are more strict than what we currently find in the schemas
+rule ensure_consistent_tags when properties.Tags exists {
+    properties.Tags {
+        items.'$ref' == '#/definitions/Tag' << Tags should be a defined object >>
+        type == 'array' << Tags should be an array >>
+    }
+    definitions.Tag {
+        additionalProperties == false << No Additional properties should be allowed in the Tag Definition >>
+        properties.Key.type == 'string' << Tag Key should be a string >>
+        properties.Value.type == 'string' << Tag Value should be a string >>
+        some required[*] == 'Key' << Tag Key should be required >>
+        some required[*] == 'Value' << Tag Value should be required >>
+        type == 'object' << Tag should be an object >>
+    }
+    when readOnlyProperties exists {
+        readOnlyProperties[*] != '/properties/Tags' << Tags should not be read only >>
+    }
+    when writeOnlyProperties exists {
+        writeOnlyProperties[*] != '/properties/Tags' << Tags should not be write only >>
+    }
+    when deprecatedProperties exists {
+        deprecatedProperties[*] != '/properties/Tags' << Tags should not be deprecated >>
+    }
+}
+
+# If there are Tags, we want to be able to have CloudFormation pass Tags to the resource provider
+# That only happens if Tags can be updated without a replacement, and taggable is not false.
+rule ensure_cloudformation_tags_supported when properties.Tags exists {
+    # the when exists excludes "old" resource types that don't use the framework
+    when handlers exists {
+        handlers.update exists << Tags should be updatable without a replacement, using the update handler >>
+    }
+    when createOnlyProperties exists {
+        createOnlyProperties[*] != '/properties/Tags' << Tags should not be create only >>
+    }
+    when taggable exists {
+        taggable != false << taggable should not be set to false >>
+    }
+}
+
