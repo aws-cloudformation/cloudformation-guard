@@ -274,6 +274,8 @@ All clauses above are combined using conjunction. As you can see, there is repet
 
 ## Blocks
 
+Clauses can be grouped into blocks. This section talks about the different block structures that can be used in Guard.
+
 ### Query blocks
 
 The above set of clauses can be written in block format as follows:
@@ -289,7 +291,9 @@ Resources.S3Bucket.Properties {
 }
 ```
 
-The above composition is referred to as query blocks as the query preceding the block sets the context for clauses inside the block. This improves composability and removes verbosity and repetition while writing multiple related clauses with the same initial query path.
+The above composition is referred to as query block as the query preceding the block sets the context for clauses inside the block. This improves composability and removes verbosity and repetition while writing multiple related clauses with the same initial query path. 
+
+> **NOTE**: Query blocks are executed in a different way compared to their elaborate version. This will be explained in [Guard: Complex Composition](COMPLEX_COMPOSITION.md) document in detail.
 
 ### When blocks - When condition for conditional evaluation
 
