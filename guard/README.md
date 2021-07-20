@@ -76,7 +76,7 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 `validate` (like the example above) validates data against rules.
 
 ```bash
-cfn-guard-validate
+cfn-guard-validate 
 Evaluates rules against the data files to determine success or failure. 
 You can point rules flag to a rules directory and point data flag to a data directory. 
 When pointed to a directory it will read all rules in the directory file and evaluate 
@@ -99,9 +99,16 @@ FLAGS:
     -v, --verbose                 Verbose logging
 
 OPTIONS:
-    -d, --data <data>      Provide a file or dir for data files in JSON or YAML
-    -r, --rules <rules>    Provide a rules file or a directory of rules files
-
+    -d, --data <data>                       Provide a file or dir for data files in JSON or YAML
+    -o, --output-format <output-format>     Specify the type of data file used for improved messaging [possible values:
+                                            json, yaml, single-line-summary]
+    -r, --rules <rules>                     Provide a rules file or a directory of rules files
+        --show-summary <show-summary>...    control if the summary table needs to be displayed. --show-summary all
+                                            (default) or --show-summary pass,fail (only show rules that did pass/fail)
+                                            or --show-summary none (to turn it off) [default: all]  [possible values:
+                                            none, all, pass, fail, skip]
+    -t, --type <type>                       Specify the type of data file used for improved messaging [possible values:
+                                            CFNTemplate]
 ```
 
 ### Rulegen
