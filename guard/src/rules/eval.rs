@@ -1033,7 +1033,7 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
         GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
             "GuardConditionClause".to_string(), conditions, block, resolver),
-        GuardClause::ParameterizedNamedRule(_) => todo!()
+        GuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(&prc, resolver)
     }
 }
 
@@ -1044,7 +1044,7 @@ pub (in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     match when_clause {
         WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
         WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver),
-        WhenGuardClause::ParameterizedNamedRule(_) => todo!(),
+        WhenGuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(&prc, resolver)
     }
 }
 
