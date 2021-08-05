@@ -1,7 +1,7 @@
-use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardAccessClause, RuleClause, GuardClause, Conjunctions};
+use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
 use crate::rules::path_value::{PathAwareValue, MapValue, compare_eq};
 use std::collections::HashMap;
-use crate::rules::{QueryResult, Status, EvalContext, UnResolved, Evaluate, RecordType};
+use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType};
 use crate::rules::path_value::Path;
 use crate::rules::Result;
 use std::convert::TryFrom;
@@ -23,7 +23,7 @@ pub(crate) struct EventRecord<'value> {
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
     rules: HashMap<&'value str, &'value Rule<'loc>>,
-    status: std::cell::RefCell<HashMap<&'value str, Status>>,
+    parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -32,6 +32,7 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             self.scope.literals,
             self.scope.variable_queries,
             self.rules,
+            self.parameterized_rules,
             new_root)
     }
 }
@@ -48,6 +49,9 @@ pub(crate) fn reset_with<'value, 'loc: 'value>(
     let rules = std::mem::replace(
         &mut root_scope.rules, HashMap::new()
     );
+    let parameterized_rules = std::mem::replace(
+        &mut root_scope.parameterized_rules, HashMap::new()
+    );
     let scope = Scope {
         root: new_value,
         resolved_variables: std::cell::RefCell::new(HashMap::new()),
@@ -55,18 +59,18 @@ pub(crate) fn reset_with<'value, 'loc: 'value>(
         variable_queries: variables
     };
     RootScope {
-        scope, status: std::cell::RefCell::new(HashMap::new()), rules
+        scope, rules, parameterized_rules
     }
 }
 
 pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     scope: Scope<'value, 'loc>,
-    parent: &'eval dyn EvalContext<'value>,
+    parent: &'eval dyn EvalContext<'value, 'loc>,
 }
 
-pub(crate) struct ValueScope<'value, 'eval> {
+pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
     pub(crate) root: &'value PathAwareValue,
-    pub(crate) parent: &'eval dyn EvalContext<'value>,
+    pub(crate) parent: &'eval dyn EvalContext<'value, 'loc>,
 }
 
 fn extract_variables<'value, 'loc: 'value>(
@@ -112,11 +116,11 @@ fn retrieve_index<'value>(parent: &'value PathAwareValue,
 
 }
 
-fn accumulate<'value>(parent: &'value PathAwareValue,
+fn accumulate<'value, 'loc: 'value>(parent: &'value PathAwareValue,
                       query_index: usize,
-                      query: &'value [QueryPart<'_>],
+                      query: &'value [QueryPart<'loc>],
                       elements: &'value Vec<PathAwareValue>,
-                      resolver: &dyn EvalContext<'value>)
+                      resolver: &dyn EvalContext<'value, 'loc>)
     -> Result<Vec<QueryResult<'value>>> {
     //
     // We are here when we are doing [*] for a list. It is an error if there are no
@@ -139,14 +143,14 @@ fn accumulate<'value>(parent: &'value PathAwareValue,
 
 }
 
-fn accumulate_map<'value, F>(
+fn accumulate_map<'value, 'loc: 'value, F>(
     parent: &'value PathAwareValue,
     map: &'value MapValue,
     query_index: usize,
-    query: &'value [QueryPart<'_>],
-    resolver: &dyn EvalContext<'value>,
+    query: &'value [QueryPart<'loc>],
+    resolver: &dyn EvalContext<'value, 'loc>,
     func: F) -> Result<Vec<QueryResult<'value>>>
-    where F: Fn(usize, &'value [QueryPart<'_>], &'value PathAwareValue, &dyn EvalContext<'value>) -> Result<Vec<QueryResult<'value>>>
+    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>>
 {
     //
     // We are here when we are doing * all values for map. It is an error if there are no
@@ -192,7 +196,7 @@ fn to_unresolved_result<'value>(
 }
 
 fn map_resolved<'value, F>(
-    current: &'value PathAwareValue,
+    _current: &'value PathAwareValue,
     query_result: QueryResult<'value>,
     func: F)
     -> Result<Vec<QueryResult<'value>>>
@@ -204,8 +208,8 @@ fn map_resolved<'value, F>(
     }
 }
 
-fn check_and_delegate<'value>(conjunctions: &'value Conjunctions<GuardClause<'_>>)
-    -> impl Fn(usize, &'value[QueryPart<'_>], &'value PathAwareValue, &dyn EvalContext<'value>) -> Result<Vec<QueryResult<'value>>>
+fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<GuardClause<'loc>>)
+    -> impl Fn(usize, &'value[QueryPart<'loc>], &'value PathAwareValue, &dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>>
 {
     move |index, query, value, eval_context| {
         let context = format!("Filter/Map#{}", conjunctions.len());
@@ -230,11 +234,11 @@ fn check_and_delegate<'value>(conjunctions: &'value Conjunctions<GuardClause<'_>
     }
 }
 
-fn query_retrieval<'value>(
+fn query_retrieval<'value, 'loc: 'value>(
     query_index: usize,
-    query: &'value [QueryPart<'_>],
+    query: &'value [QueryPart<'loc>],
     current: &'value PathAwareValue,
-    resolver: &dyn EvalContext<'value>) -> Result<Vec<QueryResult<'value>>> {
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>> {
 
     if query_index >= query.len() {
         return Ok(vec![QueryResult::Resolved(current)])
@@ -504,7 +508,7 @@ fn query_retrieval<'value>(
 
         QueryPart::MapKeyFilter(map_key_filter) => {
             match current {
-                PathAwareValue::Map((path, map)) => {
+                PathAwareValue::Map((_path, map)) => {
                     let mut selected = Vec::with_capacity(map.values.len());
                     match &map_key_filter.compare_with {
                         LetValue::AccessClause(acc_query) => {
@@ -577,8 +581,6 @@ fn query_retrieval<'value>(
                     &query[query_index..])
             }
         }
-
-        _ => unimplemented!()
     }
 }
 
@@ -593,13 +595,20 @@ pub(crate) fn root_scope<'value, 'loc: 'value>(
     for rule in &rules_file.guard_rules {
         lookup_cache.insert(rule.rule_name.as_str(), rule);
     }
-    root_scope_with(literals, queries, lookup_cache, root)
+
+    let mut parameterized_rules = HashMap::with_capacity(
+        rules_file.parameterized_rules.len());
+    for pr in rules_file.parameterized_rules.iter(){
+        parameterized_rules.insert(pr.rule.rule_name.as_str(), pr);
+    }
+    root_scope_with(literals, queries, lookup_cache,  parameterized_rules, root)
 }
 
 pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     literals: HashMap<&'value str, &'value PathAwareValue>,
     queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
     lookup_cache: HashMap<&'value str, &'value Rule<'loc>>,
+    parameterized_rules: HashMap<&'value str,&'value ParameterizedRule<'loc>>,
     root: &'value PathAwareValue)
     -> Result<RootScope<'value, 'loc>>
 {
@@ -611,14 +620,14 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
             resolved_variables: std::cell::RefCell::new(HashMap::new()),
         },
         rules: lookup_cache,
-        status: std::cell::RefCell::new(HashMap::new()),
+        parameterized_rules,
     })
 }
 
-pub(crate) fn block_scope<'value, 'block, 'loc, 'eval, T>(
+pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
     root: &'value PathAwareValue,
-    parent: &'eval dyn EvalContext<'value>) -> Result<BlockScope<'value, 'loc, 'eval>> {
+    parent: &'eval dyn EvalContext<'value, 'loc>) -> Result<BlockScope<'value, 'loc, 'eval>> {
 
     let (literals, variable_queries) =
         extract_variables(&block.assignments)?;
@@ -634,7 +643,7 @@ pub(crate) fn block_scope<'value, 'block, 'loc, 'eval, T>(
 }
 
 impl<'value, 'loc: 'value> Scope<'value, 'loc> {
-    fn resolve(&self, variable_name: &str, eval: &dyn EvalContext<'value>) -> Result<Option<Vec<QueryResult<'value>>>> {
+    fn resolve(&self, variable_name: &str, eval: &dyn EvalContext<'value, 'loc>) -> Result<Option<Vec<QueryResult<'value>>>> {
         if let Some(val) = self.literals.get(variable_name) {
             return Ok(Some(vec![QueryResult::Resolved(*val)]))
         }
@@ -656,14 +665,14 @@ impl<'value, 'loc: 'value> Scope<'value, 'loc> {
     }
 }
 
-pub(crate) struct RecordTracker<'eval, 'value> {
+pub(crate) struct RecordTracker<'eval, 'value, 'loc: 'value> {
     pub(crate) events: std::cell::RefCell<Vec<EventRecord<'value>>>,
     pub(crate) final_event: std::cell::RefCell<Option<EventRecord<'value>>>,
-    pub(crate) parent: &'eval dyn EvalContext<'value>,
+    pub(crate) parent: &'eval dyn EvalContext<'value, 'loc>,
 }
 
-impl<'eval, 'value> RecordTracker<'eval, 'value> {
-    pub(crate) fn new<'e, 'v>(parent: &'e dyn EvalContext<'v>) -> RecordTracker<'e, 'v> {
+impl<'eval, 'value, 'loc: 'value> RecordTracker<'eval, 'value, 'loc> {
+    pub(crate) fn new<'e, 'v, 'l: 'v>(parent: &'e dyn EvalContext<'v, 'l>) -> RecordTracker<'e, 'v, 'l> {
         RecordTracker {
             parent,
             events: std::cell::RefCell::new(Vec::new()),
@@ -676,14 +685,20 @@ impl<'eval, 'value> RecordTracker<'eval, 'value> {
     }
 }
 
-impl<'eval, 'value> EvalContext<'value> for RecordTracker<'eval, 'value> {
-    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'eval, 'value, 'loc> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
         self.parent.query(query)
+    }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        self.parent.find_parameterized_rule(rule_name)
     }
 
     fn root(&self) -> &'value PathAwareValue {
         self.parent.root()
     }
+
+
 
     fn rule_status(&self, rule_name: &str) -> Result<Status> {
         self.parent.rule_status(rule_name)
@@ -737,11 +752,22 @@ impl<'eval, 'value> EvalContext<'value> for RecordTracker<'eval, 'value> {
 
 }
 
-impl<'value, 'loc: 'value> EvalContext<'value> for RootScope<'value, 'loc> {
+impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc> {
 
-    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.scope.root, self)
     }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        match self.parameterized_rules.get(rule_name) {
+            Some(r) => Ok(*r),
+            _ => Err(Error::new(ErrorKind::MissingValue(
+                format!("Parameterized Rule with name {} was not found, candiate {:?}",
+                        rule_name, self.parameterized_rules.keys())
+            )))
+        }
+    }
+
 
     fn root(&self) -> &'value PathAwareValue {
         self.scope.root
@@ -757,9 +783,9 @@ impl<'value, 'loc: 'value> EvalContext<'value> for RootScope<'value, 'loc> {
         )
     }
 
-    fn start_record(&self, context: &str) -> Result<()> { Ok(()) }
+    fn start_record(&self, _context: &str) -> Result<()> { Ok(()) }
 
-    fn end_record(&self, context: &str, record: RecordType<'value>) -> Result<()> {
+    fn end_record(&self, _context: &str, _record: RecordType<'value>) -> Result<()> {
         Ok(())
     }
 
@@ -775,10 +801,15 @@ impl<'value, 'loc: 'value> EvalContext<'value> for RootScope<'value, 'loc> {
     }
 }
 
-impl<'value, 'eval> EvalContext<'value> for ValueScope<'value, 'eval> {
-    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.root, self.parent)
     }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        self.parent.find_parameterized_rule(rule_name)
+    }
+
 
     fn root(&self) -> &'value PathAwareValue {
         self.root
@@ -802,10 +833,15 @@ impl<'value, 'eval> EvalContext<'value> for ValueScope<'value, 'eval> {
     }
 }
 
-impl<'value, 'loc: 'value, 'eval> EvalContext<'value> for BlockScope<'value, 'loc, 'eval> {
-    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'value, 'loc, 'eval> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.scope.root, self)
     }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        self.parent.find_parameterized_rule(rule_name)
+    }
+
 
     fn root(&self) -> &'value PathAwareValue {
         self.scope.root

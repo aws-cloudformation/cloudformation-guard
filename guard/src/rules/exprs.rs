@@ -138,6 +138,25 @@ pub(crate) struct AccessClause<'loc> {
     pub(crate) location: FileLocation<'loc>,
 }
 
+impl<'loc> Default for AccessClause<'loc> {
+    fn default() -> Self {
+        AccessClause {
+            query: AccessQuery {
+                query: vec![],
+                match_all: true,
+            },
+            custom_message: None,
+            location: FileLocation {
+                file_name: "",
+                line: 0,
+                column: 0
+            },
+            compare_with: None,
+            comparator: (CmpOperator::Eq, false)
+        }
+    }
+}
+
 pub(crate) type Disjunctions<T> = Vec<T>;
 pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 
@@ -178,7 +197,7 @@ pub(crate) struct WhenGuardBlockClause<'loc> {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct ParameterizedNamedRuleClause<'loc> {
-    pub(crate) parameters: Vec<AccessQuery<'loc>>,
+    pub(crate) parameters: Vec<LetValue<'loc>>,
     pub(crate) named_rule: GuardNamedRuleClause<'loc>,
 }
 
@@ -195,6 +214,7 @@ pub(crate) enum GuardClause<'loc> {
 pub(crate) enum WhenGuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
+    ParameterizedNamedRule(ParameterizedNamedRuleClause<'loc>),
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<WhenGuardClause<'loc>>;

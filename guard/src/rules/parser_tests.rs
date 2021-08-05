@@ -4322,12 +4322,13 @@ fn parameterized_rule_parse_test() -> Result<(), Error> {
                                                     },
                                                     comparator: (CmpOperator::Eq, false),
                                                     custom_message: None,
-                                                    compare_with: Some(LetValue::Value(Value::String("Allow".to_string())))
+                                                    compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "Allow".to_string()))))
                                                 }
                                             })
                                         ])
                                     ])
-                                }
+                                },
+                                not_empty: false
                             })
                         )
                     ])
@@ -4607,4 +4608,343 @@ fn is_list_check_parser_bug() -> Result<(), Error> {
 fn does_this_work() -> Result<(), Error> {
     let query = AccessQuery::try_from(r#"Resources[ keys == /s3/ ][ Type == "AWS::S3::BucketPolicy" ]"#)?.query;
     Ok(())
+}
+
+#[test]
+fn parameterized_rule_block() -> Result<(), Error> {
+    let parameterized_rule = r###"
+    rule iam_disallowed_attributes_check(iam_statements) {
+      %iam_statements {
+         Action != '*'
+      }
+    }
+    "###;
+    let parameterized = ParameterizedRule::try_from(parameterized_rule)?;
+    let mut parameter_names = indexmap::IndexSet::new();
+    parameter_names.insert("iam_statements".to_string());
+    let expected = ParameterizedRule {
+        parameter_names,
+        rule: Rule {
+            rule_name: "iam_disallowed_attributes_check".to_string(),
+            block: Block {
+                assignments: vec![],
+                conjunctions: Conjunctions::from([
+                    Disjunctions::from([RuleClause::Clause(
+                        GuardClause::BlockClause(BlockGuardClause {
+                            not_empty: false,
+                            query: AccessQuery {
+                                match_all: true,
+                                query: vec![
+                                    QueryPart::Key("%iam_statements".to_string()),
+                                ]
+                            },
+                            location: FileLocation {
+                                file_name: "",
+                                line: 3,
+                                column: 7,
+                            },
+                            block: Block {
+                                assignments: vec![],
+                                conjunctions: Conjunctions::from([
+                                    Disjunctions::from([
+                                        GuardClause::Clause(GuardAccessClause {
+                                            negation: false,
+                                            access_clause: AccessClause {
+                                                query: AccessQuery {
+                                                    match_all: true,
+                                                    query: vec![
+                                                        QueryPart::Key("Action".to_string())
+                                                    ]
+                                                },
+                                                custom_message: None,
+                                                comparator: (CmpOperator::Eq, true),
+                                                compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "*".to_string())))),
+                                                location: FileLocation {
+                                                    file_name: "",
+                                                    line: 4,
+                                                    column: 10
+                                                }
+                                            }
+                                        })
+                                    ])
+                                ])
+                            }
+                        })
+                    )])
+                ])
+            },
+            conditions: None
+        }
+    };
+    assert_eq!(parameterized, expected);
+    Ok(())
+}
+
+#[test]
+fn parameters_guard_clause() -> Result<(), Error> {
+    let guard_clause = r#"not iam_disallowed_attributes_check(
+        Resources[ Type == 'AWS::IAM::Role' or
+                   Type == 'AWS::IAM::ManagedPolicy' ]
+           .Properties.PolicyDocument.Statement[*]
+       )"#;
+
+    let parameterized_guard_clause = ParameterizedNamedRuleClause::try_from(guard_clause)?;
+    let expected = ParameterizedNamedRuleClause {
+        named_rule: GuardNamedRuleClause {
+            location: FileLocation {
+                file_name: "",
+                line: 1,
+                column: 1
+            },
+            custom_message: None,
+            negation: true,
+            dependent_rule: "iam_disallowed_attributes_check".to_string()
+        },
+        parameters: vec![
+            LetValue::AccessClause(
+            AccessQuery {
+                match_all: true,
+                query: vec![
+                    QueryPart::Key("Resources".to_string()),
+                    QueryPart::Filter(
+                        Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::IAM::Role".to_string())))),
+                                        location: FileLocation {
+                                            file_name: "",
+                                            line: 2,
+                                            column: 20,
+                                        },
+                                        query: AccessQuery {
+                                            match_all: true,
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ]
+                                        },
+                                        ..Default::default()
+                                    }
+                                }),
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::IAM::ManagedPolicy".to_string())))),
+                                        location: FileLocation {
+                                            file_name: "",
+                                            line: 3,
+                                            column: 20,
+                                        },
+                                        query: AccessQuery {
+                                            match_all: true,
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ]
+                                        },
+                                        ..Default::default()
+                                    }
+                                })
+
+                            ])
+                        ])
+                    ),
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("PolicyDocument".to_string()),
+                    QueryPart::Key("Statement".to_string()),
+                    QueryPart::AllIndices
+                ]
+            })
+        ]
+    };
+    assert_eq!(parameterized_guard_clause, expected);
+    Ok(())
+}
+
+#[test]
+fn parameters_guard_clause_multiple() -> Result<(), Error> {
+    let guard_clause = r#"not iam_disallowed_attributes_check(
+        Resources[ Type == 'AWS::IAM::Role' or
+                   Type == 'AWS::IAM::ManagedPolicy' ]
+           .Properties.PolicyDocument.Statement[*],
+        %var.Properties.Tags,
+        "hardcoded"
+       )"#;
+
+    let parameterized_guard_clause = ParameterizedNamedRuleClause::try_from(guard_clause)?;
+    let expected = ParameterizedNamedRuleClause {
+        named_rule: GuardNamedRuleClause {
+            location: FileLocation {
+                file_name: "",
+                line: 1,
+                column: 1
+            },
+            custom_message: None,
+            negation: true,
+            dependent_rule: "iam_disallowed_attributes_check".to_string()
+        },
+        parameters: vec![
+            LetValue::AccessClause(
+            AccessQuery {
+                match_all: true,
+                query: vec![
+                    QueryPart::Key("Resources".to_string()),
+                    QueryPart::Filter(
+                        Conjunctions::from([
+                            Disjunctions::from([
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::IAM::Role".to_string())))),
+                                        location: FileLocation {
+                                            file_name: "",
+                                            line: 2,
+                                            column: 20,
+                                        },
+                                        query: AccessQuery {
+                                            match_all: true,
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ]
+                                        },
+                                        ..Default::default()
+                                    }
+                                }),
+                                GuardClause::Clause(GuardAccessClause {
+                                    negation: false,
+                                    access_clause: AccessClause {
+                                        compare_with: Some(LetValue::Value(PathAwareValue::String((Path::root(), "AWS::IAM::ManagedPolicy".to_string())))),
+                                        location: FileLocation {
+                                            file_name: "",
+                                            line: 3,
+                                            column: 20,
+                                        },
+                                        query: AccessQuery {
+                                            match_all: true,
+                                            query: vec![
+                                                QueryPart::Key("Type".to_string())
+                                            ]
+                                        },
+                                        ..Default::default()
+                                    }
+                                })
+
+                            ])
+                        ])
+                    ),
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("PolicyDocument".to_string()),
+                    QueryPart::Key("Statement".to_string()),
+                    QueryPart::AllIndices
+                ]
+            }),
+            LetValue::AccessClause(AccessQuery {
+                match_all: true,
+                query: vec![
+                    QueryPart::Key("%var".to_string()),
+                    QueryPart::AllIndices,
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("Tags".to_string())
+                ]
+            }),
+            LetValue::Value(PathAwareValue::try_from(Value::String("hardcoded".to_string()))?)
+        ]
+    };
+    assert_eq!(parameterized_guard_clause, expected);
+    Ok(())
+}
+
+#[test]
+fn paramterized_clause_errors() -> Result<(), Error> {
+    let just_name_rule_clause = "not named_rule";
+    let result = ParameterizedNamedRuleClause::try_from(just_name_rule_clause);
+    assert_eq!(result.is_err(), true);
+
+    let result = GuardClause::try_from(just_name_rule_clause);
+    assert_eq!(result.is_err(), true); // this does not match rule_clause
+
+    let result = RuleClause::try_from(just_name_rule_clause);
+    assert_eq!(result.is_ok(), true);
+    match result.unwrap() {
+        RuleClause::Clause(GuardClause::NamedRule(gnr)) => {
+            assert_eq!(gnr.dependent_rule.as_str(), "named_rule");
+            assert_eq!(gnr.custom_message, None);
+        },
+        _ => unreachable!()
+    }
+    Ok(())
+}
+
+#[test]
+fn parameterized_clause_in_when_condition() -> Result<(), Error> {
+    let rule_when_clause = r###"rule call_parameterized when parameterized(%x) {
+        Resources[ Type == /IAM::Role/ ] {
+            check_iam_statements(Properties.PolicyDocument.Statement[*], "some-hardcoded-param")
+            when check_required_tags_present(Properties.Tags)
+                 %someref not empty
+            {
+                some Properties.PolicyDocument.Statement[*].Principal == '*'
+            }
+        }
+    }"###;
+
+    let rule = Rule::try_from(rule_when_clause)?;
+    assert_eq!(rule.rule_name.as_str(), "call_parameterized");
+    assert_eq!(rule.conditions.is_some(), true);
+    let conditions = rule.conditions.as_ref().unwrap();
+    assert_eq!(conditions.len(), 1);
+    let contained = &conditions[0][0];
+    match contained {
+        WhenGuardClause::ParameterizedNamedRule(pr) => {
+            assert_eq!(pr.named_rule.dependent_rule.as_str(), "parameterized");
+            assert_eq!(pr.parameters.len(), 1);
+            let acc_query = &pr.parameters[0];
+            match acc_query {
+                LetValue::AccessClause(query) => {
+                    assert_eq!(query.query.len(), 1);
+                    assert_eq!(&query.query[0], &QueryPart::Key("%x".to_string()));
+                },
+                _ => unreachable!()
+            }
+        },
+        _ => unreachable!()
+    }
+
+    assert_eq!(rule.block.conjunctions.len(), 1);
+    match &rule.block.conjunctions[0][0] {
+        RuleClause::Clause(block) => {
+            match block {
+                GuardClause::BlockClause(block) => {
+                    assert_eq!(block.block.conjunctions.len(), 2);
+                    for each in &block.block.conjunctions {
+                        match &each[0] {
+                            GuardClause::ParameterizedNamedRule(prc) => {
+                                assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_iam_statements");
+                                assert_eq!(matches!(&prc.parameters[0], LetValue::AccessClause(_)), true);
+                                assert_eq!(matches!(&prc.parameters[1], LetValue::Value(_)), true);
+                            },
+
+                            GuardClause::WhenBlock(conds, _) => {
+                                assert_eq!(conds.len(), 2);
+                                match &conds[0][0] {
+                                    WhenGuardClause::ParameterizedNamedRule(prc) => {
+                                        assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_required_tags_present");
+                                        assert_eq!(matches!(&prc.parameters[0], LetValue::AccessClause(_)), true);
+                                    },
+                                    _ => unreachable!()
+                                }
+                            },
+
+                            _ => unreachable!()
+                        }
+                    }
+                },
+                _ => unreachable!()
+            }
+        },
+        _ => unreachable!()
+    }
+
+    Ok(())
+
 }

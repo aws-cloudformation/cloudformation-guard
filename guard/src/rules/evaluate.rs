@@ -4,9 +4,9 @@ use std::fmt::Formatter;
 
 use colored::Colorize;
 
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status, EvalContext};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenConditions, WhenGuardClause};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;
@@ -678,7 +678,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
     fn evaluate<'s>(&self,
                     context: &'s PathAwareValue,
                     var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        Ok('outer: loop {
+        Ok(loop {
             let mut num_passes = 0;
             let mut num_fails = 0;
             let item_name = std::any::type_name::<T>();
@@ -769,7 +769,8 @@ impl<'loc> Evaluate for WhenGuardClause<'loc> {
     fn evaluate<'s>(&self, context: &'s PathAwareValue, var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
         match self {
             WhenGuardClause::Clause(gac) => gac.evaluate(context, var_resolver),
-            WhenGuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver)
+            WhenGuardClause::NamedRule(nr) => nr.evaluate(context, var_resolver),
+            WhenGuardClause::ParameterizedNamedRule(_) => todo!(),
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::rules::eval_context::{root_scope, RecordTracker, Scope, EventRecord};
+use crate::rules::eval_context::{root_scope, RecordTracker, EventRecord};
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use std::collections::HashMap;
 
@@ -405,7 +405,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::NotComparable(NotComparableResult{rhs: value, lhs: lh_ptr, reason}) => {
+        ComparisonResult::NotComparable(NotComparableResult{rhs: value, lhs: lh_ptr, ..}) => {
             let rhs_ptr = match &rhs[0] {
                 QueryResult::Resolved(ptr) => *ptr,
                 _ => unreachable!()
@@ -568,7 +568,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, rhs}) => {
+                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, ..}) => {
                             if !outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             }
@@ -631,7 +631,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, rhs}) => {
+                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, ..}) => {
                             if outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             }
@@ -673,7 +673,7 @@ macro_rules! test_case {
                         &[QueryResult::Resolved(&rhs_value)]
                     )? {
                         match cmp_result {
-                            ComparisonResult::Comparable(ComparisonCheckResult{outcome, lhs, rhs}) => {
+                            ComparisonResult::Comparable(ComparisonCheckResult{outcome, ..}) => {
                                 assert_eq!(outcome, $assert);
                             },
 
@@ -1586,14 +1586,19 @@ fn test_inner_when_skipped() -> Result<()> {
 
 #[test]
 fn test_multiple_valued_clause_reporting() -> Result<()> {
-    struct ReportAssertions<'eval, 'value> {
-        parent: &'eval dyn EvalContext<'value>
+    struct ReportAssertions<'eval, 'value, 'loc: 'value> {
+        parent: &'eval dyn EvalContext<'value, 'loc>
     };
 
-    impl<'eval, 'value> EvalContext<'value> for ReportAssertions<'eval, 'value> {
-        fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+    impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ReportAssertions<'eval, 'value, 'loc> {
+        fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
             self.parent.query(query)
         }
+
+        fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+            todo!()
+        }
+
 
         fn root(&self) -> &'value PathAwareValue {
             self.parent.root()

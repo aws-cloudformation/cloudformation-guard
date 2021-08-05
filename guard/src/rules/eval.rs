@@ -2,8 +2,6 @@ use super::exprs::*;
 use super::*;
 use crate::rules::eval_context::{block_scope, ValueScope};
 use crate::rules::path_value::compare_eq;
-use itertools::misc::Slice;
-use crate::rules::values::WithinRange;
 use std::collections::HashMap;
 
 fn exists_operation(value: &QueryResult<'_>) -> Result<bool> {
@@ -83,11 +81,12 @@ fn inverse_operation<O>(operation: O, inverse: bool) -> impl Fn(&QueryResult<'_>
     }
 }
 
-fn record_unary_clause<'eval, 'value, O>(operation: O,
-                                   cmp: (CmpOperator, bool),
-                                   context: String,
-                                   custom_message: Option<String>,
-                                   eval_context: &'eval dyn EvalContext<'value>) -> Box<dyn Fn(&QueryResult<'value>) -> Result<bool> + 'eval>
+fn record_unary_clause<'eval, 'value, 'loc: 'value, O>(
+    operation: O,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &'eval dyn EvalContext<'value, 'loc>) -> Box<dyn Fn(&QueryResult<'value>) -> Result<bool> + 'eval>
     where O: Fn(&QueryResult<'value>) -> Result<bool> + 'eval
 {
     Box::new(move |value: &QueryResult<'value>| {
@@ -147,12 +146,12 @@ enum EvaluationResult<'value> {
     QueryValueResult(Vec<(QueryResult<'value>, Status)>),
 }
 
-fn unary_operation<'r, 'l: 'r>(lhs_query: &'l [QueryPart<'_>],
+fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                    cmp: (CmpOperator, bool),
                    inverse: bool,
                    context: String,
                    custom_message: Option<String>,
-                   eval_context: &'r dyn EvalContext<'l>) -> Result<EvaluationResult<'l>> {
+                   eval_context: &'r dyn EvalContext<'l, 'loc>) -> Result<EvaluationResult<'l>> {
     let lhs = eval_context.query(lhs_query)?;
 
     //
@@ -479,16 +478,16 @@ fn in_cmp(not_in: bool)
     }
 }
 
-fn report_all_operation<'r, 'value: 'r, C, E>(
+fn report_all_operation<'r, 'value: 'r, 'loc: 'value, C, E>(
     comparison: E,
     cmp_fn: C,
-    inverse: bool,
+    _inverse: bool,
     lhs: &'value PathAwareValue,
     rhs: &'r [QueryResult<'value>],
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
-    eval_context: &'r dyn EvalContext<'value>)
+    eval_context: &'r dyn EvalContext<'value, 'loc>)
     -> Result<HashMap<&'value PathAwareValue, bool>>
     where C: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>,
           E: Fn(C, &'value PathAwareValue, &'r[QueryResult<'value>]) -> Result<Vec<ComparisonResult<'value>>>
@@ -546,13 +545,13 @@ fn not_compare<O>(cmp: O, invert: bool) -> impl Fn(&PathAwareValue, &PathAwareVa
     }
 }
 
-fn binary_operation<'value>(lhs_query: &'value [QueryPart<'_>],
+fn binary_operation<'value, 'loc: 'value>(lhs_query: &'value [QueryPart<'loc>],
                             rhs: &[QueryResult<'value>],
                             cmp: (CmpOperator, bool),
                             inverse: bool,
                             context: String,
                             custom_message: Option<String>,
-                            eval_context: &dyn EvalContext<'value>) -> Result<EvaluationResult<'value>> {
+                            eval_context: &dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
     let lhs = eval_context.query(lhs_query)?;
     if lhs.is_empty() || rhs.is_empty() {
         return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
@@ -675,7 +674,7 @@ fn binary_operation<'value>(lhs_query: &'value [QueryPart<'_>],
 
 pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let all = gac.access_clause.query.match_all;
     let blk_context = format!("GuardAccessClause#block{}", gac);
@@ -755,7 +754,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
@@ -814,9 +813,9 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
 
 pub(in crate::rules) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
     block: &'value Block<'loc, T>,
-    resolver: &dyn EvalContext<'value>,
+    resolver: &dyn EvalContext<'value, 'loc>,
     eval_fn: E) -> Result<Status>
-    where E: Fn(&'value T, &dyn EvalContext<'value>) -> Result<Status>
+    where E: Fn(&'value T, &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let block_scope = block_scope(block, resolver.root(), resolver)?;
     eval_conjunction_clauses(&block.conjunctions, &block_scope, eval_fn)
@@ -824,7 +823,7 @@ pub(in crate::rules) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
 
 pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     block_clause: &'value BlockGuardClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let block_values = resolver.query(&block_clause.query.query)?;
     if block_values.is_empty() {
@@ -893,9 +892,9 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
 
 fn eval_when_condition_block<'value, 'loc: 'value>(
     context: String,
-    conditions: &'value WhenConditions,
-    block: &'value Block<GuardClause<'loc>>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    conditions: &'value WhenConditions<'loc>,
+    block: &'value Block<'loc, GuardClause<'loc>>,
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     resolver.start_record(&context)?;
     let when_context = format!("{}/When", context);
@@ -945,32 +944,113 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
     })
 }
 
+struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
+    resolved_parameters: HashMap<&'value str, Vec<QueryResult<'value>>>,
+    parent: &'eval dyn EvalContext<'value, 'loc>
+}
+
+impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParameterContext<'eval, 'value, 'loc> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
+        self.parent.query(query)
+    }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        self.parent.find_parameterized_rule(rule_name)
+    }
+
+
+    fn root(&self) -> &'value PathAwareValue {
+        self.parent.root()
+    }
+
+    fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        self.parent.rule_status(rule_name)
+    }
+
+    fn start_record(&self, context: &str) -> Result<()> {
+        self.parent.start_record(context)
+    }
+
+    fn end_record(&self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.parent.end_record(context, record)
+    }
+
+    fn resolve_variable(&self, variable_name: &str) -> Result<Vec<QueryResult<'value>>> {
+        match self.resolved_parameters.get(variable_name) {
+            Some(res) => Ok(res.clone()),
+            None => self.parent.resolve_variable(variable_name)
+        }
+    }
+}
+
+pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
+    call_rule: &'value ParameterizedNamedRuleClause<'loc>,
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
+{
+    let param_rule = resolver.find_parameterized_rule(
+        &call_rule.named_rule.dependent_rule)?;
+
+    if param_rule.parameter_names.len() != call_rule.parameters.len() {
+        return Err(Error::new(ErrorKind::IncompatibleError(
+            format!(
+                "Arity mismatch for called parameter rule {}, expected {}, got {}",
+                call_rule.named_rule.dependent_rule,
+                param_rule.parameter_names.len(),
+                call_rule.parameters.len()
+            )
+        )))
+    }
+
+    let mut resolved_parameters = HashMap::with_capacity(call_rule.parameters.len());
+    for (idx, each) in call_rule.parameters.iter().enumerate() {
+        match each {
+            LetValue::Value(val) => {
+                //resolved_parameters.insert((&param_rule.parameter_names[idx]).as_str(), vec![QueryResult::Resolved(val)]);
+                resolved_parameters.insert(
+                    (&param_rule.parameter_names[idx]).as_str(),
+                    vec![QueryResult::Resolved(val)]);
+            },
+            LetValue::AccessClause(query) => {
+                resolved_parameters.insert(
+                    // (&param_rule.parameter_names[idx]).as_ref(),
+                    (&param_rule.parameter_names[idx]).as_str(),
+                    resolver.query(&query.query)?
+                );
+            }
+        }
+    }
+    let eval = ResolvedParameterContext { parent: resolver, resolved_parameters };
+    eval_rule(&param_rule.rule, &eval)
+}
+
 pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
     gc: &'value GuardClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     match gc {
         GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
         GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver),
         GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
-            "GuardConditionClause".to_string(), conditions, block, resolver)
+            "GuardConditionClause".to_string(), conditions, block, resolver),
+        GuardClause::ParameterizedNamedRule(_) => todo!()
     }
 }
 
 pub (in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     when_clause: &'value WhenGuardClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     match when_clause {
         WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
-        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver)
+        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver),
+        WhenGuardClause::ParameterizedNamedRule(_) => todo!(),
     }
 }
 
 pub (in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     type_block: &'value TypeBlock<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let context = format!("TypeBlock#{}", type_block.type_name);
     resolver.start_record(&context)?;
@@ -1036,7 +1116,7 @@ pub (in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 let block_context = format!("{}/{}", context, idx);
                 resolver.start_record(&block_context)?;
                 let val_resolver = ValueScope { root: *rv, parent: resolver };
-                match eval_general_block_clause(&type_block.block, &val_resolver, eval_guard_clause) {
+                match eval_general_block_clause(block, &val_resolver, eval_guard_clause) {
                     Ok(status) => {
                         match status {
                             Status::PASS => { passes += 1; },
@@ -1085,7 +1165,7 @@ pub (in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
 
 pub(in crate::rules) fn eval_rule_clause<'value, 'loc: 'value>(
     rule_clause: &'value RuleClause<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     match rule_clause {
         RuleClause::Clause(gc) => eval_guard_clause(gc, resolver),
@@ -1097,7 +1177,7 @@ pub(in crate::rules) fn eval_rule_clause<'value, 'loc: 'value>(
 
 pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let context = format!("{}", rule.rule_name);
     resolver.start_record(&context)?;
@@ -1129,7 +1209,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
         }
     } else { &rule.block };
 
-    match eval_general_block_clause(&rule.block, resolver, eval_rule_clause) {
+    match eval_general_block_clause(block, resolver, eval_rule_clause) {
         Ok(status) => {
             resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
                 status, name: &rule.rule_name
@@ -1156,7 +1236,7 @@ impl<'loc> std::fmt::Display for RulesFile<'loc> {
 
 pub(in crate) fn eval_rules_file<'value, 'loc: 'value>(
     rule: &'value RulesFile<'loc>,
-    resolver: &dyn EvalContext<'value>) -> Result<Status>
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     let context = format!("{}", rule);
     resolver.start_record(&context)?;
@@ -1195,9 +1275,9 @@ pub(in crate) fn eval_rules_file<'value, 'loc: 'value>(
 
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
-    resolver: &dyn EvalContext<'value>,
+    resolver: &dyn EvalContext<'value, 'loc>,
     eval_fn: E) -> Result<Status>
-    where E: Fn(&'value T, &dyn EvalContext<'value>) -> Result<Status>
+    where E: Fn(&'value T, &dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
     Ok(loop {
         let mut num_passes = 0;

@@ -27,6 +27,7 @@ use indexmap::map::IndexMap;
 use std::convert::TryFrom;
 use crate::migrate::parser::TypeName;
 use crate::rules::path_value::{PathAwareValue, Path};
+use regex::internal::Input;
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
@@ -946,6 +947,49 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     })))
 }
 
+pub(crate) fn let_value(input: Span) -> IResult<Span, LetValue> {
+    alt((
+            map(parse_value, |val| LetValue::Value(PathAwareValue::try_from(val).unwrap())),
+        map(access, |acc| LetValue::AccessClause(acc)),
+        ))(input)
+}
+
+pub(crate) fn parameterized_rule_call_clause(input: Span) -> IResult<Span, ParameterizedNamedRuleClause> {
+    let mut location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
+
+    let (input, not) = opt(not)(input)?;
+    let (input, rule_name) = var_name(input)?;
+    let (input, access_clauses) =
+        delimited(
+            char('('),
+            map(
+                separated_nonempty_list(
+                    char(','),
+                    cut(
+                        delimited(multispace0, let_value, multispace0))),
+                |queries| queries),
+            cut(char(')'))
+        )(input)?;
+
+    let (input, custom_message) = opt(preceded(zero_or_more_ws_or_comment, custom_message))(input)?;
+    Ok((
+        input,
+        ParameterizedNamedRuleClause {
+            parameters: access_clauses,
+            named_rule: GuardNamedRuleClause {
+                location,
+                custom_message: custom_message.map(|s| s.to_string()),
+                negation: not.map_or(false, |_| true),
+                dependent_rule: rule_name
+            }
+        }
+    ))
+}
+
 //
 //  simple_unary               = "EXISTS" / "EMPTY"
 //  keys_unary                 = "KEYS" 1*SP simple_unary
@@ -966,13 +1010,14 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
 //
 fn clause(input: Span) -> IResult<Span, GuardClause> {
     alt((
-            when_block(single_clauses, clause, |conds, (assigns, cls)| {
-                GuardClause::WhenBlock(conds, Block {
-                    assignments: assigns,
-                    conjunctions: cls
-                })
-            }),
+        when_block(single_clauses, clause, |conds, (assigns, cls)| {
+            GuardClause::WhenBlock(conds, Block {
+                assignments: assigns,
+                conjunctions: cls
+            })
+        }),
         block_clause,
+        map(parameterized_rule_call_clause, |p| GuardClause::ParameterizedNamedRule(p)),
         |i| clause_with(i, access)
     ))(input)
 }
@@ -1007,49 +1052,33 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
 
     let (remaining, not) = opt(not)(input)?;
     let (remaining, ct_type) = var_name(remaining)?;
-    let (remaining, parameters) = opt(
-        delimited(
-            char('('),
-            separated_nonempty_list(char(','),
-                                    delimited(
-                                        multispace0,
-                                        cut(access), multispace0)),
-            cut(char(')'))
-        )
-    )(remaining)?;
 
     //
     // we peek to preserve the input, if it is or, space+newline or comment
     // we return
     //
-    if let Ok((same, _ignored)) = peek(alt((
-        preceded(space0, value((), newline)),
-        preceded(space0, value((), comment2)),
-        preceded(space0, value((), char('{'))),
-        value((), or_join),
-    )))(remaining) {
-        return Ok((same,
-                match parameters {
-                    Some(parameters) => GuardClause::ParameterizedNamedRule(
-                        ParameterizedNamedRuleClause {
-                            parameters,
-                            named_rule: GuardNamedRuleClause {
-                                dependent_rule: ct_type,
-                                location,
-                                negation: not.is_some(),
-                                custom_message: None
-                            }
-                        }
-                    ),
-                    None => GuardClause::NamedRule(
-                        GuardNamedRuleClause {
-                            dependent_rule: ct_type,
-                            location,
-                            negation: not.is_some(),
-                            custom_message: None
-                        })
-                }
-            ))
+    let do_return = remaining.is_empty() ||
+        match peek(alt((
+            preceded(space0, value((), newline)),
+            preceded(space0, value((), comment2)),
+            preceded(space0, value((), char('{'))),
+            value((), or_join),
+        )))(remaining) {
+            Ok((same, _ignored)) => true,
+            _ => false
+        };
+
+
+    if do_return {
+        return Ok((remaining,
+                   GuardClause::NamedRule(
+                       GuardNamedRuleClause {
+                           dependent_rule: ct_type,
+                           location,
+                           negation: not.is_some(),
+                           custom_message: None
+                       })
+        ))
     }
 
     //
@@ -1140,7 +1169,9 @@ fn single_clauses(input: Span) -> IResult<Span, Conjunctions<WhenGuardClause>> {
         // to be first it would interpret bucket_encryption as the rule_clause. Now to prevent that
         // we are using the alt form to first parse to see if it is clause and then try rules_clause
         //
-        alt((single_clause, map(rule_clause, |g| match g {
+        alt((single_clause,
+            map(parameterized_rule_call_clause, |p| WhenGuardClause::ParameterizedNamedRule(p)),
+             map(rule_clause, |g| match g {
             GuardClause::NamedRule(nr) => WhenGuardClause::NamedRule(nr),
             _ => unreachable!()
         }))),
@@ -1419,7 +1450,10 @@ fn rule_block_clause(input: Span) -> IResult<Span, RuleClause> {
         map(preceded(zero_or_more_ws_or_comment,
                      pair(
                          when_conditions(single_clauses),
-                         block(alt((clause, rule_clause)))
+                         block(alt((
+                             clause,
+                             rule_clause))
+                         )
                      )),
             |(conditions, block)| {
                 RuleClause::WhenBlock(conditions, Block{ assignments: block.0, conjunctions: block.1 })
@@ -1668,6 +1702,15 @@ impl<'a> TryFrom<&'a str> for ParameterizedRule<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         Ok(parameterized_rule_block(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for ParameterizedNamedRuleClause<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(parameterized_rule_call_clause(span)?.1)
     }
 }
 

@@ -32,10 +32,15 @@ pub(crate) struct BasicQueryTesting<'value> {
     pub(crate) root: &'value PathAwareValue
 }
 
-impl<'value> EvalContext<'value> for BasicQueryTesting<'value> {
+impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BasicQueryTesting<'value> {
     fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.root, self)
     }
+
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        todo!()
+    }
+
 
     // fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>> { todo!() }
     fn root(&self) -> &'value PathAwareValue { self.root }
