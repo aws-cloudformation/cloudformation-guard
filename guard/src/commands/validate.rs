@@ -320,7 +320,7 @@ fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool)
     }
 }
 
-pub(super) fn print_verbose_tree(root: &EventRecord<'_>) {
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
     pprint_tree(root, "".to_string(), true);
 }
 

@@ -2,6 +2,7 @@ use super::*;
 use crate::rules::eval_context::{root_scope, RecordTracker, EventRecord};
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use std::collections::HashMap;
+use crate::rules::parser::rules_file;
 
 //
 // All unary function simple tests
@@ -3543,6 +3544,79 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
     let eval = BasicQueryTesting { root: &path_value };
     let status = eval_guard_clause(&guard_clause, &eval)?;
     assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+#[test]
+fn parameterized_evaluations() -> Result<()> {
+    let parameterized = r###"
+    rule check_iam_statements(statements) {
+        %statements {
+            when Effect == 'Allow' {
+                Action != '*'
+            }
+        }
+    }
+
+    rule iam_checks {
+        when Resources exists {
+            Resources[ Type == /IAM::Role/ ] {
+                check_iam_statements(Properties.AssumeRolePolicyDocument.Statement[*])
+            }
+        }
+
+        when resourceType == /IAM::Role/ {
+            check_iam_statements(configuration.assumeRolePolicyDocument.Statement[*])
+        }
+    }
+    "###;
+
+    let rules_files = RulesFile::try_from(parameterized)?;
+    let template_value = r###"
+    Resources:
+      iamRole:
+        Type: AWS::IAM::Role
+        Properties:
+          AssumeRolePolicyDocument:
+            Statement:
+              - Action: '*'
+                Principal: '*'
+                Resource: '*'
+                Effect: Allow
+    "###;
+    let template = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(template_value)?
+    )?;
+
+    let eval = root_scope(&rules_files, &template)?;
+    let tracker = RecordTracker::new(&eval);
+    let status = eval_rules_file(&rules_files, &tracker)?;
+    let top = tracker.extract();
+    crate::commands::validate::print_verbose_tree(&top);
+    assert_eq!(status, Status::FAIL);
+
+    let aws_config_value = r###"
+    version: 1.2
+    resourceType: AWS::IAM::Role
+    configuration:
+      assumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Principal: '*'
+            Resource: '*'
+            Effect: Allow
+    "###;
+    let config_value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(aws_config_value)?
+    )?;
+
+    let eval = root_scope(&rules_files, &config_value)?;
+    let tracker = RecordTracker::new(&eval);
+    let status = eval_rules_file(&rules_files, &tracker)?;
+    let top = tracker.extract();
+    crate::commands::validate::print_verbose_tree(&top);
+    assert_eq!(status, Status::PASS);
 
     Ok(())
 }

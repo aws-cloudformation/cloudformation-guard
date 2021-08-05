@@ -116,12 +116,12 @@ fn retrieve_index<'value>(parent: &'value PathAwareValue,
 
 }
 
-fn accumulate<'value, 'loc: 'value>(parent: &'value PathAwareValue,
-                      query_index: usize,
-                      query: &'value [QueryPart<'loc>],
-                      elements: &'value Vec<PathAwareValue>,
-                      resolver: &dyn EvalContext<'value, 'loc>)
-    -> Result<Vec<QueryResult<'value>>> {
+fn accumulate<'value, 'loc: 'value>(
+    parent: &'value PathAwareValue,
+    query_index: usize,
+    query: &'value [QueryPart<'loc>],
+    elements: &'value Vec<PathAwareValue>,
+    resolver: &dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>> {
     //
     // We are here when we are doing [*] for a list. It is an error if there are no
     // elements
