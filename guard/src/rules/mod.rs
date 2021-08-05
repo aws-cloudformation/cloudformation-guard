@@ -17,7 +17,7 @@ use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
 use serde::{Serialize};
 use crate::rules::values::CmpOperator;
-use crate::rules::exprs::{QueryPart, GuardAccessClause};
+use crate::rules::exprs::{QueryPart, GuardAccessClause, ParameterizedRule};
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -258,9 +258,14 @@ pub(crate) enum RecordType<'value> {
     ClauseValueCheck(ClauseCheck<'value>)
 }
 
-pub(crate) trait EvalContext<'value> {
-    fn query(&self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>>;
+struct ParameterRuleResult<'value, 'loc> {
+    rule: &'value ParameterizedRule<'loc>
+}
+
+pub(crate) trait EvalContext<'value, 'loc: 'value> {
+    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
+    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&self) -> &'value PathAwareValue;
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
     fn start_record(&self, context: &str) -> Result<()>;

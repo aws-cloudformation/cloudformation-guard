@@ -1,5 +1,5 @@
 use crate::rules::eval_context::EventRecord;
-use crate::rules::{RecordType, BlockCheck, TypeBlockCheck, ClauseCheck, Status, QueryResult};
+use crate::rules::{RecordType, BlockCheck, ClauseCheck, Status, QueryResult};
 use std::fmt::Formatter;
 use crate::rules::values::CmpOperator;
 use crate::rules::path_value::PathAwareValue;
@@ -13,7 +13,7 @@ impl std::fmt::Display for PathAwareValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let (path, value): (String, serde_json::Value) = match self.try_into() {
             Ok(res) => res,
-            Err(e) => return Err(std::fmt::Error)
+            Err(_) => return Err(std::fmt::Error)
         };
         f.write_fmt(
             format_args!(
