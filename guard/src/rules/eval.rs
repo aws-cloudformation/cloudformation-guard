@@ -686,7 +686,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         gac.negation,
                         format!("{}", gac),
                         gac.access_clause.custom_message.clone(),
-                        resolver)?
+                        resolver)
     }
     else {
         let rhs = match &gac.access_clause.compare_with {
@@ -695,13 +695,30 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     LetValue::Value(rhs_val) =>
                         vec![QueryResult::Resolved(rhs_val)],
                     LetValue::AccessClause(acc_querty) =>
-                        resolver.query(&acc_querty.query)?
+                        match resolver.query(&acc_querty.query) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
+                                    status: Status::FAIL,
+                                    at_least_one_matches: !all,
+                                    message: Some(format!("Error {} when handling clause, bailing", e))
+                                }))?;
+                                return Err(e)
+                            }
+                        }
                 }
             },
 
-            None => return Err(Error::new(ErrorKind::NotComparable(
-                format!("GuardAccessClause {}, did not have a RHS for compare operation", blk_context)
-            )))
+            None => {
+                resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
+                    status: Status::FAIL,
+                    at_least_one_matches: !all,
+                    message: Some(format!("Error not RHS for binary clause when handling clause, bailing"))
+                }))?;
+                return Err(Error::new(ErrorKind::NotComparable(
+                    format!("GuardAccessClause {}, did not have a RHS for compare operation", blk_context)
+                )))
+            }
         };
         binary_operation(
             &gac.access_clause.query.query,
@@ -711,42 +728,56 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver
-        )?
+        )
     };
 
     match statues {
-        EvaluationResult::EmptyQueryResult(status) => {
-            resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
-                status, message: None, at_least_one_matches: all,
-            }))?;
-            Ok(status)
+        Ok(statues) => {
+            match statues {
+                EvaluationResult::EmptyQueryResult(status) => {
+                    resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
+                        status,
+                        message: None,
+                        at_least_one_matches: all,
+                    }))?;
+                    Ok(status)
+                },
+                EvaluationResult::QueryValueResult(result) => {
+                    let outcome = loop {
+                        let mut fails = 0;
+                        let mut pass = 0;
+                        for (_value, status) in result {
+                            match status {
+                                Status::PASS => { pass += 1; },
+                                Status::FAIL => { fails += 1; },
+                                Status::SKIP => unreachable!()
+                            }
+                        }
+                        if all {
+                            if fails > 0 { break Status::FAIL }
+                            break Status::PASS
+                        } else {
+                            if pass > 0 { break Status::PASS }
+                            break Status::FAIL
+                        }
+                    };
+                    resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
+                        message: None,
+                        status: outcome,
+                        at_least_one_matches: !all,
+                    }))?;
+                    Ok(outcome)
+                }
+            }
         },
-        EvaluationResult::QueryValueResult(result) => {
-            let outcome = loop {
-                let mut fails = 0;
-                let mut pass = 0;
-                for (_value, status) in result {
-                    match status {
-                        Status::PASS => { pass += 1; },
-                        Status::FAIL => { fails += 1; },
-                        Status::SKIP => unreachable!()
-                    }
-                }
-                if all {
-                    if fails > 0 { break Status::FAIL }
-                    break Status::PASS
-                }
-                else {
-                    if pass > 0 { break Status::PASS }
-                    break Status::FAIL
-                }
-            };
+
+        Err(e) => {
             resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
-                message: None,
-                status: outcome,
+                status: Status::FAIL,
                 at_least_one_matches: !all,
+                message: Some(format!("Error {} when handling clause, bailing", e))
             }))?;
-            Ok(outcome)
+            return Err(e)
         }
     }
 
