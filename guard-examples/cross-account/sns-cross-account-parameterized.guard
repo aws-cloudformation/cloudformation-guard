@@ -1,0 +1,39 @@
+let allowed = [
+    /111122223333/,
+    /444455556666/
+]
+
+rule check_direct_principals(principals) {
+     %principals in %allowed
+}
+
+rule check_aws_specified(principals) {
+    %principals.AWS in %allowed
+}
+
+rule check_via_aws_service(statement) {
+    when %statement.Principal.Service exists {
+        %statement.Condition[ keys == /String(Equals|Like)|Arn(Equals|Like)/ ] not empty {
+            let source_accounts = this[ keys == /(aws|AWS):[sS]ource(Account|Owner|Arn|ARN)/ ]
+            %source_accounts in %allowed
+        }
+    }
+}
+
+rule check_only_allowed_aws_accounts(statement) {
+    %statement 
+    {
+        when Effect == 'Allow'
+        {
+            check_direct_principals(Principal) or
+            check_aws_specified(Principal) or
+            check_via_aws_service(this)
+        }
+    }
+}
+
+rule check_sns_topic_cross_account {
+    Resources[ Type == 'AWS::SNS::TopicPolicy' ] {
+        check_only_allowed_aws_accounts(Properties.PolicyDocument.Statement[*])
+    }
+}

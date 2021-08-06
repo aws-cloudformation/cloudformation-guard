@@ -96,39 +96,9 @@ impl<'a> Reporter for GenericSummary<'a> {
     fn report_eval(
         &self,
         write: &mut dyn Write,
-        status: Status,
+        _status: Status,
         root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
-        let mut longest_rule_name = 0;
-        let mut failed = HashMap::new();
-        let mut skipped = HashSet::new();
-        let mut success = HashSet::new();
-        for each_rule in &root_record.children {
-            if let Some(RecordType::RuleCheck(NamedStatus{status, name})) = &each_rule.container {
-                if name.len() > longest_rule_name {
-                    longest_rule_name = name.len();
-                }
-                match status {
-                    Status::FAIL => {
-                        let mut clauses = Vec::new();
-                        for each_clause in find_failing_clauses(each_rule) {
-                            clauses.push(extract_name_info_from_record(*name, each_clause)?);
-                        }
-                        failed.insert(name.to_string(), clauses);
-                    },
-
-                    Status::PASS => {
-                        success.insert(name.to_string());
-                    },
-
-                    Status::SKIP => {
-                        skipped.insert(name.to_string());
-                    }
-                }
-            }
-        }
-
-        self.renderer.report(write, self.rules_file_name, self.data_file_name, failed, success, skipped, longest_rule_name)?;
-        Ok(())
+        super::common::report_from_events(root_record, write, self.data_file_name, self.rules_file_name, self.renderer.as_ref())
     }
 
 }

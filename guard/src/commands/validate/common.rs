@@ -2,7 +2,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult};
+use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus};
 use crate::rules::path_value::Path;
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
@@ -238,6 +238,55 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 
         _ => unreachable!()
     })
+}
+
+pub(super) fn report_from_events(
+    root_record: &EventRecord<'_>,
+    writer: &mut dyn Write,
+    data_file_name: &str,
+    rules_file_name: &str,
+    renderer: &dyn GenericReporter,
+) -> crate::rules::Result<()> {
+    let mut longest_rule_name = 0;
+    let mut failed = HashMap::new();
+    let mut skipped = HashSet::new();
+    let mut success = HashSet::new();
+    for each_rule in &root_record.children {
+        if let Some(RecordType::RuleCheck(NamedStatus{status, name})) = &each_rule.container {
+            if name.len() > longest_rule_name {
+                longest_rule_name = name.len();
+            }
+            match status {
+                Status::FAIL => {
+                    let mut clauses = Vec::new();
+                    for each_clause in find_failing_clauses(each_rule) {
+                        clauses.push(extract_name_info_from_record(*name, each_clause)?);
+                    }
+                    failed.insert(name.to_string(), clauses);
+                },
+
+                Status::PASS => {
+                    success.insert(name.to_string());
+                },
+
+                Status::SKIP => {
+                    skipped.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    renderer.report(
+        writer,
+        rules_file_name,
+        data_file_name,
+        failed,
+        success,
+        skipped,
+        longest_rule_name
+    )?;
+    Ok(())
+
 }
 
 pub(super) fn extract_name_info<'a>(rule_name: &'a str,

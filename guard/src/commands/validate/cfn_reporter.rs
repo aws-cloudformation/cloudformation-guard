@@ -14,6 +14,7 @@ use crate::rules::errors::{Error, ErrorKind};
 
 use super::EvaluationType;
 use crate::rules::Status;
+use crate::rules::eval_context::EventRecord;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)/(?P<rest>.*$)").ok().unwrap();
@@ -103,6 +104,13 @@ impl<'a> Reporter for CfnReporter<'a> {
         let passed = passed.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
         self.render.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
         Ok(())
+    }
+
+    fn report_eval(&self,
+                   write: &mut dyn Write,
+                   status: Status,
+                   root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
+        super::common::report_from_events(root_record, write, self.data_file_name, self.rules_file_name, self.render.as_ref())
     }
 }
 
