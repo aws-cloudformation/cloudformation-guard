@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType};
 use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
+use lazy_static::lazy_static;
+use inflector::cases::*;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -122,7 +124,8 @@ fn accumulate<'value, 'loc: 'value>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
     elements: &'value Vec<PathAwareValue>,
-    resolver: &mut dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>> {
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+    converter: Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>> {
     //
     // We are here when we are doing [*] for a list. It is an error if there are no
     // elements
@@ -138,7 +141,7 @@ fn accumulate<'value, 'loc: 'value>(
 
     let mut accumulated = Vec::with_capacity(elements.len());
     for each in elements {
-        accumulated.extend(query_retrieval(query_index+1, query, each, resolver)?);
+        accumulated.extend(query_retrieval_with_converter(query_index+1, query, each, resolver, converter)?);
     }
     Ok(accumulated)
 
@@ -150,8 +153,9 @@ fn accumulate_map<'value, 'loc: 'value, F>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    converter: Option<&dyn Fn(&str) -> String>,
     func: F) -> Result<Vec<QueryResult<'value>>>
-    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>>
+    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
 {
     //
     // We are here when we are doing * all values for map. It is an error if there are no
@@ -171,7 +175,7 @@ fn accumulate_map<'value, 'loc: 'value, F>(
     for each in values {
         let mut val_resolver = ValueScope{ root: each, parent: resolver };
         resolved.extend(
-            func(query_index+1, query, each, &mut val_resolver)?)
+            func(query_index+1, query, each, &mut val_resolver, converter)?)
     }
     Ok(resolved)
 }
@@ -210,9 +214,9 @@ fn map_resolved<'value, F>(
 }
 
 fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<GuardClause<'loc>>)
-    -> impl Fn(usize, &'value[QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>>
+    -> impl Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
 {
-    move |index, query, value, eval_context| {
+    move |index, query, value, eval_context, converter| {
         let context = format!("Filter/Map#{}", conjunctions.len());
         eval_context.start_record(&context)?;
         match super::eval::eval_conjunction_clauses(
@@ -221,7 +225,7 @@ fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<G
                 eval_context.end_record(&context, RecordType::Filter(status))?;
                 match status {
                     Status::PASS => {
-                        query_retrieval(index, query, value, eval_context)
+                        query_retrieval_with_converter(index, query, value, eval_context, converter)
                     },
                     _ => Ok(vec![])
                 }
@@ -235,11 +239,35 @@ fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<G
     }
 }
 
+lazy_static! {
+    static ref CONVERTERS: &'static [(fn(&str) -> bool, fn(&str) -> String)] =
+        &[
+            (camelcase::is_camel_case, camelcase::to_camel_case),
+            (classcase::is_class_case, classcase::to_class_case),
+            (kebabcase::is_kebab_case, kebabcase::to_kebab_case),
+            (pascalcase::is_pascal_case, pascalcase::to_pascal_case),
+            (snakecase::is_snake_case, snakecase::to_snake_case),
+            (titlecase::is_title_case, titlecase::to_title_case),
+            (traincase::is_train_case, traincase::to_train_case),
+        ];
+}
+
 fn query_retrieval<'value, 'loc: 'value>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
     current: &'value PathAwareValue,
     resolver: &mut dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>> {
+    query_retrieval_with_converter(
+        query_index, query, current, resolver, None,
+    )
+}
+
+fn query_retrieval_with_converter<'value, 'loc: 'value>(
+    query_index: usize,
+    query: &'value [QueryPart<'loc>],
+    current: &'value PathAwareValue,
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+    converter: Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>> {
 
     if query_index >= query.len() {
         return Ok(vec![QueryResult::Resolved(current)])
@@ -261,7 +289,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                         }
                     } else { query_index+1 };
                     let mut scope = ValueScope { root: value, parent: resolver };
-                    resolved.extend(query_retrieval(index, query, value, &mut scope)?);
+                    resolved.extend(query_retrieval_with_converter(index, query, value, &mut scope, converter)?);
                 }
             }
         }
@@ -270,7 +298,7 @@ fn query_retrieval<'value, 'loc: 'value>(
 
     match &query[query_index] {
         QueryPart::This => {
-            query_retrieval(query_index+1, query, current, resolver)
+            query_retrieval_with_converter(query_index+1, query, current, resolver, converter)
         },
 
         QueryPart::Key(key) => {
@@ -280,7 +308,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                         PathAwareValue::List((_, list)) => {
                             map_resolved(current,
                                          retrieve_index(current, idx, list, query),
-                                         |val| query_retrieval(query_index+1, query, val, resolver))
+                                         |val| query_retrieval_with_converter(query_index+1, query, val, resolver, converter))
                         }
 
                         _ =>
@@ -340,7 +368,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                                     QueryResult::Resolved(key) => {
                                         if let PathAwareValue::String((_, k)) = key {
                                             if let Some(next) = map.values.get(k) {
-                                                acc.extend(query_retrieval(query_index+1, query, next, resolver)?);
+                                                acc.extend(query_retrieval_with_converter(query_index+1, query, next, resolver, converter)?);
                                             } else {
                                                 acc.extend(
                                                     to_unresolved_result(
@@ -365,9 +393,31 @@ fn query_retrieval<'value, 'loc: 'value>(
                                 }
                             }
                             Ok(acc)
-                        } else if let Some(val) = map.values.get(key) {
-                            query_retrieval(query_index+1, query, val, resolver)
                         } else {
+                            match map.values.get(key) {
+                                Some(val) =>
+                                    return query_retrieval_with_converter(query_index+1, query, val, resolver, converter),
+
+                                None => {
+                                    match converter {
+                                        Some(func) => {
+                                            let converted = func(key.as_str());
+                                            if let Some(val) = map.values.get(&converted) {
+                                                return query_retrieval_with_converter(query_index+1, query, val, resolver, converter)
+                                            }
+                                        },
+
+                                        None => {
+                                            for (_, each_converter) in CONVERTERS.iter() {
+                                                if let Some(val) = map.values.get(&each_converter(key.as_str())) {
+                                                    return query_retrieval_with_converter(query_index+1, query, val, resolver, Some(each_converter))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             to_unresolved_result(
                                 current,
                                 format!("Could not find key {} inside struct at path {}", key, path),
@@ -389,7 +439,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                 PathAwareValue::List((_, list)) => {
                     map_resolved(current,
                                  retrieve_index(current, *index, list, query),
-                                 |val| query_retrieval(query_index+1, query, val, resolver))
+                                 |val| query_retrieval_with_converter(query_index+1, query, val, resolver, converter))
                 }
 
                 _ =>
@@ -403,7 +453,7 @@ fn query_retrieval<'value, 'loc: 'value>(
         QueryPart::AllIndices => {
             match current {
                 PathAwareValue::List((_path, elements)) => {
-                    accumulate(current, query_index, query, elements, resolver)
+                    accumulate(current, query_index, query, elements, resolver, converter)
                 },
 
                 //
@@ -412,7 +462,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                 // part of your query
                 //
                 rest => {
-                    query_retrieval(query_index+1, query, rest, resolver)
+                    query_retrieval_with_converter(query_index+1, query, rest, resolver, converter)
                 }
             }
         },
@@ -423,11 +473,11 @@ fn query_retrieval<'value, 'loc: 'value>(
                 // Supporting old format
                 //
                 PathAwareValue::List((_path, elements)) => {
-                    accumulate(current, query_index, query, elements, resolver)
+                    accumulate(current, query_index, query, elements, resolver, converter)
                 },
 
                 PathAwareValue::Map((_path, map)) => {
-                    accumulate_map(current, map, query_index, query, resolver, query_retrieval)
+                    accumulate_map(current, map, query_index, query, resolver, converter, query_retrieval_with_converter)
                 },
 
                 //
@@ -436,7 +486,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                 // part of your query
                 //
                 rest => {
-                    query_retrieval(query_index+1, query, rest, resolver)
+                    query_retrieval_with_converter(query_index+1, query, rest, resolver, converter)
                 }
             }
         },
@@ -447,7 +497,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                     match query[query_index-1] {
                         QueryPart::AllValues |
                         QueryPart::AllIndices => {
-                            check_and_delegate(conjunctions)(query_index+1, query, current, resolver)
+                            check_and_delegate(conjunctions)(query_index+1, query, current, resolver, converter)
                         },
 
                         QueryPart::Key(_) => {
@@ -459,12 +509,12 @@ fn query_retrieval<'value, 'loc: 'value>(
 //                                |index, query:&'value [QueryPart<'_>], value:&'value PathAwareValue, context: &dyn EvalContext<'value>| {
 //                                    match super::eval::eval_conjunction_clauses(
 //                                        conjunctions, resolver, super::eval::eval_guard_clause)? {
-//                                        Status::PASS => query_retrieval(index+1, query, current, resolver),
+//                                        Status::PASS => query_retrieval_with_converter(index+1, query, current, resolver, converter),
 //                                        _ => Ok(vec![])
 //                                    }
 //                                })
                             accumulate_map(
-                                current, map, query_index, query, resolver, check_and_delegate(conjunctions)
+                                current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions)
                             )
                         },
 
@@ -484,7 +534,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                                 resolver.end_record(&context, RecordType::Filter(status))?;
                                 match status {
                                     Status::PASS => {
-                                        query_retrieval(query_index + 1, query, each, resolver)?
+                                        query_retrieval_with_converter(query_index + 1, query, each, resolver, converter)?
                                     },
                                     _ => vec![]
                                 }
@@ -513,7 +563,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                     let mut selected = Vec::with_capacity(map.values.len());
                     match &map_key_filter.compare_with {
                         LetValue::AccessClause(acc_query) => {
-                            let values = query_retrieval(0, &acc_query.query, current, resolver)?;
+                            let values = query_retrieval_with_converter(0, &acc_query.query, current, resolver, converter)?;
                             let values = {
                                 let mut collected = Vec::with_capacity(values.len());
                                 for each_value in values {
@@ -564,7 +614,7 @@ fn query_retrieval<'value, 'loc: 'value>(
                         match each {
                             QueryResult::Resolved(r) => {
                                 extended.extend(
-                                    query_retrieval(query_index+1, query, r, resolver)?
+                                    query_retrieval_with_converter(query_index+1, query, r, resolver, converter)?
                                 );
                             },
 
