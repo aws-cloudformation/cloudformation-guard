@@ -278,3 +278,42 @@ fn map_filter_keys() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_with_converter() -> Result<()> {
+    let path_value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+             Properties:
+               Tags:
+                 - Key: 1
+                   Value: 1
+           ec2:
+             Type: AWS::EC2::Instance
+             Properties:
+               ImageId: ami-123456789012
+               Tags: []
+        "#)?
+    )?;
+    let mut eval = BasicQueryTesting { root: &path_value };
+    let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
+    let query_results = eval.query(&query)?;
+    assert_eq!(query_results.is_empty(), false);
+    assert_eq!(query_results.len(), 2); // 2 resources
+    for each in query_results {
+        match each {
+            QueryResult::Resolved(res) => {
+                assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags/0/Value");
+                assert_eq!(res.is_scalar(), true);
+            },
+
+            QueryResult::UnResolved(ur) => {
+                assert_eq!(ur.traversed_to.self_path().0.as_str(), "/Resources/ec2/Properties/Tags");
+            }
+        }
+    }
+
+    Ok(())
+}
