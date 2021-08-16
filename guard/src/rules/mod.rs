@@ -18,6 +18,7 @@ use crate::rules::errors::ErrorKind;
 use serde::{Serialize};
 use crate::rules::values::CmpOperator;
 use crate::rules::exprs::{QueryPart, GuardAccessClause, ParameterizedRule};
+use crate::rules::eval_context::Scope;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -263,16 +264,16 @@ struct ParameterRuleResult<'value, 'loc> {
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value> {
-    fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
-    fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>>;
-    fn root(&self) -> &'value PathAwareValue;
-    fn rule_status(&self, rule_name: &str) -> Result<Status>;
-    fn start_record(&self, context: &str) -> Result<()>;
-    fn end_record(&self, context: &str, record: RecordType<'value>) -> Result<()>;
-    fn resolve_variable(&self, variable_name: &str) -> Result<Vec<QueryResult<'value>>>;
-    fn add_variable_capture_key(&self, variable_name: &str, key: &'value PathAwareValue) -> Result<()> { Ok(()) }
-    fn add_variable_capture_index(&self, variable_name: &str, index: &'value PathAwareValue) -> Result<()> { Ok(()) }
+    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>>;
+    fn root(&mut self) -> &'value PathAwareValue;
+    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
+    fn start_record(&mut self, context: &str) -> Result<()>;
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>>;
+    fn add_variable_capture_key(&mut self, variable_name: &str, key: &'value PathAwareValue) -> Result<()> { Ok(()) }
+    fn add_variable_capture_index(&mut self, variable_name: &str, index: &'value PathAwareValue) -> Result<()> { Ok(()) }
 }
 
 pub(crate) trait EvaluationContext {
