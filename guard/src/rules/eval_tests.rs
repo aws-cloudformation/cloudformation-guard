@@ -2,7 +2,6 @@ use super::*;
 use crate::rules::eval_context::{root_scope, RecordTracker, EventRecord};
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use std::collections::HashMap;
-use crate::rules::parser::rules_file;
 
 //
 // All unary function simple tests
@@ -320,7 +319,7 @@ fn query_empty_and_non_empty() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -331,7 +330,7 @@ fn query_empty_and_non_empty() -> Result<()> {
         false,
         "".to_string(),
         None,
-        &eval)?;
+        &mut eval)?;
     match status {
         EvaluationResult::QueryValueResult(expected) => {
             assert_eq!(expected.len(), 1);
@@ -354,7 +353,7 @@ fn query_empty_and_non_empty() -> Result<()> {
         false,
         "".to_string(),
         None,
-        &eval)?;
+        &mut eval)?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
         EvaluationResult::EmptyQueryResult(status) => {
@@ -384,7 +383,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -469,7 +468,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -547,7 +546,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     Resource: '*'
         "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -610,7 +609,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                     Resource: '*'
         "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -701,7 +700,7 @@ fn binary_comparisons_gt_ge() -> Result<()> {
           string: Hi
     "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -738,7 +737,7 @@ fn binary_comparisons_lt_le() -> Result<()> {
           string: Hi
     "#)?
     )?;
-    let eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
         root: &path_value
     };
 
@@ -791,9 +790,9 @@ Resources:
     "###;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
-    let root = root_scope(&rules, &value)?;
-    let tracker = RecordTracker::new(&root);
-    let status = eval_rules_file(&rules, &tracker)?;
+    let mut root = root_scope(&rules, &value)?;
+    let mut tracker = RecordTracker::new(&mut root);
+    let status = eval_rules_file(&rules, &mut tracker)?;
     assert_eq!(status, Status::PASS);
     Ok(())
 }
@@ -830,9 +829,9 @@ fn block_guard_pass() -> Result<()> {
     }
     "#)?;
 
-    let eval = BasicQueryTesting { root: &path_value };
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_guard_clause(&block_clauses, &tracker)?;
+    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_guard_clause(&block_clauses, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
     let top = tracker.extract();
     match top.container.as_ref() {
@@ -902,7 +901,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
 
     //
     // Evaluation differences with 1.0 for Statement.*.Principal == '*'
@@ -940,12 +939,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
 
     let clause_str = r#"Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_str = r#"SOME Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let value_str = r###"
@@ -955,11 +954,11 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
     //
     // Evaluate the SOME clause again, it must pass with ths value as well
     //
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -995,8 +994,8 @@ fn block_evaluation() -> Result<()> {
     }
     "#;
     let clause = GuardClause::try_from(clause_str)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&clause, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
     Ok(())
 }
@@ -1030,7 +1029,7 @@ fn block_evaluation_fail() -> Result<()> {
     "#;
     let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
         EndpointConfiguration == ["PRIVATE"]
         some Policy.Statement[*] {
@@ -1040,7 +1039,7 @@ fn block_evaluation_fail() -> Result<()> {
     }
     "#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
 }
@@ -1076,8 +1075,8 @@ fn variable_projections() -> Result<()> {
       some %policies.Properties.Bucket.Ref not empty
     }
     "#)?;
-    let root_scope = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &root_scope)?;
+    let mut root_scope = root_scope(&rules_file, &path_value)?;
+    let status = eval_rules_file(&rules_file, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1114,9 +1113,9 @@ fn variable_projections_failures() -> Result<()> {
       some %policies.Properties.Bucket.Ref not empty
     }
     "#)?;
-    let root_scope = root_scope(&rules_file, &path_value)?;
-    let tracker = RecordTracker::new(&root_scope);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut root_scope = root_scope(&rules_file, &path_value)?;
+    let mut tracker = RecordTracker::new(&mut root_scope);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(status, Status::FAIL); // for s3_bucket_policy_2.Properties.Bucket == ""
 
     let top = tracker.extract();
@@ -1202,8 +1201,8 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let root_scope = root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &root_scope)?;
+    let mut root_scope = root_scope(&rules_files, &path_value)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
     let rules_files = RulesFile::try_from(r#"
@@ -1214,8 +1213,8 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &root_scope)?;
+    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::SKIP);
 
     let path_value = PathAwareValue::try_from(
@@ -1246,8 +1245,8 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &root_scope)?;
+    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::FAIL);
 
     //
@@ -1262,8 +1261,8 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &root_scope)?;
+    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
     //
@@ -1278,8 +1277,8 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &root_scope)?;
+    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1321,9 +1320,9 @@ fn cross_rule_clause_when_checks() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let root = root_scope(&rules, &resources)?;
-    let tracker = RecordTracker::new(&root);
-    let status = eval_rules_file(&rules, &tracker)?;
+    let mut root = root_scope(&rules, &resources)?;
+    let mut tracker = RecordTracker::new(&mut root);
+    let status = eval_rules_file(&rules, &mut tracker)?;
     assert_eq!(status, Status::PASS);
     let mut expectations = HashMap::with_capacity(4);
     expectations.insert("skipped".to_string(), Status::SKIP);
@@ -1356,9 +1355,9 @@ fn cross_rule_clause_when_checks() -> Result<()> {
     "#;
 
     let resources = PathAwareValue::try_from(input)?;
-    let root = root_scope(&rules, &resources)?;
-    let tracker = RecordTracker::new(&root);
-    let status = eval_rules_file(&rules, &tracker)?;
+    let mut root = root_scope(&rules, &resources)?;
+    let mut tracker = RecordTracker::new(&mut root);
+    let status = eval_rules_file(&rules, &mut tracker)?;
     assert_eq!(status, Status::PASS);
     expectations.clear();
     expectations.insert("skipped".to_string(), Status::PASS);
@@ -1397,8 +1396,8 @@ fn test_field_type_array_or_single() -> Result<()> {
     "#;
     let path_value = PathAwareValue::try_from(statements)?;
     let clause = GuardClause::try_from(r#"Statement[*].Action != '*'"#)?;
-    let eval = BasicQueryTesting{ root: &path_value };
-    let status = eval_guard_clause(&clause, &eval)?;
+    let mut eval = BasicQueryTesting{ root: &path_value };
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let statements = r#"{
@@ -1410,25 +1409,25 @@ fn test_field_type_array_or_single() -> Result<()> {
     }
     "#;
     let path_value = PathAwareValue::try_from(statements)?;
-    let eval = BasicQueryTesting{ root: &path_value };
-    let status = eval_guard_clause(&clause, &eval)?;
+    let mut eval = BasicQueryTesting{ root: &path_value };
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"Statement[*].Action[*] != '*'"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     // Test old format
     let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action == '*'"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action != '*'"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1449,18 +1448,18 @@ fn test_for_in_and_not_in() -> Result<()> {
     }"#;
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(statments)?)?;
-    let eval = BasicQueryTesting{ root: &value };
+    let mut eval = BasicQueryTesting{ root: &value };
 
     let clause = GuardClause::try_from(r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"some mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1484,8 +1483,8 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
             - 101
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting{ root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting{ root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let value_str = r#"
@@ -1497,8 +1496,8 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
             - 100000
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting{ root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting{ root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1545,8 +1544,8 @@ fn test_inner_when_skipped() -> Result<()> {
           ManagedPolicyName: OperatorPolicy
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"
@@ -1564,22 +1563,22 @@ fn test_inner_when_skipped() -> Result<()> {
           ManagedPolicyName: AdminPolicy
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::SKIP);
 
     let value_str = r#"
     Resources: {}
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1588,30 +1587,29 @@ fn test_inner_when_skipped() -> Result<()> {
 #[test]
 fn test_multiple_valued_clause_reporting() -> Result<()> {
     struct ReportAssertions<'eval, 'value, 'loc: 'value> {
-        parent: &'eval dyn EvalContext<'value, 'loc>
+        parent: &'eval mut dyn EvalContext<'value, 'loc>
     };
 
     impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ReportAssertions<'eval, 'value, 'loc> {
-        fn query(&self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
+        fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
             self.parent.query(query)
         }
 
-        fn find_parameterized_rule(&self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+        fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
             todo!()
         }
 
-
-        fn root(&self) -> &'value PathAwareValue {
+        fn root(&mut self) -> &'value PathAwareValue {
             self.parent.root()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
             self.parent.rule_status(rule_name)
         }
 
-        fn start_record(&self, context: &str) -> Result<()> { Ok(()) }
+        fn start_record(&mut self, context: &str) -> Result<()> { Ok(()) }
 
-        fn end_record(&self, context: &str, record: RecordType<'value>) -> Result<()> {
+        fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
             match record {
                 RecordType::GuardClauseBlockCheck(BlockCheck{message, status, at_least_one_matches}) => {
                     assert_eq!(message, None);
@@ -1652,7 +1650,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
             Ok(())
         }
 
-        fn resolve_variable(&self, variable_name: &str) -> Result<Vec<QueryResult<'value>>> {
+        fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
             self.parent.resolve_variable(variable_name)
         }
     }
@@ -1679,9 +1677,9 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
 
     let rules = Rule::try_from(rule)?;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
-    let root = BasicQueryTesting { root: &values };
-    let reporter = ReportAssertions { parent: &root };
-    let status = eval_rule(&rules, &reporter)?;
+    let mut root = BasicQueryTesting { root: &values };
+    let mut reporter = ReportAssertions { parent: &mut root };
+    let status = eval_rule(&rules, &mut reporter)?;
     assert_eq!(status, Status::FAIL);
 
     let rule = r###"
@@ -1706,9 +1704,9 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     "###;
 
     let rules = RulesFile::try_from(rule)?;
-    let root = root_scope(&rules, &values)?;
-    let reporter = ReportAssertions{ parent: &root };
-    let status = eval_rules_file(&rules, &reporter)?;
+    let mut root = root_scope(&rules, &values)?;
+    let mut reporter = ReportAssertions{ parent: &mut root };
+    let status = eval_rules_file(&rules, &mut reporter)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1775,8 +1773,8 @@ Resources:
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
-    let context = root_scope(&rule_eval, &value)?;
-    let status = eval_rules_file(&rule_eval, &context)?;
+    let mut context = root_scope(&rule_eval, &value)?;
+    let status = eval_rules_file(&rule_eval, &mut context)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1837,8 +1835,8 @@ fn double_projection_tests() -> Result<()> {
 
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
-    let eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let resources_str = r###"
@@ -1854,8 +1852,8 @@ fn double_projection_tests() -> Result<()> {
     }
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
-    let eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1931,7 +1929,7 @@ fn test_rules_with_some_clauses() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(resources)?;
     let parsed = RulesFile::try_from(query)?;
-    let eval = root_scope(&parsed, &value)?;
+    let mut eval = root_scope(&parsed, &value)?;
     let selected = eval.resolve_variable("x")?;
     println!("{:?}", selected);
     assert_eq!(selected.len(), 1);
@@ -1961,30 +1959,30 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     }
     "#;
     let values = PathAwareValue::try_from(values_str)?;
-    let eval = BasicQueryTesting { root: &values };
+    let mut eval = BasicQueryTesting { root: &values };
 
-    let status = eval_guard_clause(&clause_some, &eval)?;
+    let status = eval_guard_clause(&clause_some, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let values_str = r#"{ Tags: [] }"#;
     let values = PathAwareValue::try_from(values_str)?;
-    let eval = BasicQueryTesting { root: &values };
-    let status = eval_guard_clause(&clause_some, &eval)?;
+    let mut eval = BasicQueryTesting { root: &values };
+    let status = eval_guard_clause(&clause_some, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
-    let eval = BasicQueryTesting { root: &values };
-    let status = eval_guard_clause(&clause_some, &eval)?;
+    let mut eval = BasicQueryTesting { root: &values };
+    let status = eval_guard_clause(&clause_some, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
-    let status = eval_guard_clause(&clause, &eval)?;
+    let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     //
@@ -2014,7 +2012,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     }"#;
     let resources = PathAwareValue::try_from(resources_str)?;
     let selection_query = AccessQuery::try_from(selection_str)?;
-    let eval = BasicQueryTesting { root: &resources };
+    let mut eval = BasicQueryTesting { root: &resources };
     let selected = eval.query(&selection_query.query)?;
     println!("Selected = {:?}", selected);
     assert_eq!(selected.len(), 1);
@@ -2050,9 +2048,9 @@ rule check_rest_api_is_private_and_has_access {
     }
 }"#;
     let rule = RulesFile::try_from(rule_str)?;
-    let root = root_scope(&rule, &value)?;
-    let tracker = RecordTracker::new(&root);
-    let status = eval_rules_file(&rule, &tracker)?;
+    let mut root = root_scope(&rule, &value)?;
+    let mut tracker = RecordTracker::new(&mut root);
+    let status = eval_rules_file(&rule, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"
@@ -2072,8 +2070,8 @@ rule check_rest_api_is_private_and_has_access {
     "#;
     let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = root_scope(&rule, &value)?;
-    let status = eval_rules_file(&rule, &root)?;
+    let mut root = root_scope(&rule, &value)?;
+    let status = eval_rules_file(&rule, &mut root)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2086,50 +2084,50 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(resources)?)?;
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags[*].Key == /Name/"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"some Tags[*].Key == /Name/"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags[*] { Key == /Name/ }"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"some Tags[*] { Key == /Name/ }"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags !empty"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags empty"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags[*] !empty"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags[*] empty"#)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&claused_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2140,21 +2138,21 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let resources = r#"Resources: {}"#;
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
 
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources.*.Properties exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources.* { Properties exists }"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     //
@@ -2162,7 +2160,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     //
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources[ Type == /Bucket/ ].Propertiers exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     //
@@ -2177,8 +2175,8 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2187,10 +2185,10 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let resources = r#"{}"#;
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -2268,9 +2266,9 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?
     )?;
-    let eval = root_scope(&rules_file, &path_value)?;
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut eval = root_scope(&rules_file, &path_value)?;
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
 
     let top = tracker.extract();
@@ -2328,8 +2326,8 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?
     )?;
-    let eval = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = root_scope(&rules_file, &path_value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2355,8 +2353,8 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?
     )?;
-    let eval = eval.reset_root(&path_value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = eval.reset_root(&path_value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2384,12 +2382,12 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(resources)?
     )?;
-    let eval = eval.reset_root(&path_value)?;
+    let mut eval = eval.reset_root(&path_value)?;
     //
     // Let us track failures and assert on what must be observed
     //
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
 
     let top = tracker.extract();
@@ -2458,8 +2456,8 @@ fn filter_based_with_join_pass_use_cases() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(resources)?
     )?;
     let rules_file = RulesFile::try_from(rules)?;
-    let eval = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = root_scope(&rules_file, &path_value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2497,8 +2495,8 @@ fn rule_clause_tests() -> Result<()> {
     "#;
 
     let value = PathAwareValue::try_from(v)?;
-    let eval = root_scope(&rule, &value)?;
-    let status = eval_rules_file(&rule, &eval)?;
+    let mut eval = root_scope(&rule, &value)?;
+    let status = eval_rules_file(&rule, &mut eval)?;
     assert_eq!(Status::PASS, status);
 
     //
@@ -2519,8 +2517,8 @@ fn rule_clause_tests() -> Result<()> {
     "#;
 
     let value = PathAwareValue::try_from(v)?;
-    let eval = eval.reset_root(&value)?;
-    let status = eval_rules_file(&rule, &eval)?;
+    let mut eval = eval.reset_root(&value)?;
+    let status = eval_rules_file(&rule, &mut eval)?;
     assert_eq!(Status::FAIL, status);
 
     Ok(())
@@ -2583,9 +2581,9 @@ fn rule_test_type_blocks() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value)?
     )?;
     let rules_file = RulesFile::try_from(r)?;
-    let root_context = root_scope(&rules_file, &root)?;
-    let tracker = RecordTracker::new(&root_context);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut root_context = root_scope(&rules_file, &root)?;
+    let mut tracker = RecordTracker::new(&mut root_context);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(Status::FAIL, status);
 
     let top = tracker.extract();
@@ -2675,8 +2673,8 @@ rule iam_basic_checks when iam_resources_exists {
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
-    let root_context = root_scope(&rules_file, &root)?;
-    let status = eval_rules_file(&rules_file, &root_context)?;
+    let mut root_context = root_scope(&rules_file, &root)?;
+    let status = eval_rules_file(&rules_file, &mut root_context)?;
     assert_eq!(Status::PASS, status);
 
     Ok(())
@@ -2743,10 +2741,10 @@ rule iam_basic_checks {
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
-    let root_context = root_scope(&rules_file, &root)?;
+    let mut root_context = root_scope(&rules_file, &root)?;
 
-    let tracker = RecordTracker::new(&root_context);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut tracker = RecordTracker::new(&mut root_context);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(Status::FAIL, status);
 
     let top = tracker.extract();
@@ -2810,9 +2808,9 @@ rule iam_basic_checks {
     "###;
 
     let root = PathAwareValue::try_from(value)?;
-    let root_context = root_context.reset_root(&root)?;
-    let tracker = RecordTracker::new(&root_context);
-    let status = eval_rules_file(&rules_file, &tracker)?;
+    let mut root_context = root_context.reset_root(&root)?;
+    let mut tracker = RecordTracker::new(&mut root_context);
+    let status = eval_rules_file(&rules_file, &mut tracker)?;
     assert_eq!(Status::FAIL, status);
 
     let top = tracker.extract();
@@ -2894,26 +2892,26 @@ fn test_iam_statement_clauses() -> Result<()> {
     }
     "###;
     let value = PathAwareValue::try_from(sample)?;
-    let eval = BasicQueryTesting { root: &value };
+    let mut eval = BasicQueryTesting { root: &value };
 
     let clause = r#"Statement[
         Condition EXISTS ].Condition.*[
             this is_struct ][ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#;
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
     let parsed = GuardClause::try_from(clause)?;
-    let status = eval_guard_clause(&parsed, &eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(Status::PASS, status);
 
     let clause = r#"Statement[ Condition EXISTS
                                      Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
     "#;
     let parsed = GuardClause::try_from(clause)?;
-    let status = eval_guard_clause(&parsed, &eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(Status::PASS, status);
 
     let parsed = GuardClause::try_from(
         r#"SOME Statement[*].Condition.*[ THIS IS_STRUCT ][ KEYS ==  /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#)?;
-    let status = eval_guard_clause(&parsed, &eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(Status::PASS, status);
 
     let sample = r###"
@@ -2927,9 +2925,9 @@ fn test_iam_statement_clauses() -> Result<()> {
         ]
     }"###;
     let value = PathAwareValue::try_from(sample)?;
-    let eval = BasicQueryTesting { root: &value };
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_guard_clause(&parsed, &tracker)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_guard_clause(&parsed, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
 
     let sample = r###"
@@ -2946,9 +2944,9 @@ fn test_iam_statement_clauses() -> Result<()> {
         ]
     }"###;
     let value = PathAwareValue::try_from(sample)?;
-    let eval = BasicQueryTesting { root: &value };
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_guard_clause(&parsed, &tracker)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_guard_clause(&parsed, &mut tracker)?;
     assert_eq!(status, Status::FAIL);
 
     let sample = r###"
@@ -2966,16 +2964,16 @@ fn test_iam_statement_clauses() -> Result<()> {
         ]
     }"###;
     let value = PathAwareValue::try_from(sample)?;
-    let eval = BasicQueryTesting { root: &value };
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_guard_clause(&parsed, &tracker)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_guard_clause(&parsed, &mut tracker)?;
     assert_eq!(status, Status::PASS);
 
 
     let value = PathAwareValue::try_from(SAMPLE)?;
     let parsed = GuardClause::try_from(clause)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_guard_clause(&parsed, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(Status::FAIL, status);
 
     Ok(())
@@ -3034,8 +3032,8 @@ rule check_rest_api_private {
     }"###;
 
     let value = PathAwareValue::try_from(resources)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -3096,8 +3094,8 @@ rule check_rest_api_private {
     }"###;
 
     let value = PathAwareValue::try_from(resources)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let resources = r###"
@@ -3137,8 +3135,8 @@ rule check_rest_api_private {
     }"###;
 
     let value = PathAwareValue::try_from(resources)?;
-    let eval = BasicQueryTesting { root: &value };
-    let status = eval_rule(&rule, &eval)?;
+    let mut eval = BasicQueryTesting { root: &value };
+    let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -3199,8 +3197,8 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
-    let eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &eval)?;
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
 
     println!("{}", status);
     Ok(())
@@ -3316,8 +3314,8 @@ rule deny_egress when %sgs NOT EMPTY {
     };
 
     for (index, each) in samples.iter().enumerate() {
-        let root_context = root_scope(&rules_file, &each)?;
-        let status = eval_rules_file(&rules_file, &root_context)?;
+        let mut root_context = root_scope(&rules_file, &each)?;
+        let status = eval_rules_file(&rules_file, &mut root_context)?;
         println!("{}", format!("Status {} = {}", index, status).underline());
     }
 
@@ -3516,8 +3514,8 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     ];
 
     for (idx, each) in parsed_values.iter().enumerate() {
-        let root_scope = root_scope(&s3_rule, each)?;
-        let status = eval_rules_file(&s3_rule, &root_scope)?;
+        let mut root_scope = root_scope(&s3_rule, each)?;
+        let status = eval_rules_file(&s3_rule, &mut root_scope)?;
         assert_eq!(status, expectations[idx]);
     }
     Ok(())
@@ -3531,8 +3529,8 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value)?
     )?;
     let guard_clause = GuardClause::try_from(clause)?;
-    let eval = BasicQueryTesting { root: &path_value };
-    let status = eval_guard_clause(&guard_clause, &eval)?;
+    let mut eval = BasicQueryTesting { root: &path_value };
+    let status = eval_guard_clause(&guard_clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
     let clause = r#"algorithms == ["KMS", "SSE"]"#;
@@ -3541,8 +3539,8 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value)?
     )?;
     let guard_clause = GuardClause::try_from(clause)?;
-    let eval = BasicQueryTesting { root: &path_value };
-    let status = eval_guard_clause(&guard_clause, &eval)?;
+    let mut eval = BasicQueryTesting { root: &path_value };
+    let status = eval_guard_clause(&guard_clause, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -3589,9 +3587,9 @@ fn parameterized_evaluations() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(template_value)?
     )?;
 
-    let eval = root_scope(&rules_files, &template)?;
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_rules_file(&rules_files, &tracker)?;
+    let mut eval = root_scope(&rules_files, &template)?;
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_rules_file(&rules_files, &mut tracker)?;
     let top = tracker.extract();
     crate::commands::validate::print_verbose_tree(&top);
     assert_eq!(status, Status::FAIL);
@@ -3611,9 +3609,9 @@ fn parameterized_evaluations() -> Result<()> {
         serde_yaml::from_str::<serde_json::Value>(aws_config_value)?
     )?;
 
-    let eval = root_scope(&rules_files, &config_value)?;
-    let tracker = RecordTracker::new(&eval);
-    let status = eval_rules_file(&rules_files, &tracker)?;
+    let mut eval = root_scope(&rules_files, &config_value)?;
+    let mut tracker = RecordTracker::new(&mut eval);
+    let status = eval_rules_file(&rules_files, &mut tracker)?;
     let top = tracker.extract();
     crate::commands::validate::print_verbose_tree(&top);
     assert_eq!(status, Status::PASS);

@@ -540,9 +540,9 @@ fn evaluate_against_data_input<'r>(data_type: Type,
         }
 
         if new_engine_version {
-            let root_scope = root_scope(&rules, &each)?;
-            let tracker = RecordTracker::new(&root_scope);
-            let status = eval_rules_file(rules, &tracker)?;
+            let mut root_scope = root_scope(&rules, &each)?;
+            let mut tracker = RecordTracker::new(&mut root_scope);
+            let status = eval_rules_file(rules, &mut tracker)?;
             let root_record = tracker.extract();
             for each in &reporters {
                 (*each).report_eval(&mut write_output, status, &root_record)?
