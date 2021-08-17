@@ -68,11 +68,6 @@ pub(crate) enum EvaluationType {
     Clause
 }
 
-pub(crate) struct RuleEvalResult<'rules> {
-    name: &'rules str,
-
-}
-
 impl std::fmt::Display for EvaluationType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
