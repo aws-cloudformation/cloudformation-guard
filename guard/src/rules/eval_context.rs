@@ -647,8 +647,10 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
 }
 
 pub(crate) struct RecordTracker<'eval, 'value, 'loc: 'value> {
-    pub(crate) events: std::cell::RefCell<Vec<EventRecord<'value>>>,
-    pub(crate) final_event: std::cell::RefCell<Option<EventRecord<'value>>>,
+//    pub(crate) events: std::cell::RefCell<Vec<EventRecord<'value>>>,
+//    pub(crate) final_event: std::cell::RefCell<Option<EventRecord<'value>>>,
+    pub(crate) events: Vec<EventRecord<'value>>,
+    pub(crate) final_event: Option<EventRecord<'value>>,
     pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
@@ -656,12 +658,12 @@ impl<'eval, 'value, 'loc: 'value> RecordTracker<'eval, 'value, 'loc> {
     pub(crate) fn new<'e, 'v, 'l: 'v>(parent: &'e mut dyn EvalContext<'v, 'l>) -> RecordTracker<'e, 'v, 'l> {
         RecordTracker {
             parent,
-            events: std::cell::RefCell::new(Vec::new()),
-            final_event: std::cell::RefCell::new(None)
+            events: Vec::new(),
+            final_event: None
         }
     }
 
-    pub(crate) fn extract(self) -> EventRecord<'value> {
+    pub(crate) fn extract(mut self) -> EventRecord<'value> {
         self.final_event.take().unwrap()
     }
 }
@@ -686,7 +688,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'e
     }
 
     fn start_record(&mut self, context: &str) -> Result<()> {
-        self.events.borrow_mut().push(EventRecord {
+        self.events.push(EventRecord {
             context: context.to_string(),
             container: None,
             children: vec![]
@@ -695,7 +697,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'e
     }
 
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
-        let matched = match self.events.borrow_mut().pop() {
+        let matched = match self.events.pop() {
             Some(mut event) => {
                 if &event.context != context {
                     return Err(Error::new(ErrorKind::IncompatibleError(
@@ -714,13 +716,13 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'e
             }
         };
 
-        match self.events.borrow_mut().last_mut() {
+        match self.events.last_mut() {
             Some(parent) => {
                 parent.children.push(matched);
             },
 
             None => {
-                self.final_event.borrow_mut().replace(matched);
+                self.final_event.replace(matched);
             }
         }
         Ok(())
