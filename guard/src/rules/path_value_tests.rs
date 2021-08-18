@@ -244,12 +244,12 @@ fn path_value_queries() -> Result<(), Error> {
                 query: AccessQuery {
                     query: vec![
                         QueryPart::Key(String::from("Resources")),
-                        QueryPart::AllValues,
+                        QueryPart::AllValues(None),
                         QueryPart::Key("Properties".to_string()),
                         QueryPart::Key("SecurityGroupIds".to_string()),
-                        QueryPart::AllIndices,
+                        QueryPart::AllIndices(None),
                         QueryPart::Key("Fn::GetAtt".to_string()),
-                        QueryPart::AllValues
+                        QueryPart::AllValues(None)
                     ],
                     match_all: false
                 },

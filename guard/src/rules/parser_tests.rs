@@ -832,14 +832,14 @@ fn to_string_vec<'loc>(list: &[&str]) -> Vec<QueryPart<'loc>> {
     let mut list = list.iter()
         .map(|part|
             if *part == "*" {
-                QueryPart::AllValues
+                QueryPart::AllValues(None)
             }
             else {
                 QueryPart::Key(String::from(*part))
             })
         .collect::<Vec<QueryPart>>();
     if list[0].is_variable() {
-        list.insert(1, QueryPart::AllIndices);
+        list.insert(1, QueryPart::AllIndices(None));
     }
     list
 }
@@ -1139,7 +1139,7 @@ fn test_access() {
              AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
                  QueryPart::Key("type".to_string()),
-                 QueryPart::AllValues,
+                 QueryPart::AllValues(None),
              ], match_all: true }
         )),
         Ok(( // 7
@@ -1153,7 +1153,7 @@ fn test_access() {
              },
              AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
-                 QueryPart::AllValues,
+                 QueryPart::AllValues(None),
                  QueryPart::Key("type".to_string()),
                  QueryPart::Key("port".to_string()),
              ], match_all: true },
@@ -1169,7 +1169,7 @@ fn test_access() {
              },
              AccessQuery{ query: vec![
                  QueryPart::Key("engine".to_string()),
-                 QueryPart::AllValues,
+                 QueryPart::AllValues(None),
                  QueryPart::Key("type".to_string()),
                  QueryPart::Key("%var".to_string())
              ], match_all: true },
@@ -1216,7 +1216,7 @@ fn test_access() {
             AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
                 QueryPart::Key("ok".to_string()),
-                QueryPart::AllValues,
+                QueryPart::AllValues(None),
             ], match_all: true },
         )),
 
@@ -1233,7 +1233,7 @@ fn test_access() {
             AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
                 QueryPart::Key("%name".to_string()),
-                QueryPart::AllValues
+                QueryPart::AllValues(None)
             ], match_all: true },
         )),
 
@@ -1249,7 +1249,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-                QueryPart::AllIndices,
+                QueryPart::AllIndices(None),
                 QueryPart::Key("type".to_string()),
             ], match_all: true },
         )),
@@ -1267,8 +1267,8 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-                QueryPart::AllIndices,
-                QueryPart::AllValues,
+                QueryPart::AllIndices(None),
+                QueryPart::AllValues(None),
                 QueryPart::Key("type".to_string()),
                 QueryPart::Index(0),
             ], match_all: true },
@@ -1287,9 +1287,9 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-                QueryPart::AllIndices,
+                QueryPart::AllIndices(None),
                 QueryPart::Key("%type".to_string()),
-                QueryPart::AllValues,
+                QueryPart::AllValues(None),
             ], match_all: true },
         )),
 
@@ -1306,9 +1306,9 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-                QueryPart::AllIndices,
+                QueryPart::AllIndices(None),
                 QueryPart::Key("%type".to_string()),
-                QueryPart::AllValues,
+                QueryPart::AllValues(None),
                 QueryPart::Key("port".to_string())
             ], match_all: true },
         )),
@@ -1326,8 +1326,8 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("%engine".to_string()),
-                QueryPart::AllIndices,
-                QueryPart::AllValues,
+                QueryPart::AllIndices(None),
+                QueryPart::AllValues(None),
             ], match_all: true },
         )),
 
@@ -1344,7 +1344,7 @@ fn test_access() {
             },
             AccessQuery{ query: vec![
                 QueryPart::Key("engine".to_string()),
-                QueryPart::Filter(vec![
+                QueryPart::Filter(None, vec![
                     vec![GuardClause::Clause(
                         GuardAccessClause {
                             access_clause: AccessClause {
@@ -1638,7 +1638,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            QueryPart::MapKeyFilter(MapKeyFilterClause {
+            QueryPart::MapKeyFilter(None, MapKeyFilterClause {
                 comparator: (CmpOperator::In, false),
                 compare_with: LetValue::AccessClause(AccessQuery {
                     match_all: true,
@@ -1659,7 +1659,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            QueryPart::MapKeyFilter(MapKeyFilterClause {
+            QueryPart::MapKeyFilter(None, MapKeyFilterClause {
                 comparator: (CmpOperator::In, true),
                 compare_with: LetValue::AccessClause(AccessQuery {
                     match_all: true,
@@ -1681,7 +1681,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            QueryPart::MapKeyFilter(MapKeyFilterClause {
+            QueryPart::MapKeyFilter(None, MapKeyFilterClause {
                 comparator: (CmpOperator::Eq, false),
                 compare_with: LetValue::Value(PathAwareValue::try_from(Value::Regex("aws:S".to_string())).unwrap()),
             })
@@ -1698,7 +1698,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            QueryPart::MapKeyFilter(MapKeyFilterClause {
+            QueryPart::MapKeyFilter(None, MapKeyFilterClause {
                 comparator: (CmpOperator::Eq, true),
                 compare_with: LetValue::Value(PathAwareValue::try_from(Value::String("aws:IsSecure".to_string())).unwrap()),
             }),
@@ -1714,7 +1714,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            QueryPart::MapKeyFilter(MapKeyFilterClause {
+            QueryPart::MapKeyFilter(None, MapKeyFilterClause {
                 comparator: (CmpOperator::In, true),
                 compare_with: LetValue::AccessClause(AccessQuery {
                     match_all: true,
@@ -2085,8 +2085,8 @@ fn test_predicate_clause_success() {
         )},
             AccessQuery{ query: vec![
                 QueryPart::Key("resources".to_string()),
-                QueryPart::AllValues,
-                QueryPart::Filter(Conjunctions::from([
+                QueryPart::AllValues(None),
+                QueryPart::Filter(None, Conjunctions::from([
                     Disjunctions::from([
                         GuardClause::Clause(
                             GuardAccessClause {
@@ -2120,8 +2120,8 @@ fn test_predicate_clause_success() {
         )},
             AccessQuery{ query: vec![
                 QueryPart::Key("resources".to_string()),
-                QueryPart::AllValues,
-                QueryPart::Filter(Conjunctions::from([
+                QueryPart::AllValues(None),
+                QueryPart::Filter(None, Conjunctions::from([
                     Disjunctions::from([
                         GuardClause::Clause(
                             GuardAccessClause {
@@ -2570,7 +2570,7 @@ fn test_clauses() {
                                 },
                                 compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
                                 query: AccessQuery{ query: "configurations.containers.*.image".split(".")
-                                    .map(|s| if s == "*" { QueryPart::AllValues } else { QueryPart::Key(s.to_string()) }).collect(), match_all: true },
+                                    .map(|s| if s == "*" { QueryPart::AllValues(None) } else { QueryPart::Key(s.to_string()) }).collect(), match_all: true },
                                 custom_message: None,
                                 comparator: (CmpOperator::Eq, false),
                             },
@@ -2621,7 +2621,7 @@ fn test_clauses() {
                                 compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
                                 query: AccessQuery{ query: "configurations.containers[*].image".split(".").map( |part|
                                     if part.contains('[') {
-                                        vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices]
+                                        vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices(None)]
                                     } else {
                                         vec![QueryPart::Key(part.to_string())]
                                     }
@@ -2870,8 +2870,8 @@ fn test_assignments() {
                 value: LetValue::AccessClause(
                     AccessQuery{ query: vec![
                         QueryPart::Key(String::from("resources")),
-                        QueryPart::AllValues,
-                        QueryPart::Filter(Conjunctions::from(
+                        QueryPart::AllValues(None),
+                        QueryPart::Filter(None, Conjunctions::from(
                             [
                                 Disjunctions::from([
                                     GuardClause::Clause(
@@ -3074,8 +3074,8 @@ fn test_type_block() {
                 },
                 query: vec![
                     QueryPart::Key("Resources".to_string()),
-                    QueryPart::AllValues,
-                    QueryPart::Filter(Conjunctions::from([
+                    QueryPart::AllValues(None),
+                    QueryPart::Filter(None, Conjunctions::from([
                         Disjunctions::from([
                             GuardClause::Clause(GuardAccessClause {
                                 negation: false,
@@ -3142,8 +3142,8 @@ fn test_type_block() {
                 },
                 query: vec![
                     QueryPart::Key("Resources".to_string()),
-                    QueryPart::AllValues,
-                    QueryPart::Filter(Conjunctions::from([
+                    QueryPart::AllValues(None),
+                    QueryPart::Filter(None, Conjunctions::from([
                         Disjunctions::from([
                             GuardClause::Clause(GuardAccessClause {
                                 negation: false,
@@ -3228,8 +3228,8 @@ fn test_type_block() {
                 },
                 query: vec![
                     QueryPart::Key("Resources".to_string()),
-                    QueryPart::AllValues,
-                    QueryPart::Filter(Conjunctions::from([
+                    QueryPart::AllValues(None),
+                    QueryPart::Filter(None, Conjunctions::from([
                         Disjunctions::from([
                             GuardClause::Clause(GuardAccessClause {
                                 negation: false,
@@ -3394,8 +3394,8 @@ fn test_rule_block() {
 
                                 query: vec![
                                     QueryPart::Key("Resources".to_string()),
-                                    QueryPart::AllValues,
-                                    QueryPart::Filter(Conjunctions::from([
+                                    QueryPart::AllValues(None),
+                                    QueryPart::Filter(None, Conjunctions::from([
                                         Disjunctions::from([
                                             GuardClause::Clause(GuardAccessClause {
                                                 negation: false,
@@ -3446,8 +3446,8 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
-                                                            QueryPart::AllIndices,
-                                                            QueryPart::AllValues,
+                                                            QueryPart::AllIndices(None),
+                                                            QueryPart::AllValues(None),
                                                             QueryPart::Key("Ebs".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Exists, false),
@@ -3469,8 +3469,8 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
-                                                            QueryPart::AllIndices,
-                                                            QueryPart::AllValues,
+                                                            QueryPart::AllIndices(None),
+                                                            QueryPart::AllValues(None),
                                                             QueryPart::Key("device_name".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
@@ -3492,8 +3492,8 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
-                                                            QueryPart::AllIndices,
-                                                            QueryPart::AllValues,
+                                                            QueryPart::AllIndices(None),
+                                                            QueryPart::AllValues(None),
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("encrypted".to_string())
                                                         ], match_all: true },
@@ -3516,8 +3516,8 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("%volumes".to_string()),
-                                                            QueryPart::AllIndices,
-                                                            QueryPart::AllValues,
+                                                            QueryPart::AllIndices(None),
+                                                            QueryPart::AllValues(None),
                                                             QueryPart::Key("Ebs".to_string()),
                                                             QueryPart::Key("delete_on_termination".to_string())
                                                         ], match_all: true },
@@ -3538,8 +3538,8 @@ fn test_rule_block() {
                                 },
                                 query: vec![
                                     QueryPart::Key("Resources".to_string()),
-                                    QueryPart::AllValues,
-                                    QueryPart::Filter(Conjunctions::from([
+                                    QueryPart::AllValues(None),
+                                    QueryPart::Filter(None, Conjunctions::from([
                                         Disjunctions::from([
                                             GuardClause::Clause(GuardAccessClause {
                                                 negation: false,
@@ -3578,7 +3578,7 @@ fn test_rule_block() {
                                                     access_clause: AccessClause {
                                                         query: AccessQuery{ query: vec![
                                                             QueryPart::Key("block_device_mappings".to_string()),
-                                                            QueryPart::AllValues,
+                                                            QueryPart::AllValues(None),
                                                             QueryPart::Key("device_name".to_string())
                                                         ], match_all: true },
                                                         comparator: (CmpOperator::Eq, false),
@@ -3598,8 +3598,8 @@ fn test_rule_block() {
                                 },
                                 query: vec![
                                     QueryPart::Key("Resources".to_string()),
-                                    QueryPart::AllValues,
-                                    QueryPart::Filter(Conjunctions::from([
+                                    QueryPart::AllValues(None),
+                                    QueryPart::Filter(None, Conjunctions::from([
                                         Disjunctions::from([
                                             GuardClause::Clause(GuardAccessClause {
                                                 negation: false,
@@ -3733,7 +3733,7 @@ fn test_try_from_rule_block() -> Result<(), Error> {
                                                 access_clause: AccessClause {
                                                     query: AccessQuery{ query: vec![
                                                         QueryPart::Key(String::from("tags")),
-                                                        QueryPart::AllValues,
+                                                        QueryPart::AllValues(None),
                                                         QueryPart::Key(String::from("key"))
                                                     ], match_all: true },
                                                     comparator: (CmpOperator::In, false),
@@ -3756,8 +3756,8 @@ fn test_try_from_rule_block() -> Result<(), Error> {
                             },
                             query: vec![
                                 QueryPart::Key("Resources".to_string()),
-                                QueryPart::AllValues,
-                                QueryPart::Filter(Conjunctions::from([
+                                QueryPart::AllValues(None),
+                                QueryPart::Filter(None, Conjunctions::from([
                                     Disjunctions::from([
                                         GuardClause::Clause(GuardAccessClause {
                                             negation: false,
@@ -3982,8 +3982,8 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     },
                     query: vec![
                         QueryPart::Key("Resources".to_string()),
-                        QueryPart::AllValues,
-                        QueryPart::Filter(Conjunctions::from([
+                        QueryPart::AllValues(None),
+                        QueryPart::Filter(None, Conjunctions::from([
                             Disjunctions::from([
                                 GuardClause::Clause(GuardAccessClause {
                                     negation: false,
@@ -4035,8 +4035,8 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     },
                     query: vec![
                         QueryPart::Key("Resources".to_string()),
-                        QueryPart::AllValues,
-                        QueryPart::Filter(Conjunctions::from([
+                        QueryPart::AllValues(None),
+                        QueryPart::Filter(None, Conjunctions::from([
                             Disjunctions::from([
                                 GuardClause::Clause(GuardAccessClause {
                                     negation: false,
@@ -4088,8 +4088,8 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                     },
                     query: vec![
                         QueryPart::Key("Resources".to_string()),
-                        QueryPart::AllValues,
-                        QueryPart::Filter(Conjunctions::from([
+                        QueryPart::AllValues(None),
+                        QueryPart::Filter(None, Conjunctions::from([
                             Disjunctions::from([
                                 GuardClause::Clause(GuardAccessClause {
                                     negation: false,
@@ -4141,8 +4141,8 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
                      },
                      query: vec![
                          QueryPart::Key("Resources".to_string()),
-                         QueryPart::AllValues,
-                         QueryPart::Filter(Conjunctions::from([
+                         QueryPart::AllValues(None),
+                         QueryPart::Filter(None, Conjunctions::from([
                              Disjunctions::from([
                                  GuardClause::Clause(GuardAccessClause {
                                      negation: false,
@@ -4354,14 +4354,14 @@ fn some_clause_parse() -> Result<(), Error> {
                     match_all: false,
                     query: vec![
                         QueryPart::Key("%api_gws".to_string()),
-                        QueryPart::AllIndices,
+                        QueryPart::AllIndices(None),
                         QueryPart::Key("Properties".to_string()),
                         QueryPart::Key("Policy".to_string()),
                         QueryPart::Key("Statement".to_string()),
-                        QueryPart::AllIndices,
+                        QueryPart::AllIndices(None),
                         QueryPart::Key("Condition".to_string()),
                         QueryPart::MapKeyFilter(
-                            MapKeyFilterClause {
+                            None, MapKeyFilterClause {
                                 comparator: (CmpOperator::Eq, false),
                                 compare_with: LetValue::Value(PathAwareValue::try_from(Value::Regex("aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())).unwrap())
                             }
@@ -4392,7 +4392,7 @@ fn it_support_test() -> Result<(), Error> {
         match_all: true,
         query: vec![
             QueryPart::Key("Tags".to_string()),
-            QueryPart::Filter(
+            QueryPart::Filter(None,
                 Conjunctions::from([
                     Disjunctions::from([
                         GuardClause::Clause(
@@ -4449,7 +4449,7 @@ fn test_block_properties()-> Result<(), Error> {
                 query: vec![
                     QueryPart::Key("Properties".to_string()),
                     QueryPart::Key("Statements".to_string()),
-                    QueryPart::AllIndices
+                    QueryPart::AllIndices(None)
                 ],
                 match_all: true
             },
@@ -4706,7 +4706,7 @@ fn parameters_guard_clause() -> Result<(), Error> {
                 match_all: true,
                 query: vec![
                     QueryPart::Key("Resources".to_string()),
-                    QueryPart::Filter(
+                    QueryPart::Filter(None,
                         Conjunctions::from([
                             Disjunctions::from([
                                 GuardClause::Clause(GuardAccessClause {
@@ -4752,7 +4752,7 @@ fn parameters_guard_clause() -> Result<(), Error> {
                     QueryPart::Key("Properties".to_string()),
                     QueryPart::Key("PolicyDocument".to_string()),
                     QueryPart::Key("Statement".to_string()),
-                    QueryPart::AllIndices
+                    QueryPart::AllIndices(None)
                 ]
             })
         ]
@@ -4789,7 +4789,7 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
                 match_all: true,
                 query: vec![
                     QueryPart::Key("Resources".to_string()),
-                    QueryPart::Filter(
+                    QueryPart::Filter(None,
                         Conjunctions::from([
                             Disjunctions::from([
                                 GuardClause::Clause(GuardAccessClause {
@@ -4835,14 +4835,14 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
                     QueryPart::Key("Properties".to_string()),
                     QueryPart::Key("PolicyDocument".to_string()),
                     QueryPart::Key("Statement".to_string()),
-                    QueryPart::AllIndices
+                    QueryPart::AllIndices(None)
                 ]
             }),
             LetValue::AccessClause(AccessQuery {
                 match_all: true,
                 query: vec![
                     QueryPart::Key("%var".to_string()),
-                    QueryPart::AllIndices,
+                    QueryPart::AllIndices(None),
                     QueryPart::Key("Properties".to_string()),
                     QueryPart::Key("Tags".to_string())
                 ]
@@ -4947,4 +4947,14 @@ fn parameterized_clause_in_when_condition() -> Result<(), Error> {
 
     Ok(())
 
+}
+
+#[test]
+fn test_variable_capture_syntax() -> Result<(), Error> {
+    Ok(())
+}
+
+#[test]
+fn test_filter_with_variable_captures() -> Result<(), Error> {
+    Ok(())
 }

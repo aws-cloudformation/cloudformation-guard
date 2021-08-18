@@ -25,7 +25,7 @@ fn resolve_variable_query<'s>(all: bool,
     let retrieved = var_resolver.resolve_variable(variable)?;
     let index: usize = if query.len() > 1 {
         match &query[1] {
-            QueryPart::AllIndices => 2,
+            QueryPart::AllIndices(_) => 2,
             _ => 1,
         }
     } else { 1 };

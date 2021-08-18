@@ -447,7 +447,7 @@ impl QueryResolver for PathAwareValue {
                                 let mut acc = Vec::with_capacity(keys.len());
                                 let keys = if query.len() > 1 {
                                     match query[1] {
-                                        QueryPart::AllIndices | QueryPart::Key(_) => keys,
+                                        QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
                                             let check = if index >= 0 { index } else { -index } as usize;
                                             if check < keys.len() {
@@ -517,7 +517,7 @@ impl QueryResolver for PathAwareValue {
                 }
             },
 
-            QueryPart::AllIndices => {
+            QueryPart::AllIndices(_name) => {
                 match self {
                     PathAwareValue::List((_path, elements)) => {
                         PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
@@ -534,7 +534,7 @@ impl QueryResolver for PathAwareValue {
                 }
             }
 
-            QueryPart::AllValues => {
+            QueryPart::AllValues(_name) => {
                 match self {
                     //
                     // Supporting old format
@@ -564,7 +564,7 @@ impl QueryResolver for PathAwareValue {
                 }
             },
 
-            QueryPart::MapKeyFilter(filter) => {
+            QueryPart::MapKeyFilter(_name, filter) => {
                 match self {
                     PathAwareValue::Map((path, map)) => {
                         let mut selected = Vec::with_capacity(map.values.len());
@@ -612,7 +612,7 @@ impl QueryResolver for PathAwareValue {
                 }
             },
 
-            QueryPart::Filter(conjunctions) => {
+            QueryPart::Filter(_name, conjunctions) => {
                 match self {
                     PathAwareValue::List((path, vec)) => {
                         let mut selected = Vec::with_capacity(vec.len());
@@ -639,7 +639,7 @@ impl QueryResolver for PathAwareValue {
                                             filter.status(Status::PASS);
                                             let index: usize = if query.len() > 1 {
                                                 match &query[1] {
-                                                    QueryPart::AllIndices => 2,
+                                                    QueryPart::AllIndices(_) => 2,
                                                     _ => 1
                                                 }
                                             } else { 1 };

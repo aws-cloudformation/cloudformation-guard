@@ -57,11 +57,11 @@ pub(crate) struct LetExpr<'loc> {
 pub(crate) enum QueryPart<'loc> {
     This,
     Key(String),
-    MapKeyFilter(MapKeyFilterClause<'loc>),
-    AllValues,
-    AllIndices,
+    MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
+    AllValues(Option<String>),
+    AllIndices(Option<String>),
     Index(i32),
-    Filter(Conjunctions<GuardClause<'loc>>),
+    Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 
 impl<'loc> QueryPart<'loc> {
@@ -93,11 +93,11 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str(s.as_str())?;
             },
 
-            QueryPart::AllIndices => {
+            QueryPart::AllIndices(_name) => {
                 f.write_str("[*]")?;
             }
 
-            QueryPart::AllValues => {
+            QueryPart::AllValues(_name) => {
                 f.write_str("*")?;
             },
 
@@ -105,12 +105,12 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 write!(f, "{}", idx.to_string())?;
             },
 
-            QueryPart::Filter(_c) => {
-                f.write_str("(filter-clauses)")?;
+            QueryPart::Filter(name, _c) => {
+                f.write_fmt(format_args!("{} (filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
             },
 
-            QueryPart::MapKeyFilter(_clause) => {
-                f.write_str("(map-key-filter-clause)")?;
+            QueryPart::MapKeyFilter(name, _clause) => {
+                f.write_fmt(format_args!("{} (map-key-filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
             },
 
             QueryPart::This => {

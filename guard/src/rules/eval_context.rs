@@ -283,8 +283,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 },
                 QueryResult::Resolved(value) => {
                     let index = if query_index+1 < query.len() {
-                        match query[query_index+1] {
-                            QueryPart::AllIndices => query_index+2,
+                        match &query[query_index+1] {
+                            QueryPart::AllIndices(_name) => query_index+2,
                             _ => query_index+1
                         }
                     } else { query_index+1 };
@@ -325,10 +325,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             let var = query[query_index].variable().unwrap();
                             let keys = resolver.resolve_variable(var)?;
                             let keys = if query.len() > query_index+1 {
-                                match query[query_index+1] {
-                                    QueryPart::AllIndices | QueryPart::Key(_) => keys,
+                                match &query[query_index+1] {
+                                    QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                     QueryPart::Index(index) => {
-                                        let check = if index >= 0 { index } else { -index } as usize;
+                                        let check = if *index >= 0 { *index } else { -*index } as usize;
                                         if check < keys.len() {
                                             vec![keys[check].clone()]
                                         } else {
@@ -450,7 +450,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::AllIndices => {
+        QueryPart::AllIndices(_name) => {
             match current {
                 PathAwareValue::List((_path, elements)) => {
                     accumulate(current, query_index, query, elements, resolver, converter)
@@ -467,7 +467,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::AllValues => {
+        QueryPart::AllValues(_name) => {
             match current {
                 //
                 // Supporting old format
@@ -491,12 +491,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::Filter(conjunctions) => {
+        QueryPart::Filter(_name, conjunctions) => {
             match current {
                 PathAwareValue::Map((_path, map)) => {
-                    match query[query_index-1] {
-                        QueryPart::AllValues |
-                        QueryPart::AllIndices => {
+                    match &query[query_index-1] {
+                        QueryPart::AllValues(_name) |
+                        QueryPart::AllIndices(_name) => {
                             check_and_delegate(conjunctions)(query_index+1, query, current, resolver, converter)
                         },
 
@@ -557,7 +557,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::MapKeyFilter(map_key_filter) => {
+        QueryPart::MapKeyFilter(_name, map_key_filter) => {
             match current {
                 PathAwareValue::Map((_path, map)) => {
                     let mut selected = Vec::with_capacity(map.values.len());
