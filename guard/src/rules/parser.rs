@@ -27,7 +27,6 @@ use indexmap::map::IndexMap;
 use std::convert::TryFrom;
 use crate::migrate::parser::TypeName;
 use crate::rules::path_value::{PathAwareValue, Path};
-use regex::internal::Input;
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 
@@ -673,12 +672,19 @@ pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     }
 }
 
+fn variable_capture_in_map_or_index(input: Span) -> IResult<Span, String> {
+    let (input, var) = preceded(zero_or_more_ws_or_comment, var_name)(input)?;
+    let (input, _pipe) = preceded(space0, char('|'))(input)?;
+    Ok((input, var))
+}
+
 fn predicate_filter_clauses(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
+    let (input, var) = opt(variable_capture_in_map_or_index)(input)?;
     let (input, filters) = cnf_clauses(
         input, clause, std::convert::identity, true)?;
     let (input, _close) = cut(close_array)(input)?;
-    Ok((input, QueryPart::Filter(filters)))
+    Ok((input, QueryPart::Filter(var, filters)))
 }
 
 fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
@@ -691,7 +697,7 @@ fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
                           }),
                           map(property_name, |p| QueryPart::Key(p)),
                           map(var_name_access_inclusive, |p| QueryPart::Key(p)),
-                          value(QueryPart::AllValues, char('*')),
+                          value(QueryPart::AllValues(None), char('*')),
                       )) // end alt
              ) // end preceded for char '.'
     )(input)
@@ -706,9 +712,13 @@ fn close_array(input: Span) -> IResult<Span, ()> {
 }
 
 fn all_indices(input: Span) -> IResult<Span, QueryPart> {
-    value(QueryPart::AllIndices,
-          delimited(open_array, char('*'), cut(close_array)))
-        (input)
+    let (input, _open) = open_array(input)?;
+    let (input, query_part) = alt((
+        value(QueryPart::AllIndices(None), preceded(zero_or_more_ws_or_comment, char('*'))),
+        map(var_name, |name| QueryPart::AllIndices(Some(name)))
+    ))(input)?;
+    let (input, _close) = close_array(input)?;
+    Ok((input, query_part))
 }
 
 fn array_index(input: Span) -> IResult<Span, QueryPart> {
@@ -719,14 +729,24 @@ fn array_index(input: Span) -> IResult<Span, QueryPart> {
 }
 
 fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
-    map(delimited(open_array, parse_string, cut(close_array)), |idx| {
-        let idx = match idx { Value::String(i) => i, _ => unreachable!() };
-        QueryPart::Key(idx)
-    })(input)
+    let (input, _open) = open_array(input)?;
+    let (input, query_part) = alt((
+        map(parse_string, |idx| {
+            let idx = match idx {
+                Value::String(i) => i,
+                _ => unreachable!()
+            };
+            QueryPart::Key(idx)
+        }),
+        map(var_name, |name| QueryPart::AllValues(Some(name)))
+    ))(input)?;
+    let (input, _close) = close_array(input)?;
+    Ok((input, query_part))
 }
 
 fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
+    let (input, var) = opt(variable_capture_in_map_or_index)(input)?;
     let (input, _keys) = preceded(zero_or_more_ws_or_comment, keys)(input)?;
     let (input, cmp) = cut(
         preceded(zero_or_more_ws_or_comment, alt((
@@ -741,8 +761,8 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
         map( parse_value, |value| LetValue::Value(PathAwareValue::try_from(value).unwrap())),
         map( preceded(zero_or_more_ws_or_comment, access), LetValue::AccessClause),
     ))))(input)?;
-    let (input, _close) = cut(close_array)(input)?;
-    Ok((input, QueryPart::MapKeyFilter(MapKeyFilterClause {
+    let (input, _close) = close_array(input)?;
+    Ok((input, QueryPart::MapKeyFilter(var, MapKeyFilterClause {
         comparator: cmp,
         compare_with: with
     })))
@@ -754,7 +774,7 @@ fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {
         array_index,
         map_key_lookup,
         map_keys_match,
-        predicate_filter_clauses
+        predicate_filter_clauses,
     ))(input)
 }
 
@@ -823,8 +843,13 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
         let query_parts = match remainder {
             Some(mut parts) => {
                 parts.insert(0, first.clone());
-                if first.is_variable() && parts.get(1) != Some(&QueryPart::AllIndices) {
-                    parts.insert(1, QueryPart::AllIndices);
+                if first.is_variable() {
+                    match parts.get(1) {
+                        Some(QueryPart::AllIndices(_)) => {},
+                        _ => {
+                            parts.insert(1, QueryPart::AllIndices(None));
+                        }
+                    }
                 }
                 parts
             },
@@ -1404,8 +1429,8 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
         },
         query: vec![
             QueryPart::Key("Resources".to_string()),
-            QueryPart::AllValues,
-            QueryPart::Filter(Conjunctions::from([
+            QueryPart::AllValues(None),
+            QueryPart::Filter(None, Conjunctions::from([
                 Disjunctions::from([
                     GuardClause::Clause(GuardAccessClause {
                         negation: false,

@@ -59,8 +59,9 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
             ClauseCheck::MissingBlockValue(missing) => {
                 f.write_fmt(
                     format_args!(
-                        "GuardBlockValueMissing(Status={}, {})",
+                        "GuardBlockValueMissing(Status={}, Reason={}, {})",
                         missing.status,
+                        missing.message.as_ref().map_or("", String::as_str),
                         missing.from.unresolved_traversed_to().map_or("", |p| p.self_path().0.as_str())
                     )
                 )?;

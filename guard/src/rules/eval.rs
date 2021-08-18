@@ -164,8 +164,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
     // outcome. The earlier engine would suppress such a error and skip
     //
     let empty_on_expr = match &lhs_query[lhs_query.len()-1] {
-        QueryPart::Filter(_) |
-        QueryPart::MapKeyFilter(_) => true,
+        QueryPart::Filter(_,_) |
+        QueryPart::MapKeyFilter(_,_) => true,
         rest => rest.is_variable() && lhs_query.len() == 1
     };
 
