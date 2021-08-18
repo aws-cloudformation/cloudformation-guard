@@ -1012,6 +1012,10 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParamete
             None => self.parent.resolve_variable(variable_name)
         }
     }
+
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
+    }
 }
 
 pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(

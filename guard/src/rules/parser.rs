@@ -738,7 +738,7 @@ fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
             };
             QueryPart::Key(idx)
         }),
-        map(var_name, |name| QueryPart::AllValues(Some(name)))
+        map(delimited(zero_or_more_ws_or_comment, var_name,zero_or_more_ws_or_comment), |name| QueryPart::AllValues(Some(name)))
     ))(input)?;
     let (input, _close) = close_array(input)?;
     Ok((input, query_part))
