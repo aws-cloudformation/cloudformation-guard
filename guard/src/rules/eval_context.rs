@@ -140,7 +140,7 @@ fn accumulate<'value, 'loc: 'value>(
     }
 
     let mut accumulated = Vec::with_capacity(elements.len());
-    for each in elements {
+    for (index, each) in elements.iter().enumerate() {
         accumulated.extend(query_retrieval_with_converter(query_index+1, query, each, resolver, converter)?);
     }
     Ok(accumulated)
@@ -155,7 +155,7 @@ fn accumulate_map<'value, 'loc: 'value, F>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     converter: Option<&dyn Fn(&str) -> String>,
     func: F) -> Result<Vec<QueryResult<'value>>>
-    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
+    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
 {
     //
     // We are here when we are doing * all values for map. It is an error if there are no
@@ -170,12 +170,11 @@ fn accumulate_map<'value, 'loc: 'value, F>(
         );
     }
 
-    let values: Vec<&PathAwareValue> = map.values.values().collect();
-    let mut resolved = Vec::with_capacity(values.len());
-    for each in values {
+    let mut resolved = Vec::with_capacity(map.values.len());
+    for (key, each) in map.keys.iter().zip(map.values.values()) {
         let mut val_resolver = ValueScope{ root: each, parent: resolver };
         resolved.extend(
-            func(query_index+1, query, each, &mut val_resolver, converter)?)
+            func(query_index+1, query, key, each, &mut val_resolver, converter)?)
     }
     Ok(resolved)
 }
@@ -213,16 +212,19 @@ fn map_resolved<'value, F>(
     }
 }
 
-fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<GuardClause<'loc>>)
-    -> impl Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
+fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<GuardClause<'loc>>, name: &'value Option<String>)
+    -> impl Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
 {
-    move |index, query, value, eval_context, converter| {
+    move |index, query, key, value, eval_context, converter| {
         let context = format!("Filter/Map#{}", conjunctions.len());
         eval_context.start_record(&context)?;
         match super::eval::eval_conjunction_clauses(
             conjunctions, eval_context, super::eval::eval_guard_clause) {
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
+                if let Some(key_name) = name {
+                    eval_context.add_variable_capture_key(key_name.as_ref(), key)?;
+                }
                 match status {
                     Status::PASS => {
                         query_retrieval_with_converter(index, query, value, eval_context, converter)
@@ -450,7 +452,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::AllIndices(_name) => {
+        QueryPart::AllIndices(name) => {
             match current {
                 PathAwareValue::List((_path, elements)) => {
                     accumulate(current, query_index, query, elements, resolver, converter)
@@ -467,7 +469,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::AllValues(_name) => {
+        QueryPart::AllValues(name) => {
             match current {
                 //
                 // Supporting old format
@@ -477,7 +479,23 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 },
 
                 PathAwareValue::Map((_path, map)) => {
-                    accumulate_map(current, map, query_index, query, resolver, converter, query_retrieval_with_converter)
+                    let (report, name) = match name {
+                        Some(n) => (true, n.as_str()),
+                        None => (false, "")
+                    };
+                    accumulate_map(current, map, query_index, query, resolver, converter,
+                                   |index,
+                                    query,
+                                    key,
+                                    value,
+                                    context,
+                                    converter| {
+                                    if report {
+                                        context.add_variable_capture_key(name, key)?;
+                                    }
+                                       query_retrieval_with_converter(index, query, value, context, converter)
+                                   }
+                    )
                 },
 
                 //
@@ -491,13 +509,13 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::Filter(_name, conjunctions) => {
+        QueryPart::Filter(name, conjunctions) => {
             match current {
                 PathAwareValue::Map((_path, map)) => {
                     match &query[query_index-1] {
                         QueryPart::AllValues(_name) |
                         QueryPart::AllIndices(_name) => {
-                            check_and_delegate(conjunctions)(query_index+1, query, current, resolver, converter)
+                            check_and_delegate(conjunctions, &None)(query_index+1, query, current, current, resolver, converter)
                         },
 
                         QueryPart::Key(_) => {
@@ -514,7 +532,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 //                                    }
 //                                })
                             accumulate_map(
-                                current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions)
+                                current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions, name)
                             )
                         },
 
@@ -783,6 +801,9 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'e
         self.parent.resolve_variable(variable_name)
     }
 
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
+    }
 }
 
 impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc> {
@@ -837,7 +858,6 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         Ok(())
     }
 
-
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
             return Ok(vec![QueryResult::Resolved(*val)])
@@ -871,6 +891,12 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 //            Err(e) => Err(e),
 //        }
     }
+
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.scope.resolved_variables.entry(variable_name).or_default()
+            .push(QueryResult::Resolved(key));
+        Ok(())
+    }
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
@@ -902,6 +928,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         self.parent.resolve_variable(variable_name)
+    }
+
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
     }
 }
 
@@ -952,6 +982,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         } else { result };
         self.scope.resolved_variables.insert(variable_name, result.clone());
         return Ok(result);
+    }
+
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
     }
 }
 

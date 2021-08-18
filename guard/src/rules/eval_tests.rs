@@ -1653,6 +1653,10 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
         fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
             self.parent.resolve_variable(variable_name)
         }
+
+        fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+            todo!()
+        }
     }
 
     let rule = r###"

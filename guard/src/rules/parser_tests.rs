@@ -4951,10 +4951,20 @@ fn parameterized_clause_in_when_condition() -> Result<(), Error> {
 
 #[test]
 fn test_variable_capture_syntax() -> Result<(), Error> {
-    Ok(())
-}
+    let map_index_capture = "Resources[ resource_name ].Properties";
+    let access = AccessQuery::try_from(map_index_capture)?.query;
+    assert_eq!(access.len(), 3);
+    assert_eq!(access[1], QueryPart::AllValues(Some(String::from("resource_name"))));
 
-#[test]
-fn test_filter_with_variable_captures() -> Result<(), Error> {
+    let map_index_with_filter = "Resources[ resource_name | Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    let access = AccessQuery::try_from(map_index_with_filter)?.query;
+    assert_eq!(access.len(), 4);
+    let filters = &access[1];
+    assert_eq!(matches!(filters, QueryPart::Filter(_, _)), true);
+    let (name, filter) = match filters {
+        QueryPart::Filter(name, filters) => (name, filters),
+        _ => unreachable!()
+    };
+    assert_eq!(name, &Some(String::from("resource_name")));
     Ok(())
 }

@@ -49,6 +49,9 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BasicQueryTesting<'valu
     fn start_record(&mut self, context: &str) -> Result<()> { Ok(()) }
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> { Ok(()) }
     fn resolve_variable(&mut self, variable_name: &str) -> Result<Vec<QueryResult<'value>>> { todo!() }
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        todo!()
+    }
 }
 
 #[test]
