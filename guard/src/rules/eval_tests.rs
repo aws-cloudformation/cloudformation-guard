@@ -3622,3 +3622,43 @@ fn parameterized_evaluations() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn using_resource_names_for_assessment() -> Result<()> {
+    let resources = r###"
+    Resources:
+        s3:
+            Type: AWS::S3::Bucket
+        s3Policy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                BucketName:
+                    Ref: s3
+        s3Fail:
+            Type: AWS::S3::Bucket
+    "###;
+
+    let value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(resources)?
+    )?;
+
+    let rules_file = r###"
+    rule check_s3_has_bucket_policy {
+        let s3_buckets = Resources[ s3_name | Type == 'AWS::S3::Bucket' ]
+        let s3_bucket_policy_associations =
+            some Resources[ Type == 'AWS::S3::BucketPolicy' ].Properties.BucketName.Ref
+        when %s3_buckets not empty {
+            %s3_bucket_policy_associations == %s3_name
+                <<ALL S3 buckets do not have a bucket policy associated>>
+        }
+    }
+    "###;
+
+    let rules = RulesFile::try_from(rules_file)?;
+    let mut eval = root_scope(&rules, &value)?;
+    let mut tracer = RecordTracker::new(&mut eval);
+    let status = eval_rules_file(&rules, &mut tracer)?;
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}

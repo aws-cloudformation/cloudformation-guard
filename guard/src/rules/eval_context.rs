@@ -223,7 +223,9 @@ fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<G
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
                 if let Some(key_name) = name {
-                    eval_context.add_variable_capture_key(key_name.as_ref(), key)?;
+                    if status == Status::PASS {
+                        eval_context.add_variable_capture_key(key_name.as_ref(), key)?;
+                    }
                 }
                 match status {
                     Status::PASS => {
