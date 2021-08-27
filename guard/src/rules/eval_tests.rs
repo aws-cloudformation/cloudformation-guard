@@ -405,13 +405,12 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::NotComparable(NotComparableResult{rhs: value, lhs: lh_ptr, ..}) => {
+        ComparisonResult::NotComparable(NotComparableWithRhs { pair: LhsRhsPair { rhs: value, .. }, .. }) => {
             let rhs_ptr = match &rhs[0] {
                 QueryResult::Resolved(ptr) => *ptr,
                 _ => unreachable!()
             };
             assert_eq!(std::ptr::eq(rhs_ptr, *value), true);
-            assert_eq!(std::ptr::eq(lhs, *lh_ptr), true);
         },
 
         _ => unreachable!()
@@ -426,7 +425,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonCheckResult { outcome, .. }) => {
+        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert_eq!(*outcome, false);
         },
 
@@ -442,7 +441,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonCheckResult { outcome, .. }) => {
+        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert_eq!(*outcome, true);
         },
 
@@ -491,11 +490,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
     assert_eq!(result.len(), 2);
     for cmp_result in result {
         match cmp_result {
-            ComparisonResult::Comparable(ComparisonCheckResult{ rhs, lhs, outcome }) => {
-                let rhs = match rhs {
-                    QueryResult::Resolved(rhs) => rhs,
-                    _ => unreachable!()
-                };
+            ComparisonResult::Comparable(ComparisonWithRhs { pair: LhsRhsPair{ rhs, .. }, outcome }) => {
                 if outcome {
                     match (lhs, rhs) {
                         (PathAwareValue::String((_,s1)), PathAwareValue::String((_, s2)))=> {
@@ -568,7 +563,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, ..}) => {
+                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, ..}) => {
                             if !outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             }
@@ -631,7 +626,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonCheckResult{ outcome, lhs, ..}) => {
+                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, ..}) => {
                             if outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             }
@@ -673,7 +668,7 @@ macro_rules! test_case {
                         &[QueryResult::Resolved(&rhs_value)]
                     )? {
                         match cmp_result {
-                            ComparisonResult::Comparable(ComparisonCheckResult{outcome, ..}) => {
+                            ComparisonResult::Comparable(ComparisonWithRhs{outcome, ..}) => {
                                 assert_eq!(outcome, $assert);
                             },
 
@@ -2292,7 +2287,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
                         {
                             let path = res.self_path().0.as_str();
                             path == "/Resources/iam/Properties/PolicyDocument/Statement/Action" ||
-                                path == "/Resources/iam/Properties/PolicyDocument/Statement/Principal/0"
+                                path == "/Resources/iam/Properties/PolicyDocument/Statement/Principal"
                         }
                     ), true)
                 },
@@ -3648,6 +3643,7 @@ fn using_resource_names_for_assessment() -> Result<()> {
         let s3_bucket_policy_associations =
             some Resources[ Type == 'AWS::S3::BucketPolicy' ].Properties.BucketName.Ref
         when %s3_buckets not empty {
+            # %s3_name == %s3_bucket_policy_associations
             %s3_bucket_policy_associations == %s3_name
                 <<ALL S3 buckets do not have a bucket policy associated>>
         }
