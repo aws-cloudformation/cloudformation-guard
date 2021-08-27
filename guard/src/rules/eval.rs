@@ -320,20 +320,29 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
 }
 
 enum ComparisonResult<'r> {
-    Comparable(ComparisonCheckResult<'r>),
-    NotComparable(NotComparableResult<'r>),
+    Comparable(ComparisonWithRhs<'r>),
+    NotComparable(NotComparableWithRhs<'r>),
+    UnResolvedRhs(UnResolvedRhs<'r>),
 }
 
-struct ComparisonCheckResult<'r> {
+struct LhsRhsPair<'value> {
+    lhs: &'value PathAwareValue,
+    rhs: &'value PathAwareValue,
+}
+
+struct ComparisonWithRhs<'r> {
     outcome: bool,
-    lhs: &'r PathAwareValue,
-    rhs: QueryResult<'r>,
+    pair: LhsRhsPair<'r>,
 }
 
-struct NotComparableResult<'r> {
-    lhs: &'r PathAwareValue,
-    rhs: &'r PathAwareValue,
+struct NotComparableWithRhs<'r> {
     reason: String,
+    pair: LhsRhsPair<'r>,
+}
+
+struct UnResolvedRhs<'r> {
+    rhs: QueryResult<'r>,
+    lhs: &'r PathAwareValue
 }
 
 fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs: &'r[QueryResult<'value>])
@@ -347,8 +356,12 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                 match cmp(lhs, *each_rhs_resolved) {
                     Ok(outcome) => {
                         statues.push(ComparisonResult::Comparable(
-                            ComparisonCheckResult {
-                                outcome, lhs, rhs: each_rhs.clone()
+                            ComparisonWithRhs {
+                                outcome,
+                                pair: LhsRhsPair {
+                                    lhs,
+                                    rhs: *each_rhs_resolved
+                                }
                             }
                         ));
                     },
@@ -360,19 +373,26 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                                     match cmp(each, *each_rhs_resolved) {
                                         Ok(outcome) => {
                                             statues.push(ComparisonResult::Comparable(
-                                                ComparisonCheckResult {
-                                                    outcome, lhs: each, rhs: each_rhs.clone()
+                                                ComparisonWithRhs {
+                                                    outcome,
+                                                    pair: LhsRhsPair {
+                                                        lhs,
+                                                        rhs: *each_rhs_resolved
+                                                    }
                                                 }
                                             ));
                                         },
 
                                         Err(Error(ErrorKind::NotComparable(reason))) => {
                                             statues.push(ComparisonResult::NotComparable(
-                                                NotComparableResult {
-                                                    reason, rhs: *each_rhs_resolved, lhs: each
+                                                NotComparableWithRhs {
+                                                    reason,
+                                                    pair: LhsRhsPair {
+                                                        lhs,
+                                                        rhs: *each_rhs_resolved,
+                                                    }
                                                 }
                                             ));
-
                                         },
 
                                         Err(e) => return Err(e)
@@ -389,16 +409,24 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                                     match cmp(lhs, rhs_inner_single_element) {
                                         Ok(outcome) => {
                                             statues.push(ComparisonResult::Comparable(
-                                                ComparisonCheckResult {
-                                                    outcome, lhs, rhs: each_rhs.clone()
+                                                ComparisonWithRhs {
+                                                    outcome,
+                                                    pair: LhsRhsPair {
+                                                        lhs,
+                                                        rhs: rhs_inner_single_element,
+                                                    }
                                                 }
                                             ));
                                         },
 
                                         Err(Error(ErrorKind::NotComparable(reason))) => {
                                             statues.push(ComparisonResult::NotComparable(
-                                                NotComparableResult {
-                                                    reason, rhs: rhs_inner_single_element, lhs,
+                                                NotComparableWithRhs {
+                                                    reason,
+                                                    pair: LhsRhsPair {
+                                                        lhs,
+                                                        rhs: rhs_inner_single_element,
+                                                    }
                                                 }
                                             ));
 
@@ -412,10 +440,12 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                         }
 
                         statues.push(ComparisonResult::NotComparable(
-                            NotComparableResult {
+                            NotComparableWithRhs {
                                 reason,
-                                rhs: *each_rhs_resolved,
-                                lhs
+                                pair: LhsRhsPair {
+                                    lhs,
+                                    rhs: *each_rhs_resolved,
+                                }
                             }
                         ));
                     },
@@ -425,10 +455,9 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
             },
 
             QueryResult::UnResolved(_ur) => {
-                statues.push(ComparisonResult::Comparable(ComparisonCheckResult {
-                    outcome: false,
-                    lhs,
+                statues.push(ComparisonResult::UnResolvedRhs(UnResolvedRhs {
                     rhs: each_rhs.clone(),
+                    lhs
                 }));
             }
         }
@@ -478,62 +507,146 @@ fn in_cmp(not_in: bool)
     }
 }
 
-fn report_all_operation<'r, 'value: 'r, 'loc: 'value, C, E>(
-    comparison: E,
-    cmp_fn: C,
-    _inverse: bool,
-    lhs: &'value PathAwareValue,
-    rhs: &'r [QueryResult<'value>],
+fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
+    comparisons: Vec<ComparisonResult<'value>>,
+    is_lhs_rhs_swapped: bool,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
-    eval_context: &'r mut dyn EvalContext<'value, 'loc>)
-    -> Result<HashMap<&'value PathAwareValue, bool>>
-    where C: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>,
-          E: Fn(C, &'value PathAwareValue, &'r[QueryResult<'value>]) -> Result<Vec<ComparisonResult<'value>>>
+    eval_context: &'r mut dyn EvalContext<'value, 'loc>) -> Result<Vec<(QueryResult<'value>, Status)>>
 {
-    let mut overall = HashMap::new();
-    let results = comparison(cmp_fn, lhs, rhs)?;
-    for outcome in results {
-        match outcome {
-            ComparisonResult::NotComparable(NotComparableResult{lhs, rhs, reason}) => {
-                eval_context.start_record(&context)?;
-                eval_context.end_record(&context, RecordType::ClauseValueCheck(
-                    ClauseCheck::Comparison(ComparisonClauseCheck {
-                        from: QueryResult::Resolved(lhs),
-                        comparison: cmp,
-                        to: Some(QueryResult::Resolved(rhs)),
-                        custom_message: custom_message.clone(),
-                        message: Some(reason),
-                        status: Status::FAIL
-                    })
-                ))?;
-                overall.insert(lhs, false);
-            },
-
-            ComparisonResult::Comparable(ComparisonCheckResult{outcome, lhs, rhs}) => {
-                if outcome {
-                    eval_context.start_record(&context)?;
-                    eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+    let mut status = Vec::with_capacity(comparisons.len());
+    for each_res in comparisons {
+        let (lhs_value, rhs_value, outcome, reason) = match each_res {
+            ComparisonResult::Comparable(
+                ComparisonWithRhs {
+                    outcome,
+                    pair: LhsRhsPair {
+                        lhs: lhs_value,
+                        rhs: rhs_value
+                    }
+                }) =>
+                if is_lhs_rhs_swapped {
+                    (QueryResult::Resolved(rhs_value),
+                     Some(QueryResult::Resolved(lhs_value)),
+                     outcome,
+                     None)
                 }
                 else {
-                    eval_context.start_record(&context)?;
-                    eval_context.end_record(&context, RecordType::ClauseValueCheck(
-                        ClauseCheck::Comparison(ComparisonClauseCheck {
-                            from: QueryResult::Resolved(lhs),
-                            comparison: cmp,
-                            to: Some(rhs),
-                            custom_message: custom_message.clone(),
-                            message: None,
-                            status: Status::FAIL
-                        })
-                    ))?;
+                    (QueryResult::Resolved(lhs_value),
+                     Some(QueryResult::Resolved(rhs_value)),
+                     outcome,
+                     None)
+                },
+
+            ComparisonResult::NotComparable(
+                NotComparableWithRhs {
+                    reason,
+                    pair: LhsRhsPair {
+                        rhs: rhs_value,
+                        lhs: lhs_value,
+                    }
+                }) =>
+                if is_lhs_rhs_swapped {
+                    (QueryResult::Resolved(rhs_value),
+                     Some(QueryResult::Resolved(lhs_value)),
+                     false,
+                     None)
                 }
-                overall.insert(lhs, outcome);
-            }
+                else {
+                    (QueryResult::Resolved(lhs_value),
+                     Some(QueryResult::Resolved(rhs_value)),
+                     false,
+                     None)
+                },
+
+            ComparisonResult::UnResolvedRhs(
+                UnResolvedRhs {
+                    lhs: lhs_value,
+                    rhs: rhs_query_result
+                }) =>
+                if is_lhs_rhs_swapped {
+                    (rhs_query_result,
+                     Some(QueryResult::Resolved(lhs_value)),
+                     false,
+                     None)
+                }
+                else {
+                    (QueryResult::Resolved(lhs_value),
+                     Some(rhs_query_result),
+                     false,
+                     None)
+                }
+        };
+
+        if outcome {
+            eval_context.start_record(&context)?;
+            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+            status.push((lhs_value, Status::PASS));
+        }
+        else {
+            status.push((lhs_value.clone(), Status::FAIL));
+            eval_context.start_record(&context)?;
+            eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                ClauseCheck::Comparison(ComparisonClauseCheck {
+                    from: lhs_value,
+                    comparison: cmp,
+                    to: rhs_value,
+                    custom_message: custom_message.clone(),
+                    message: reason,
+                    status: Status::FAIL
+                })
+            ))?;
         }
     }
-    Ok(overall)
+    Ok(status)
+}
+
+fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
+    rhs_comparisons: Vec<ComparisonResult<'value>>,
+    is_lhs_rhs_swapped: bool,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &'r mut dyn EvalContext<'value, 'loc>) -> Result<(QueryResult<'value>, Status)>
+
+{
+    let matched = 'matches: loop {
+        for elem in &rhs_comparisons {
+            if let ComparisonResult::Comparable(
+                ComparisonWithRhs { outcome, .. }
+            ) = elem {
+                if *outcome {
+                    break 'matches Some(elem)
+                }
+            }
+        }
+        break 'matches None
+    };
+
+    Ok(match matched {
+        Some(elem) => {
+            eval_context.start_record(&context)?;
+            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+            let lhs_value = match elem {
+                ComparisonResult::Comparable(
+                    ComparisonWithRhs {
+                        outcome: true,
+                        pair: LhsRhsPair {
+                            lhs: lhs_value,
+                            rhs: rhs_value
+                        }
+                    }) => if is_lhs_rhs_swapped { *rhs_value } else { *lhs_value },
+
+                _ => unreachable!()
+            };
+            (QueryResult::Resolved(lhs_value), Status::PASS)
+        },
+        None => {
+            let lhs_values = report_all_values(rhs_comparisons, is_lhs_rhs_swapped, cmp, context, custom_message, eval_context)?;
+            lhs_values.get(0).unwrap().clone()
+        }
+    })
 }
 
 fn not_compare<O>(cmp: O, invert: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
@@ -545,21 +658,108 @@ fn not_compare<O>(cmp: O, invert: bool) -> impl Fn(&PathAwareValue, &PathAwareVa
     }
 }
 
-fn binary_operation<'value, 'loc: 'value>(lhs_query: &'value [QueryPart<'loc>],
-                            rhs: &[QueryResult<'value>],
-                            cmp: (CmpOperator, bool),
-                            inverse: bool,
-                            context: String,
-                            custom_message: Option<String>,
-                            eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
+fn eq_operation<'value, 'loc: 'value>(
+    lhs: &[QueryResult<'value>],
+    rhs: &[QueryResult<'value>],
+    rhs_is_literal: bool,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
+
+    let (first, second, is_swapped) = if lhs.len() >= rhs.len() {
+        (lhs, rhs, false)
+    } else {
+        (rhs, lhs, true)
+    };
+
+    let mut statues = Vec::with_capacity(lhs.len());
+    for (idx, each) in first.iter().enumerate() {
+        match each {
+            QueryResult::UnResolved(_ur) => {
+                eval_context.start_record(&context)?;
+                let (from, to) = if is_swapped {
+                    (&lhs[0], Some(each.clone()))
+                } else {
+                    (each, None)
+                };
+                eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                    ClauseCheck::Comparison(ComparisonClauseCheck {
+                        status: Status::FAIL,
+                        message: None,
+                        custom_message: custom_message.clone(),
+                        comparison: cmp,
+                        from: from.clone(),
+                        to: to,
+                    })
+                ))?;
+                statues.push((from.clone(), Status::FAIL));
+            },
+
+            QueryResult::Resolved(l) => {
+                let comparisons = each_lhs_compare(
+                    crate::rules::path_value::compare_eq,
+                    *l,
+                    second
+                )?;
+                if !rhs_is_literal {
+                    let (lhs_value, status) = report_at_least_one(
+                        comparisons,
+                        is_swapped,
+                        cmp,
+                        context.clone(),
+                        custom_message.clone(),
+                        eval_context
+                    )?;
+                    statues.push((lhs_value, status));
+                }
+                else {
+                    statues.extend(
+                        report_all_values(
+                            comparisons,
+                            is_swapped,
+                            cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context
+                        )?
+                    )
+                }
+            }
+        }
+    }
+    Ok(EvaluationResult::QueryValueResult(statues))
+}
+
+fn binary_operation<'value, 'loc: 'value>(
+    lhs_query: &'value [QueryPart<'loc>],
+    rhs: &[QueryResult<'value>],
+    rhs_is_literal: bool,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
+
     let lhs = eval_context.query(lhs_query)?;
     if lhs.is_empty() || rhs.is_empty() {
         return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
     }
 
-    let mut statues = Vec::with_capacity(lhs.len());
-    for each in lhs {
-        match &each {
+    if let (CmpOperator::Eq, false) = cmp {
+        return eq_operation(
+            &lhs,
+            rhs,
+            rhs_is_literal,
+            cmp,
+            context,
+            custom_message,
+            eval_context
+        )
+    }
+
+    let mut statues: Vec<(QueryResult<'_>, Status)> = Vec::with_capacity(lhs.len());
+    for (idx, each) in lhs.iter().enumerate() {
+        match each {
             QueryResult::UnResolved(_ur) => {
                 eval_context.start_record(&context)?;
                 eval_context.end_record(&context, RecordType::ClauseValueCheck(
@@ -572,99 +772,86 @@ fn binary_operation<'value, 'loc: 'value>(lhs_query: &'value [QueryPart<'loc>],
                         to: None,
                     })
                 ))?;
-                statues.push((each, Status::FAIL));
+                statues.push((each.clone(), Status::FAIL));
             },
 
             QueryResult::Resolved(l) => {
                 let r = match cmp {
-                    (CmpOperator::Eq, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
-                                not_compare(crate::rules::path_value::compare_eq, is_not),
-                            inverse,
+                    (CmpOperator::Eq, true) => {
+                        each_lhs_compare(
+                            not_compare(crate::rules::path_value::compare_eq, true),
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     },
 
                     (CmpOperator::Ge, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
+                        each_lhs_compare(
                             not_compare(crate::rules::path_value::compare_ge, is_not),
-                            inverse,
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     },
 
                     (CmpOperator::Gt, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
+                        each_lhs_compare(
                             not_compare(crate::rules::path_value::compare_gt, is_not),
-                            inverse,
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     },
 
                     (CmpOperator::Lt, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
+                        each_lhs_compare(
                             not_compare(crate::rules::path_value::compare_lt, is_not),
-                            inverse,
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     },
 
                     (CmpOperator::Le, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
+                        each_lhs_compare(
                             not_compare(crate::rules::path_value::compare_le, is_not),
-                            inverse,
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     },
 
                     (CmpOperator::In, is_not) => {
-                        report_all_operation(
-                            each_lhs_compare,
+                        each_lhs_compare(
                             in_cmp(is_not),
-                            inverse,
                             *l,
-                            rhs,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
+                            rhs
                         )?
                     }
 
                     _ => unreachable!()
                 };
-                for (each, res) in r {
-                    statues.push((QueryResult::Resolved(each), if res { Status::PASS } else { Status::FAIL }));
+
+                match cmp.0 {
+                    CmpOperator::In => {
+                        let (lhs_value, status) = report_at_least_one(
+                            r,
+                            false,
+                            cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context
+                        )?;
+                        statues.push((lhs_value, status));
+                    },
+
+                    _ => {
+                        let status = report_all_values(
+                            r,
+                            false,
+                            cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context
+                        )?;
+                        statues.extend(status);
+                    }
                 }
             }
         };
@@ -689,14 +876,14 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         resolver)
     }
     else {
-        let rhs = match &gac.access_clause.compare_with {
+        let (rhs, is_literal) = match &gac.access_clause.compare_with {
             Some(val) => {
                 match val {
                     LetValue::Value(rhs_val) =>
-                        vec![QueryResult::Resolved(rhs_val)],
+                        (vec![QueryResult::Resolved(rhs_val)], true),
                     LetValue::AccessClause(acc_querty) =>
                         match resolver.query(&acc_querty.query) {
-                            Ok(result) => result,
+                            Ok(result) => (result, false),
                             Err(e) => {
                                 resolver.end_record(&blk_context, RecordType::GuardClauseBlockCheck(BlockCheck {
                                     status: Status::FAIL,
@@ -723,8 +910,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
         binary_operation(
             &gac.access_clause.query.query,
             &rhs,
+            is_literal,
             gac.access_clause.comparator,
-            gac.negation,
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver
