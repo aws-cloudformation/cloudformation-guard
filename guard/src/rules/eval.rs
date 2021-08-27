@@ -376,7 +376,7 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                                                 ComparisonWithRhs {
                                                     outcome,
                                                     pair: LhsRhsPair {
-                                                        lhs,
+                                                        lhs: each,
                                                         rhs: *each_rhs_resolved
                                                     }
                                                 }
@@ -388,7 +388,7 @@ fn each_lhs_compare<'r, 'value: 'r, C>(cmp: C, lhs: &'value PathAwareValue, rhs:
                                                 NotComparableWithRhs {
                                                     reason,
                                                     pair: LhsRhsPair {
-                                                        lhs,
+                                                        lhs: each,
                                                         rhs: *each_rhs_resolved,
                                                     }
                                                 }
