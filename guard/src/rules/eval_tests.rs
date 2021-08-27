@@ -2287,7 +2287,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
                         {
                             let path = res.self_path().0.as_str();
                             path == "/Resources/iam/Properties/PolicyDocument/Statement/Action" ||
-                                path == "/Resources/iam/Properties/PolicyDocument/Statement/Principal"
+                                path == "/Resources/iam/Properties/PolicyDocument/Statement/Principal/0"
                         }
                     ), true)
                 },
