@@ -494,15 +494,7 @@ fn in_cmp(not_in: bool)
                 })
             },
 
-            PathAwareValue::RangeInt(_)   |
-            PathAwareValue::RangeFloat(_) |
-            PathAwareValue::RangeChar(_)=> {
-                compare_eq(lhs, rhs)
-            },
-
-            _ => return Err(Error::new(ErrorKind::NotComparable(
-                    format!("IN operator can be compared with a list or range type, found {}", rhs.type_info())
-                )))
+            _ => compare_eq(lhs, rhs)
         }
     }
 }
