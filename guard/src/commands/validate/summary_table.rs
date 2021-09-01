@@ -1,11 +1,13 @@
 use crate::commands::validate::Reporter;
 use std::io::Write;
 use crate::commands::tracker::StatusContext;
-use crate::rules::Status;
+use crate::rules::{Status, NamedStatus};
 use colored::*;
 use itertools::Itertools;
 use enumflags2::{bitflags, BitFlags};
 use crate::commands::validate::common::colored_string;
+use crate::rules::eval_context::EventRecord;
+use crate::rules::RecordType;
 
 #[bitflags]
 #[repr(u8)]
@@ -48,6 +50,22 @@ fn print_partition(writer: &mut dyn Write,
     Ok(())
 }
 
+fn print_summary(
+    writer: &mut dyn Write,
+    rules_file_name: &str,
+    longest: usize,
+    rules: &[(Status, &str)]) -> crate::rules::Result<()> {
+    for (status, rule_name) in rules {
+        writeln!(writer,
+                 "{filename}/{context:<0$}{status}",
+                 longest+4,
+                 filename=rules_file_name,
+                 context=rule_name,
+                 status=super::common::colored_string(Some(*status)))?;
+    }
+    Ok(())
+}
+
 
 impl<'r> Reporter for SummaryTable<'r> {
     fn report(&self,
@@ -84,6 +102,46 @@ impl<'r> Reporter for SummaryTable<'r> {
 
         writeln!(writer, "---")?;
 
+        Ok(())
+    }
+
+    fn report_eval(&self, writer: &mut dyn Write, status: Status, root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
+        writeln!(writer, "{} Status = {}", self.data_file_name, colored_string(Some(status)))?;
+        let mut passed = Vec::with_capacity(root_record.children.len());
+        let mut skipped = Vec::with_capacity(root_record.children.len());
+        let mut failed = Vec::with_capacity(root_record.children.len());
+        let mut longest = 0 as usize;
+        for each_rule in &root_record.children {
+            if let Some(RecordType::RuleCheck(NamedStatus {status, name})) =
+                &each_rule.container {
+                match status {
+                    Status::PASS => passed.push((*status, *name)),
+                    Status::FAIL => failed.push((*status, *name)),
+                    Status::SKIP => skipped.push((*status, *name)),
+                }
+                if longest < name.len() {
+                    longest = name.len()
+                }
+            }
+        }
+
+        if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
+            writeln!(writer, "{}", "SKIP rules".bold());
+            print_summary(writer, self.rules_file_name, longest, &skipped)?;
+
+        }
+
+        if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
+            writeln!(writer, "{}", "PASS rules".bold());
+            print_summary(writer, self.rules_file_name, longest, &passed)?;
+        }
+
+        if self.summary_type.contains(SummaryType::FAIL) && !failed.is_empty() {
+            writeln!(writer, "{}", "FAILED rules".bold());
+            print_summary(writer, self.rules_file_name, longest, &failed)?;
+        }
+
+        writeln!(writer, "---")?;
         Ok(())
     }
 }
