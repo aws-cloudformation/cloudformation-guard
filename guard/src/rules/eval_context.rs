@@ -880,18 +880,20 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
         let result = query_retrieval(0, &query.query, self.scope.root, self)?;
         let result = if !match_all {
-            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
-        } else { result };
+            let cloned = result.clone();
+            let selected: Vec<QueryResult> =
+                cloned.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect();
+            if selected.is_empty() {
+                result
+            }
+            else {
+                selected
+            }
+        } else {
+            result
+        };
         self.scope.resolved_variables.insert(variable_name, result.clone());
         return Ok(result);
-
-//        match resolve(variable_name, self) {
-//            Ok(Some(ret)) => Ok(ret),
-//            Ok(None) => Err(Error::new(ErrorKind::MissingValue(
-//                format!("Could not resolve variable by name {} across scopes", variable_name)
-//            ))),
-//            Err(e) => Err(e),
-//        }
     }
 
     fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
@@ -980,8 +982,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
         let result = query_retrieval(0, &query.query, self.scope.root, self)?;
         let result = if !match_all {
-            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
-        } else { result };
+            let cloned = result.clone();
+            let selected: Vec<QueryResult> =
+                cloned.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect();
+            if selected.is_empty() {
+                result
+            }
+            else {
+                selected
+            }
+        } else {
+            result
+        };
         self.scope.resolved_variables.insert(variable_name, result.clone());
         return Ok(result);
     }
