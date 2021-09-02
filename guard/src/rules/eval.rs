@@ -499,6 +499,97 @@ fn in_cmp(not_in: bool)
     }
 }
 
+fn report_value<'r, 'value: 'r, 'loc: 'value>(
+    each_res: &ComparisonResult<'value>,
+    is_lhs_rhs_swapped: bool,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &'r mut dyn EvalContext<'value, 'loc>) -> Result<(QueryResult<'value>, Status)>{
+
+    let (lhs_value, rhs_value, outcome, reason) = match each_res {
+        ComparisonResult::Comparable(
+            ComparisonWithRhs {
+                outcome,
+                pair: LhsRhsPair {
+                    lhs: lhs_value,
+                    rhs: rhs_value
+                }
+            }) =>
+            if is_lhs_rhs_swapped {
+                (QueryResult::Resolved(rhs_value),
+                 Some(QueryResult::Resolved(lhs_value)),
+                 *outcome,
+                 None)
+            }
+            else {
+                (QueryResult::Resolved(lhs_value),
+                 Some(QueryResult::Resolved(rhs_value)),
+                 *outcome,
+                 None)
+            },
+
+        ComparisonResult::NotComparable(
+            NotComparableWithRhs {
+                reason,
+                pair: LhsRhsPair {
+                    rhs: rhs_value,
+                    lhs: lhs_value,
+                }
+            }) =>
+            if is_lhs_rhs_swapped {
+                (QueryResult::Resolved(rhs_value),
+                 Some(QueryResult::Resolved(lhs_value)),
+                 false,
+                 None)
+            }
+            else {
+                (QueryResult::Resolved(lhs_value),
+                 Some(QueryResult::Resolved(rhs_value)),
+                 false,
+                 None)
+            },
+
+        ComparisonResult::UnResolvedRhs(
+            UnResolvedRhs {
+                lhs: lhs_value,
+                rhs: rhs_query_result
+            }) =>
+            if is_lhs_rhs_swapped {
+                (rhs_query_result.clone(),
+                 Some(QueryResult::Resolved(lhs_value)),
+                 false,
+                 None)
+            }
+            else {
+                (QueryResult::Resolved(lhs_value),
+                 Some(rhs_query_result.clone()),
+                 false,
+                 None)
+            }
+    };
+
+    Ok(if outcome {
+        eval_context.start_record(&context)?;
+        eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+        (lhs_value, Status::PASS)
+    }
+    else {
+        eval_context.start_record(&context)?;
+        eval_context.end_record(&context, RecordType::ClauseValueCheck(
+            ClauseCheck::Comparison(ComparisonClauseCheck {
+                from: lhs_value.clone(),
+                comparison: cmp,
+                to: rhs_value,
+                custom_message: custom_message.clone(),
+                message: reason,
+                status: Status::FAIL
+            })
+        ))?;
+        (lhs_value, Status::FAIL)
+    })
+}
+
 fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     comparisons: Vec<ComparisonResult<'value>>,
     is_lhs_rhs_swapped: bool,
@@ -509,87 +600,14 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
 {
     let mut status = Vec::with_capacity(comparisons.len());
     for each_res in comparisons {
-        let (lhs_value, rhs_value, outcome, reason) = match each_res {
-            ComparisonResult::Comparable(
-                ComparisonWithRhs {
-                    outcome,
-                    pair: LhsRhsPair {
-                        lhs: lhs_value,
-                        rhs: rhs_value
-                    }
-                }) =>
-                if is_lhs_rhs_swapped {
-                    (QueryResult::Resolved(rhs_value),
-                     Some(QueryResult::Resolved(lhs_value)),
-                     outcome,
-                     None)
-                }
-                else {
-                    (QueryResult::Resolved(lhs_value),
-                     Some(QueryResult::Resolved(rhs_value)),
-                     outcome,
-                     None)
-                },
-
-            ComparisonResult::NotComparable(
-                NotComparableWithRhs {
-                    reason,
-                    pair: LhsRhsPair {
-                        rhs: rhs_value,
-                        lhs: lhs_value,
-                    }
-                }) =>
-                if is_lhs_rhs_swapped {
-                    (QueryResult::Resolved(rhs_value),
-                     Some(QueryResult::Resolved(lhs_value)),
-                     false,
-                     None)
-                }
-                else {
-                    (QueryResult::Resolved(lhs_value),
-                     Some(QueryResult::Resolved(rhs_value)),
-                     false,
-                     None)
-                },
-
-            ComparisonResult::UnResolvedRhs(
-                UnResolvedRhs {
-                    lhs: lhs_value,
-                    rhs: rhs_query_result
-                }) =>
-                if is_lhs_rhs_swapped {
-                    (rhs_query_result,
-                     Some(QueryResult::Resolved(lhs_value)),
-                     false,
-                     None)
-                }
-                else {
-                    (QueryResult::Resolved(lhs_value),
-                     Some(rhs_query_result),
-                     false,
-                     None)
-                }
-        };
-
-        if outcome {
-            eval_context.start_record(&context)?;
-            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
-            status.push((lhs_value, Status::PASS));
-        }
-        else {
-            status.push((lhs_value.clone(), Status::FAIL));
-            eval_context.start_record(&context)?;
-            eval_context.end_record(&context, RecordType::ClauseValueCheck(
-                ClauseCheck::Comparison(ComparisonClauseCheck {
-                    from: lhs_value,
-                    comparison: cmp,
-                    to: rhs_value,
-                    custom_message: custom_message.clone(),
-                    message: reason,
-                    status: Status::FAIL
-                })
-            ))?;
-        }
+        status.push(report_value(
+            &each_res,
+            is_lhs_rhs_swapped,
+            cmp,
+            context.clone(),
+            custom_message.clone(),
+            eval_context
+        )?);
     }
     Ok(status)
 }
@@ -600,45 +618,63 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
-    eval_context: &'r mut dyn EvalContext<'value, 'loc>) -> Result<(QueryResult<'value>, Status)>
+    eval_context: &'r mut dyn EvalContext<'value, 'loc>) -> Result<Vec<(QueryResult<'value>, Status)>>
 
 {
-    let matched = 'matches: loop {
-        for elem in &rhs_comparisons {
-            if let ComparisonResult::Comparable(
-                ComparisonWithRhs { outcome, .. }
-            ) = elem {
-                if *outcome {
-                    break 'matches Some(elem)
+    let mut statues = Vec::with_capacity(rhs_comparisons.len());
+    let mut by_lhs_value = HashMap::new();
+    for each in &rhs_comparisons {
+        match each {
+            ComparisonResult::Comparable(ComparisonWithRhs{pair: LhsRhsPair {lhs, rhs},..}) => {
+                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+                    .or_insert(vec![])
+                    .push(each);
+            },
+
+            ComparisonResult::NotComparable(NotComparableWithRhs{pair: LhsRhsPair{lhs, rhs}, ..}) => {
+                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+                    .or_insert(vec![])
+                    .push(each);
+            },
+
+            ComparisonResult::UnResolvedRhs(UnResolvedRhs{rhs, lhs}) => {
+                if let QueryResult::UnResolved(ur) = rhs {
+                    by_lhs_value.entry(if is_lhs_rhs_swapped { ur.traversed_to } else { *lhs })
+                        .or_insert(vec![])
+                        .push(each)
                 }
             }
         }
-        break 'matches None
     };
 
-    Ok(match matched {
-        Some(elem) => {
-            eval_context.start_record(&context)?;
-            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
-            let lhs_value = match elem {
-                ComparisonResult::Comparable(
-                    ComparisonWithRhs {
-                        outcome: true,
-                        pair: LhsRhsPair {
-                            lhs: lhs_value,
-                            rhs: rhs_value
-                        }
-                    }) => if is_lhs_rhs_swapped { *rhs_value } else { *lhs_value },
-
-                _ => unreachable!()
-            };
-            (QueryResult::Resolved(lhs_value), Status::PASS)
-        },
-        None => {
-            let lhs_values = report_all_values(rhs_comparisons, is_lhs_rhs_swapped, cmp, context, custom_message, eval_context)?;
-            lhs_values.get(0).unwrap().clone()
+    for (lhs, results) in by_lhs_value.iter() {
+        let found = results.iter().find(|r|
+            match r {
+                ComparisonResult::Comparable(ComparisonWithRhs{outcome: true, ..}) => true,
+                _ => false
+            });
+        match found {
+            Some(_) => {
+                eval_context.start_record(&context)?;
+                eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+                statues.push((QueryResult::Resolved(*lhs), Status::PASS))
+            },
+            None => {
+                for each_res in results {
+                    report_value(
+                        *each_res,
+                        is_lhs_rhs_swapped,
+                        cmp,
+                        context.clone(),
+                        custom_message.clone(),
+                        eval_context
+                    )?;
+                }
+                statues.push((QueryResult::Resolved(*lhs), Status::FAIL))
+            }
         }
-    })
+    }
+    Ok(statues)
 }
 
 fn not_compare<O>(cmp: O, invert: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
@@ -695,15 +731,14 @@ fn eq_operation<'value, 'loc: 'value>(
                     second
                 )?;
                 if !rhs_is_literal {
-                    let (lhs_value, status) = report_at_least_one(
+                    statues.extend(report_at_least_one(
                         comparisons,
                         is_swapped,
                         cmp,
                         context.clone(),
                         custom_message.clone(),
                         eval_context
-                    )?;
-                    statues.push((lhs_value, status));
+                    )?);
                 }
                 else {
                     statues.extend(
@@ -822,27 +857,14 @@ fn binary_operation<'value, 'loc: 'value>(
 
                 match cmp.0 {
                     CmpOperator::In => {
-                        if !l.is_list() {
-                            let (lhs_value, status) = report_at_least_one(
-                                r,
-                                false,
-                                cmp,
-                                context.clone(),
-                                custom_message.clone(),
-                                eval_context
-                            )?;
-                            statues.push((lhs_value, status));
-                        }
-                        else {
-                            statues.extend(report_all_values(
-                                r,
-                                false,
-                                cmp,
-                                context.clone(),
-                                custom_message.clone(),
-                                eval_context
-                            )?);
-                        };
+                        statues.extend(report_at_least_one(
+                            r,
+                            false,
+                            cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context
+                        )?);
                     },
 
                     _ => {
