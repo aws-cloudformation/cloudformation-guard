@@ -880,15 +880,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
         let result = query_retrieval(0, &query.query, self.scope.root, self)?;
         let result = if !match_all {
-            let cloned = result.clone();
-            let selected: Vec<QueryResult> =
-                cloned.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect();
-            if selected.is_empty() {
-                result
-            }
-            else {
-                selected
-            }
+            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
         } else {
             result
         };
@@ -982,15 +974,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
         let result = query_retrieval(0, &query.query, self.scope.root, self)?;
         let result = if !match_all {
-            let cloned = result.clone();
-            let selected: Vec<QueryResult> =
-                cloned.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect();
-            if selected.is_empty() {
-                result
-            }
-            else {
-                selected
-            }
+            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
         } else {
             result
         };
