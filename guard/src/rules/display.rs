@@ -49,7 +49,7 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ClauseCheck::Success => {
-                f.write_fmt(format_args!("GuardClause(Status={})", Status::PASS))?;
+                f.write_fmt(format_args!("GuardClauseValueCheck(Status={})", Status::PASS))?;
             },
 
             ClauseCheck::NoValueForEmptyCheck => {
