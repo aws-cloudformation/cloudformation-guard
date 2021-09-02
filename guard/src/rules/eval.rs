@@ -1,5 +1,5 @@
-use super::exprs::*;
 use super::*;
+use super::exprs::*;
 use crate::rules::eval_context::{block_scope, ValueScope};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
@@ -822,19 +822,32 @@ fn binary_operation<'value, 'loc: 'value>(
 
                 match cmp.0 {
                     CmpOperator::In => {
-                        let (lhs_value, status) = report_at_least_one(
-                            r,
-                            false,
-                            cmp,
-                            context.clone(),
-                            custom_message.clone(),
-                            eval_context
-                        )?;
-                        statues.push((lhs_value, status));
+                        if !l.is_list() {
+                            let (lhs_value, status) = report_at_least_one(
+                                r,
+                                false,
+                                cmp,
+                                context.clone(),
+                                custom_message.clone(),
+                                eval_context
+                            )?;
+                            statues.push((lhs_value, status));
+                        }
+                        else {
+                            statues.extend(report_all_values(
+                                r,
+                                false,
+                                cmp,
+                                context.clone(),
+                                custom_message.clone(),
+                                eval_context
+                            )?);
+                        };
                     },
 
                     _ => {
-                        let status = report_all_values(
+                        let status =
+                            report_all_values(
                             r,
                             false,
                             cmp,
