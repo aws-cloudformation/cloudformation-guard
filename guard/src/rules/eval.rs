@@ -1577,7 +1577,10 @@ pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
 
             if num_of_disjunction_fails > 0 {
                 num_fails += 1;
-                if multiple_ors_present {
+            }
+
+            if multiple_ors_present {
+                if num_of_disjunction_fails > 0 {
                     resolver.end_record(
                         &context,
                         RecordType::Disjunction(BlockCheck {
@@ -1587,7 +1590,17 @@ pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
                         })
                     )?;
                 }
-                continue;
+                else {
+                    resolver.end_record(
+                        &context,
+                        RecordType::Disjunction(BlockCheck {
+                            message: None,
+                            status: Status::SKIP,
+                            at_least_one_matches: true
+                        })
+                    )?;
+
+                }
             }
         }
         if num_fails > 0 { break Status::FAIL }
