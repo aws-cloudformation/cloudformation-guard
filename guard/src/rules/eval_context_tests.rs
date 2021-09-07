@@ -279,6 +279,60 @@ fn map_filter_keys() -> Result<()> {
         }
     }
 
+    //
+    // Testing other operations
+    //
+    let query = AccessQuery::try_from("Resources[ keys in [/s3/, /ec2/] ]")?.query;
+    let query_results = eval.query(&query)?;
+    assert_eq!(query_results.len(), 2);
+    for each in query_results {
+        match each {
+            QueryResult::Resolved(res) => {
+                let path = res.self_path().0.as_str();
+                assert_eq!(path == "/Resources/s3Bucket" || path == "/Resources/ec2", true);
+                assert_eq!(res.is_map(), true);
+            },
+
+            _ => unreachable!()
+        }
+    }
+
+    //
+    // !in test
+    //
+    let query = AccessQuery::try_from("Resources[ keys not in [/ec2/] ]")?.query;
+    let query_results = eval.query(&query)?;
+    assert_eq!(query_results.len(), 1);
+    for each in query_results {
+        match each {
+            QueryResult::Resolved(res) => {
+                let path = res.self_path().0.as_str();
+                assert_eq!(path == "/Resources/s3Bucket", true);
+                assert_eq!(res.is_map(), true);
+            },
+
+            _ => unreachable!()
+        }
+    }
+
+    //
+    // !!= test
+    //
+    let query = AccessQuery::try_from("Resources[ keys != /ec2/ ]")?.query;
+    let query_results = eval.query(&query)?;
+    assert_eq!(query_results.len(), 1);
+    for each in query_results {
+        match each {
+            QueryResult::Resolved(res) => {
+                let path = res.self_path().0.as_str();
+                assert_eq!(path == "/Resources/s3Bucket", true);
+                assert_eq!(res.is_map(), true);
+            },
+
+            _ => unreachable!()
+        }
+    }
+
     Ok(())
 }
 

@@ -6,6 +6,7 @@ use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
 use inflector::cases::*;
+use crate::rules::eval::EvaluationResult::QueryValueResult;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -581,54 +582,55 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             match current {
                 PathAwareValue::Map((_path, map)) => {
                     let mut selected = Vec::with_capacity(map.values.len());
-                    match &map_key_filter.compare_with {
+                    let (rhs, is_literal) = match &map_key_filter.compare_with {
                         LetValue::AccessClause(acc_query) => {
                             let values = query_retrieval_with_converter(0, &acc_query.query, current, resolver, converter)?;
-                            let values = {
-                                let mut collected = Vec::with_capacity(values.len());
-                                for each_value in values {
-                                    match each_value {
-                                        QueryResult::UnResolved(ur) => {
-                                            selected.push(
-                                                    to_unresolved_value(current,
-                                                                         format!("Access query retrieved value was unresolved at path {} for reason {}",
-                                                                                 ur.traversed_to.self_path(), match ur.reason { Some(r) => r, None => "".to_string() }),
-                                                                         &query[query_index..]
-                                                    ));
-                                        },
-
-                                        QueryResult::Resolved(val) => {
-                                            collected.push(val);
-                                        }
-                                    }
-                                }
-                                collected
-                            };
-                            for each_key in &map.keys {
-                                if values.contains(&each_key) {
-                                    match each_key {
-                                        PathAwareValue::String((_, v)) => {
-                                            selected.push(QueryResult::Resolved(map.values.get(v).unwrap()));
-                                        },
-                                        _ => unreachable!()
-                                    }
-                                }
-                            }
+                            (values, false)
                         },
 
                         LetValue::Value(path_value) => {
-                            for key in map.keys.iter() {
-                                if compare_eq(key, path_value)? {
-                                    match key {
-                                        PathAwareValue::String((_, v)) => {
-                                            selected.push(QueryResult::Resolved(map.values.get(v).unwrap()));
-                                        },
-                                        _ => unreachable!()
-                                    }
+                            (vec![QueryResult::Resolved(path_value)], true)
+                        }
+                    };
+
+                    let lhs = map.keys.iter().map(|p| QueryResult::Resolved(p))
+                        .collect::<Vec<QueryResult<'_>>>();
+
+                    let results = super::eval::real_binary_operation(
+                        &lhs,
+                        &rhs,
+                        is_literal,
+                        map_key_filter.comparator,
+                        "".to_string(),
+                        None,
+                        resolver
+                    )?;
+
+                    let results = match results {
+                        super::eval::EvaluationResult::QueryValueResult(r) => r,
+                        _ => unreachable!()
+                    };
+
+                    for each_result in results {
+                        match each_result {
+                            (QueryResult::Resolved(key), Status::PASS) => {
+                                if let PathAwareValue::String((_, key_name))= key {
+                                    selected.push(
+                                        QueryResult::Resolved(
+                                            map.values.get(key_name.as_str()).unwrap()));
                                 }
+                            },
+
+                            (QueryResult::UnResolved(ur), _) => {
+                                selected.push(QueryResult::UnResolved(ur));
+                            },
+
+                            (_, _) => {
+                                continue;
                             }
                         }
                     }
+
                     let mut extended = Vec::with_capacity(selected.len());
                     for each in selected {
                         match each {
