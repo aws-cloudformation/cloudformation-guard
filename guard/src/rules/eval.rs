@@ -141,7 +141,7 @@ macro_rules! box_create_func {
     }
 }
 
-enum EvaluationResult<'value> {
+pub(super) enum EvaluationResult<'value> {
     EmptyQueryResult(Status),
     QueryValueResult(Vec<(QueryResult<'value>, Status)>),
 }
@@ -771,10 +771,29 @@ fn binary_operation<'value, 'loc: 'value>(
     if lhs.is_empty() || rhs.is_empty() {
         return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
     }
+    real_binary_operation(
+        &lhs,
+        rhs,
+        rhs_is_literal,
+        cmp,
+        context,
+        custom_message,
+        eval_context
+    )
+}
+
+pub(super) fn real_binary_operation<'value, 'loc: 'value>(
+    lhs: &[QueryResult<'value>],
+    rhs: &[QueryResult<'value>],
+    rhs_is_literal: bool,
+    cmp: (CmpOperator, bool),
+    context: String,
+    custom_message: Option<String>,
+    eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
 
     if let (CmpOperator::Eq, false) = cmp {
         return eq_operation(
-            &lhs,
+            lhs,
             rhs,
             rhs_is_literal,
             cmp,
