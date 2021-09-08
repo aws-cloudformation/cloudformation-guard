@@ -25,13 +25,19 @@ pub fn validate_and_return_json(
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
-                    let reporters = vec![];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-run","lambda-payload", true, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json();
-                    return Ok(json_result);
+                    let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
+                    let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
+                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
+                    let event = tracker.final_event.unwrap();
+                    Ok(serde_json::to_string_pretty(&event)?)
+
+//                    let root_context = RootScope::new(&rules, &root);
+//                    let stacker = StackTracker::new(&root_context);
+//                    let reporters = vec![];
+//                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-run","lambda-payload", true, true, false);
+//                    rules.evaluate(&root, &reporter)?;
+//                    let json_result = reporter.get_result_json();
+//                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }
