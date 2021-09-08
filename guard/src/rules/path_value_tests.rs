@@ -348,3 +348,41 @@ fn map_keys_filter_test() -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[test]
+fn merge_values_test() -> Result<(), Error> {
+    let resources = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+        "#)?
+    )?;
+
+    let parameters = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(r#"
+        PARAMETERS:
+            ORG_IDS: ["o-2324/"]
+        "#)?
+    )?;
+
+    let resources = resources.merge(parameters)?;
+    assert_eq!(matches!(resources, PathAwareValue::Map(_)), true);
+    let resources_map = match &resources {
+        PathAwareValue::Map((_, map)) => map,
+        _ => unreachable!()
+    };
+    assert_eq!(resources_map.values.len(), 2);
+    assert_eq!(matches!(resources_map.values.get("PARAMETERS"), Some(_)), true);
+
+    let parameters = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(r#"
+        PARAMETERS:
+            ORG_IDS: ["o-2324/"]
+        "#)?
+    )?;
+    let resources = resources.merge(parameters);
+    assert_eq!(resources.is_err(), true);
+
+    Ok(())
+}

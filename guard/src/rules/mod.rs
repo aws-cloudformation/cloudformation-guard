@@ -176,6 +176,7 @@ pub(crate) struct NamedStatus<'value> {
     pub(crate) status: Status,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum RecordType<'value> {
     //
     // has as many child events for RuleCheck as there are rules in the file

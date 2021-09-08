@@ -684,6 +684,36 @@ impl QueryResolver for PathAwareValue {
 
 impl PathAwareValue {
 
+    pub(crate) fn merge(mut self, other: PathAwareValue) -> crate::rules::Result<PathAwareValue> {
+        match (&mut self, other) {
+            (PathAwareValue::List((_path, vec)),
+             PathAwareValue::List((_p2, other_vec))) => {
+                vec.extend(other_vec)
+            },
+
+            (PathAwareValue::Map((_, map)),
+             PathAwareValue::Map((path, other_map))) => {
+                for (key, value) in other_map.values {
+                    if map.values.contains_key(&key) {
+                        return Err(Error::new(ErrorKind::MultipleValues(
+                            format!("Key {}, already exists in map", key)
+                        )))
+                    }
+
+                    map.values.insert(key.clone(), value);
+                    map.keys.push(PathAwareValue::String((path.extend_str(&key), key)));
+                }
+            }
+
+            (this, that) => {
+                return Err(Error::new(ErrorKind::IncompatibleError(
+                    format!("Types are not compatible for merges {}, {}", this.type_info(), that.type_info())
+                )))
+            }
+        }
+        Ok(self)
+    }
+
     pub(crate) fn is_list(&self) -> bool {
         match self {
             PathAwareValue::List((_, _)) => true,
