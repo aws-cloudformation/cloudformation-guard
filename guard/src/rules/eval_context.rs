@@ -534,9 +534,13 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 //                                        _ => Ok(vec![])
 //                                    }
 //                                })
-                            accumulate_map(
-                                current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions, name)
-                            )
+                            if !map.is_empty() || query_index+1 < query.len() {
+                                accumulate_map(
+                                    current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions, name)
+                                )
+                            } else {
+                                Ok(vec![])
+                            }
                         },
 
                         _ => unreachable!()

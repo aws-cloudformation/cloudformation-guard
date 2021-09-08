@@ -1568,7 +1568,7 @@ fn test_inner_when_skipped() -> Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value };
     let status = eval_rule(&rule, &mut eval)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status, Status::SKIP);
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
@@ -2158,7 +2158,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     // Resources is empty, hence FAIL
     //
     let clause_failure_spec = GuardClause::try_from(
-        r#"Resources[ Type == /Bucket/ ].Propertiers exists"#)?;
+        r#"Resources[ Type == /Bucket/ ].Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
