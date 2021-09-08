@@ -44,8 +44,8 @@ or failure testing.
 "#)
             .arg(Arg::with_name("rules-file").long("rules-file").short("r").takes_value(true).help("Provide a rules file").required(true))
             .arg(Arg::with_name("test-data").long("test-data").short("t").takes_value(true).help("Provide a file or dir for data files in JSON or YAML").required(true))
-            .arg(Arg::with_name("new_eval_engine_version").long("new-eval-engine-version").short("n").takes_value(false)
-                .help("uses the new engine for evaluation. This parameter will allow customers to evaluate new changes before migrating"))
+            .arg(Arg::with_name("prev-engine").long("prev-engine").takes_value(false)
+                .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name("alphabetical").alias("-a").help("Sort alphabetically inside a directory").required(false))
             .arg(Arg::with_name("last-modified").long("last-modified").short("m").required(false).conflicts_with("alphabetical")
                 .help("Sort by last modified times within a directory"))
@@ -65,7 +65,7 @@ or failure testing.
             regular_ordering
         };
         let verbose = app.is_present("verbose");
-        let new_engine = app.is_present("new_eval_engine_version");
+        let new_engine = !app.is_present("prev-engine");
 
         let data_test_files = get_files_with_filter(&data, cmp, |entry| {
             entry.file_name().to_str()
