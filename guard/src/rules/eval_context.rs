@@ -7,6 +7,7 @@ use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
 use inflector::cases::*;
 use crate::rules::eval::EvaluationResult::QueryValueResult;
+use serde::Serialize;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -16,6 +17,7 @@ pub(crate) struct Scope<'value, 'loc: 'value> {
     variable_queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct EventRecord<'value> {
     pub(crate) context: String,
     pub(crate) container: Option<RecordType<'value>>,

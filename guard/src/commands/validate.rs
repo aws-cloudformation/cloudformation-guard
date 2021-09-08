@@ -88,9 +88,11 @@ rules and data files. The directory being pointed to must contain only data file
 or rules files.
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
-            .arg(Arg::with_name("new_eval_engine_version").long("new-eval-engine-version").short("n").takes_value(false)
-                .help("uses the new engine for evaluation. This parameter will allow customers to evaluate new changes before migrating"))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML")
+                .multiple(true))
+            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("old_eval_engine_version").long("old-eval-engine-version").short("o").takes_value(false)
+                .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
@@ -121,7 +123,7 @@ or rules files.
         };
 
         let empty_path = Path::new("");
-        let data_files = match app.value_of("data") {
+        let (merge, data_files): (bool, Vec<(String, String)>) = match app.value_of("data-dir") {
             Some(file_or_dir) => {
                 let base = PathBuf::from_str(file_or_dir)?;
                 let selected = get_files(file_or_dir, cmp)?;
@@ -134,19 +136,36 @@ or rules files.
                     let relative = match path.strip_prefix(base.as_path()) {
                         Ok(p) => if p != empty_path {
                             format!("{}", p.display())
-
                         } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
                         Err(_) => format!("{}", path.display()),
                     };
                     streams.push((context, relative));
                 }
-                streams
+                (false, streams)
             },
             None => {
-                let mut context = String::new();
-                let mut reader = BufReader::new(std::io::stdin());
-                reader.read_to_string(&mut context);
-                vec![(context, "STDIN".to_string())]
+                match app.values_of("data") {
+                    Some(files) => {
+                        let mut streams = Vec::with_capacity(files.len());
+                        for each_file in files {
+                            let base = PathBuf::from_str(each_file)?;
+                            let mut context = String::new();
+                            let mut reader = BufReader::new(File::open(base.as_path())?);
+                            reader.read_to_string(&mut context)?;
+                            let path = base.as_path();
+                            streams.push((context, format!("{}", path.display())));
+                        }
+                        (true, streams)
+                    }
+
+                    None => {
+                        let mut context = String::new();
+                        let mut reader = BufReader::new(std::io::stdin());
+                        reader.read_to_string(&mut context);
+                        (false, vec![(context, "STDIN".to_string())])
+                    }
+                }
+
             }
         };
 
@@ -199,7 +218,7 @@ or rules files.
 
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
-        let new_version_eval_engine = app.is_present("new_eval_engine_version");
+        let new_version_eval_engine = !app.is_present("old_eval_engine_version");
 
         let base = PathBuf::from_str(file)?;
         let files = get_files(file, cmp)?;
@@ -262,17 +281,23 @@ pub fn validate_and_return_json(
     let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
 
     match crate::rules::parser::rules_file(span) {
-
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
-                    let reporters = vec![];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json();
-                    return Ok(json_result);
+                    let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
+                    let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
+                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
+                    let event = tracker.final_event.unwrap();
+                    Ok(serde_json::to_string_pretty(&event)?)
+
+
+//                    let root_context = RootScope::new(&rules, &root);
+//                    let stacker = StackTracker::new(&root_context);
+//                    let reporters = vec![];
+//                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
+//                    rules.evaluate(&root, &reporter)?;
+//                    let json_result = reporter.get_result_json();
+//                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }
