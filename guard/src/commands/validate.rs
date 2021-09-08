@@ -91,7 +91,7 @@ or rules files.
             .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML")
                 .multiple(true))
             .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
-            .arg(Arg::with_name("old_eval_engine_version").long("old-eval-engine-version").short("o").takes_value(false)
+            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
                 .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
@@ -167,6 +167,31 @@ or rules files.
                 }
 
             }
+        };
+
+        let mut data_files= {
+            let mut collected = Vec::with_capacity(data_files.len());
+            for (content, name) in data_files {
+                let entry = match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(value) => (PathAwareValue::try_from(value)?, name),
+                    Err(_) => {
+                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                        (PathAwareValue::try_from(value)?, name)
+                    }
+                };
+                collected.push(entry);
+            }
+            collected
+        };
+
+        let data_files = if merge {
+            let (mut first, name) = data_files.pop().unwrap();
+            for (value, _) in data_files {
+                first = first.merge(value)?;
+            }
+            vec![(first, name)]
+        } else {
+            data_files
         };
 
         let verbose = if app.is_present("verbose") {
@@ -529,7 +554,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 fn evaluate_against_data_input<'r>(data_type: Type,
                                    output: OutputFormatType,
-                                   data_files: &'r [(String, String)],
+                                   data_files: &'r [(PathAwareValue, String)],
                                    rules: &RulesFile<'_>,
                                    rules_file_name: &'r str,
                                    verbose: bool,
@@ -537,19 +562,9 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                                    show_clause_failures: bool,
                                    new_engine_version: bool,
                                    summary_table: BitFlags<SummaryType>) -> Result<Status> {
-    let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
-        match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
-            Err(_) => {
-                let value = serde_yaml::from_str::<serde_json::Value>(content)?;
-                Ok((PathAwareValue::try_from(value)?, name.as_str()))
-            }
-        }
-    ).collect();
-
     let mut overall = Status::PASS;
     let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
-    for (each, data_file_name) in iterator? {
+    for (each, data_file_name) in data_files {
         let mut reporters = match data_type {
             Type::CFNTemplate =>
                 vec![
@@ -565,7 +580,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
         }
 
         if new_engine_version {
-            let mut root_scope = root_scope(&rules, &each)?;
+            let mut root_scope = root_scope(&rules, each)?;
             let mut tracker = RecordTracker::new(&mut root_scope);
             let status = eval_rules_file(rules, &mut tracker)?;
             let root_record = tracker.extract();
@@ -575,8 +590,12 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             if verbose {
                 print_verbose_tree(&root_record);
             }
+
+            if print_json {
+                println!("{}", serde_json::to_string_pretty(&root_record)?)
+            }
         } else {
-            let root_context = RootScope::new(rules, &each);
+            let root_context = RootScope::new(rules, each);
             let stacker = StackTracker::new(&root_context);
             let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
             let appender = MetadataAppender { delegate: &reporter, root_context: &each };
