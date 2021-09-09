@@ -213,8 +213,7 @@ or rules files.
                 match each_file_content {
                     Err(e) => println!("Unable read content from file {}", e),
                     Ok((file_content, rule_file_name)) => {
-                        let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                        match crate::rules::parser::rules_file(span) {
+                        match parse_rules(&file_content, &rule_file_name) {
                             Err(e) => {
                                 println!("Parsing error handling rules file = {}, Error = {}",
                                          rule_file_name.underline(), e);
@@ -248,16 +247,13 @@ or rules files.
             let mut context = String::new();
             let mut reader = BufReader::new(std::io::stdin());
             reader.read_to_string(&mut context);
-            let payload: Payload = match serde_json::from_str::<Payload>(&context) {
-                Ok(value) => value,
-                Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
-            };
+            let payload: Payload = deserialize_payload(&context)?;
+
             let data_collection: Vec<(String, String)> = payload.list_of_data.iter().enumerate().map(|(i, data)|(data.to_string(), format!("DATA_STDIN[{}]", i + 1))).collect();
             let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
 
             for (each_rules, location) in rules_collection {
-                let span = crate::rules::parser::Span::new_extra(&each_rules, &location);
-                match crate::rules::parser::rules_file(span) {
+               match parse_rules(&each_rules, &location) {
                     Err(e) => {
                         println!("Parsing error handling rules = {}, Error = {}",
                                  location.underline(), e);
@@ -288,6 +284,18 @@ or rules files.
         }
         Ok(exit_code)
     }
+}
+
+fn deserialize_payload(payload: &str) -> Result<Payload> {
+    match serde_json::from_str::<Payload>(payload) {
+        Ok(value) => Ok(value),
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+    }
+}
+
+fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Result<RulesFile<'r>> {
+    let span = crate::rules::parser::Span::new_extra(rules_file_content, rules_file_name);
+    crate::rules::parser::rules_file(span)
 }
 
 pub fn validate_and_return_json(
@@ -562,3 +570,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
     }
     Ok(overall)
 }
+
+#[cfg(test)]
+#[path = "validate_tests.rs"]
+mod validate_tests;
