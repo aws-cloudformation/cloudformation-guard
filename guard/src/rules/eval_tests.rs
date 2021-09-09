@@ -3658,3 +3658,39 @@ fn using_resource_names_for_assessment() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_string_in_comparison() -> Result<()> {
+    let resources = r###"
+    Resources:
+      s3:
+        Type: AWS::S3::Bucket
+      s3Policy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+          PolicyDocument:
+            Statement:
+              Resource:
+                Fn::Sub: "aws:arn:s3::${s3}"
+    "###;
+    let value = PathAwareValue::try_from(
+        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+
+    let rules = r###"
+    let s3_buckets = Resources[ bucket_names | Type == 'AWS::S3::Bucket' ]
+    rule s3_policies {
+        when %s3_buckets not empty {
+            Resources[ Type == 'AWS::S3::BucketPolicy' ] {
+                some %bucket_names[*] in Properties.PolicyDocument.Statement.Resource.'Fn::Sub'
+            }
+        }
+    }
+    "###;
+
+    let rules_files = RulesFile::try_from(rules)?;
+    let mut eval = root_scope(&rules_files, &value)?;
+    let status = eval_rules_file(&rules_files, &mut eval)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
