@@ -476,12 +476,18 @@ fn not_cmp<F>(cmp: F) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<boo
     }
 }
 
-fn in_cmp(not_in: bool)
-          -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
+fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
 {
     move |lhs, rhs| {
-        match rhs {
-            PathAwareValue::List((_, rhs_list)) => {
+        match (lhs, rhs) {
+            (PathAwareValue::String((_, lhs_value)),
+             PathAwareValue::String((_, rhs_value))) => {
+                let result = rhs_value.contains(lhs_value);
+                Ok(if not_in { !result } else { result })
+            },
+
+            (_,
+             PathAwareValue::List((_, rhs_list))) => {
                 Ok({
                     let mut tracking = Vec::with_capacity(rhs_list.len());
                     for each_rhs in rhs_list {
@@ -494,7 +500,10 @@ fn in_cmp(not_in: bool)
                 })
             },
 
-            _ => compare_eq(lhs, rhs)
+            (_, _) => {
+                let result = compare_eq(lhs, rhs)?;
+                Ok(if not_in { !result } else { result })
+            }
         }
     }
 }
