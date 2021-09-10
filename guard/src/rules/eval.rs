@@ -1098,13 +1098,17 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     block_clause: &'value BlockGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>) -> Result<Status>
 {
+    let context = format!("BlockGuardClause#{}", block_clause.location);
+    let match_all = block_clause.query.match_all;
+    resolver.start_record(&context)?;
     let block_values = resolver.query(&block_clause.query.query)?;
     if block_values.is_empty() {
-        return Ok(if block_clause.not_empty { Status::FAIL } else { Status::SKIP })
+        let status = if block_clause.not_empty { Status::FAIL } else { Status::SKIP };
+        resolver.end_record(&context, RecordType::BlockGuardCheck(BlockCheck {
+            status, at_least_one_matches: !match_all, message: None
+        }))?;
+        return Ok(status)
     }
-    let match_all = block_clause.query.match_all;
-    let context = format!("BlockGuardClause#{}", block_clause.location);
-    resolver.start_record(&context)?;
     let mut fails = 0;
     let mut passes = 0;
     for each in block_values {
