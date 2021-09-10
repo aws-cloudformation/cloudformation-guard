@@ -199,14 +199,24 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
             match &check.from {
                 QueryResult::Resolved(res) => {
                     let (path, provided) :(String, serde_json::Value) = (*res).try_into()?;
-                    let (_, expected) :(String, serde_json::Value) = check.to.as_ref().unwrap().resolved().unwrap().try_into()?;
+                    let expected: Option<(String, serde_json::Value)> = match &check.to {
+                        Some(to) => match to {
+                            QueryResult::Resolved(v) => Some((*v).try_into()?),
+                            QueryResult::UnResolved(ur) => Some(ur.traversed_to.try_into()?),
+                        }
+                        None => None,
+                    };
+                    let expected = match expected {
+                        Some((_, ex)) => Some(ex),
+                        None => None,
+                    };
                     NameInfo {
                         rule: rule_name,
                         comparison: Some(check.comparison.into()),
                         error: check.message.clone(),
                         message: check.custom_message.as_ref().map_or("".to_string(), |msg| msg.clone()),
                         provided: Some(provided),
-                        expected: Some(expected),
+                        expected,
                         path,
                         ..Default::default()
                     }
