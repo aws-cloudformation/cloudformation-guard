@@ -577,10 +577,28 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     Ok(selected)
                 }
 
-                _ => to_unresolved_result(
-                    current,
-                    format!("Filter on value type that was not a struct or array {} {}", current.type_info(), current.self_path()),
-                    &query[query_index..])
+                _ => if let QueryPart::AllIndices(_) = &query[query_index-1] {
+                    let mut val_resolver = ValueScope { root: current, parent: resolver };
+                    match super::eval::eval_conjunction_clauses(
+                            conjunctions, &mut val_resolver, super::eval::eval_guard_clause) {
+                        Ok(status) => {
+                            match status {
+                                Status::PASS => {
+                                    query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
+                                },
+                                _ => Ok(vec![])
+                            }
+                        },
+                        Err(e) => {
+                            return Err(e)
+                        }
+                    }
+                } else {
+                    to_unresolved_result(
+                        current,
+                        format!("Filter on value type that was not a struct or array {} {}", current.type_info(), current.self_path()),
+                        &query[query_index..])
+                }
             }
         },
 
