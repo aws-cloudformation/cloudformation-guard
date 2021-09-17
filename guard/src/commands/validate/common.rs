@@ -131,6 +131,7 @@ pub(super) fn find_failing_clauses<'record, 'value>(
         Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => vec![],
 
         Some(RecordType::ClauseValueCheck(_)) => vec![current],
+        Some(RecordType::RuleCheck(NamedStatus{message: Some(_), status: Status::FAIL, ..})) => vec![current],
 
         _ => {
             let mut acc = Vec::new();
@@ -147,6 +148,14 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
     clause: &'record EventRecord<'value>) -> crate::rules::Result<NameInfo<'record>>
 {
     Ok(match &clause.container {
+        Some(RecordType::RuleCheck(NamedStatus{message: Some(msg), name, ..})) => {
+            NameInfo {
+                message: msg.clone(),
+                rule: *name,
+                ..Default::default()
+            }
+        },
+
         Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(missing))) =>
             NameInfo {
                 error: missing.message.clone(),
@@ -262,7 +271,7 @@ pub(super) fn report_from_events(
     let mut skipped = HashSet::new();
     let mut success = HashSet::new();
     for each_rule in &root_record.children {
-        if let Some(RecordType::RuleCheck(NamedStatus{status, name})) = &each_rule.container {
+        if let Some(RecordType::RuleCheck(NamedStatus{status, name, message})) = &each_rule.container {
             if name.len() > longest_rule_name {
                 longest_rule_name = name.len();
             }
@@ -439,7 +448,15 @@ pub(super) fn print_name_info<R, U, B>(
             None => {
                 let (cmp, not) = match &each.comparison {
                     Some(cmp) => (cmp.operator, cmp.not_operator_exists),
-                    None => return Err(Error::new(ErrorKind::MissingValue("Comparison must be present for this".to_string())))
+                    None => {
+                        writeln!(writer, "Parameterized Rule {rules}/{rule_name} failed for {data}. Reason {msg}",
+                            rules=rules_file_name,
+                            data=data_file_name,
+                            rule_name=each.rule,
+                            msg=each.message.replace('\n', "; ")
+                        );
+                        continue;
+                    }
                 };
                 if cmp.is_unary() {
                     writeln!(writer, "{}",

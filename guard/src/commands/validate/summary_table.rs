@@ -112,7 +112,7 @@ impl<'r> Reporter for SummaryTable<'r> {
         let mut failed = Vec::with_capacity(root_record.children.len());
         let mut longest = 0 as usize;
         for each_rule in &root_record.children {
-            if let Some(RecordType::RuleCheck(NamedStatus {status, name})) =
+            if let Some(RecordType::RuleCheck(NamedStatus {status, name, ..})) =
                 &each_rule.container {
                 match status {
                     Status::PASS => passed.push((*status, *name)),
