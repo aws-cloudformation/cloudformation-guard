@@ -174,6 +174,17 @@ pub(crate) struct BlockCheck {
 pub(crate) struct NamedStatus<'value> {
     pub(crate) name: &'value str,
     pub(crate) status: Status,
+    pub(crate) message: Option<String>
+}
+
+impl<'value> Default for NamedStatus<'value> {
+    fn default() -> NamedStatus<'static> {
+        NamedStatus {
+            name: "",
+            status: Status::PASS,
+            message: None
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

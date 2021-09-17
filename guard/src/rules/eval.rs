@@ -1222,6 +1222,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
 }
 
 struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
+    call_rule: &'value ParameterizedNamedRuleClause<'loc>,
     resolved_parameters: HashMap<&'value str, Vec<QueryResult<'value>>>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>
 }
@@ -1249,6 +1250,21 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParamete
     }
 
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        let record = match record {
+            RecordType::RuleCheck(ns) => {
+                if ns.name == &self.call_rule.named_rule.dependent_rule {
+                    RecordType::RuleCheck(NamedStatus {
+                        name: ns.name,
+                        status: ns.status,
+                        message: self.call_rule.named_rule.custom_message.clone()
+                    })
+                }
+                else {
+                    RecordType::RuleCheck(ns)
+                }
+            },
+            rest => rest
+        };
         self.parent.end_record(context, record)
     }
 
@@ -1300,7 +1316,7 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
             }
         }
     }
-    let mut eval = ResolvedParameterContext { parent: resolver, resolved_parameters };
+    let mut eval = ResolvedParameterContext { parent: resolver, resolved_parameters, call_rule };
     eval_rule(&param_rule.rule, &mut eval)
 }
 
@@ -1472,6 +1488,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                     resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
                         status: Status::SKIP,
                         name: &rule.rule_name,
+                        ..Default::default()
                     }))?;
                     return Ok(Status::SKIP)
                 }
@@ -1484,6 +1501,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
                     status: Status::FAIL,
                     name: &rule.rule_name,
+                    ..Default::default()
                 }))?;
                 return Err(e)
             }
@@ -1493,7 +1511,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     match eval_general_block_clause(block, resolver, eval_rule_clause) {
         Ok(status) => {
             resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
-                status, name: &rule.rule_name
+                status, name: &rule.rule_name,..Default::default()
             }))?;
             Ok(status)
         },
@@ -1501,7 +1519,8 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
         Err(e) => {
             resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
                 status: Status::FAIL,
-                name: &rule.rule_name
+                name: &rule.rule_name,
+                ..Default::default()
             }))?;
             return Err(e)
         }
@@ -1536,7 +1555,8 @@ pub(in crate) fn eval_rules_file<'value, 'loc: 'value>(
             Err(e) => {
                 resolver.end_record(&context, RecordType::RuleCheck(NamedStatus {
                     status: Status::FAIL,
-                    name: ""
+                    name: &each_rule.rule_name,
+                    ..Default::default()
                 }))?;
                 return Err(e)
             }
@@ -1549,7 +1569,7 @@ pub(in crate) fn eval_rules_file<'value, 'loc: 'value>(
         else { Status::SKIP };
 
     resolver.end_record(&context, RecordType::FileCheck(NamedStatus {
-        status: overall, name: ""
+        status: overall, name: "", ..Default::default()
     }))?;
     Ok(overall)
 }

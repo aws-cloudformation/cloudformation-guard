@@ -153,7 +153,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         let top = tracer.extract();
 
                         for rule in &top.children {
-                            if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name})) = rule.container {
+                            if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name, ..})) = rule.container {
                                 match each.expectations.rules.get(name) {
                                     Some(expectation) => {
                                         match Status::try_from(expectation.as_str()) {
