@@ -8,6 +8,7 @@ use lazy_static::lazy_static;
 use inflector::cases::*;
 use crate::rules::eval::EvaluationResult::QueryValueResult;
 use serde::Serialize;
+use crate::rules::Status::SKIP;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -26,7 +27,7 @@ pub(crate) struct EventRecord<'value> {
 
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
-    rules: HashMap<&'value str, &'value Rule<'loc>>,
+    rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
     rules_status: HashMap<&'value str, Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
 }
@@ -536,7 +537,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 //                                        _ => Ok(vec![])
 //                                    }
 //                                })
-                            if !map.is_empty() || query_index+1 < query.len() {
+                            if !map.is_empty() {
                                 accumulate_map(
                                     current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions, name)
                                 )
@@ -690,7 +691,7 @@ pub(crate) fn root_scope<'value, 'loc: 'value>(
         extract_variables(&rules_file.assignments)?;
     let mut lookup_cache = HashMap::with_capacity(rules_file.guard_rules.len());
     for rule in &rules_file.guard_rules {
-        lookup_cache.insert(rule.rule_name.as_str(), rule);
+        lookup_cache.entry(rule.rule_name.as_str()).or_insert(vec![]).push(rule);
     }
 
     let mut parameterized_rules = HashMap::with_capacity(
@@ -704,7 +705,7 @@ pub(crate) fn root_scope<'value, 'loc: 'value>(
 pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     literals: HashMap<&'value str, &'value PathAwareValue>,
     queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
-    lookup_cache: HashMap<&'value str, &'value Rule<'loc>>,
+    lookup_cache: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
     parameterized_rules: HashMap<&'value str,&'value ParameterizedRule<'loc>>,
     root: &'value PathAwareValue)
     -> Result<RootScope<'value, 'loc>>
@@ -861,13 +862,23 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         }
 
         let rule = match self.rules.get(rule_name) {
-            Some(rule) => *rule,
+            Some(rule) => rule.clone(),
             None => return Err(Error::new(ErrorKind::MissingValue(
                 format!("Rule {} by that name does not exist, Rule Names = {:?}",
                         rule_name, self.rules.keys()))))
         };
 
-        let status = super::eval::eval_rule(rule, self)?;
+        let status = 'done: loop {
+            for each_rule in rule {
+                let status = super::eval::eval_rule(each_rule, self)?;
+                if status != SKIP {
+                    break 'done status;
+                }
+            }
+            break SKIP
+        };
+
+        // let status = super::eval::eval_rule(rule, self)?;
         self.rules_status.insert(rule_name, status);
         Ok(status)
 
