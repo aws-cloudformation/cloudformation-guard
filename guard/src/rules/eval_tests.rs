@@ -1631,7 +1631,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
 
                 RecordType::ClauseValueCheck(ClauseCheck::Success) => {},
 
-                RecordType::RuleCheck(NamedStatus{name, status}) => {
+                RecordType::RuleCheck(NamedStatus{name, status, ..}) => {
                     assert_eq!(name, "name_check");
                     assert_eq!(status, Status::FAIL);
                 },
@@ -2160,7 +2160,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources[ Type == /Bucket/ ].Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status, Status::SKIP);
 
     //
     // Resource present filter did not select, SKIP

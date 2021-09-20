@@ -23,7 +23,9 @@ fn extraction_test() -> Result<()> {
     let root_scope = root_scope(&rules, &path_value)?;
     assert_eq!(rules.guard_rules.len(), 1);
     assert_eq!(root_scope.rules.len(), 1);
-    assert_eq!(root_scope.rules.get("aws_route53_recordset").map(|s| *s), rules.guard_rules.get(0));
+    assert_eq!(root_scope.rules.get("aws_route53_recordset").map(|s| s.get(0))
+                   .map(|s| match s { Some(r) => Some(*r), None => None })
+                   .flatten(), rules.guard_rules.get(0));
 
     Ok(())
 }

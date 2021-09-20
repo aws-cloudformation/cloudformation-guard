@@ -20,6 +20,7 @@ use serde::{Serialize, Deserialize};
 use itertools::Itertools;
 use crate::rules::eval_context::RecordTracker;
 use crate::rules::eval::eval_rules_file;
+use crate::rules::Status::SKIP;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}
@@ -152,33 +153,92 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         eval_rules_file(&rules, &mut tracer)?;
                         let top = tracer.extract();
 
-                        for rule in &top.children {
+                        let by_rules = top.children.iter().fold(
+                            HashMap::new(), |mut acc, rule| {
                             if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name, ..})) = rule.container {
-                                match each.expectations.rules.get(name) {
-                                    Some(expectation) => {
-                                        match Status::try_from(expectation.as_str()) {
-                                            Err(e) => println!("Incorrect STATUS provided {}", e),
-                                            Ok(expected_status) => {
-                                                if got_status != expected_status {
-                                                    by_result.entry(String::from("FAILED")).or_insert(indexmap::IndexSet::new())
-                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                     name, expected_status, got_status)));
-                                                    exit_code = 7;
-                                                } else {
-                                                    by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
-                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                     name, expected_status, got_status)));
+                                acc.entry(name).or_insert(vec![]).push(&rule.container)
+                            }
+                            acc
+                        });
+
+                        for (rule_name, rule) in by_rules {
+                            let expected = match each.expectations.rules.get(rule_name) {
+                                Some(exp) => Status::try_from(exp.as_str())?,
+                                None => {
+                                    println!("  No Test expectation was set for Rule {}", rule_name);
+                                    continue;
+                                }
+                            };
+
+                            let mut statues: Vec<Status> = Vec::with_capacity(rule.len());
+                            let matched = 'matched: loop {
+                                let mut all_skipped = 0;
+                                for each in rule.iter() {
+                                    if let Some(RecordType::RuleCheck(NamedStatus { status: got_status, .. })) = each {
+                                        match expected {
+                                            Status::SKIP => {
+                                                if *got_status == SKIP {
+                                                    all_skipped += 1;
+                                                }
+                                            },
+
+                                            rest => {
+                                                if *got_status == rest {
+                                                    break 'matched Some(expected)
                                                 }
                                             }
                                         }
-                                    },
-
-                                    None => {
-                                        println!("  No Test expectation was set for Rule {}", name)
+                                        statues.push(*got_status)
                                     }
+                                }
+                                if expected == SKIP && all_skipped == rule.len() {
+                                    break 'matched Some(expected)
+                                }
+                                break 'matched None
+                            };
+
+                            match matched {
+                                Some(status) => {
+                                    by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
+                                        .insert(String::from(format!("{}: Expected = {}",
+                                                                     rule_name, status)));
+                                },
+
+                                None => {
+                                    by_result.entry(String::from("FAIL")).or_insert(indexmap::IndexSet::new())
+                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {:?}",
+                                                                     rule_name, expected, statues)));
                                 }
                             }
                         }
+
+//                        for rule in &top.children {
+//                            if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name, ..})) = rule.container {
+//                                match each.expectations.rules.get(name) {
+//                                    Some(expectation) => {
+//                                        match Status::try_from(expectation.as_str()) {
+//                                            Err(e) => println!("Incorrect STATUS provided {}", e),
+//                                            Ok(expected_status) => {
+//                                                if got_status != expected_status {
+//                                                    by_result.entry(String::from("FAILED")).or_insert(indexmap::IndexSet::new())
+//                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
+//                                                                                     name, expected_status, got_status)));
+//                                                    exit_code = 7;
+//                                                } else {
+//                                                    by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
+//                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
+//                                                                                     name, expected_status, got_status)));
+//                                                }
+//                                            }
+//                                        }
+//                                    },
+//
+//                                    None => {
+//                                        println!("  No Test expectation was set for Rule {}", name)
+//                                    }
+//                                }
+//                            }
+//                        }
 
                         if verbose {
                             super::validate::print_verbose_tree(&top);
