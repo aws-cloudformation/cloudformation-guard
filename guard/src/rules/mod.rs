@@ -152,7 +152,7 @@ pub(crate) enum ClauseCheck<'value> {
     Success,
     Comparison(ComparisonClauseCheck<'value>),
     Unary(UnaryValueCheck<'value>),
-    NoValueForEmptyCheck,
+    NoValueForEmptyCheck(Option<String>),
     DependentRule(MissingValueCheck<'value>),
     MissingBlockValue(ValueCheck<'value>)
 }

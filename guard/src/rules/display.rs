@@ -52,8 +52,10 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
                 f.write_fmt(format_args!("GuardClauseValueCheck(Status={})", Status::PASS))?;
             },
 
-            ClauseCheck::NoValueForEmptyCheck => {
-                f.write_fmt(format_args!("GuardClause(Status={}, Empty)", Status::FAIL))?;
+            ClauseCheck::NoValueForEmptyCheck(message) => {
+                f.write_fmt(format_args!(
+                    "GuardClause(Status={}, Empty, {})",
+                    Status::FAIL, message.as_ref().map_or("", |s| s.as_ref())))?;
             },
 
             ClauseCheck::MissingBlockValue(missing) => {

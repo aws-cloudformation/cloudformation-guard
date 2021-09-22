@@ -18,7 +18,7 @@ pub(crate) struct Scope<'value, 'loc: 'value> {
     variable_queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub(crate) struct EventRecord<'value> {
     pub(crate) context: String,
     pub(crate) container: Option<RecordType<'value>>,

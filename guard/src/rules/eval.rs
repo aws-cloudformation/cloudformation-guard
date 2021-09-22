@@ -233,7 +233,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                         },
                         false => {
                             eval_context.start_record(&context)?;
-                            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck))?;
+                            eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck(custom_message.clone())))?;
                             Status::FAIL
                         }
                     }
