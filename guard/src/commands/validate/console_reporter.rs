@@ -58,7 +58,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                 ClauseCheck::NoValueForEmptyCheck(msg) => {
                     let custom_message = msg.as_ref()
                         .map_or("".to_string(),
-                                |s| format!(" Message = [{}]", s.replace("\n", ";")));
+                                |s| format!("{}", s.replace("\n", ";")));
 
                     writeln!(
                         writer,
