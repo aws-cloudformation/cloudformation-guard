@@ -30,6 +30,7 @@ mod generic_summary;
 mod common;
 mod summary_table;
 mod cfn_reporter;
+mod console_reporter;
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -565,19 +566,25 @@ fn evaluate_against_data_input<'r>(data_type: Type,
     let mut overall = Status::PASS;
     let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
     for (each, data_file_name) in data_files {
-        let mut reporters = match data_type {
-            Type::CFNTemplate =>
-                vec![
-                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-            Type::Generic =>
-                vec![
-                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-        };
+        let mut reporters = vec![];
+//        let mut reporters = match data_type {
+//            Type::CFNTemplate =>
+//                vec![
+//                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
+//            Type::Generic =>
+//                vec![
+//                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
+//        };
         if !summary_table.is_empty() {
             reporters.insert(
                 0, Box::new(
                     summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
         }
+
+        reporters.insert(
+            1,
+            Box::new(
+                console_reporter::ConsoleReporter::new(data_file_name, rules_file_name)) as Box<dyn Reporter>);
 
         if new_engine_version {
             let mut root_scope = root_scope(&rules, each)?;

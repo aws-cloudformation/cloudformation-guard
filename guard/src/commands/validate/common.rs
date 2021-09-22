@@ -2,7 +2,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus};
+use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, BlockCheck, TypeBlockCheck};
 use crate::rules::path_value::Path;
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
@@ -248,15 +248,45 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
             }
         }
 
-        Some(RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck)) =>
+        Some(RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck(msg))) =>
             NameInfo {
                 rule: rule_name,
                 comparison: Some(Comparison{not_operator_exists: false, operator: CmpOperator::Empty}),
+                message: String::from(msg.as_ref().map_or("", |s| s.as_str())),
                 ..Default::default()
             },
 
         _ => unreachable!()
     })
+}
+
+pub(crate) fn extract_event_records<'value>(root_record: EventRecord<'value>)
+    -> (Vec<EventRecord<'value>>, Vec<EventRecord<'value>>, Vec<EventRecord<'value>>)
+{
+    let mut failed = Vec::with_capacity(root_record.children.len());
+    let mut skipped = Vec::with_capacity(root_record.children.len());
+    let mut passed = Vec::with_capacity(root_record.children.len());
+    for each_rule in root_record.children {
+        match &each_rule.container {
+            Some(RecordType::RuleCheck(NamedStatus{status: Status::FAIL, name, message})) => {
+                let mut failed = EventRecord {
+                    container: Some(RecordType::RuleCheck(NamedStatus{status: Status::FAIL, name, message: message.clone()})),
+                    children: vec![],
+                    context: each_rule.context
+                };
+                //add_failed_children(&mut failed, each_rule.children)
+            },
+
+            Some(RecordType::RuleCheck(NamedStatus{status: Status::SKIP, ..})) => {
+                skipped.push(each_rule);
+            }
+
+            rest => {
+                skipped.push(each_rule);
+            }
+        }
+    }
+    (failed, skipped, passed)
 }
 
 pub(super) fn report_from_events(
