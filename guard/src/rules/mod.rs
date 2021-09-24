@@ -95,6 +95,7 @@ pub(crate) struct UnResolved<'value> {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum QueryResult<'value> {
+    Literal(&'value PathAwareValue),
     Resolved(&'value PathAwareValue),
     UnResolved(UnResolved<'value>),
 }

@@ -289,6 +289,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 QueryResult::UnResolved(ur) => {
                     resolved.push(QueryResult::UnResolved(ur));
                 },
+                QueryResult::Literal(value) |
                 QueryResult::Resolved(value) => {
                     let index = if query_index+1 < query.len() {
                         match &query[query_index+1] {
@@ -373,6 +374,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         );
                                     },
 
+                                    QueryResult::Literal(key) |
                                     QueryResult::Resolved(key) => {
                                         if let PathAwareValue::String((_, k)) = key {
                                             if let Some(next) = map.values.get(k) {
@@ -607,14 +609,14 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             match current {
                 PathAwareValue::Map((_path, map)) => {
                     let mut selected = Vec::with_capacity(map.values.len());
-                    let (rhs, is_literal) = match &map_key_filter.compare_with {
+                    let rhs = match &map_key_filter.compare_with {
                         LetValue::AccessClause(acc_query) => {
                             let values = query_retrieval_with_converter(0, &acc_query.query, current, resolver, converter)?;
-                            (values, false)
+                            values
                         },
 
                         LetValue::Value(path_value) => {
-                            (vec![QueryResult::Resolved(path_value)], true)
+                            vec![QueryResult::Literal(path_value)]
                         }
                     };
 
@@ -624,7 +626,6 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     let results = super::eval::real_binary_operation(
                         &lhs,
                         &rhs,
-                        is_literal,
                         map_key_filter.comparator,
                         "".to_string(),
                         None,
@@ -659,6 +660,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     let mut extended = Vec::with_capacity(selected.len());
                     for each in selected {
                         match each {
+                            QueryResult::Literal(r) |
                             QueryResult::Resolved(r) => {
                                 extended.extend(
                                     query_retrieval_with_converter(query_index+1, query, r, resolver, converter)?
@@ -899,7 +901,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Resolved(*val)])
+            return Ok(vec![QueryResult::Literal(*val)])
         }
 
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
@@ -995,7 +997,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Resolved(*val)])
+            return Ok(vec![QueryResult::Literal(*val)])
         }
 
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {

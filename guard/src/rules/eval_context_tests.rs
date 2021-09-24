@@ -156,6 +156,7 @@ fn non_empty_value_mixed_results() -> Result<()> {
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
+            QueryResult::Literal(_) => unreachable!(),
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags");
                 assert_eq!(res.is_list(), true);
@@ -194,6 +195,7 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
+            QueryResult::Literal(_) => unreachable!(),
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags/0/Value");
                 assert_eq!(res.is_scalar(), true);
@@ -233,6 +235,7 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
+            QueryResult::Literal(_) => unreachable!(),
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags/0/Value");
                 assert_eq!(res.is_scalar(), true);
@@ -363,6 +366,7 @@ fn test_with_converter() -> Result<()> {
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
+            QueryResult::Literal(_) => unreachable!(),
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags/0/Value");
                 assert_eq!(res.is_scalar(), true);
