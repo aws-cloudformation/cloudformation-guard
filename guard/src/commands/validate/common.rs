@@ -200,16 +200,21 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                         path,
                         ..Default::default()
                     }
-                }
+                },
+
+                QueryResult::Literal(_) => unreachable!()
             }
         }
 
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) => {
             match &check.from {
+                QueryResult::Literal(_) => unreachable!(),
+
                 QueryResult::Resolved(res) => {
                     let (path, provided) :(String, serde_json::Value) = (*res).try_into()?;
                     let expected: Option<(String, serde_json::Value)> = match &check.to {
                         Some(to) => match to {
+                            QueryResult::Literal(_) => unreachable!(),
                             QueryResult::Resolved(v) => Some((*v).try_into()?),
                             QueryResult::UnResolved(ur) => Some(ur.traversed_to.try_into()?),
                         }

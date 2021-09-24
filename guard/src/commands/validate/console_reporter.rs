@@ -129,6 +129,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                                 |s| format!( " Error = [{}]", s));
 
                     match from {
+                        QueryResult::Literal(_) => unreachable!(),
                         QueryResult::Resolved(res) => {
                             writeln!(
                                 writer,
@@ -176,6 +177,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                     let to_result = match to {
                         Some(to) => {
                             match to {
+                                QueryResult::Literal(_) => unreachable!(),
                                 QueryResult::Resolved(to_res) => {
                                     Some(*to_res)
                                 },
@@ -202,6 +204,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                     };
 
                     match from {
+                        QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
                             writeln!(
                                 writer,

@@ -29,6 +29,14 @@ impl std::fmt::Display for PathAwareValue {
 impl<'value> std::fmt::Display for QueryResult<'value> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            QueryResult::Literal(l) => {
+                f.write_fmt(
+                    format_args!(
+                        "literal, {}", l
+                    )
+                )?;
+            },
+
             QueryResult::Resolved(r) => {
                 f.write_fmt(
                     format_args!("(resolved, {})", r)
