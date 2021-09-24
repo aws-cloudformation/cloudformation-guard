@@ -516,7 +516,6 @@ fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<b
 
 fn report_value<'r, 'value: 'r, 'loc: 'value>(
     each_res: &ComparisonResult<'value>,
-    is_lhs_rhs_swapped: bool,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -531,18 +530,18 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                     rhs: rhs_value
                 }
             }) =>
-            if is_lhs_rhs_swapped {
-                (QueryResult::Resolved(rhs_value),
-                 Some(QueryResult::Resolved(lhs_value)),
-                 *outcome,
-                 None)
-            }
-            else {
+//            if is_lhs_rhs_swapped {
+//                (QueryResult::Resolved(rhs_value),
+//                 Some(QueryResult::Resolved(lhs_value)),
+//                 *outcome,
+//                 None)
+//            }
+//            else {
                 (QueryResult::Resolved(lhs_value),
                  Some(QueryResult::Resolved(rhs_value)),
                  *outcome,
-                 None)
-            },
+                 None),
+            //},
 
         ComparisonResult::NotComparable(
             NotComparableWithRhs {
@@ -552,36 +551,36 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                     lhs: lhs_value,
                 }
             }) =>
-            if is_lhs_rhs_swapped {
-                (QueryResult::Resolved(rhs_value),
-                 Some(QueryResult::Resolved(lhs_value)),
-                 false,
-                 None)
-            }
-            else {
+//            if is_lhs_rhs_swapped {
+//                (QueryResult::Resolved(rhs_value),
+//                 Some(QueryResult::Resolved(lhs_value)),
+//                 false,
+//                 None)
+//            }
+//            else {
                 (QueryResult::Resolved(lhs_value),
                  Some(QueryResult::Resolved(rhs_value)),
                  false,
-                 None)
-            },
+                 None),
+//            },
 
         ComparisonResult::UnResolvedRhs(
             UnResolvedRhs {
                 lhs: lhs_value,
                 rhs: rhs_query_result
             }) =>
-            if is_lhs_rhs_swapped {
-                (rhs_query_result.clone(),
-                 Some(QueryResult::Resolved(lhs_value)),
-                 false,
-                 None)
-            }
-            else {
+//            if is_lhs_rhs_swapped {
+//                (rhs_query_result.clone(),
+//                 Some(QueryResult::Resolved(lhs_value)),
+//                 false,
+//                 None)
+//            }
+//            else {
                 (QueryResult::Resolved(lhs_value),
                  Some(rhs_query_result.clone()),
                  false,
-                 None)
-            }
+                 None),
+//            }
     };
 
     Ok(if outcome {
@@ -607,7 +606,6 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
 
 fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     comparisons: Vec<ComparisonResult<'value>>,
-    is_lhs_rhs_swapped: bool,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -617,7 +615,6 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     for each_res in comparisons {
         status.push(report_value(
             &each_res,
-            is_lhs_rhs_swapped,
             cmp,
             context.clone(),
             custom_message.clone(),
@@ -629,7 +626,6 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
 
 fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     rhs_comparisons: Vec<ComparisonResult<'value>>,
-    is_lhs_rhs_swapped: bool,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -641,22 +637,31 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     for each in &rhs_comparisons {
         match each {
             ComparisonResult::Comparable(ComparisonWithRhs{pair: LhsRhsPair {lhs, rhs},..}) => {
-                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+                by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
                     .push(each);
+//                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+//                    .or_insert(vec![])
+//                    .push(each);
             },
 
             ComparisonResult::NotComparable(NotComparableWithRhs{pair: LhsRhsPair{lhs, rhs}, ..}) => {
-                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+                by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
                     .push(each);
+//                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
+//                    .or_insert(vec![])
+//                    .push(each);
             },
 
             ComparisonResult::UnResolvedRhs(UnResolvedRhs{rhs, lhs}) => {
                 if let QueryResult::UnResolved(ur) = rhs {
-                    by_lhs_value.entry(if is_lhs_rhs_swapped { ur.traversed_to } else { *lhs })
+                    by_lhs_value.entry(*lhs )
                         .or_insert(vec![])
-                        .push(each)
+                        .push(each);
+//                    by_lhs_value.entry(if is_lhs_rhs_swapped { ur.traversed_to } else { *lhs })
+//                        .or_insert(vec![])
+//                        .push(each)
                 }
             }
         }
@@ -678,7 +683,6 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 for each_res in results {
                     report_value(
                         *each_res,
-                        is_lhs_rhs_swapped,
                         cmp,
                         context.clone(),
                         custom_message.clone(),
@@ -807,7 +811,6 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                     CmpOperator::In => {
                         statues.extend(report_at_least_one(
                             r,
-                            false,
                             cmp,
                             context.clone(),
                             custom_message.clone(),
@@ -819,7 +822,6 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         let status =
                             report_all_values(
                             r,
-                            false,
                             cmp,
                             context.clone(),
                             custom_message.clone(),
