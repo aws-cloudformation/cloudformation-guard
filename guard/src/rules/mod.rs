@@ -29,6 +29,12 @@ pub(crate) enum Status {
     SKIP,
 }
 
+impl Default for Status {
+    fn default() -> Self {
+        Status::SKIP
+    }
+}
+
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

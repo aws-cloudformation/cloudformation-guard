@@ -271,8 +271,6 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
 
 impl<'a> Reporter for ConsoleReporter<'a> {
 
-
-
     fn report(&self,
               writer: &mut dyn Write,
               _status: Option<Status>,

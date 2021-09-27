@@ -1,7 +1,7 @@
 use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
 use crate::rules::path_value::{PathAwareValue, MapValue, compare_eq};
-use std::collections::HashMap;
-use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType};
+use std::collections::{HashMap, HashSet};
+use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck};
 use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
@@ -9,6 +9,9 @@ use inflector::cases::*;
 use crate::rules::eval::EvaluationResult::QueryValueResult;
 use serde::Serialize;
 use crate::rules::Status::SKIP;
+use crate::rules::values::CmpOperator;
+use inflector::Inflector;
+use crate::rules::ClauseCheck::Unary;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -1023,6 +1026,447 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
     fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
+    }
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) struct Messages {
+    custom_message: Option<String>,
+    error_message: Option<String>
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) struct FileReport<'value> {
+    name: &'value str,
+    status: Status,
+    not_compliant: Vec<ClauseReport<'value>>,
+    not_applicable: HashSet<String>,
+    compliant: HashSet<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RuleReport<'value> {
+    name: &'value str,
+    messages: Messages,
+    checks: Vec<ClauseReport<'value>>
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct UnaryComparison<'value> {
+    value: &'value PathAwareValue,
+    comparison: (CmpOperator, bool),
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ValueUnResolved<'value> {
+    value: UnResolved<'value>,
+    comparison: (CmpOperator, bool),
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) enum UnaryCheck<'value> {
+    UnResolved(ValueUnResolved<'value>),
+    Resolved(UnaryComparison<'value>),
+    UnResolvedContext(String)
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct UnaryReport<'value> {
+    context: String,
+    message: Messages,
+    check: UnaryCheck<'value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct BinaryComparison<'value> {
+    from: &'value PathAwareValue,
+    to: &'value PathAwareValue,
+    comparison: (CmpOperator, bool)
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) enum BinaryCheck<'value> {
+    UnResolved(ValueUnResolved<'value>),
+    Resolved(BinaryComparison<'value>),
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) struct BinaryReport<'value> {
+    context: String,
+    messages: Messages,
+    check: BinaryCheck<'value>,
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) enum GuardClauseReport<'value> {
+    Unary(UnaryReport<'value>),
+    Binary(BinaryReport<'value>),
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Disjunctions<'value> {
+    checks: Vec<ClauseReport<'value>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct GuardBlockReport {
+    context: String,
+    messages: Messages,
+}
+
+#[derive(Clone, Debug,Serialize)]
+pub(crate) enum ClauseReport<'value> {
+    Rule(RuleReport<'value>),
+    Block(GuardBlockReport),
+    Disjunctions(Disjunctions<'value>),
+    Clause(GuardClauseReport<'value>),
+}
+
+fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -> Vec<ClauseReport<'value>> {
+    let mut clauses = Vec::with_capacity(checks.len());
+    for current in checks {
+        match &current.container {
+            Some(RecordType::RuleCheck(NamedStatus{name, status: Status::FAIL, message})) => {
+                clauses.push(ClauseReport::Rule(RuleReport {
+                    name: *name,
+                    checks: report_all_failed_clauses_for_rules(&current.children),
+                    messages: Messages {
+                        custom_message: message.clone(),
+                        error_message: None
+                    }
+                }));
+            },
+
+            Some(RecordType::BlockGuardCheck(BlockCheck{status: Status::FAIL, ..})) => {
+                if current.children.is_empty() {
+                    clauses.push(ClauseReport::Block(GuardBlockReport{
+                        context: current.context.clone(),
+                        messages: Messages {
+                            error_message: Some(String::from("query for block clause did not retrieve any value")),
+                            custom_message: None,
+                        }
+                    }));
+                }
+                else {
+                    clauses.extend(report_all_failed_clauses_for_rules(&current.children));
+                }
+            },
+
+            Some(RecordType::Disjunction(BlockCheck{status: Status::FAIL, ..})) => {
+                clauses.push(ClauseReport::Disjunctions(Disjunctions{
+                    checks: report_all_failed_clauses_for_rules(&current.children)
+                }));
+            }
+
+            Some(RecordType::BlockGuardCheck(BlockCheck{status: Status::FAIL, ..}))             |
+            Some(RecordType::GuardClauseBlockCheck(BlockCheck{status: Status::FAIL, ..}))       |
+            Some(RecordType::TypeBlock(Status::FAIL)) |
+            Some(RecordType::TypeCheck(TypeBlockCheck{block: BlockCheck{status: Status::FAIL, ..}, ..})) |
+            Some(RecordType::WhenCheck(BlockCheck{status: Status::FAIL, ..})) => {
+                clauses.extend(report_all_failed_clauses_for_rules(&current.children));
+            },
+
+            Some(RecordType::ClauseValueCheck(clause)) => {
+                match clause {
+                    ClauseCheck::NoValueForEmptyCheck(msg) => {
+                        let custom_message = msg.as_ref()
+                            .map_or("".to_string(),
+                                    |s| format!("{}", s.replace("\n", ";")));
+
+                        let custom_message = format!(
+                            "Check was not compliant as variable in context [{}] was not empty. Message [{}]",
+                            current.context,
+                            custom_message
+                        );
+                        clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+                            context: current.context.clone(),
+                            check: UnaryCheck::UnResolvedContext(current.context.to_string()),
+                            message: Messages {
+                                custom_message: Some(custom_message),
+                                error_message: None,
+                            }
+                        })))
+                    }
+
+                    ClauseCheck::Success => {},
+
+                    ClauseCheck::DependentRule(missing) => {
+                        let message = missing.custom_message.as_ref()
+                            .map_or("", String::as_str);
+                        let message = format!(
+                            "Check was not compliant as dependent rule [{rule}] did not PASS. Context [{cxt}]: Message: [{msg}]",
+                            rule=missing.rule,
+                            cxt=current.context,
+                            msg=message,
+                        );
+                        clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport{
+                            message: Messages {
+                                custom_message: Some(message),
+                                error_message: missing.message.clone(),
+                            },
+                            context: current.context.clone(),
+                            check: UnaryCheck::UnResolvedContext(missing.rule.to_string()),
+                        })));
+                    },
+
+                    ClauseCheck::MissingBlockValue(missing) => {
+                        let (property, far) = match &missing.from {
+                            QueryResult::UnResolved(ur) => {
+                                (ur.remaining_query.as_str(), ur.traversed_to)
+                            },
+                            _ => unreachable!()
+                        };
+                        let message = missing.custom_message.as_ref()
+                            .map_or("", String::as_str);
+                        let message = format!(
+                            "Check was not compliant as property [{}] is missing. Value traversed to [{}]. Message [{}]",
+                            property,
+                            far,
+                            message
+                        );
+                        clauses.push(
+                            ClauseReport::Block(GuardBlockReport{
+                                context: current.context.clone(),
+                                messages: Messages {
+                                    custom_message: Some(message),
+                                    error_message: missing.message.clone(),
+                                }
+                            })
+                        );
+                    },
+
+                    ClauseCheck::Unary(
+                        UnaryValueCheck{
+                            comparison: (cmp, not),
+                            value: ValueCheck{
+                                status: Status::FAIL,
+                                from,
+                                message,
+                                custom_message
+                            }}) => {
+                        let cmp_msg = match cmp {
+                            CmpOperator::Exists => if *not { "existed" } else { "did not exist" },
+                            CmpOperator::Empty => if *not { "was empty"} else { "was not empty" },
+                            CmpOperator::IsList => if *not { "was a list " } else { "was not list" },
+                            CmpOperator::IsMap => if *not { "was a struct" } else { "was not struct" },
+                            CmpOperator::IsString => if *not { "was a string " } else { "was not string" },
+                            _ => unreachable!()
+                        };
+
+                        let custom_message = custom_message.as_ref()
+                            .map_or("".to_string(),
+                                    |s| format!(" Message = [{}]", s.replace("\n", ";")));
+
+                        let error_message = message.as_ref()
+                            .map_or("".to_string(),
+                                    |s| format!( " Error = [{}]", s));
+
+                        let (message, check) = match from {
+                            QueryResult::Literal(_) => unreachable!(),
+                            QueryResult::Resolved(res) => {
+                                (
+                                    format!(
+                                        "Check was not compliant as property [{prop}] {cmp_msg}.{err}{msg}",
+                                        prop=res.self_path(),
+                                        cmp_msg=cmp_msg,
+                                        err=error_message,
+                                        msg=custom_message
+                                    ),
+                                    UnaryCheck::Resolved(UnaryComparison {
+                                        comparison: (*cmp, *not),
+                                        value: *res,
+                                    })
+                                )
+
+                            },
+
+                            QueryResult::UnResolved(unres) => {
+                                (
+                                    format!(
+                                        "Check was not compliant as property [{remain}] is missing. Value traversed to [{tr}].{err}{msg}",
+                                        remain=unres.remaining_query,
+                                        tr=unres.traversed_to,
+                                        err=error_message,
+                                        msg=custom_message
+                                    ),
+                                    UnaryCheck::UnResolved(ValueUnResolved{
+                                        value: unres.clone(),
+                                        comparison: (*cmp, *not),
+                                    })
+                                )
+                            }
+                        };
+
+                        clauses.push(
+                            ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+                                message: Messages {
+                                    custom_message: Some(message),
+                                    error_message: Some(error_message),
+                                },
+                                context: current.context.clone(),
+                                check
+                            }))
+                        );
+                    },
+
+
+                    ClauseCheck::Comparison(
+                        ComparisonClauseCheck{
+                            custom_message,
+                            message,
+                            comparison: (cmp, not),
+                            from,
+                            status: Status::FAIL,
+                            to
+                        }) => {
+                        let custom_message = custom_message.as_ref()
+                            .map_or("".to_string(),
+                                    |s| format!(" Message = [{}]", s.replace("\n", ";")));
+
+                        let error_message = message.as_ref()
+                            .map_or("".to_string(),
+                                    |s| format!( " Error = [{}]", s));
+
+                        match from {
+                            QueryResult::Literal(_) => unreachable!(),
+                            QueryResult::UnResolved(to_unres) => {
+                                let message = format!(
+                                    "Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}{msg}",
+                                    remain=to_unres.remaining_query,
+                                    to=to_unres.traversed_to,
+                                    err=error_message,
+                                    msg=custom_message
+                                );
+                                clauses.push(ClauseReport::Clause(
+                                    GuardClauseReport::Binary(BinaryReport {
+                                        context: current.context.to_string(),
+                                        messages: Messages {
+                                            custom_message: Some(message),
+                                            error_message: Some(error_message),
+                                        },
+                                        check: BinaryCheck::UnResolved(ValueUnResolved{
+                                            comparison: (*cmp, *not),
+                                            value: to_unres.clone()
+                                        })
+                                    })
+                                ));
+                            },
+
+                            QueryResult::Resolved(res) => {
+                                if let Some(to) = to {
+                                    match to {
+                                        QueryResult::Literal(_) => unreachable!(),
+                                        QueryResult::Resolved(to_res) => {
+                                            let message = format!(
+                                                "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}{msg}",
+                                                from=res,
+                                                to=to_res,
+                                                op_msg=match cmp {
+                                                    CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
+                                                    CmpOperator::Le => if *not { "less than equal to" } else { "less than equal to" },
+                                                    CmpOperator::Lt => if *not { "less than" } else { "not less than" },
+                                                    CmpOperator::Ge => if *not { "greater than equal to" } else { "not greater than equal" },
+                                                    CmpOperator::Gt => if *not { "greater than" } else { "not greater than" },
+                                                    CmpOperator::In => if *not { "in" } else { "not in" },
+                                                    _ => unreachable!()
+                                                },
+                                                err=error_message,
+                                                msg=custom_message
+                                            );
+                                            clauses.push(
+                                                ClauseReport::Clause(
+                                                    GuardClauseReport::Binary(BinaryReport {
+                                                        check: BinaryCheck::Resolved(
+                                                            BinaryComparison{
+                                                                to: *to_res,
+                                                                from: res,
+                                                                comparison: (*cmp, *not),
+                                                            }
+                                                        ),
+                                                        context: current.context.to_string(),
+                                                        messages: Messages {
+                                                            error_message: Some(error_message),
+                                                            custom_message: Some(message)
+                                                        }
+                                                    })
+                                                )
+                                            )
+
+                                        },
+
+                                        QueryResult::UnResolved(to_unres) => {
+                                            let message = format!(
+                                                "Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}{msg}",
+                                                remain=to_unres.remaining_query,
+                                                to=to_unres.traversed_to,
+                                                err=error_message,
+                                                msg=custom_message
+                                            );
+                                            clauses.push(ClauseReport::Clause(
+                                                GuardClauseReport::Binary(BinaryReport {
+                                                    context: current.context.to_string(),
+                                                    messages: Messages {
+                                                        custom_message: Some(message),
+                                                        error_message: Some(error_message),
+                                                    },
+                                                    check: BinaryCheck::UnResolved(ValueUnResolved{
+                                                        comparison: (*cmp, *not),
+                                                        value: to_unres.clone()
+                                                    })
+                                                })
+                                            ));
+                                        },
+                                    }
+                                }
+
+                            }
+                        }
+                    },
+
+                    _ => {}
+                }
+            }
+
+            _ => {}
+        }
+    }
+    clauses
+}
+
+impl<'value> EventRecord<'value> {
+    pub(crate) fn simplifed_json(&self) -> Result<FileReport<'value>> {
+        Ok(match &self.container {
+            Some(file_status) => {
+                match file_status {
+                    RecordType::FileCheck(NamedStatus{name, status, message}) => {
+                        let mut pass = HashSet::with_capacity(self.children.len());
+                        let mut skip = HashSet::with_capacity(self.children.len());
+                        for each in &self.children {
+                            if let Some(rule) = &each.container {
+                                if let RecordType::RuleCheck(NamedStatus { status, message, name }) = rule {
+                                    match *status {
+                                        Status::PASS => { pass.insert(name.to_string()); },
+                                        Status::SKIP => { skip.insert(name.to_string()); },
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        FileReport {
+                            status: *status,
+                            name: *name,
+                            not_compliant: report_all_failed_clauses_for_rules(&self.children),
+                            not_applicable: skip,
+                            compliant: pass
+                        }
+                    },
+
+                    _ => unreachable!()
+                }
+            },
+
+            None => unreachable!()
+        })
     }
 }
 
