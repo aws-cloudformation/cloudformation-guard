@@ -11,8 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use regex::Regex;
 use lazy_static::*;
-use crate::rules::eval_context::EventRecord;
+use crate::rules::eval_context::{EventRecord, FileReport};
 use crate::rules::errors::{Error, ErrorKind};
+use crate::commands::validate::OutputFormatType;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -527,5 +528,27 @@ pub(super) fn print_name_info<R, U, B>(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct DataOutputNewForm<'a, 'v> {
+    data_from: &'a str,
+    rules_from: &'a str,
+    report: FileReport<'v>
+}
+
+pub(super) fn report_structured<'value>(root: &EventRecord<'value>,
+                                        data_from: &str,
+                                        rules_from: &str,
+                                        type_output: OutputFormatType) -> crate::rules::Result<String> {
+    let mut report = root.simplifed_json()?;
+    let output = DataOutputNewForm {
+        report, data_from, rules_from
+    };
+    Ok(match type_output {
+        OutputFormatType::JSON => serde_json::to_string(&output)?,
+        OutputFormatType::YAML => serde_yaml::to_string(&output)?,
+        _ => unreachable!()
+    })
 }
 
