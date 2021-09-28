@@ -972,11 +972,40 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     })))
 }
 
+fn function_expr(input: Span) -> IResult<Span, FunctionExpr> {
+    let location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_column() as u32,
+    };
+    let (input, (name, parameters)) = call_expr(input)?;
+    Ok((input, FunctionExpr {
+        location, name, parameters
+    }))
+}
+
 pub(crate) fn let_value(input: Span) -> IResult<Span, LetValue> {
-    alt((
+    preceded(zero_or_more_ws_or_comment,
+        alt((
             map(parse_value, |val| LetValue::Value(PathAwareValue::try_from(val).unwrap())),
-        map(access, |acc| LetValue::AccessClause(acc)),
-        ))(input)
+            map(access, |acc| LetValue::AccessClause(acc)),
+            map(function_expr, |func| LetValue::FunctionCall(func)),
+        ))
+    )(input)
+}
+
+fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
+    tuple((
+        var_name,
+        delimited(
+            char('('),
+                separated_nonempty_list(
+                    char(','),
+                    cut(
+                        delimited(multispace0, let_value, multispace0))),
+            cut(char(')'))
+        )
+    ))(input)
 }
 
 pub(crate) fn parameterized_rule_call_clause(input: Span) -> IResult<Span, ParameterizedNamedRuleClause> {
@@ -987,19 +1016,7 @@ pub(crate) fn parameterized_rule_call_clause(input: Span) -> IResult<Span, Param
     };
 
     let (input, not) = opt(not)(input)?;
-    let (input, rule_name) = var_name(input)?;
-    let (input, access_clauses) =
-        delimited(
-            char('('),
-            map(
-                separated_nonempty_list(
-                    char(','),
-                    cut(
-                        delimited(multispace0, let_value, multispace0))),
-                |queries| queries),
-            cut(char(')'))
-        )(input)?;
-
+    let (input, (rule_name, access_clauses)) = call_expr(input)?;
     let (input, custom_message) = opt(preceded(zero_or_more_ws_or_comment, custom_message))(input)?;
     Ok((
         input,
@@ -1233,7 +1250,7 @@ fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
         std::convert::identity, false)
 }
 
-fn assignment(input: Span) -> IResult<Span, LetExpr> {
+fn let_assignment_expr(input: Span) -> IResult<Span, String> {
     let (input, _let_keyword) = tag("let")(input)?;
     let (input, (var_name, _eq_sign)) = tuple((
         //
@@ -1252,6 +1269,11 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
             )
         ),
     ))(input)?;
+    Ok((input, var_name))
+}
+
+fn assignment(input: Span) -> IResult<Span, LetExpr> {
+    let (input, var_name) = let_assignment_expr(input)?;
 
     match parse_value(input) {
         Ok((input, value)) => Ok((input, LetExpr {
@@ -1515,7 +1537,7 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 //
 // parameter names
 //
-fn rule_parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
+fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
     delimited(
         char('('),
         map(separated_nonempty_list(char(','),
@@ -1537,7 +1559,7 @@ fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
         (input)?;
 
     let (input, rule_name) = cut(var_name)(input)?;
-    let (input, parameter_names) = rule_parameter_names(input)?;
+    let (input, parameter_names) = parameter_names(input)?;
     let (input, (assignments, conjunctions)) =
         cut(block(rule_block_clause))(input)?;
 
@@ -1576,6 +1598,7 @@ fn remove_whitespace_comments<'loc, P, R>(parser: P) -> impl Fn(Span<'loc>) -> I
     }
 }
 
+
 #[derive(Clone, PartialEq, Debug)]
 enum Exprs<'loc> {
     Assignment(LetExpr<'loc>),
@@ -1583,7 +1606,7 @@ enum Exprs<'loc> {
     DefaultWhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
     DefaultClause(Disjunctions<GuardClause<'loc>>),
     Rule(Rule<'loc>),
-    ParameterizedRule(ParameterizedRule<'loc>)
+    ParameterizedRule(ParameterizedRule<'loc>),
 }
 
 //

@@ -595,6 +595,8 @@ impl QueryResolver for PathAwareValue {
                                     }
                                 }
                             },
+
+                            LetValue::FunctionCall(_) => unreachable!(),
                         };
                         if query.len() > 1 {
                             let mut acc = Vec::with_capacity(selected.len());
