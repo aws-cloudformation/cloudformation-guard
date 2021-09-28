@@ -249,9 +249,28 @@ or rules files.
         let new_version_eval_engine = !app.is_present("old_eval_engine_version");
 
         let base = PathBuf::from_str(file)?;
-        let files = get_files(file, cmp)?;
+        let rules = if base.is_file() {
+            vec![base.clone()]
+        } else {
+            let mut rule_files = Vec::new();
+            for each in walkdir::WalkDir::new(base.clone()) {
+                if let Ok(entry) = each {
+                    if entry.path().is_file() &&
+                       entry.path().file_name().map(|s| s.to_str()).flatten()
+                           .map_or(false, |s|
+                                s.ends_with(".guard") ||
+                                s.ends_with(".ruleset")
+                           )
+                    {
+                        rule_files.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+            rule_files
+        };
+
         let mut exit_code = 0;
-        for each_file_content in iterate_over(&files, |content, file|
+        for each_file_content in iterate_over(&rules, |content, file|
             Ok((content, match file.strip_prefix(&base) {
                 Ok(path) => if path == empty_path {
                     format!("{}", file.file_name().unwrap().to_str().unwrap())
@@ -316,7 +335,7 @@ pub fn validate_and_return_json(
                     let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
                     let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
                     let event = tracker.final_event.unwrap();
-                    Ok(serde_json::to_string_pretty(&event)?)
+                    Ok(serde_json::to_string_pretty(&event.simplifed_json()?)?)
 
 
 //                    let root_context = RootScope::new(&rules, &root);
