@@ -1,17 +1,14 @@
 use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
-use crate::rules::path_value::{PathAwareValue, MapValue, compare_eq};
+use crate::rules::path_value::{PathAwareValue, MapValue};
 use std::collections::{HashMap, HashSet};
 use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck};
 use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
 use inflector::cases::*;
-use crate::rules::eval::EvaluationResult::QueryValueResult;
 use serde::Serialize;
 use crate::rules::Status::SKIP;
 use crate::rules::values::CmpOperator;
-use inflector::Inflector;
-use crate::rules::ClauseCheck::Unary;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -98,7 +95,9 @@ fn extract_variables<'value, 'loc: 'value>(
 
             LetValue::AccessClause(query) => {
                 queries.insert(each.var.as_str(), query);
-            }
+            },
+
+            LetValue::FunctionCall(_) => todo!()
         }
     }
     Ok((literals, queries))
@@ -147,7 +146,7 @@ fn accumulate<'value, 'loc: 'value>(
     }
 
     let mut accumulated = Vec::with_capacity(elements.len());
-    for (index, each) in elements.iter().enumerate() {
+    for (_index, each) in elements.iter().enumerate() {
         accumulated.extend(query_retrieval_with_converter(query_index+1, query, each, resolver, converter)?);
     }
     Ok(accumulated)
@@ -620,7 +619,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 
                         LetValue::Value(path_value) => {
                             vec![QueryResult::Literal(path_value)]
-                        }
+                        },
+
+                        LetValue::FunctionCall(_) => todo!(),
                     };
 
                     let lhs = map.keys.iter().map(|p| QueryResult::Resolved(p))
@@ -1158,7 +1159,6 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                 }));
             }
 
-            Some(RecordType::BlockGuardCheck(BlockCheck{status: Status::FAIL, ..}))             |
             Some(RecordType::GuardClauseBlockCheck(BlockCheck{status: Status::FAIL, ..}))       |
             Some(RecordType::TypeBlock(Status::FAIL)) |
             Some(RecordType::TypeCheck(TypeBlockCheck{block: BlockCheck{status: Status::FAIL, ..}, ..})) |

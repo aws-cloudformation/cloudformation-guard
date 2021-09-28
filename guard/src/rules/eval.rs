@@ -869,7 +869,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 }))?;
                                 return Err(e)
                             }
-                        }
+                        },
+                    LetValue::FunctionCall(_) => todo!()
                 }
             },
 
@@ -1235,7 +1236,8 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
                     (&param_rule.parameter_names[idx]).as_str(),
                     resolver.query(&query.query)?
                 );
-            }
+            },
+            LetValue::FunctionCall(_) => todo!(),
         }
     }
     let mut eval = ResolvedParameterContext { parent: resolver, resolved_parameters, call_rule };

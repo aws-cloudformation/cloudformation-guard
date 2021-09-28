@@ -4184,17 +4184,17 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
 #[test]
 fn rule_parameters_parse_test() -> Result<(), Error> {
     let parameters = "(statements, policy)";
-    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    let (_span, parsed_parameters) = parameter_names(from_str2(parameters))?;
     assert_eq!(parsed_parameters.len(), 2);
     assert_eq!(parsed_parameters, ["statements", "policy"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
 
     let parameters = "(statements)";
-    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    let (_span, parsed_parameters) = parameter_names(from_str2(parameters))?;
     assert_eq!(parsed_parameters.len(), 1);
     assert_eq!(parsed_parameters, ["statements"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
 
     let parameters = "( statements  , policy    )";
-    let (_span, parsed_parameters) = rule_parameter_names(from_str2(parameters))?;
+    let (_span, parsed_parameters) = parameter_names(from_str2(parameters))?;
     assert_eq!(parsed_parameters.len(), 2);
     assert_eq!(parsed_parameters, ["statements", "policy"].iter().map(|s| s.to_string()).into_iter().collect::<indexmap::IndexSet<String>>());
 
@@ -4202,7 +4202,7 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     // Error cases
     //
     let parameters = "()";
-    let result = rule_parameter_names(from_str2(parameters));
+    let result = parameter_names(from_str2(parameters));
     assert_eq!(result.is_err(), true);
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError {
         context: "".to_string(),
@@ -4218,7 +4218,7 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     })));
 
     let parameters = "statements";
-    let result = rule_parameter_names(from_str2(parameters));
+    let result = parameter_names(from_str2(parameters));
     assert_eq!(result.is_err(), true);
     assert_eq!(result.err(), Some(nom::Err::Error(ParserError {
         kind: nom::error::ErrorKind::Char, // no '('
@@ -4234,7 +4234,7 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     })));
 
     let parameters = "(statements";
-    let result = rule_parameter_names(from_str2(parameters));
+    let result = parameter_names(from_str2(parameters));
     assert_eq!(result.is_err(), true);
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
         kind: nom::error::ErrorKind::Char, // no ')'
@@ -4250,7 +4250,7 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     })));
 
     let parameters = "(statements,)"; // missing second parameter
-    let result = rule_parameter_names(from_str2(parameters));
+    let result = parameter_names(from_str2(parameters));
     assert_eq!(result.is_err(), true);
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
         kind: nom::error::ErrorKind::Alpha, // due to var_name

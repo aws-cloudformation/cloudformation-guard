@@ -24,6 +24,7 @@ impl<'loc> std::fmt::Display for FileLocation<'loc> {
 pub(crate) enum LetValue<'loc> {
     Value(PathAwareValue),
     AccessClause(AccessQuery<'loc>),
+    FunctionCall(FunctionExpr<'loc>),
 }
 
 ///
@@ -202,6 +203,14 @@ pub(crate) struct ParameterizedNamedRuleClause<'loc> {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct FunctionExpr<'loc> {
+    pub(crate) parameters: Vec<LetValue<'loc>>,
+    pub(crate) name: String,
+    pub(crate) location: FileLocation<'loc>,
+}
+
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
@@ -336,11 +345,27 @@ impl<'loc> std::fmt::Display for AccessQuery<'loc> {
     }
 }
 
+impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}(", self.name)?;
+        let last_index = self.parameters.len() - 1;
+        for (idx, each_param) in self.parameters.iter().enumerate() {
+            write!(f, "{}", each_param)?;
+            if idx != last_index {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")?;
+        Ok(())
+    }
+}
+
 impl<'loc> std::fmt::Display for LetValue<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             LetValue::AccessClause(acc) => acc.fmt(f)?,
-            LetValue::Value(v) => write!(f, "{:?}", v)?
+            LetValue::Value(v) => write!(f, "{:?}", v)?,
+            LetValue::FunctionCall(call_expr) => write!(f, "{}", call_expr)?,
         }
         Ok(())
     }
