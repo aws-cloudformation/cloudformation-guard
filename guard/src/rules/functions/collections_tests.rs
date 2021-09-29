@@ -4,6 +4,7 @@ use crate::rules::path_value::*;
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::EvalContext;
 use crate::rules::exprs::AccessQuery;
+use std::convert::TryFrom;
 
 #[test]
 fn test_count_function() -> crate::rules::Result<()> {
