@@ -7,6 +7,7 @@ pub(crate) mod path_value;
 pub(crate) mod eval_context;
 pub(crate) mod eval;
 pub(crate) mod display;
+pub(crate) mod functions;
 
 use errors::Error;
 

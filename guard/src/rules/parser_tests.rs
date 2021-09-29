@@ -4968,3 +4968,69 @@ fn test_variable_capture_syntax() -> Result<(), Error> {
     assert_eq!(name, &Some(String::from("resource_name")));
     Ok(())
 }
+
+#[test]
+fn test_builtin_function_call_expr() -> Result<(), Error> {
+    let call_expr = "count(Resources.*)";
+    let function = FunctionExpr::try_from(call_expr)?;
+    assert_eq!(function.name, "count");
+    assert_eq!(function.parameters.len(), 1);
+    let parameter = &function.parameters[0];
+    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    if let LetValue::AccessClause(query) = parameter {
+        assert_eq!(query.match_all, true);
+        assert_eq!(query.query.len(), 2);
+        let expected = vec![
+            QueryPart::Key("Resources".to_string()),
+            QueryPart::AllValues(None),
+        ];
+        assert_eq!(&query.query, &expected);
+    }
+
+    let call_expr = r#"json_parse(Resources[ Type == 'AWS::SNS::TopicPolicy' ].Properties.PolicyDocument)"#;
+    let function = FunctionExpr::try_from(call_expr)?;
+    assert_eq!(function.name, "json_parse");
+    assert_eq!(function.parameters.len(), 1);
+    let parameter = &function.parameters[0];
+    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    if let LetValue::AccessClause(query) = parameter {
+        assert_eq!(query.match_all, true);
+        assert_eq!(query.query.len(), 4);
+    }
+
+    let call_expr = r#"json_parse(Resources[ Type == 'AWS::SNS::TopicPolicy' ].Properties.PolicyDocument)"#;
+    let function = FunctionExpr::try_from(call_expr)?;
+    assert_eq!(function.name, "json_parse");
+    assert_eq!(function.parameters.len(), 1);
+    let parameter = &function.parameters[0];
+    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    if let LetValue::AccessClause(query) = parameter {
+        assert_eq!(query.match_all, true);
+        assert_eq!(query.query.len(), 4);
+    }
+
+    let call_expr = r#"substring(%sqs_queues.Arn, 0, 6)"#;
+    let function = FunctionExpr::try_from(call_expr)?;
+    assert_eq!(function.name, "substring");
+    assert_eq!(function.parameters.len(), 3);
+    let parameter = &function.parameters[0];
+    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    if let LetValue::AccessClause(query) = parameter {
+        assert_eq!(query.match_all, true);
+        assert_eq!(query.query.len(), 3);
+    }
+
+    let parameter = &function.parameters[1];
+    assert_eq!(matches!(parameter, LetValue::Value(_)), true);
+    if let LetValue::Value(PathAwareValue::Int((_, v))) = parameter {
+        assert_eq!(*v, 0);
+    }
+
+    let parameter = &function.parameters[2];
+    assert_eq!(matches!(parameter, LetValue::Value(_)), true);
+    if let LetValue::Value(PathAwareValue::Int((_, v))) = parameter {
+        assert_eq!(*v, 6);
+    }
+
+    Ok(())
+}

@@ -12,7 +12,7 @@ use nom::character::complete::{digit1, one_of, anychar};
 use nom::combinator::{map_res, opt};
 use nom::number::complete::double;
 use nom::sequence::{separated_pair, tuple};
-use nom::{FindSubstring, InputTake};
+use nom::{FindSubstring, InputTake, Slice};
 use nom::character::complete::{alpha1, space1, newline};
 use nom::combinator::{cut, peek, all_consuming};
 use nom::error::context;
@@ -175,20 +175,45 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     alt((positive, negative))(input)
 }
 
+fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
+    move |input: Span| {
+        let mut completed = String::new();
+        let (input, _begin) = char(ch)(input)?;
+        let mut span = input;
+        loop {
+            let (remainder, upto) = take_while(|c| c != ch)(span)?;
+            let frag = *upto.fragment();
+            if frag.ends_with('\\') {
+                completed.push_str(frag);
+                completed.push(ch);
+                span = remainder.slice(1..);
+                continue;
+            }
+            completed.push_str(frag);
+            let (remainder, _end) = cut(char(ch))(remainder)?;
+            return Ok((remainder, Value::String(completed)))
+        }
+    }
+}
+
 pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
-    map(
-        alt((
-            delimited(
-                char('"'),
-                take_while(|c| c != '"'),
-                char('"')),
-            delimited(
-                char('\''),
-                take_while(|c| c != '\''),
-                char('\'')),
-        )),
-        |s: Span| Value::String((*s.fragment()).to_string()),
-    )(input)
+    alt((
+        parse_string_inner('\''),
+        parse_string_inner('\"')
+        ))(input)
+//    map(
+//        alt((
+//            delimited(
+//                char('"'),
+//                take_while(|c| c != '"'),
+//                char('"')),
+//            delimited(
+//                char('\''),
+//                take_while(|c| c != '\''),
+//                char('\'')),
+//        )),
+//        |s: Span| Value::String((*s.fragment()).to_string()),
+//    )(input)
 }
 
 fn parse_bool(input: Span) -> IResult<Span, Value> {
@@ -1759,6 +1784,15 @@ impl<'a> TryFrom<&'a str> for ParameterizedNamedRuleClause<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         Ok(parameterized_rule_call_clause(span)?.1)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for FunctionExpr<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let span = from_str2(value);
+        Ok(function_expr(span)?.1)
     }
 }
 
