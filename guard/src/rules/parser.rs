@@ -184,7 +184,7 @@ fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
             let (remainder, upto) = take_while(|c| c != ch)(span)?;
             let frag = *upto.fragment();
             if frag.ends_with('\\') {
-                completed.push_str(frag);
+                completed.push_str(frag.slice(0..frag.len()-1));
                 completed.push(ch);
                 span = remainder.slice(1..);
                 continue;
