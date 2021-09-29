@@ -54,6 +54,29 @@ fn test_parse_string() {
 }
 
 #[test]
+fn test_embedded_string_parsing() {
+    let s = "\"\\\"Hi There\\\"\"";
+    let string = parse_string(from_str2(s));
+    assert_eq!(string.is_ok(), true);
+    assert_eq!(string.unwrap().1, Value::String("\"Hi There\"".to_string()));
+
+    let s = "\"{\\\"hi\\\": \\\"there\\\"}\"";
+    let string = parse_string(from_str2(s));
+    assert_eq!(string.is_ok(), true);
+    let json = r#"{"hi": "there"}"#.to_string();
+    if let Value::String(val) = string.unwrap().1 {
+        assert_eq!(val, json);
+        let json = serde_json::from_str::<serde_json::Value>(&val);
+        assert_eq!(json.is_ok(), true);
+    }
+
+    let s = "\"Hi \\\"embedded\\\" there\"";
+    let string = parse_string(from_str2(s));
+    assert_eq!(string.is_ok(), true);
+    assert_eq!(string.unwrap().1, Value::String(String::from("Hi \"embedded\" there".to_owned())));
+}
+
+#[test]
 fn test_parse_string_rest() {
     let hi = "\"Hi there\"";
     let s = hi.to_owned() + " 1234";
@@ -74,14 +97,6 @@ fn test_parse_string_from_scalar() {
         Ok((cmp, Value::String("Hi there".to_string())))
     );
 }
-
-/*
-#[test]
-fn test_parse_string_to_fix() {
-    let s = "\"Hi \\\"embedded\\\" there\"";
-    assert_eq!(parse_string(s), Ok(("", Value::String(String::from("Hi \"embedded\" there".to_owned())))))
-}
- */
 
 #[test]
 fn test_parse_bool() {
