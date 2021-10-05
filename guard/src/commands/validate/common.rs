@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use regex::Regex;
 use lazy_static::*;
-use crate::rules::eval_context::{EventRecord, FileReport};
+use crate::rules::eval_context::{EventRecord, FileReport, simplifed_json_from_root};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::commands::validate::OutputFormatType;
 
@@ -541,7 +541,7 @@ pub(super) fn report_structured<'value>(root: &EventRecord<'value>,
                                         data_from: &str,
                                         rules_from: &str,
                                         type_output: OutputFormatType) -> crate::rules::Result<String> {
-    let mut report = root.simplifed_json()?;
+    let mut report = simplifed_json_from_root(root)?;
     let output = DataOutputNewForm {
         report, data_from, rules_from
     };

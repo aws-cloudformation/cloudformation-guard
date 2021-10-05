@@ -1036,9 +1036,12 @@ pub(crate) struct Messages {
     error_message: Option<String>
 }
 
-#[derive(Clone, Debug,Serialize)]
+pub(crate) type Metadata = HashMap<String, String>;
+
+#[derive(Clone, Debug,Serialize, Default)]
 pub(crate) struct FileReport<'value> {
     name: &'value str,
+    metatdata: Metadata,
     status: Status,
     not_compliant: Vec<ClauseReport<'value>>,
     not_applicable: HashSet<String>,
@@ -1105,7 +1108,7 @@ pub(crate) enum GuardClauseReport<'value> {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct Disjunctions<'value> {
+pub(crate) struct DisjunctionsReport<'value> {
     checks: Vec<ClauseReport<'value>>,
 }
 
@@ -1119,7 +1122,7 @@ pub(crate) struct GuardBlockReport {
 pub(crate) enum ClauseReport<'value> {
     Rule(RuleReport<'value>),
     Block(GuardBlockReport),
-    Disjunctions(Disjunctions<'value>),
+    Disjunctions(DisjunctionsReport<'value>),
     Clause(GuardClauseReport<'value>),
 }
 
@@ -1154,7 +1157,7 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
             },
 
             Some(RecordType::Disjunction(BlockCheck{status: Status::FAIL, ..})) => {
-                clauses.push(ClauseReport::Disjunctions(Disjunctions{
+                clauses.push(ClauseReport::Disjunctions(DisjunctionsReport {
                     checks: report_all_failed_clauses_for_rules(&current.children)
                 }));
             }
@@ -1433,41 +1436,40 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
     clauses
 }
 
-impl<'value> EventRecord<'value> {
-    pub(crate) fn simplifed_json(&self) -> Result<FileReport<'value>> {
-        Ok(match &self.container {
-            Some(file_status) => {
-                match file_status {
-                    RecordType::FileCheck(NamedStatus{name, status, message}) => {
-                        let mut pass = HashSet::with_capacity(self.children.len());
-                        let mut skip = HashSet::with_capacity(self.children.len());
-                        for each in &self.children {
-                            if let Some(rule) = &each.container {
-                                if let RecordType::RuleCheck(NamedStatus { status, message, name }) = rule {
-                                    match *status {
-                                        Status::PASS => { pass.insert(name.to_string()); },
-                                        Status::SKIP => { skip.insert(name.to_string()); },
-                                        _ => {}
-                                    }
+pub(crate) fn simplifed_json_from_root<'value>(root: &EventRecord<'value>) -> Result<FileReport<'value>> {
+    Ok(match &root.container {
+        Some(file_status) => {
+            match file_status {
+                RecordType::FileCheck(NamedStatus{name, status, message}) => {
+                    let mut pass = HashSet::with_capacity(root.children.len());
+                    let mut skip = HashSet::with_capacity(root.children.len());
+                    for each in &root.children {
+                        if let Some(rule) = &each.container {
+                            if let RecordType::RuleCheck(NamedStatus { status, message, name }) = rule {
+                                match *status {
+                                    Status::PASS => { pass.insert(name.to_string()); },
+                                    Status::SKIP => { skip.insert(name.to_string()); },
+                                    _ => {}
                                 }
                             }
                         }
-                        FileReport {
-                            status: *status,
-                            name: *name,
-                            not_compliant: report_all_failed_clauses_for_rules(&self.children),
-                            not_applicable: skip,
-                            compliant: pass
-                        }
-                    },
+                    }
+                    FileReport {
+                        status: *status,
+                        name: *name,
+                        not_compliant: report_all_failed_clauses_for_rules(&root.children),
+                        not_applicable: skip,
+                        compliant: pass,
+                        ..Default::default()
+                    }
+                },
 
-                    _ => unreachable!()
-                }
-            },
+                _ => unreachable!()
+            }
+        },
 
-            None => unreachable!()
-        })
-    }
+        None => unreachable!()
+    })
 }
 
 #[cfg(test)]

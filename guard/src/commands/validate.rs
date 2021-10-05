@@ -21,7 +21,7 @@ use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
-use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope};
+use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::{ RecordType, NamedStatus };
 use std::collections::HashMap;
@@ -335,7 +335,8 @@ pub fn validate_and_return_json(
                     let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
                     let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
                     let event = tracker.final_event.unwrap();
-                    Ok(serde_json::to_string_pretty(&event.simplifed_json()?)?)
+                    let file_report = simplifed_json_from_root(&event)?;
+                    Ok(serde_json::to_string_pretty(&file_report)?)
 
 
 //                    let root_context = RootScope::new(&rules, &root);
