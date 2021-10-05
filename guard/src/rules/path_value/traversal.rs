@@ -1,11 +1,8 @@
 use crate::rules::path_value::PathAwareValue;
-use std::convert::TryFrom;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
 use regex::Regex;
-use indexmap::Equivalent;
-use std::collections::{HashMap, BTreeMap, HashSet};
-use nom::InputTake;
+use std::collections::BTreeMap;
 
 lazy_static! {
     static ref RELATIVE_PATH: Regex = Regex::new(r"^(\d+)(#|/.*)").ok().unwrap();
@@ -23,10 +20,6 @@ pub(crate) struct Node<'value> {
 }
 
 impl<'value> Node<'value> {
-    pub(crate) fn has_parent(&self) -> bool {
-        self.parent.is_some()
-    }
-
     pub(crate) fn parent(&self) -> Option<&str> {
         self.parent
     }
