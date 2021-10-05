@@ -1,3 +1,5 @@
+pub(crate) mod traversal;
+
 use std::cmp::Ordering;
 use std::convert::{TryFrom, TryInto};
 //
@@ -34,8 +36,15 @@ impl std::fmt::Display for Path {
 }
 
 impl Path {
-    pub fn root() -> Self {
+    pub(crate) fn root() -> Self {
         Path("".to_string())
+    }
+
+    pub(crate) fn relative(&self) -> &str {
+        match self.0.rfind('/') {
+            Some(pos) => &self.0[pos+1..],
+            None => &self.0
+        }
     }
 }
 
