@@ -706,70 +706,16 @@ impl QueryResolver for PathAwareValue {
 
 impl Serialize for PathAwareValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        let mut struct_ser= serializer.serialize_struct("PathAwareValue", 2)?;
-        match self {
-            PathAwareValue::Null(path)              => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", &serde_json::Value::Null)?;
+        let result: crate::rules::Result<(String, serde_json::Value)> = self.try_into();
+        match result {
+            Ok((path, value)) => {
+                let mut struct_ser= serializer.serialize_struct("PathAwareValue", 2)?;
+                struct_ser.serialize_field("path", &path)?;
+                struct_ser.serialize_field("value", &value)?;
+                struct_ser.end()
             },
-
-            PathAwareValue::String((path, v))       => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::Regex((path, v))        => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::Bool((path, v))          => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::Int((path, v))            => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::Float((path, v))          => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::Char((path, v))         => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::List((path, v)) => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-
-            },
-
-            PathAwareValue::Map((path, v))         => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::RangeInt((path, v))   => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::RangeFloat((path, v)) => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            },
-
-            PathAwareValue::RangeChar((path, v))  => {
-                struct_ser.serialize_field("path", &path.0)?;
-                struct_ser.serialize_field("value", v)?;
-            }
+            Err(e) => Err(serde::ser::Error::custom(e))
         }
-        struct_ser.end()
     }
 }
 
