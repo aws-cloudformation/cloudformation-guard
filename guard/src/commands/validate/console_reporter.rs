@@ -1,24 +1,14 @@
-use crate::commands::validate::Reporter;
+use crate::commands::validate::{Reporter, OutputFormatType};
 use std::io::Write;
 use crate::rules::{Status, RecordType, ClauseCheck, NamedStatus, BlockCheck, QueryResult, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, TypeBlockCheck};
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::values::CmpOperator;
 use std::convert::TryInto;
+use crate::rules::path_value::traversal::Traversal;
 
 #[derive(Debug)]
-pub(crate) struct ConsoleReporter<'a> {
-    data_file_name: &'a str,
-    rules_file_name: &'a str,
-}
-
-impl<'a> ConsoleReporter<'a> {
-    pub(crate) fn new<'s>(data_file_name: &'s str, rules_file_name: &'s str) -> ConsoleReporter<'s> {
-        ConsoleReporter {
-            data_file_name, rules_file_name
-        }
-    }
-}
+pub(crate) struct ConsoleReporter{}
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
@@ -269,28 +259,37 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
     Ok(())
 }
 
-impl<'a> Reporter for ConsoleReporter<'a> {
+impl Reporter for ConsoleReporter {
 
-    fn report(&self,
-              writer: &mut dyn Write,
-              _status: Option<Status>,
-              failed_rules: &[&StatusContext],
-              passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize) -> crate::rules::Result<()> {
+    fn report(
+        &self,
+        _writer: &mut dyn Write,
+        _status: Option<Status>,
+        _failed_rules: &[&StatusContext],
+        _passed_or_skipped: &[&StatusContext],
+        _longest_rule_name: usize,
+        _rules_file: &str,
+        _data_file: &str,
+        _data: &Traversal<'_>,
+        _output_format_type: OutputFormatType) -> crate::rules::Result<()> {
         Ok(())
     }
 
-    fn report_eval(
+    fn report_eval<'value>(
         &self,
         write: &mut dyn Write,
-        _status: Status,
-        root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
+        status: Status,
+        root_record: &EventRecord<'value>,
+        rules_file_name: &str,
+        data_file_name: &str,
+        _data: &Traversal<'value>,
+        _outputType: OutputFormatType) -> crate::rules::Result<()> {
         pprint_failed_sub_tree(
             root_record,
             "".to_string(),
             true,
-            self.rules_file_name,
-            self.data_file_name,
+            rules_file_name,
+            data_file_name,
             write
         )
     }

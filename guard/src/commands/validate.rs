@@ -25,14 +25,14 @@ use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope, simplif
 use crate::rules::eval::eval_rules_file;
 use crate::rules::{ RecordType, NamedStatus };
 use std::collections::HashMap;
+use crate::rules::path_value::traversal::Traversal;
 
 mod generic_summary;
 mod common;
 mod summary_table;
 mod cfn_reporter;
+mod cfn;
 mod console_reporter;
-mod structured_output_reporter;
-
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -54,13 +54,21 @@ pub(crate) trait Reporter : Debug {
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize,
+              rules_file: &str,
+              data_file: &str,
+              data: &Traversal<'_>,
+              outputType: OutputFormatType
     ) -> Result<()>;
 
-    fn report_eval(
+    fn report_eval<'value>(
         &self,
         write: &mut dyn Write,
         status: Status,
-        root_record: &EventRecord<'_>
+        root_record: &EventRecord<'value>,
+        rules_file: &str,
+        data_file: &str,
+        data: &Traversal<'value>,
+        outputType: OutputFormatType
     ) -> Result<()> { Ok(()) }
 }
 
@@ -357,7 +365,7 @@ pub fn validate_and_return_json(
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
-    reporters: &'r Vec<Box<dyn Reporter + 'r>>,
+    reporters: &'r dyn Reporter,
     rules_file_name: &'r str,
     data_file_name: &'r str,
     verbose: bool,
@@ -474,10 +482,10 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Reporter + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, renderer: &'r dyn Reporter, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
-            reporters: renderers,
+            reporters: renderer,
             rules_file_name,
             data_file_name,
             verbose,
@@ -492,7 +500,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
     }
 
-    fn report(self) -> crate::rules::Result<()> {
+    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> crate::rules::Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         let mut output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
@@ -516,15 +524,18 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                         _ => false
                     });
 
-            for each_reporter in self.reporters {
-                each_reporter.report(
+            let traversal = Traversal::from(root);
+
+            self.reporters.report(
                     &mut output,
                     top.status.clone(),
                     &failed,
                     &rest,
-                    longest
-                )?;
-            }
+                    longest,
+                    self.rules_file_name,
+                    self.data_file_name,
+                    &traversal,
+                    output_format_type)?;
 
             if self.show_clause_failures {
                 println!("{}", "Clause Failure Summary".bold());
@@ -588,20 +599,29 @@ fn evaluate_against_data_input<'r>(data_type: Type,
     let mut overall = Status::PASS;
     let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
     for (each, data_file_name) in data_files {
-        let mut reporters =
-            match output {
-                OutputFormatType::YAML |
-                OutputFormatType::JSON => {
-                    vec![
-                        Box::new(structured_output_reporter::StructureOutputReporter::new(data_file_name, rules_file_name, output))
-                            as Box<dyn Reporter>]
-                },
-                OutputFormatType::SingleLineSummary => {
-                    vec![
-                        Box::new(
-                            console_reporter::ConsoleReporter::new(data_file_name, rules_file_name)) as Box<dyn Reporter>]
-                },
-            };
+//        let mut reporters =
+//            match output {
+//                OutputFormatType::YAML |
+//                OutputFormatType::JSON => {
+//                    vec![
+//                        Box::new(structured_output_reporter::StructureOutputReporter::new(data_file_name, rules_file_name, output))
+//                            as Box<dyn Reporter>]
+//                },
+//                OutputFormatType::SingleLineSummary => {
+//                    vec![
+//                        Box::new(
+//                            console_reporter::ConsoleReporter::new(data_file_name, rules_file_name)) as Box<dyn Reporter>]
+//                },
+//            };
+        let traversal = Traversal::from(each);
+        let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+        let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+        let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
+            cfn
+        } else {
+            Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
+                as Box<dyn Reporter>
+        };
 
 //        let mut reporters = match data_type {
 //            Type::CFNTemplate =>
@@ -611,34 +631,39 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 //                vec![
 //                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
 //        };
-        if !summary_table.is_empty() {
-            reporters.insert(
-                0, Box::new(
-                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
-        }
+//        if !summary_table.is_empty() {
+//            reporters.insert(
+//                0, Box::new(
+//                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
+//        }
 
         if new_engine_version {
             let mut root_scope = root_scope(rules, each)?;
             let mut tracker = RecordTracker::new(&mut root_scope);
             let status = eval_rules_file(rules, &mut tracker)?;
             let root_record = tracker.extract();
-            for each in &reporters {
-                (*each).report_eval(&mut write_output, status, &root_record)?
-            }
+            reporter.report_eval(
+                &mut write_output,
+                status,
+                &root_record,
+                rules_file_name,
+                data_file_name,
+                &traversal,
+                output
+            )?;
             if verbose {
                 print_verbose_tree(&root_record);
             }
-
             if print_json {
                 println!("{}", serde_json::to_string_pretty(&root_record)?)
             }
         } else {
             let root_context = RootScope::new(rules, each);
             let stacker = StackTracker::new(&root_context);
-            let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
+            let reporter = ConsoleReporter::new(stacker, reporter.as_ref(), rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
             let appender = MetadataAppender { delegate: &reporter, root_context: &each };
             let status = rules.evaluate(&each, &appender)?;
-            reporter.report()?;
+            reporter.report(&each, output)?;
             if status == Status::FAIL {
                 overall = Status::FAIL
             }

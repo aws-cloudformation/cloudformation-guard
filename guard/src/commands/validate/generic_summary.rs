@@ -13,39 +13,36 @@ use crate::rules::{EvaluationType, Status, RecordType, NamedStatus};
 use super::common::*;
 use itertools::Itertools;
 use crate::rules::eval_context::EventRecord;
+use crate::rules::path_value::traversal::Traversal;
 
 #[derive(Debug)]
-pub(crate) struct GenericSummary<'a> {
-    data_file_name: &'a str,
-    rules_file_name: &'a str,
-    output_format_type: OutputFormatType,
-    renderer: Box<dyn GenericReporter + 'a>,
-}
+pub(crate) struct GenericSummary {}
 
-impl<'a> GenericSummary<'a> {
-    pub(crate) fn new<'r>(data_file_name: &'r str,
-                          rules_file_name: &'r str,
-                          output_format_type: OutputFormatType) -> GenericSummary<'r> {
-        GenericSummary {
-            data_file_name,
-            rules_file_name,
-            output_format_type,
-            renderer: match output_format_type {
-                OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
-            }
-        }
+impl GenericSummary {
+    pub(crate) fn new() -> Self {
+        GenericSummary {}
     }
 }
 
-impl<'a> Reporter for GenericSummary<'a> {
-    fn report(&self,
-              writer: &mut dyn Write,
-              _status: Option<Status>,
-              failed_rules: &[&StatusContext],
-              passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize) -> crate::rules::Result<()> {
+impl Reporter for GenericSummary {
+
+    fn report(
+        &self,
+        writer: &mut dyn Write,
+        status: Option<Status>,
+        failed_rules: &[&StatusContext],
+        passed_or_skipped: &[&StatusContext],
+        longest_rule_name: usize,
+        rules_file: &str,
+        data_file: &str,
+        data: &Traversal<'_>,
+        output_format_type: OutputFormatType) -> crate::rules::Result<()>
+    {
+        let renderer = match output_format_type {
+            OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
+            OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+            OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
+        };
         let failed = if !failed_rules.is_empty() {
             let mut by_rule = HashMap::with_capacity(failed_rules.len());
             for each_failed_rule in failed_rules {
@@ -89,16 +86,26 @@ impl<'a> Reporter for GenericSummary<'a> {
             });
         let skipped = skipped.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
         let passed = passed.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
-        self.renderer.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
+        renderer.report(writer, rules_file, data_file, failed, passed, skipped, longest_rule_name)?;
         Ok(())
+
     }
 
-    fn report_eval(
+    fn report_eval<'value>(
         &self,
         write: &mut dyn Write,
-        _status: Status,
-        root_record: &EventRecord<'_>) -> crate::rules::Result<()> {
-        super::common::report_from_events(root_record, write, self.data_file_name, self.rules_file_name, self.renderer.as_ref())
+        status: Status,
+        root_record: &EventRecord<'value>,
+        rules_file: &str,
+        data_file: &str,
+        data: &Traversal<'value>,
+        output_format_type: OutputFormatType) -> crate::rules::Result<()> {
+        let renderer = match output_format_type {
+            OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary{}) as Box<dyn GenericReporter>,
+            OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+            OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
+        };
+        super::common::report_from_events(root_record, write, data_file, rules_file, renderer.as_ref())
     }
 
 }

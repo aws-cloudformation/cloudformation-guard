@@ -6,7 +6,7 @@ use std::convert::{TryFrom, TryInto};
 // Std Libraries
 //
 use std::fmt::Formatter;
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Serializer};
 
 
 use crate::rules::evaluate::{AutoReport, resolve_query};
@@ -21,6 +21,7 @@ use super::exprs::{QueryPart, SliceDisplay};
 use super::values::*;
 use crate::rules::exprs::LetValue;
 use std::hash::{Hash, Hasher};
+use serde::ser::{SerializeStruct, SerializeMap};
 
 //
 // crate level
@@ -117,10 +118,20 @@ impl Path {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct MapValue {
     pub(crate) keys: Vec<PathAwareValue>,
     pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
+}
+
+impl Serialize for MapValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        for (key, value) in self.values.iter() {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
 }
 
 impl PartialEq for MapValue {
@@ -138,7 +149,7 @@ impl MapValue {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone,Deserialize)]
 pub(crate) enum PathAwareValue {
     Null(Path),
     String((Path, String)),
@@ -690,6 +701,75 @@ impl QueryResolver for PathAwareValue {
                 }
             },
         }
+    }
+}
+
+impl Serialize for PathAwareValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let mut struct_ser= serializer.serialize_struct("PathAwareValue", 2)?;
+        match self {
+            PathAwareValue::Null(path)              => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", &serde_json::Value::Null)?;
+            },
+
+            PathAwareValue::String((path, v))       => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::Regex((path, v))        => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::Bool((path, v))          => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::Int((path, v))            => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::Float((path, v))          => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::Char((path, v))         => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::List((path, v)) => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+
+            },
+
+            PathAwareValue::Map((path, v))         => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::RangeInt((path, v))   => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::RangeFloat((path, v)) => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            },
+
+            PathAwareValue::RangeChar((path, v))  => {
+                struct_ser.serialize_field("path", &path.0)?;
+                struct_ser.serialize_field("value", v)?;
+            }
+        }
+        struct_ser.end()
     }
 }
 
