@@ -657,6 +657,9 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             if print_json {
                 println!("{}", serde_json::to_string_pretty(&root_record)?)
             }
+            if status == Status::FAIL {
+                overall = Status::FAIL
+            }
         } else {
             let root_context = RootScope::new(rules, each);
             let stacker = StackTracker::new(&root_context);

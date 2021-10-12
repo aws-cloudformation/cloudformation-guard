@@ -1131,22 +1131,22 @@ pub(crate) fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
     let (cmp, not) = cmp;
     if cmp.is_unary() {
         match cmp {
-            CmpOperator::Exists => if not { "existed" } else { "did not exist" },
-            CmpOperator::Empty => if not { "was empty" } else { "was not empty" },
-            CmpOperator::IsList => if not { "was a list " } else { "was not list" },
-            CmpOperator::IsMap => if not { "was a struct" } else { "was not struct" },
-            CmpOperator::IsString => if not { "was a string " } else { "was not string" },
+            CmpOperator::Exists => if not { "NOT EXISTS" } else { "EXISTS" },
+            CmpOperator::Empty => if not { "NOT EMPTY" } else { "EMPTY" },
+            CmpOperator::IsList => if not { "NOT LIST" } else { "IS LIST" },
+            CmpOperator::IsMap => if not { "NOT STRUCT" } else { "IS STRUCT" },
+            CmpOperator::IsString => if not { "NOT STRING" } else { "IS STRING" }
             _ => unreachable!()
         }
     }
     else {
         match cmp {
-            CmpOperator::Eq => if not { "equal to" } else { "not equal to" },
-            CmpOperator::Le => if not { "less than equal to" } else { "less than equal to" },
-            CmpOperator::Lt => if not { "less than" } else { "not less than" },
-            CmpOperator::Ge => if not { "greater than equal to" } else { "not greater than equal" },
-            CmpOperator::Gt => if not { "greater than" } else { "not greater than" },
-            CmpOperator::In => if not { "in" } else { "not in" },
+            CmpOperator::Eq => if not { "NOT EQUAL" } else { "EQUAL" },
+            CmpOperator::Le => if not { "NOT LESS THAN EQUAL" } else { "LESS THAN EQUAL" },
+            CmpOperator::Lt => if not { "NOT LESS THAN" } else { "LESS THAN" },
+            CmpOperator::Ge => if not { "NOT GREATER THAN EQUAL" } else { "GREATER THAN EQUAL" },
+            CmpOperator::Gt => if not { "NOT GREATER THAN" } else { "GREATER THAN" },
+            CmpOperator::In => if not { "NOT IN" } else { "IN" },
             _ => unreachable!()
         }
     }
