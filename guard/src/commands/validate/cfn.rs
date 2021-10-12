@@ -1,10 +1,10 @@
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
-use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison};
+use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport};
 use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use lazy_static::lazy_static;
 use crate::rules::UnResolved;
 use regex::Regex;
@@ -16,6 +16,7 @@ use std::hash::{Hash, Hasher};
 use serde::ser::{SerializeStruct, SerializeMap};
 
 use std::ops::{Deref, DerefMut};
+use std::cmp::Ordering;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?").ok().unwrap();
@@ -27,25 +28,43 @@ pub(crate) struct CfnAware<'reporter>{
 }
 
 #[derive(Clone, Debug)]
-struct IdentityKey<'key, T> {
+struct IdentityKey<'key, T: PartialOrd> {
     key: &'key T,
 }
 
-impl<'key, T> Hash for IdentityKey<'key, T> {
+impl<'key, T: PartialOrd> Hash for IdentityKey<'key, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::ptr::hash(self.key, state)
     }
 }
 
-impl<'key, T> PartialEq for IdentityKey<'key, T> {
+impl<'key, T: PartialOrd> PartialEq for IdentityKey<'key, T> {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self.key, other.key)
     }
 }
 
-impl<'key, T> Eq for IdentityKey<'key, T> {}
+impl<'key, T: PartialOrd> Eq for IdentityKey<'key, T> {}
 
-type IdentityHashMap<'key, K, V> = HashMap<IdentityKey<'key, K>, V>;
+impl<'key, T: PartialOrd> PartialOrd for IdentityKey<'key, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.key.partial_cmp(other.key)
+    }
+}
+
+impl<'key, T: PartialOrd> Ord for IdentityKey<'key, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.partial_cmp(other) {
+            Some(o) => o,
+            None => Ordering::Equal
+        }
+    }
+}
+
+// type IdentityHashMap<'key, K, V> = HashMap<IdentityKey<'key, K>, V>;
+
+
+type IdentityHashMap<'key, K, V> = BTreeMap<IdentityKey<'key, K>, V>;
 
 impl<'reporter> CfnAware<'reporter> {
     pub(crate) fn new() -> CfnAware<'reporter> {
@@ -108,6 +127,7 @@ pub(crate) struct ResourceView<'report, 'value: 'report> {
     resource_id: &'value str,
     #[serde(rename = "type")]
     resource_type: &'value str,
+    rule_name: &'value str,
     cdk_path: Option<&'value str>,
     errors: Vec<PropertyError<'report, 'value>>,
 }
@@ -184,6 +204,10 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                 )
             > = HashMap::new();
             for each_rule in &record.not_compliant {
+                let rule_name = match each_rule {
+                    ClauseReport::Rule(RuleReport{name, ..}) => *name,
+                    _ => unreachable!()
+                };
                 for each in find_guard_clause_failures(each_rule) {
                     let value= match each {
                         GuardClauseReport::Unary(unary) => {
@@ -233,6 +257,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                         };
                         (ResourceView {
                             resource_id: resource_name,
+                            rule_name,
                             resource_type,
                             cdk_path,
                             errors: vec![]
@@ -322,7 +347,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
             match outputType {
                 OutputFormatType::JSON => serde_json::to_writer(write, &overall)?,
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &overall)?,
-                _ => return Err(Error::new(ErrorKind::IncompatibleError(format!("Not Supported"))))
+                OutputFormatType::SingleLineSummary => single_line(write, &overall)?,
             }
 
             Ok(())
@@ -341,4 +366,51 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                 )
         }
     }
+}
+
+fn single_line(writer: &mut dyn Write,
+               overall: &Overall<'_, '_>) -> crate::rules::Result<()> {
+    writeln!(writer, "Evaluating data {} against rules {}", overall.data_file, overall.rules_file)?;
+    writeln!(writer, "Number of non-compliant resources {}", overall.non_compliant.len())?;
+    for each_resource in &overall.non_compliant {
+        let (id, type_, rule_name) = (
+            each_resource.resource_id,
+            each_resource.resource_type,
+            each_resource.rule_name
+        );
+        for each_prop_error in &each_resource.errors {
+            for each_err in &each_prop_error.errors {
+                match each_err {
+                    FailedProperty::UnaryError(UnaryResolvedProperty{error, message, ..}) |
+                    FailedProperty::BinaryError(BinaryResolvedProperty{message, error, ..}) => {
+                        writeln!(
+                            writer,
+                            "Resource(Id={id}, Type={type_}) was not compliant with rule [{rule}]. Message [{msg}]. {err}",
+                            id=id,
+                            type_=type_,
+                            err=error,
+                            msg=message,
+                            rule=rule_name,
+                        )?;
+                    },
+
+                    FailedProperty::RetrievalError(up) => {
+                        let cmp_str = crate::rules::eval_context::cmp_str(up.cmp);
+                        writeln!(
+                            writer,
+                            "Resource(Id={id}, Type={type_}) was not compliant with rule [{rule}] due to retrieval error. Remaining Query [{query}], traversed until [{value}]. {err}",
+                            id=id,
+                            type_=type_,
+                            rule=rule_name,
+                            query=up.remaining_query,
+                            err=up.reason.as_ref().map_or("", |r| r),
+                            value=each_prop_error.from
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

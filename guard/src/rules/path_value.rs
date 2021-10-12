@@ -773,6 +773,12 @@ impl Serialize for PathAwareValue {
     }
 }
 
+impl PartialOrd for PathAwareValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.self_path().0.partial_cmp(&other.self_path().0)
+    }
+}
+
 impl PathAwareValue {
 
     pub(crate) fn merge(mut self, other: PathAwareValue) -> crate::rules::Result<PathAwareValue> {
