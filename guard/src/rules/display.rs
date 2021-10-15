@@ -1,7 +1,7 @@
 use crate::rules::eval_context::EventRecord;
 use crate::rules::{RecordType, BlockCheck, ClauseCheck, Status, QueryResult};
-use std::fmt::Formatter;
-use crate::rules::values::CmpOperator;
+use std::fmt::{Formatter, Display};
+use crate::rules::values::{CmpOperator, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
 use crate::rules::path_value::PathAwareValue;
 use std::convert::TryInto;
 
@@ -9,20 +9,87 @@ pub(crate) fn display_comparison((cmp, not): (CmpOperator, bool)) -> String {
     format!("{} {}", if not { "not" } else { "" }, cmp)
 }
 
+
+fn write_range<T: Display + PartialOrd>(
+    formatter: &mut Formatter<'_>,
+    range: &RangeType<T>) -> std::fmt::Result
+{
+    if range.inclusive & LOWER_INCLUSIVE != 0 {
+        formatter.write_str("[")?;
+    }
+    else {
+        formatter.write_str("(")?;
+    }
+    range.lower.fmt(formatter)?;
+    formatter.write_str(",")?;
+    range.upper.fmt(formatter)?;
+    if range.inclusive & UPPER_INCLUSIVE != 0 {
+        formatter.write_str("]")?;
+    }
+    else {
+        formatter.write_str(")")?;
+    }
+    Ok(())
+}
+
+pub(crate) struct ValueOnlyDisplay<'value>(pub(crate) &'value PathAwareValue);
+
+impl<'value> Display for ValueOnlyDisplay<'value> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            PathAwareValue::Null(_path)                         => formatter.write_str("\"NULL\"")?,
+            PathAwareValue::String((_path, value))      => formatter.write_fmt(
+                format_args!("\"{}\"", value))?,
+            PathAwareValue::Regex((_path, value))       => formatter.write_fmt(
+                format_args!("\"/{}/\"", value))?,
+            PathAwareValue::Bool((_path, value))        => formatter.write_fmt(
+                format_args!("{}", value))?,
+            PathAwareValue::Int((_path, value))             => formatter.write_fmt(
+                format_args!("{}", value))?,
+            PathAwareValue::Float((_path, value))                   => formatter.write_fmt(
+                format_args!("{}", value))?,
+            PathAwareValue::Char((_path, value))         => formatter.write_fmt(
+                format_args!("\'{}\'", value))?,
+            PathAwareValue::List((_path, list))         => {
+                formatter.write_str("[")?;
+                let last = list.len()-1;
+                for (idx, each) in list.iter().enumerate() {
+                    ValueOnlyDisplay(each).fmt(formatter)?;
+                    if last != idx {
+                        formatter.write_str(",")?;
+                    }
+                }
+                formatter.write_str("]")?;
+            },
+
+            PathAwareValue::Map((_path, map))          => {
+                formatter.write_str("{")?;
+                let last = map.values.len()-1;
+                for (idx, (key, value)) in map.values.iter().enumerate() {
+                    formatter.write_fmt(
+                        format_args!("\"{}\"", key))?;
+                    formatter.write_str(":")?;
+                    ValueOnlyDisplay(value).fmt(formatter)?;
+                    if last != idx {
+                        formatter.write_str(",")?;
+                    }
+                }
+                formatter.write_str("}")?;
+
+            },
+
+            PathAwareValue::RangeInt((_path, value))    => write_range(formatter, value)?,
+            PathAwareValue::RangeFloat((_path, value))   => write_range(formatter, value)?,
+            PathAwareValue::RangeChar((_path, value))    => write_range(formatter, value)?,
+        }
+        Ok(())
+    }
+}
+
 impl std::fmt::Display for PathAwareValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let (path, value): (String, serde_json::Value) = match self.try_into() {
-            Ok(res) => res,
-            Err(_) => return Err(std::fmt::Error)
-        };
-        f.write_fmt(
-            format_args!(
-                "Path={}, Value={}",
-                path,
-                value
-            )
-        )?;
-        Ok(())
+        f.write_fmt( format_args!("Path={} Value=", self.self_path()))?;
+        ValueOnlyDisplay(self).fmt(f)
     }
 }
 

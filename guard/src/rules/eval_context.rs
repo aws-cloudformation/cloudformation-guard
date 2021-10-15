@@ -1075,10 +1075,21 @@ pub(crate) enum UnaryCheck<'value> {
     UnResolvedContext(String)
 }
 
+impl<'value> ValueComparisons<'value> for UnaryCheck<'value> {
+    fn value_from(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            UnaryCheck::UnResolved(ur) => Some(ur.value.traversed_to),
+            UnaryCheck::Resolved(uc) => Some(uc.value),
+            UnaryCheck::UnResolvedContext(_) => None,
+        }
+    }
+}
+
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct UnaryReport<'value> {
     pub(crate) context: String,
-    pub(crate) message: Messages,
+    pub(crate) messages: Messages,
     pub(crate) check: UnaryCheck<'value>,
 }
 
@@ -1095,6 +1106,15 @@ pub(crate) enum BinaryCheck<'value> {
     Resolved(BinaryComparison<'value>),
 }
 
+impl<'value> ValueComparisons<'value> for BinaryCheck<'value> {
+    fn value_from(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            BinaryCheck::UnResolved(vur) => Some(vur.value.traversed_to),
+            BinaryCheck::Resolved(res) => Some(res.from),
+        }
+    }
+}
+
 #[derive(Clone, Debug,Serialize)]
 pub(crate) struct BinaryReport<'value> {
     pub(crate) context: String,
@@ -1108,24 +1128,119 @@ pub(crate) enum GuardClauseReport<'value> {
     Binary(BinaryReport<'value>),
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct DisjunctionsReport<'value> {
-   pub(crate) checks: Vec<ClauseReport<'value>>,
+pub(crate) trait ValueComparisons<'from> {
+    fn value_from(&self) -> Option<&'from PathAwareValue>;
+    fn value_to(&self) -> Option<&'from PathAwareValue> {
+        None
+    }
+}
+
+impl<'value> ValueComparisons<'value> for GuardClauseReport<'value> {
+    fn value_from(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            GuardClauseReport::Binary(br) => br.check.value_from(),
+            GuardClauseReport::Unary(ur) => ur.check.value_from(),
+        }
+    }
+
+    fn value_to(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            GuardClauseReport::Binary(br) => br.check.value_to(),
+            GuardClauseReport::Unary(ur) => ur.check.value_to(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct GuardBlockReport {
-   pub(crate) context: String,
-   pub(crate) messages: Messages,
+pub(crate) struct DisjunctionsReport<'value> {
+    pub(crate) checks: Vec<ClauseReport<'value>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct GuardBlockReport<'value> {
+    pub(crate) context: String,
+    pub(crate) messages: Messages,
+    pub(crate) unresolved: Option<UnResolved<'value>>,
+}
+
+impl<'value> ValueComparisons<'value> for GuardBlockReport<'value> {
+    fn value_from(&self) -> Option<&'value PathAwareValue> {
+        if let Some(ur) = &self.unresolved {
+            return Some(ur.traversed_to)
+        }
+        None
+    }
 }
 
 #[derive(Clone, Debug,Serialize)]
 pub(crate) enum ClauseReport<'value> {
     Rule(RuleReport<'value>),
-    Block(GuardBlockReport),
+    Block(GuardBlockReport<'value>),
     Disjunctions(DisjunctionsReport<'value>),
     Clause(GuardClauseReport<'value>),
 }
+
+impl<'value> ClauseReport<'value> {
+    pub(crate) fn is_rule(&self) -> bool {
+        if let Self::Rule(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_block(&self) -> bool {
+        if let Self::Block(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_disjunctions(&self) -> bool {
+        if let Self::Disjunctions(_) = self { true } else { false }
+    }
+
+    pub(crate) fn is_clause(&self) -> bool {
+        if let Self::Clause(_) = self { true } else { false }
+    }
+
+    pub(crate) fn rule(&self) -> Option<&RuleReport> {
+        if let Self::Rule(rr) = self { Some(rr) } else { None }
+    }
+
+    pub(crate) fn block(&self) -> Option<&GuardBlockReport> {
+        if let Self::Block(rr) = self { Some(rr) } else { None }
+    }
+
+    pub(crate) fn disjunctions(&self) -> Option<&DisjunctionsReport> {
+        if let Self::Disjunctions(rr) = self { Some(rr) } else { None }
+    }
+
+    pub(crate) fn clause(&self) -> Option<&GuardClauseReport> {
+        if let Self::Clause(gc) = self { Some(gc) } else { None }
+    }
+
+    pub(crate) fn key(&self, parent: &str) -> String {
+        match self {
+            Self::Rule(RuleReport{name, ..}) => format!("{}/{}", parent, name),
+            Self::Block(_) => format!("{}/B[{:p}]", parent, self),
+            Self::Disjunctions(_) => format!("{}/Or[{:p}]", parent, self),
+            Self::Clause(_) => format!("{}/C[{:p}]", parent, self)
+        }
+    }
+}
+
+impl<'value> ValueComparisons<'value> for ClauseReport<'value> {
+    fn value_from(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            Self::Block(b) => b.value_from(),
+            Self::Clause(c) => c.value_from(),
+            _ => None
+        }
+    }
+
+    fn value_to(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            Self::Block(b) => b.value_to(),
+            Self::Clause(c) => c.value_to(),
+            _ => None
+        }
+    }
+}
+
 
 pub(crate) fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
     let (cmp, not) = cmp;
@@ -1175,7 +1290,8 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                         messages: Messages {
                             error_message: Some(String::from("query for block clause did not retrieve any value")),
                             custom_message: None,
-                        }
+                        },
+                        unresolved: None,
                     }));
                 }
                 else {
@@ -1210,7 +1326,7 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                         clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
                             context: current.context.clone(),
                             check: UnaryCheck::UnResolvedContext(current.context.to_string()),
-                            message: Messages {
+                            messages: Messages {
                                 custom_message: Some(custom_message),
                                 error_message: Some(error_message),
                             }
@@ -1228,7 +1344,7 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                             cxt=current.context,
                         );
                         clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport{
-                            message: Messages {
+                            messages: Messages {
                                 custom_message: Some(message.to_string()),
                                 error_message: Some(error_message),
                             },
@@ -1238,9 +1354,9 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                     },
 
                     ClauseCheck::MissingBlockValue(missing) => {
-                        let (property, far) = match &missing.from {
+                        let (property, far, ur) = match &missing.from {
                             QueryResult::UnResolved(ur) => {
-                                (ur.remaining_query.as_str(), ur.traversed_to)
+                                (ur.remaining_query.as_str(), ur.traversed_to, ur)
                             },
                             _ => unreachable!()
                         };
@@ -1257,7 +1373,8 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                                 messages: Messages {
                                     custom_message: Some(message.to_string()),
                                     error_message: Some(error_message),
-                                }
+                                },
+                                unresolved: Some(ur.clone())
                             })
                         );
                     },
@@ -1324,7 +1441,7 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
 
                         clauses.push(
                             ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
-                                message: Messages {
+                                messages: Messages {
                                     custom_message: Some(custom_message),
                                     error_message: Some(message),
                                 },
