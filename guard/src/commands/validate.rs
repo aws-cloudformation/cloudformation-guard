@@ -111,8 +111,8 @@ or rules files.
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
-                .default_value("all")
-                .help("control if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
+                .default_value("fail")
+                .help("control if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
             )
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
@@ -237,7 +237,7 @@ or rules files.
         };
 
         let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
-            SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP,
+            SummaryType::FAIL.into(),
             |v| {
                 v.fold(BitFlags::empty(), |mut st, elem| {
                     match elem {

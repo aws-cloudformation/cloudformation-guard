@@ -87,24 +87,32 @@ impl<'r> Reporter for SummaryTable<'r> {
                 _ => false
             });
 
-        writeln!(writer, "{} Status = {}", data_file_name, colored_string(status))?;
+        let mut wrote_header_line = false;
         if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
+            writeln!(writer, "{} Status = {}", data_file_name, colored_string(status))?;
+            wrote_header_line = true;
             writeln!(writer, "{}", "SKIP rules".bold());
             print_partition(writer, rules_file_name, &skipped, longest_rule_name)?;
 
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
+            writeln!(writer, "{} Status = {}", data_file_name, colored_string(status))?;
+            wrote_header_line = true;
             writeln!(writer, "{}", "PASS rules".bold());
             print_partition(writer, rules_file_name, &passed, longest_rule_name)?;
         }
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed_rules.is_empty() {
+            writeln!(writer, "{} Status = {}", data_file_name, colored_string(status))?;
+            wrote_header_line = true;
             writeln!(writer, "{}", "FAILED rules".bold());
             print_partition(writer, rules_file_name, failed_rules, longest_rule_name)?;
         }
 
-        writeln!(writer, "---")?;
+        if wrote_header_line {
+            writeln!(writer, "---")?;
+        }
         self.next.report(
                   writer,
                   status,
@@ -127,7 +135,6 @@ impl<'r> Reporter for SummaryTable<'r> {
         _data: &Traversal<'value>,
         _output_format_type: OutputFormatType) -> crate::rules::Result<()> {
 
-        writeln!(writer, "{} Status = {}", data_file_name, colored_string(Some(status)))?;
         let mut passed = indexmap::IndexMap::with_capacity(root_record.children.len());
         let mut skipped = indexmap::IndexMap::with_capacity(root_record.children.len());
         let mut failed = indexmap::IndexMap::with_capacity(root_record.children.len());
@@ -148,22 +155,36 @@ impl<'r> Reporter for SummaryTable<'r> {
 
         skipped.retain(|key, _| !(passed.contains_key(key) || failed.contains_key(key)));
 
+        let mut wrote_header_line = false;
         if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
+            writeln!(writer, "{} Status = {}", data_file_name, colored_string(Some(status)))?;
+            wrote_header_line = true;
             writeln!(writer, "{}", "SKIP rules".bold())?;
             print_summary(writer, rules_file_name, longest, &skipped)?;
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
+            if !wrote_header_line {
+                wrote_header_line = true;
+                writeln!(writer, "{} Status = {}", data_file_name, colored_string(Some(status)))?;
+            }
             writeln!(writer, "{}", "PASS rules".bold())?;
             print_summary(writer, rules_file_name, longest, &passed)?;
         }
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed.is_empty() {
+            if !wrote_header_line {
+                wrote_header_line = true;
+                writeln!(writer, "{} Status = {}", data_file_name, colored_string(Some(status)))?;
+            }
             writeln!(writer, "{}", "FAILED rules".bold())?;
             print_summary(writer, rules_file_name, longest, &failed)?;
         }
 
-        writeln!(writer, "---")?;
+        if wrote_header_line {
+            writeln!(writer, "---")?;
+        }
+
         self.next.report_eval(
             writer,
             status,

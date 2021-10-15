@@ -1,10 +1,10 @@
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
-use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport};
+use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport, ValueComparisons, FileReport};
 use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
 use lazy_static::lazy_static;
 use crate::rules::UnResolved;
 use regex::Regex;
@@ -17,6 +17,8 @@ use serde::ser::{SerializeStruct, SerializeMap};
 
 use std::ops::{Deref, DerefMut};
 use std::cmp::Ordering;
+use colored::*;
+use crate::rules::display::ValueOnlyDisplay;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?").ok().unwrap();
@@ -26,45 +28,6 @@ lazy_static! {
 pub(crate) struct CfnAware<'reporter>{
     next: Option<&'reporter dyn Reporter>,
 }
-
-#[derive(Clone, Debug)]
-struct IdentityKey<'key, T: PartialOrd> {
-    key: &'key T,
-}
-
-impl<'key, T: PartialOrd> Hash for IdentityKey<'key, T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::ptr::hash(self.key, state)
-    }
-}
-
-impl<'key, T: PartialOrd> PartialEq for IdentityKey<'key, T> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.key, other.key)
-    }
-}
-
-impl<'key, T: PartialOrd> Eq for IdentityKey<'key, T> {}
-
-impl<'key, T: PartialOrd> PartialOrd for IdentityKey<'key, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.key.partial_cmp(other.key)
-    }
-}
-
-impl<'key, T: PartialOrd> Ord for IdentityKey<'key, T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.partial_cmp(other) {
-            Some(o) => o,
-            None => Ordering::Equal
-        }
-    }
-}
-
-// type IdentityHashMap<'key, K, V> = HashMap<IdentityKey<'key, K>, V>;
-
-
-type IdentityHashMap<'key, K, V> = BTreeMap<IdentityKey<'key, K>, V>;
 
 impl<'reporter> CfnAware<'reporter> {
     pub(crate) fn new() -> CfnAware<'reporter> {
@@ -76,87 +39,101 @@ impl<'reporter> CfnAware<'reporter> {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) enum ResolvedFailure<'report, 'value: 'report> {
-    Unary(&'report UnaryComparison<'value>),
-    Binary(&'report BinaryComparison<'value>),
+#[derive(Clone, Debug)]
+struct Node<'report, 'value: 'report> {
+    parent: std::rc::Rc<String>,
+    path: std::rc::Rc<String>,
+    clause: &'report ClauseReport<'value>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct UnResolvedProperty<'report> {
-    remaining_query: &'report str,
-    reason: &'report Option<String>,
-    cmp: (CmpOperator, bool)
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct UnaryResolvedProperty<'report> {
-    message: &'report str,
-    error: &'report str,
-    cmp: (CmpOperator, bool)
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct BinaryResolvedProperty<
+type RuleHierarchy<
     'report,
-    'value: 'report> {
-    to: &'value PathAwareValue,
-    error: &'report str,
-    message: &'report str,
-    cmp: (CmpOperator, bool),
-}
+    'value> =
+    BTreeMap<
+        std::rc::Rc<String>,
+        std::rc::Rc<Node<'report, 'value>>
+    >;
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) enum FailedProperty<'report, 'value: 'report> {
-    RetrievalError(UnResolvedProperty<'report>),
-    UnaryError(UnaryResolvedProperty<'report>),
-    BinaryError(BinaryResolvedProperty<'report, 'value>)
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct PropertyError<
+type PathTree<
     'report,
-    'value: 'report>
+    'value> =
+    BTreeMap<
+        &'value str,
+        Vec<std::rc::Rc<Node<'report, 'value>>>
+    >;
+
+fn insert_into_trees<'report, 'value: 'report>(
+    clause: &'report ClauseReport<'value>,
+    parent: std::rc::Rc<String>,
+    path_tree: &mut PathTree<'report, 'value>,
+    hierarchy: &mut RuleHierarchy<'report, 'value>)
 {
-    from: &'value PathAwareValue,
-    errors: Vec<FailedProperty<'report, 'value>>
-}
+    let path = std::rc::Rc::new(clause.key(&parent));
+    let node = std::rc::Rc::new(Node {
+        parent, path: path.clone(), clause
+    });
+    hierarchy.insert(path, node.clone());
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct ResourceView<'report, 'value: 'report> {
-    resource_id: &'value str,
-    #[serde(rename = "type")]
-    resource_type: &'value str,
-    rule_name: &'value str,
-    cdk_path: Option<&'value str>,
-    errors: Vec<PropertyError<'report, 'value>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct Overall<'report, 'value: 'report> {
-    data_file: &'report str,
-    rules_file: &'report str,
-    status: Status,
-    non_compliant: Vec<ResourceView<'report, 'value>>,
-    compliant: &'report HashSet<String>,
-    not_applicable: &'report HashSet<String>,
-}
-
-fn find_guard_clause_failures<'report, 'value: 'report>(clause_report: &'report ClauseReport<'value>)
-    -> Vec<&'report GuardClauseReport<'value>> {
-    if let ClauseReport::Clause(gac) = clause_report {
-        return vec![gac]
+    if let Some(from) = clause.value_from() {
+        let path = from.self_path().0.as_str();
+        path_tree.entry(path).or_insert(vec![]).push(node);
     }
-    let checks = match clause_report {
-        ClauseReport::Rule(report)  => &report.checks,
-        ClauseReport::Disjunctions(report) => &report.checks,
-        _ => return vec![],
-    };
-    checks.iter().map(|each| find_guard_clause_failures(each))
-        .fold(Vec::new(), |mut vec, others| {
-            vec.extend(others);
-            vec
-        })
+}
+
+fn insert_into_trees_from_parent<'report, 'value: 'report>(
+    clause: &'report ClauseReport<'value>,
+    children: &'report[ClauseReport<'value>],
+    parent: std::rc::Rc<String>,
+    path_tree: &mut PathTree<'report, 'value>,
+    hierarchy: &mut RuleHierarchy<'report, 'value>)
+{
+    let path = std::rc::Rc::new(clause.key(&parent));
+    let node = std::rc::Rc::new(Node {
+        parent, path: path.clone(), clause
+    });
+    hierarchy.insert(path.clone(), node);
+
+    for each in children {
+        populate_hierarchy_path_trees(
+            each,
+            path.clone(),
+            path_tree,
+            hierarchy
+        );
+    }
+}
+
+fn populate_hierarchy_path_trees<'report, 'value: 'report>(
+    clause: &'report ClauseReport<'value>,
+    parent: std::rc::Rc<String>,
+    path_tree: &mut PathTree<'report, 'value>,
+    hierarchy: &mut RuleHierarchy<'report, 'value>)
+{
+    match clause {
+        ClauseReport::Clause(_) |
+        ClauseReport::Block(_)  => insert_into_trees(
+            clause,
+            parent,
+            path_tree,
+            hierarchy
+        ),
+
+        ClauseReport::Disjunctions(ors) => insert_into_trees_from_parent(
+            clause,
+            &ors.checks,
+            parent,
+            path_tree,
+            hierarchy
+        ),
+
+        ClauseReport::Rule(rr) => insert_into_trees_from_parent(
+            clause,
+            &rr.checks,
+            parent,
+            path_tree,
+            hierarchy
+        ),
+    }
 }
 
 impl<'reporter> Reporter for CfnAware<'reporter> {
@@ -187,170 +164,13 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 
         let root = data.root().unwrap();
         if let Ok(_) = data.at("/Resources", root) {
-            let record = simplifed_json_from_root(root_record)?;
-            let mut by_resources: HashMap<
-                &str,
-                (ResourceView,
-                 IdentityHashMap<
-                     '_,
-                     PathAwareValue,
-                     Vec<
-                         FailedProperty<
-                             '_,
-                             '_
-                         >
-                     >
-                 >
-                )
-            > = HashMap::new();
-            for each_rule in &record.not_compliant {
-                let rule_name = match each_rule {
-                    ClauseReport::Rule(RuleReport{name, ..}) => *name,
-                    _ => unreachable!()
-                };
-                for each in find_guard_clause_failures(each_rule) {
-                    let value= match each {
-                        GuardClauseReport::Unary(unary) => {
-                            match &unary.check {
-                                UnaryCheck::Resolved(UnaryComparison{value, ..}) => *value,
-                                UnaryCheck::UnResolved(ValueUnResolved{value: UnResolved{traversed_to: value, ..}, ..}) =>
-                                    *value,
-                                _ => {
-                                    continue;
-                                }
-                            }
-                        },
-
-                        GuardClauseReport::Binary(binary) => {
-                            match &binary.check {
-                                BinaryCheck::Resolved(BinaryComparison{from: value, ..}) |
-                                BinaryCheck::UnResolved(ValueUnResolved{value: UnResolved{traversed_to: value, ..}, ..}) => *value,
-                            }
-                        }
-                    };
-                    let resource_name = match CFN_RESOURCES.captures(value.self_path().0.as_str()) {
-                        Some(cap) => {
-                            cap.get(1).unwrap().as_str()
-                        },
-                        _ => unreachable!()
-                    };
-                    let root = data.root().unwrap();
-                    let mut resource_views= by_resources.entry(resource_name).or_insert_with(|| {
-                        let path = format!("/Resources/{}", resource_name);
-                        let resource = match data.at(&path, root) {
-                            Ok(TraversalResult::Value(val)) => val,
-                            _ => unreachable!()
-                        };
-                        let resource_type = match data.at("0/Type", resource) {
-                            Ok(TraversalResult::Value(val)) => match val.value() {
-                                PathAwareValue::String((_, v)) => v.as_str(),
-                                _ => unreachable!()
-                            }
-                            _ => unreachable!()
-                        };
-                        let cdk_path = match data.at("0/Metadata/aws.cdk.path", resource) {
-                            Ok(TraversalResult::Value(val)) => match val.value() {
-                                PathAwareValue::String((_, v)) => Some(v.as_str()),
-                                _ => unreachable!()
-                            },
-                            _ => None
-                        };
-                        (ResourceView {
-                            resource_id: resource_name,
-                            rule_name,
-                            resource_type,
-                            cdk_path,
-                            errors: vec![]
-                        },
-                        IdentityHashMap::new())
-                    });
-
-                    match each {
-                        GuardClauseReport::Binary(bin) => match &bin.check {
-                            BinaryCheck::UnResolved(un) => {
-                                resource_views.1.entry(
-                                    IdentityKey{key: un.value.traversed_to}
-                                ).or_insert(vec![]).push(
-                                    FailedProperty::RetrievalError(UnResolvedProperty {
-                                        remaining_query: &un.value.remaining_query,
-                                        cmp: un.comparison,
-                                        reason: &un.value.reason
-                                    }));
-                            }
-
-                            BinaryCheck::Resolved(cmp) => {
-                                resource_views.1.entry(
-                                    IdentityKey{key: cmp.from}
-                                ).or_insert(vec![]).push(
-                                    FailedProperty::BinaryError(BinaryResolvedProperty {
-                                        cmp: cmp.comparison,
-                                        to: cmp.to,
-                                        error: bin.messages.error_message.as_ref().map_or(
-                                            "", String::as_str),
-                                        message: bin.messages.custom_message.as_ref().map_or(
-                                            "", String::as_str)
-                                    })
-                                );
-                            }
-                        },
-
-                        GuardClauseReport::Unary(unary) => match &unary.check {
-                            UnaryCheck::UnResolved(un) => {
-                                resource_views.1.entry(
-                                    IdentityKey{key: un.value.traversed_to}
-                                ).or_insert(vec![]).push(
-                                FailedProperty::RetrievalError(UnResolvedProperty {
-                                    remaining_query: &un.value.remaining_query,
-                                    cmp: un.comparison,
-                                    reason: &un.value.reason
-                                }));
-                            },
-                            UnaryCheck::Resolved(unary_cmp) => {
-                                resource_views.1.entry(
-                                    IdentityKey{key: unary_cmp.value}
-                                ).or_insert(vec![]).push(
-                                    FailedProperty::UnaryError(UnaryResolvedProperty {
-                                        cmp: unary_cmp.comparison,
-                                        error: unary.message.error_message.as_ref().map_or(
-                                            "", String::as_str),
-                                        message: unary.message.custom_message.as_ref().map_or(
-                                            "", String::as_str)
-                                    })
-                                );
-                            },
-                            UnaryCheck::UnResolvedContext(_) => {}
-                        }
-                    }
-                }
-            }
-
-            let mut aggr_by_resources = Vec::with_capacity(by_resources.len());
-            for (_resource_id, (mut view, id_map)) in by_resources {
-                for (from, errors) in id_map {
-                    view.errors.push(PropertyError {
-                        from: from.key,
-                        errors
-                    });
-                }
-                aggr_by_resources.push(view);
-            }
-
-            let overall = Overall {
-                status,
-                compliant: &record.compliant,
-                not_applicable: &record.not_applicable,
-                non_compliant: aggr_by_resources,
-                rules_file,
-                data_file,
-            };
-
-            match outputType {
-                OutputFormatType::JSON => serde_json::to_writer(write, &overall)?,
-                OutputFormatType::YAML => serde_yaml::to_writer(write, &overall)?,
-                OutputFormatType::SingleLineSummary => single_line(write, &overall)?,
-            }
-
-            Ok(())
+            let failure_report = simplifed_json_from_root(root_record)?;
+            Ok(match outputType {
+                OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
+                OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
+                OutputFormatType::SingleLineSummary => single_line(
+                    write, data_file, rules_file, data, failure_report)?,
+            })
         }
         else {
             self.next.map_or(
@@ -368,48 +188,448 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
     }
 }
 
-fn single_line(writer: &mut dyn Write,
-               overall: &Overall<'_, '_>) -> crate::rules::Result<()> {
-    writeln!(writer, "Evaluating data {} against rules {}", overall.data_file, overall.rules_file)?;
-    writeln!(writer, "Number of non-compliant resources {}", overall.non_compliant.len())?;
-    for each_resource in &overall.non_compliant {
-        let (id, type_, rule_name) = (
-            each_resource.resource_id,
-            each_resource.resource_type,
-            each_resource.rule_name
-        );
-        for each_prop_error in &each_resource.errors {
-            for each_err in &each_prop_error.errors {
-                match each_err {
-                    FailedProperty::UnaryError(UnaryResolvedProperty{error, message, ..}) |
-                    FailedProperty::BinaryError(BinaryResolvedProperty{message, error, ..}) => {
-                        writeln!(
-                            writer,
-                            "Resource(Id={id}, Type={type_}) was not compliant with rule [{rule}]. Message [{msg}]. {err}",
-                            id=id,
-                            type_=type_,
-                            err=error,
-                            msg=message,
-                            rule=rule_name,
-                        )?;
-                    },
+fn emit_messages(
+    writer: &mut dyn Write,
+    prefix: &str,
+    message: &str,
+    error: &str,
+    width: usize) -> crate::rules::Result<()> {
+    if !message.is_empty() {
+        writeln!(
+            writer,
+            "{prefix}{mh:<width$}= {message}",
+            prefix=prefix,
+            message=message,
+            mh="Message",
+            width=width
+        )?;
+    }
 
-                    FailedProperty::RetrievalError(up) => {
-                        let cmp_str = crate::rules::eval_context::cmp_str(up.cmp);
-                        writeln!(
-                            writer,
-                            "Resource(Id={id}, Type={type_}) was not compliant with rule [{rule}] due to retrieval error. Remaining Query [{query}], traversed until [{value}]. {err}",
-                            id=id,
-                            type_=type_,
-                            rule=rule_name,
-                            query=up.remaining_query,
-                            err=up.reason.as_ref().map_or("", |r| r),
-                            value=each_prop_error.from
-                        )?;
+    if !error.is_empty() {
+        writeln!(
+            writer,
+            "{prefix}{eh:<width$}= {error}",
+            prefix=prefix,
+            error=error,
+            eh="Error",
+            width=width
+        )?;
+    }
+
+    Ok(())
+}
+
+fn emit_retrieval_error(
+    writer: &mut dyn Write,
+    prefix: &str,
+    vur: &ValueUnResolved<'_>,
+    context: &str,
+    message: &str) -> crate::rules::Result<()> {
+    writeln!(
+        writer,
+        "{prefix}Check = {cxt} {{",
+        prefix=prefix,
+        cxt=context
+    )?;
+    let check_end = format!("{}}}", prefix);
+    let prefix = format!("{}  ", prefix);
+    emit_messages(
+        writer,
+        &prefix,
+        message,
+        "",
+        0,
+    )?;
+
+    writeln!(
+        writer,
+        "{prefix}RequiredPropertyError {{",
+        prefix=prefix
+    )?;
+    let rpe_end = format!("{}}}", prefix);
+    let prefix = format!("{}  ", prefix);
+    writeln!(
+        writer,
+        "{prefix}PropertyPath = {path}",
+        prefix=prefix,
+        path=vur.value.traversed_to.self_path()
+    )?;
+
+    writeln!(
+        writer,
+        "{prefix}MissingProperty = {prop}",
+        prefix=prefix,
+        prop=vur.value.remaining_query
+    )?;
+
+    let reason = vur.value.reason.as_ref().map_or("", String::as_str);
+    if !reason.is_empty() {
+        writeln!(
+            writer,
+            "{prefix}Reason = {reason}",
+            prefix=prefix,
+            reason=reason
+        )?;
+
+    }
+    writeln!(writer, "{}", rpe_end)?;
+    writeln!(writer, "{}", check_end)?;
+    Ok(())
+}
+
+fn pprint_clauses(
+    writer: &mut dyn Write,
+    clause: &ClauseReport<'_>,
+    resource: &LocalResourceAggr<'_, '_>,
+    prefix: String) -> crate::rules::Result<()> {
+
+    match clause {
+        ClauseReport::Rule(rr) => {
+            writeln!(
+                writer,
+                "{prefix}Rule = {rule} {{",
+                prefix=prefix,
+                rule=rr.name
+            )?;
+            let rule_end = format!("{}}}", prefix);
+            let prefix = format!("{}  ", prefix);
+            let message = rr.messages.custom_message.as_ref().map_or("", String::as_str);
+            let error = rr.messages.error_message.as_ref().map_or("", String::as_str);
+            emit_messages(writer, &prefix, message, error, 0)?;
+            writeln!(
+                writer,
+                "{prefix}ALL {{",
+                prefix=prefix
+            )?;
+            let all_end = format!("{}}}", prefix);
+            let prefix = format!("{}  ", prefix);
+            for child in &rr.checks {
+                pprint_clauses(
+                    writer,
+                    child,
+                    resource,
+                    prefix.clone(),
+                )?;
+            }
+            writeln!(writer, "{}", all_end)?;
+            writeln!(writer, "{}", rule_end)?;
+        },
+
+        ClauseReport::Disjunctions(ors) => {
+            writeln!(
+                writer,
+                "{prefix}ANY {{",
+                prefix=prefix
+            )?;
+            let end = format!("{}}}", prefix);
+            let prefix = format!("{}  ", prefix);
+            for child in &ors.checks {
+                pprint_clauses(
+                    writer,
+                    child,
+                    resource,
+                    prefix.clone(),
+                )?;
+            }
+            writeln!(writer, "{}", end)?;
+        },
+
+        ClauseReport::Block(blk) => {
+            if !resource.clauses.contains(&IdentityHash{key: clause}) {
+                return Ok(())
+            }
+            writeln!(
+                writer,
+                "{prefix}Check = {cxt} {{",
+                prefix=prefix,
+                cxt=blk.context
+            )?;
+            let check_end = format!("{}}}", prefix);
+            let prefix = format!("{}  ", prefix);
+            writeln!(
+                writer,
+                "{prefix}RequiredPropertyError {{",
+                prefix=prefix
+            )?;
+            let mpv_end = format!("{}}}", prefix);
+            let prefix = format!("{}  ", prefix);
+            let (traversed_to, query) = blk.unresolved.as_ref().map_or(
+                ("", ""),
+                |val| (&val.traversed_to.self_path().0, &val.remaining_query));
+            let width = if !traversed_to.is_empty() {
+                let width = "MissingProperty".len() + 4;
+                writeln!(
+                    writer,
+                    "{prefix}{pp:<width$}= {path}\n{prefix}{mp:<width$}= {q}",
+                    prefix=prefix,
+                    pp="PropertyPath",
+                    width=width,
+                    path=traversed_to,
+                    mp="MissingProperty",
+                    q=query
+                )?;
+                width
+            } else {
+                "Message".len() + 4
+            };
+            let message = blk.messages.custom_message.as_ref().map_or("", String::as_str);
+            let error = blk.messages.error_message.as_ref().map_or("", String::as_str);
+            emit_messages(writer, &prefix, message, error, width)?;
+            writeln!(writer, "{}", mpv_end)?;
+            writeln!(writer, "{}", check_end)?;
+        },
+
+        ClauseReport::Clause(gac) => {
+            if !resource.clauses.contains(&IdentityHash{key: clause}) {
+                return Ok(())
+            }
+            match gac {
+                GuardClauseReport::Unary(ur) => {
+                    match &ur.check {
+                        UnaryCheck::UnResolved(vur) => {
+                            emit_retrieval_error(
+                                writer,
+                                &prefix,
+                                vur,
+                                &ur.context,
+                                ur.messages.custom_message.as_ref().map_or("", String::as_str)
+                            )?;
+                        },
+
+                        UnaryCheck::Resolved(re) => {
+                            writeln!(
+                                writer,
+                                "{prefix}Check = {cxt} {{",
+                                prefix=prefix,
+                                cxt=ur.context
+                            )?;
+                            let check_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            writeln!(
+                                writer,
+                                "{prefix}ComparisonError {{",
+                                prefix=prefix
+                            )?;
+                            let ce_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            let width = "PropertyPath".len() + 4;
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}",
+                                width=width,
+                                pp="PropertyPath",
+                                op="Operator",
+                                prefix=prefix,
+                                path=re.value.self_path(),
+                                cmp=crate::rules::eval_context::cmp_str(re.comparison),
+                            )?;
+                            let message = ur.messages.custom_message.as_ref().map_or("", String::as_str);
+                            let error = ur.messages.error_message.as_ref().map_or("", String::as_str);
+                            emit_messages(writer, &prefix, message, error, width)?;
+                            writeln!(writer, "{}", ce_end)?;
+                            writeln!(writer, "{}", check_end)?;
+                        },
+
+                        _ => {}
                     }
+                },
+
+                GuardClauseReport::Binary(br) => {
+                    match &br.check {
+                        BinaryCheck::UnResolved(vur) => {
+                            emit_retrieval_error(
+                                writer,
+                                &prefix,
+                                vur,
+                                &br.context,
+                                br.messages.custom_message.as_ref().map_or("", String::as_str)
+                            )?;
+                        },
+
+                        BinaryCheck::Resolved(bc) => {
+                            writeln!(
+                                writer,
+                                "{prefix}Check = {cxt} {{",
+                                prefix=prefix,
+                                cxt=br.context
+                            )?;
+                            let check_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            writeln!(
+                                writer,
+                                "{prefix}ComparisonError {{",
+                                prefix=prefix
+                            )?;
+                            let ce_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            let width = "PropertyPath".len() + 4;
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                                width=width,
+                                pp="PropertyPath",
+                                op="Operator",
+                                val="Value",
+                                cw="ComparedWith",
+                                prefix=prefix,
+                                path=bc.from.self_path(),
+                                value=ValueOnlyDisplay(bc.from),
+                                cmp=crate::rules::eval_context::cmp_str(bc.comparison),
+                                with=ValueOnlyDisplay(bc.to)
+                            )?;
+                            let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
+                            let error = br.messages.error_message.as_ref().map_or("", String::as_str);
+                            emit_messages(writer, &prefix, message, error, width)?;
+                            writeln!(writer, "{}", ce_end)?;
+                            writeln!(writer, "{}", check_end)?;
+                        }
+
+                    }
+
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct LocalResourceAggr<'record, 'value: 'record> {
+    name: &'value str,
+    resource_type: &'value str,
+    cdk_path: Option<&'value str>,
+    clauses: HashSet<IdentityHash<'record, ClauseReport<'value>>>,
+    paths: BTreeSet<String>
+}
+
+#[derive(Clone, Debug)]
+struct IdentityHash<'key, T> {
+    key: &'key T
+}
+
+impl<'key, T> Hash for IdentityHash<'key, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self.key, state)
+    }
+}
+
+impl<'key, T> Eq for IdentityHash<'key, T> {}
+impl<'key, T> PartialEq for IdentityHash<'key, T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.key, other.key)
+    }
+}
+
+fn single_line(writer: &mut dyn Write,
+               data_file: &str,
+               rules_file: &str,
+               data: &Traversal<'_>,
+               failure_report: FileReport<'_>) -> crate::rules::Result<()> {
+
+    if failure_report.not_compliant.is_empty() {
+        return Ok(())
+    }
+
+    let mut path_tree = PathTree::new();
+    let mut hierarchy = RuleHierarchy::new();
+    let root_node = std::rc::Rc::new(String::from(""));
+    for each_rule in &failure_report.not_compliant {
+        populate_hierarchy_path_trees(
+            each_rule,
+            root_node.clone(),
+            &mut path_tree,
+            &mut hierarchy
+        );
+    }
+
+    let root = data.root().unwrap();
+    let mut by_resources = HashMap::new();
+    for (key, value) in path_tree.range("/Resources/"..) {
+        let resource_name = match CFN_RESOURCES.captures(*key) {
+            Some(cap) => {
+                cap.get(1).unwrap().as_str()
+            },
+            _ => unreachable!()
+        };
+        let resource_aggr = by_resources.entry(resource_name).or_insert_with(|| {
+            let path = format!("/Resources/{}", resource_name);
+            let resource = match data.at(&path, root) {
+                Ok(TraversalResult::Value(val)) => val,
+                _ => unreachable!()
+            };
+            let resource_type = match data.at("0/Type", resource) {
+                Ok(TraversalResult::Value(val)) => match val.value() {
+                    PathAwareValue::String((_, v)) => v.as_str(),
+                    _ => unreachable!()
+                }
+                _ => unreachable!()
+            };
+            let cdk_path = match data.at("0/Metadata/aws:cdk:path", resource) {
+                Ok(TraversalResult::Value(val)) => match val.value() {
+                    PathAwareValue::String((_, v)) => Some(v.as_str()),
+                    _ => unreachable!()
+                },
+                _ => None
+            };
+            LocalResourceAggr {
+                name: resource_name,
+                resource_type,
+                cdk_path,
+                clauses: HashSet::new(),
+                paths: BTreeSet::new(),
+            }
+        });
+
+        for node in value.iter() {
+            resource_aggr.clauses.insert(IdentityHash{key: node.clause});
+            resource_aggr.paths.insert(node.path.as_ref().clone());
+        }
+    }
+
+    writeln!(writer, "Evaluating data {} against rules {}", data_file, rules_file)?;
+    let num_of_resources = format!("{}", by_resources.len()).bold();
+    writeln!(writer, "Number of non-compliant resources {}", num_of_resources)?;
+    for (_, resource) in by_resources {
+        writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
+        let prefix = String::from("  ");
+        writeln!(
+            writer,
+            "{prefix}{0:<width$}= {rt}",
+            "Type",
+            prefix=prefix,
+            width=10,
+            rt=resource.resource_type,
+        )?;
+        let cdk_path = resource.cdk_path.as_ref().map_or("", |p| *p);
+        if !cdk_path.is_empty() {
+            writeln!(
+                writer,
+                "{prefix}{0:<width$}= {cdk}",
+                "CDK-Path",
+                prefix=prefix,
+                width=10,
+                cdk=cdk_path
+            )?;
+        }
+        for each_rule in &failure_report.not_compliant {
+            let rule_name = match each_rule {
+                ClauseReport::Rule(RuleReport{name, ..}) => format!("/{}", name),
+                _ => unreachable!()
+            };
+
+            let range = resource.paths.range(rule_name.clone()..)
+                .take_while(|p| p.starts_with(&rule_name)).count();
+            if range > 0 {
+                pprint_clauses(
+                    writer,
+                    each_rule,
+                    &resource,
+                    prefix.clone()
+                )?;
+            }
+        }
+        writeln!(writer, "}}")?;
     }
 
     Ok(())
