@@ -1023,7 +1023,15 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     let context = format!("BlockGuardClause#{}", block_clause.location);
     let match_all = block_clause.query.match_all;
     resolver.start_record(&context)?;
-    let block_values = resolver.query(&block_clause.query.query)?;
+    let block_values = match resolver.query(&block_clause.query.query) {
+        Ok(values) => values,
+        Err(e) => {
+            resolver.end_record(&context, RecordType::BlockGuardCheck(BlockCheck {
+                status: Status::FAIL, at_least_one_matches: !match_all, message: None
+            }))?;
+            return Err(e)
+        }
+    };
     if block_values.is_empty() {
         let status = if block_clause.not_empty { Status::FAIL } else { Status::SKIP };
         resolver.end_record(&context, RecordType::BlockGuardCheck(BlockCheck {
@@ -1315,7 +1323,20 @@ pub (in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
         }
     } else { &type_block.block };
 
-    let values = resolver.query(&type_block.query)?;
+    let values = match resolver.query(&type_block.query) {
+        Ok(values) => values,
+        Err(e) => {
+            resolver.end_record(&context, RecordType::TypeCheck(TypeBlockCheck {
+                type_name: &type_block.type_name,
+                block: BlockCheck {
+                    status: Status::FAIL,
+                    at_least_one_matches: false,
+                    message: None
+                }
+            }))?;
+            return Err(e)
+        }
+    };
     if values.is_empty() {
         resolver.end_record(&context, RecordType::TypeCheck(
             TypeBlockCheck {
