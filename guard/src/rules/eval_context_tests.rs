@@ -33,11 +33,12 @@ fn extraction_test() -> Result<()> {
 //
 // Query Testing without Filtering
 //
-pub(crate) struct BasicQueryTesting<'value> {
-    pub(crate) root: &'value PathAwareValue
+pub(crate) struct BasicQueryTesting<'record, 'value> {
+    pub(crate) root: &'value PathAwareValue,
+    pub(crate) recorder: Option<&'record mut dyn RecordTracer<'value>>,
 }
 
-impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BasicQueryTesting<'value> {
+impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc> for BasicQueryTesting<'record, 'value> {
     fn query(&mut self, query: &'value [QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.root, self)
     }
@@ -48,18 +49,30 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BasicQueryTesting<'valu
 
     fn root(&mut self) -> &'value PathAwareValue { self.root }
     fn rule_status(&mut self, rule_name: &str) -> Result<Status> { todo!() }
-    fn start_record(&mut self, context: &str) -> Result<()> { Ok(()) }
-    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> { Ok(()) }
     fn resolve_variable(&mut self, variable_name: &str) -> Result<Vec<QueryResult<'value>>> { todo!() }
     fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
         todo!()
     }
 }
 
+impl<'record, 'value, 'loc: 'value> RecordTracer<'value> for BasicQueryTesting<'record, 'value> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.recorder.as_mut().map_or(
+            Ok(()),
+            |r| (*r).start_record(context)
+        )
+    }
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.recorder.as_mut().map_or(
+            Ok(()),
+            |r| (*r).end_record(context, record))
+    }
+}
+
 #[test]
 fn no_query_return_root() -> Result<()> {
     let path_value = PathAwareValue::try_from("{}")?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query_results = eval.query(&[])?;
     assert_eq!(query_results.is_empty(), false);
     assert_eq!(query_results.len(), 1);
@@ -74,7 +87,7 @@ fn no_query_return_root() -> Result<()> {
 #[test]
 fn empty_value_return_unresolved() -> Result<()> {
     let path_value = PathAwareValue::try_from("{}")?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
@@ -100,7 +113,7 @@ fn non_empty_value_return_results() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
@@ -150,7 +163,7 @@ fn non_empty_value_mixed_results() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
     assert_eq!(query_results.len(), 2); // 2 resources
@@ -188,7 +201,7 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
@@ -228,7 +241,7 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
                Tags: []
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
@@ -268,7 +281,7 @@ fn map_filter_keys() -> Result<()> {
                Tags: []
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("Resources[ keys == /s3/ ]")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);
@@ -359,7 +372,7 @@ fn test_with_converter() -> Result<()> {
                Tags: []
         "#)?
     )?;
-    let mut eval = BasicQueryTesting { root: &path_value };
+    let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
     let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
     let query_results = eval.query(&query)?;
     assert_eq!(query_results.is_empty(), false);

@@ -13,7 +13,7 @@ fn test_count_function() -> crate::rules::Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
 
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);
@@ -24,7 +24,7 @@ fn test_count_function() -> crate::rules::Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
 
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);
@@ -40,7 +40,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::S3::Bucket' ]"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);

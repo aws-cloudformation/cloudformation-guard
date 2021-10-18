@@ -1,7 +1,7 @@
 use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
 use crate::rules::path_value::{PathAwareValue, MapValue};
 use std::collections::{HashMap, HashSet};
-use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck};
+use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, RecordTracer};
 use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
@@ -30,6 +30,7 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
     rules_status: HashMap<&'value str, Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
+    recorder: RecordTracker<'value>,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -40,6 +41,15 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             self.rules,
             self.parameterized_rules,
             new_root)
+    }
+
+    pub(crate) fn reset_recorder(&mut self) -> RecordTracker<'value> {
+        std::mem::replace(
+            &mut self.recorder, RecordTracker {
+                final_event: None,
+                events: vec![]
+            }
+        )
     }
 }
 
@@ -66,7 +76,11 @@ pub(crate) fn reset_with<'value, 'loc: 'value>(
         variable_queries: variables
     };
     RootScope {
-        scope, rules, parameterized_rules, rules_status: HashMap::new()
+        scope, rules, parameterized_rules, rules_status: HashMap::new(),
+        recorder: RecordTracker {
+            final_event: None,
+            events: vec![]
+        }
     }
 }
 
@@ -726,7 +740,11 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         },
         rules: lookup_cache,
         parameterized_rules,
-        rules_status: HashMap::new()
+        rules_status: HashMap::new(),
+        recorder: RecordTracker {
+            final_event: None,
+            events: vec![]
+        }
     })
 }
 
@@ -749,47 +767,24 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     })
 }
 
-pub(crate) struct RecordTracker<'eval, 'value, 'loc: 'value> {
-//    pub(crate) events: std::cell::RefCell<Vec<EventRecord<'value>>>,
-//    pub(crate) final_event: std::cell::RefCell<Option<EventRecord<'value>>>,
+pub(crate) struct RecordTracker<'value> {
     pub(crate) events: Vec<EventRecord<'value>>,
     pub(crate) final_event: Option<EventRecord<'value>>,
-    pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
-impl<'eval, 'value, 'loc: 'value> RecordTracker<'eval, 'value, 'loc> {
-    pub(crate) fn new<'e, 'v, 'l: 'v>(parent: &'e mut dyn EvalContext<'v, 'l>) -> RecordTracker<'e, 'v, 'l> {
+impl<'value> RecordTracker<'value> {
+    pub(crate) fn new() -> RecordTracker<'value> {
         RecordTracker {
-            parent,
-            events: Vec::new(),
+            events: vec![],
             final_event: None
         }
     }
-
     pub(crate) fn extract(mut self) -> EventRecord<'value> {
         self.final_event.take().unwrap()
     }
 }
 
-impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'eval, 'value, 'loc> {
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
-        self.parent.query(query)
-    }
-
-    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
-        self.parent.find_parameterized_rule(rule_name)
-    }
-
-    fn root(&mut self) -> &'value PathAwareValue {
-        self.parent.root()
-    }
-
-
-
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
-    }
-
+impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.events.push(EventRecord {
             context: context.to_string(),
@@ -829,15 +824,6 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for RecordTracker<'e
             }
         }
         Ok(())
-    }
-
-
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
-        self.parent.resolve_variable(variable_name)
-    }
-
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
-        self.parent.add_variable_capture_key(variable_name, key)
     }
 }
 
@@ -897,12 +883,6 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 //        )
     }
 
-    fn start_record(&mut self, _context: &str) -> Result<()> { Ok(()) }
-
-    fn end_record(&mut self, _context: &str, _record: RecordType<'value>) -> Result<()> {
-        Ok(())
-    }
-
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
             return Ok(vec![QueryResult::Literal(*val)])
@@ -938,6 +918,16 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
+impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.recorder.start_record(context)
+    }
+
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.recorder.end_record(context, record)
+    }
+}
+
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
         query_retrieval(0, query, self.root, self.parent)
@@ -956,14 +946,6 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.rule_status(rule_name)
     }
 
-    fn start_record(&mut self, context: &str) -> Result<()> {
-        self.parent.start_record(context)
-    }
-
-    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
-        self.parent.end_record(context, record)
-    }
-
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
         self.parent.resolve_variable(variable_name)
@@ -973,6 +955,17 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.add_variable_capture_key(variable_name, key)
     }
 }
+
+impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'eval, 'loc> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.parent.start_record(context)
+    }
+
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.parent.end_record(context, record)
+    }
+}
+
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'value, 'loc, 'eval> {
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
@@ -989,14 +982,6 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
         self.parent.rule_status(rule_name)
-    }
-
-    fn start_record(&mut self, context: &str) -> Result<()> {
-        self.parent.start_record(context)
-    }
-
-    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
-        self.parent.end_record(context, record)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
@@ -1029,6 +1014,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         self.parent.add_variable_capture_key(variable_name, key)
     }
 }
+
+impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'loc, 'eval> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.parent.start_record(context)
+    }
+
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.parent.end_record(context, record)
+    }
+}
+
+
 
 #[derive(Clone, Debug,Serialize, Default)]
 pub(crate) struct Messages {
