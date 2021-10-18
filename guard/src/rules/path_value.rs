@@ -771,6 +771,13 @@ impl PathAwareValue {
         }
     }
 
+    pub(crate) fn is_null(&self) -> bool {
+        match self {
+            PathAwareValue::Null(_) => true,
+            _ => false,
+        }
+    }
+
     fn map_error_or_empty(&self, all: bool, e: Error) -> Result<Vec<&PathAwareValue>, Error> {
         if !all {
             match e {

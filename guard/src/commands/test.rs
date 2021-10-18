@@ -241,9 +241,9 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
                         let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                        let mut tracer = RecordTracker::new(&mut root_scope);
-                        eval_rules_file(&rules, &mut tracer)?;
-                        let top = tracer.extract();
+                        //let mut tracer = RecordTracker::new(&mut root_scope);
+                        eval_rules_file(&rules, &mut root_scope)?;
+                        let top = root_scope.reset_recorder().extract();
 
                         let by_rules = top.children.iter().fold(
                             HashMap::new(), |mut acc, rule| {

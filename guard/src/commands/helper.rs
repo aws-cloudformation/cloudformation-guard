@@ -26,9 +26,9 @@ pub fn validate_and_return_json(
             match input_data {
                 Ok(root) => {
                     let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                    let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
-                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
-                    let event = tracker.final_event.unwrap();
+                    //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
+                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
+                    let event = root_scope.reset_recorder().extract();
                     Ok(serde_json::to_string_pretty(&event)?)
 
 //                    let root_context = RootScope::new(&rules, &root);

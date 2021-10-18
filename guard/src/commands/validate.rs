@@ -340,8 +340,9 @@ pub fn validate_and_return_json(
             match input_data {
                 Ok(root) => {
                     let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                    let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
-                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut tracker)?;
+                    //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
+                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
+                    let mut tracker = root_scope.reset_recorder();
                     let event = tracker.final_event.unwrap();
                     let file_report = simplifed_json_from_root(&event)?;
                     Ok(serde_json::to_string_pretty(&file_report)?)
@@ -639,9 +640,9 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 
         if new_engine_version {
             let mut root_scope = root_scope(rules, each)?;
-            let mut tracker = RecordTracker::new(&mut root_scope);
-            let status = eval_rules_file(rules, &mut tracker)?;
-            let root_record = tracker.extract();
+            //let mut tracker = RecordTracker::new(&mut root_scope);
+            let status = eval_rules_file(rules, &mut root_scope)?;
+            let root_record = root_scope.reset_recorder().extract();
             reporter.report_eval(
                 &mut write_output,
                 status,

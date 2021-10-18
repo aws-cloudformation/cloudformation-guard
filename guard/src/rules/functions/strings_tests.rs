@@ -26,7 +26,7 @@ fn test_json_parse() -> crate::rules::Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
 
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Policy"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);
@@ -64,7 +64,7 @@ fn test_regex_replace() -> crate::rules::Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
 
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);
@@ -101,7 +101,7 @@ fn test_substring() -> crate::rules::Result<()> {
         serde_yaml::from_str::<serde_json::Value>(value_str)?
     )?;
 
-    let mut eval = BasicQueryTesting {root: &value};
+    let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
     let results = eval.query(&query.query)?;
     let cnt = count(&results);

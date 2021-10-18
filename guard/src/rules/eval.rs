@@ -181,7 +181,16 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                     let (result, status) = match each {
                         QueryResult::Literal(res) |
                         QueryResult::Resolved(res) => {
-                            (QueryResult::Resolved(res), match cmp.1 {
+                            //
+                            // NULL == EMPTY
+                            //
+                            let status = if cmp.1 {
+                                // Not empty
+                                !res.is_null()
+                            } else {
+                                res.is_null()
+                            };
+                            (QueryResult::Resolved(res), match status {
                                 true => Status::PASS, // not_empty
                                 false => Status::FAIL // fail not_empty
                             })
@@ -1167,7 +1176,6 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParamete
         self.parent.find_parameterized_rule(rule_name)
     }
 
-
     fn root(&mut self) -> &'value PathAwareValue {
         self.parent.root()
     }
@@ -1176,6 +1184,20 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParamete
         self.parent.rule_status(rule_name)
     }
 
+
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
+        match self.resolved_parameters.get(variable_name) {
+            Some(res) => Ok(res.clone()),
+            None => self.parent.resolve_variable(variable_name)
+        }
+    }
+
+    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
+    }
+}
+
+impl<'eval, 'value, 'loc: 'value> RecordTracer<'value> for ResolvedParameterContext<'eval, 'value, 'loc> {
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.parent.start_record(context)
     }
@@ -1199,16 +1221,6 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc> for ResolvedParamete
         self.parent.end_record(context, record)
     }
 
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
-        match self.resolved_parameters.get(variable_name) {
-            Some(res) => Ok(res.clone()),
-            None => self.parent.resolve_variable(variable_name)
-        }
-    }
-
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
-        self.parent.add_variable_capture_key(variable_name, key)
-    }
 }
 
 pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(

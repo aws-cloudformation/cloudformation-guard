@@ -52,11 +52,13 @@ impl<'value> Display for ValueOnlyDisplay<'value> {
                 format_args!("\'{}\'", value))?,
             PathAwareValue::List((_path, list))         => {
                 formatter.write_str("[")?;
-                let last = list.len()-1;
-                for (idx, each) in list.iter().enumerate() {
-                    ValueOnlyDisplay(each).fmt(formatter)?;
-                    if last != idx {
-                        formatter.write_str(",")?;
+                if !list.is_empty() {
+                    let last = list.len()-1;
+                    for (idx, each) in list.iter().enumerate() {
+                        ValueOnlyDisplay(each).fmt(formatter)?;
+                        if last != idx {
+                            formatter.write_str(",")?;
+                        }
                     }
                 }
                 formatter.write_str("]")?;
@@ -64,14 +66,16 @@ impl<'value> Display for ValueOnlyDisplay<'value> {
 
             PathAwareValue::Map((_path, map))          => {
                 formatter.write_str("{")?;
-                let last = map.values.len()-1;
-                for (idx, (key, value)) in map.values.iter().enumerate() {
-                    formatter.write_fmt(
-                        format_args!("\"{}\"", key))?;
-                    formatter.write_str(":")?;
-                    ValueOnlyDisplay(value).fmt(formatter)?;
-                    if last != idx {
-                        formatter.write_str(",")?;
+                if !map.is_empty() {
+                    let last = map.values.len()-1;
+                    for (idx, (key, value)) in map.values.iter().enumerate() {
+                        formatter.write_fmt(
+                            format_args!("\"{}\"", key))?;
+                        formatter.write_str(":")?;
+                        ValueOnlyDisplay(value).fmt(formatter)?;
+                        if last != idx {
+                            formatter.write_str(",")?;
+                        }
                     }
                 }
                 formatter.write_str("}")?;

@@ -278,14 +278,17 @@ struct ParameterRuleResult<'value, 'loc> {
     rule: &'value ParameterizedRule<'loc>
 }
 
-pub(crate) trait EvalContext<'value, 'loc: 'value> {
+pub(crate) trait RecordTracer<'value> {
+    fn start_record(&mut self, context: &str) -> Result<()>;
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
+}
+
+pub(crate) trait EvalContext<'value, 'loc: 'value> : RecordTracer<'value> {
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
     fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&mut self) -> &'value PathAwareValue;
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
-    fn start_record(&mut self, context: &str) -> Result<()>;
-    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>>;
     fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()>;
     fn add_variable_capture_index(&mut self, variable_name: &str, index: &'value PathAwareValue) -> Result<()> { Ok(()) }
