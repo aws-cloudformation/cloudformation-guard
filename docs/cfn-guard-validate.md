@@ -27,6 +27,24 @@ Prints help information\.
 
 Validates files in a directory that is ordered by last\-modified times\.
 
+`-P`, `--payload`
+
+Allows you to provide rules and data in the following JSON format via `stdin`:
+
+```
+{"rules":["<rules 1>", "<rules 2>", ...], "data":["<data 1>", "<data 2>", ...]}
+```
+
+For example:
+
+```
+{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}
+```
+
+For "rules", specify a string list of rules files\. For "data", specify a string list of data files\.
+
+If you specify the `--payload` flag, don't specify the `--rules` or `--data` options\.
+
 `-p`, `--print-json`
 
 Prints the output in JSON format\.
@@ -49,15 +67,21 @@ Increases the output verbosity\. Can be specified multiple times\.
 
 Provides the name of a file or directory for data files in either JSON or YAML format\. If you provide a directory, Guard evaluates the specified rules against all data files in the directory\. The directory must contain only data files; it cannot contain both data and rules files\.
 
+If you specify the `--payload` flag, don't specify the `--data` option\.
+
 `-o`, `--output-format` \(string\)
 
 Writes to an output file\.
+
+*Default*: `single-line-summary`
 
 *Allowed values*: `json` \| `yaml` \| `single-line-summary`
 
 `-r`, `--rules` \(string\)
 
 Provides the name of a rules file or a directory of rules files\. If you provide a directory, Guard evaluates all rules in the directory against the specified data\. The directory must contain only rules files; it cannot contain both data and rules files\.
+
+If you specify the `--payload` flag, do not specify the `--rules` option\.
 
 `--show-summary` \(string\)
 
@@ -91,3 +115,7 @@ Summary Report Overall File Status = PASS
 PASS/SKIP rules
 default PASS
 ```
+
+## See also<a name="cfn-guard-validate-see-also"></a>
+
+[Validating input data against Guard rules](validating-rules.md)
