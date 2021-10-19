@@ -31,7 +31,7 @@ async fn main() -> Result<(), Error> {
 
 pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
     info!("Template is: [{}]", &e.data);
-    info!("Rule Set is: [{:?}]", &e.rules);
+    info!("Rules are: [{:?}]", &e.rules);
     let mut results_vec = Vec::new();
     for rule in e.rules.iter() {
         let result = match cfn_guard::run_checks(&e.data, &rule) {
