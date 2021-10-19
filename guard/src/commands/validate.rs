@@ -26,6 +26,7 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::{ RecordType, NamedStatus };
 use std::collections::HashMap;
 use crate::rules::path_value::traversal::Traversal;
+use crate::commands::validate::tf::TfAware;
 
 mod generic_summary;
 mod common;
@@ -33,6 +34,7 @@ mod summary_table;
 mod cfn_reporter;
 mod cfn;
 mod console_reporter;
+mod tf;
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -57,18 +59,18 @@ pub(crate) trait Reporter : Debug {
               rules_file: &str,
               data_file: &str,
               data: &Traversal<'_>,
-              outputType: OutputFormatType
+              output_type: OutputFormatType
     ) -> Result<()>;
 
     fn report_eval<'value>(
         &self,
-        write: &mut dyn Write,
-        status: Status,
-        root_record: &EventRecord<'value>,
-        rules_file: &str,
-        data_file: &str,
-        data: &Traversal<'value>,
-        outputType: OutputFormatType
+        _write: &mut dyn Write,
+        _status: Status,
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data: &Traversal<'value>,
+        _output_type: OutputFormatType
     ) -> Result<()> { Ok(()) }
 }
 
@@ -616,7 +618,8 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 //            };
         let traversal = Traversal::from(each);
         let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
-        let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+        let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+        let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
         let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
             cfn
         } else {
