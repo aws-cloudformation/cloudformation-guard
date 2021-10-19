@@ -20,6 +20,16 @@ use std::cmp::Ordering;
 use colored::*;
 use crate::rules::display::ValueOnlyDisplay;
 
+use super::common::{
+    LocalResourceAggr,
+    IdentityHash,
+    RuleHierarchy,
+    PathTree,
+    Node,
+    populate_hierarchy_path_trees
+};
+
+
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?").ok().unwrap();
 }
@@ -36,103 +46,6 @@ impl<'reporter> CfnAware<'reporter> {
 
     pub(crate) fn new_with(next: &'reporter dyn Reporter) -> CfnAware {
         CfnAware { next: Some(next) }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Node<'report, 'value: 'report> {
-    parent: std::rc::Rc<String>,
-    path: std::rc::Rc<String>,
-    clause: &'report ClauseReport<'value>,
-}
-
-type RuleHierarchy<
-    'report,
-    'value> =
-    BTreeMap<
-        std::rc::Rc<String>,
-        std::rc::Rc<Node<'report, 'value>>
-    >;
-
-type PathTree<
-    'report,
-    'value> =
-    BTreeMap<
-        &'value str,
-        Vec<std::rc::Rc<Node<'report, 'value>>>
-    >;
-
-fn insert_into_trees<'report, 'value: 'report>(
-    clause: &'report ClauseReport<'value>,
-    parent: std::rc::Rc<String>,
-    path_tree: &mut PathTree<'report, 'value>,
-    hierarchy: &mut RuleHierarchy<'report, 'value>)
-{
-    let path = std::rc::Rc::new(clause.key(&parent));
-    let node = std::rc::Rc::new(Node {
-        parent, path: path.clone(), clause
-    });
-    hierarchy.insert(path, node.clone());
-
-    if let Some(from) = clause.value_from() {
-        let path = from.self_path().0.as_str();
-        path_tree.entry(path).or_insert(vec![]).push(node);
-    }
-}
-
-fn insert_into_trees_from_parent<'report, 'value: 'report>(
-    clause: &'report ClauseReport<'value>,
-    children: &'report[ClauseReport<'value>],
-    parent: std::rc::Rc<String>,
-    path_tree: &mut PathTree<'report, 'value>,
-    hierarchy: &mut RuleHierarchy<'report, 'value>)
-{
-    let path = std::rc::Rc::new(clause.key(&parent));
-    let node = std::rc::Rc::new(Node {
-        parent, path: path.clone(), clause
-    });
-    hierarchy.insert(path.clone(), node);
-
-    for each in children {
-        populate_hierarchy_path_trees(
-            each,
-            path.clone(),
-            path_tree,
-            hierarchy
-        );
-    }
-}
-
-fn populate_hierarchy_path_trees<'report, 'value: 'report>(
-    clause: &'report ClauseReport<'value>,
-    parent: std::rc::Rc<String>,
-    path_tree: &mut PathTree<'report, 'value>,
-    hierarchy: &mut RuleHierarchy<'report, 'value>)
-{
-    match clause {
-        ClauseReport::Clause(_) |
-        ClauseReport::Block(_)  => insert_into_trees(
-            clause,
-            parent,
-            path_tree,
-            hierarchy
-        ),
-
-        ClauseReport::Disjunctions(ors) => insert_into_trees_from_parent(
-            clause,
-            &ors.checks,
-            parent,
-            path_tree,
-            hierarchy
-        ),
-
-        ClauseReport::Rule(rr) => insert_into_trees_from_parent(
-            clause,
-            &rr.checks,
-            parent,
-            path_tree,
-            hierarchy
-        ),
     }
 }
 
@@ -188,337 +101,46 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
     }
 }
 
-fn emit_messages(
+fn binary_err_msg(
     writer: &mut dyn Write,
-    prefix: &str,
-    message: &str,
-    error: &str,
-    width: usize) -> crate::rules::Result<()> {
-    if !message.is_empty() {
-        writeln!(
-            writer,
-            "{prefix}{mh:<width$}= {message}",
-            prefix=prefix,
-            message=message,
-            mh="Message",
-            width=width
-        )?;
-    }
-
-    if !error.is_empty() {
-        writeln!(
-            writer,
-            "{prefix}{eh:<width$}= {error}",
-            prefix=prefix,
-            error=error,
-            eh="Error",
-            width=width
-        )?;
-    }
-
-    Ok(())
+    _clause: &ClauseReport<'_>,
+    bc: &BinaryComparison<'_>,
+    prefix: &str) -> crate::rules::Result<usize> {
+    let width = "PropertyPath".len() + 4;
+    writeln!(
+        writer,
+        "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+        width=width,
+        pp="PropertyPath",
+        op="Operator",
+        val="Value",
+        cw="ComparedWith",
+        prefix=prefix,
+        path=bc.from.self_path(),
+        value=ValueOnlyDisplay(bc.from),
+        cmp=crate::rules::eval_context::cmp_str(bc.comparison),
+        with=ValueOnlyDisplay(bc.to)
+    )?;
+    Ok(width)
 }
 
-fn emit_retrieval_error(
+fn unary_err_msg(
     writer: &mut dyn Write,
-    prefix: &str,
-    vur: &ValueUnResolved<'_>,
-    context: &str,
-    message: &str) -> crate::rules::Result<()> {
+    _clause: &ClauseReport<'_>,
+    re: &UnaryComparison<'_>,
+    prefix: &str) -> crate::rules::Result<usize> {
+    let width = "PropertyPath".len() + 4;
     writeln!(
         writer,
-        "{prefix}Check = {cxt} {{",
+        "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}",
+        width=width,
+        pp="PropertyPath",
+        op="Operator",
         prefix=prefix,
-        cxt=context
+        path=re.value.self_path(),
+        cmp=crate::rules::eval_context::cmp_str(re.comparison),
     )?;
-    let check_end = format!("{}}}", prefix);
-    let prefix = format!("{}  ", prefix);
-    emit_messages(
-        writer,
-        &prefix,
-        message,
-        "",
-        0,
-    )?;
-
-    writeln!(
-        writer,
-        "{prefix}RequiredPropertyError {{",
-        prefix=prefix
-    )?;
-    let rpe_end = format!("{}}}", prefix);
-    let prefix = format!("{}  ", prefix);
-    writeln!(
-        writer,
-        "{prefix}PropertyPath = {path}",
-        prefix=prefix,
-        path=vur.value.traversed_to.self_path()
-    )?;
-
-    writeln!(
-        writer,
-        "{prefix}MissingProperty = {prop}",
-        prefix=prefix,
-        prop=vur.value.remaining_query
-    )?;
-
-    let reason = vur.value.reason.as_ref().map_or("", String::as_str);
-    if !reason.is_empty() {
-        writeln!(
-            writer,
-            "{prefix}Reason = {reason}",
-            prefix=prefix,
-            reason=reason
-        )?;
-
-    }
-    writeln!(writer, "{}", rpe_end)?;
-    writeln!(writer, "{}", check_end)?;
-    Ok(())
-}
-
-fn pprint_clauses(
-    writer: &mut dyn Write,
-    clause: &ClauseReport<'_>,
-    resource: &LocalResourceAggr<'_, '_>,
-    prefix: String) -> crate::rules::Result<()> {
-
-    match clause {
-        ClauseReport::Rule(rr) => {
-            writeln!(
-                writer,
-                "{prefix}Rule = {rule} {{",
-                prefix=prefix,
-                rule=rr.name
-            )?;
-            let rule_end = format!("{}}}", prefix);
-            let prefix = format!("{}  ", prefix);
-            let message = rr.messages.custom_message.as_ref().map_or("", String::as_str);
-            let error = rr.messages.error_message.as_ref().map_or("", String::as_str);
-            emit_messages(writer, &prefix, message, error, 0)?;
-            writeln!(
-                writer,
-                "{prefix}ALL {{",
-                prefix=prefix
-            )?;
-            let all_end = format!("{}}}", prefix);
-            let prefix = format!("{}  ", prefix);
-            for child in &rr.checks {
-                pprint_clauses(
-                    writer,
-                    child,
-                    resource,
-                    prefix.clone(),
-                )?;
-            }
-            writeln!(writer, "{}", all_end)?;
-            writeln!(writer, "{}", rule_end)?;
-        },
-
-        ClauseReport::Disjunctions(ors) => {
-            writeln!(
-                writer,
-                "{prefix}ANY {{",
-                prefix=prefix
-            )?;
-            let end = format!("{}}}", prefix);
-            let prefix = format!("{}  ", prefix);
-            for child in &ors.checks {
-                pprint_clauses(
-                    writer,
-                    child,
-                    resource,
-                    prefix.clone(),
-                )?;
-            }
-            writeln!(writer, "{}", end)?;
-        },
-
-        ClauseReport::Block(blk) => {
-            if !resource.clauses.contains(&IdentityHash{key: clause}) {
-                return Ok(())
-            }
-            writeln!(
-                writer,
-                "{prefix}Check = {cxt} {{",
-                prefix=prefix,
-                cxt=blk.context
-            )?;
-            let check_end = format!("{}}}", prefix);
-            let prefix = format!("{}  ", prefix);
-            writeln!(
-                writer,
-                "{prefix}RequiredPropertyError {{",
-                prefix=prefix
-            )?;
-            let mpv_end = format!("{}}}", prefix);
-            let prefix = format!("{}  ", prefix);
-            let (traversed_to, query) = blk.unresolved.as_ref().map_or(
-                ("", ""),
-                |val| (&val.traversed_to.self_path().0, &val.remaining_query));
-            let width = if !traversed_to.is_empty() {
-                let width = "MissingProperty".len() + 4;
-                writeln!(
-                    writer,
-                    "{prefix}{pp:<width$}= {path}\n{prefix}{mp:<width$}= {q}",
-                    prefix=prefix,
-                    pp="PropertyPath",
-                    width=width,
-                    path=traversed_to,
-                    mp="MissingProperty",
-                    q=query
-                )?;
-                width
-            } else {
-                "Message".len() + 4
-            };
-            let message = blk.messages.custom_message.as_ref().map_or("", String::as_str);
-            let error = blk.messages.error_message.as_ref().map_or("", String::as_str);
-            emit_messages(writer, &prefix, message, error, width)?;
-            writeln!(writer, "{}", mpv_end)?;
-            writeln!(writer, "{}", check_end)?;
-        },
-
-        ClauseReport::Clause(gac) => {
-            if !resource.clauses.contains(&IdentityHash{key: clause}) {
-                return Ok(())
-            }
-            match gac {
-                GuardClauseReport::Unary(ur) => {
-                    match &ur.check {
-                        UnaryCheck::UnResolved(vur) => {
-                            emit_retrieval_error(
-                                writer,
-                                &prefix,
-                                vur,
-                                &ur.context,
-                                ur.messages.custom_message.as_ref().map_or("", String::as_str)
-                            )?;
-                        },
-
-                        UnaryCheck::Resolved(re) => {
-                            writeln!(
-                                writer,
-                                "{prefix}Check = {cxt} {{",
-                                prefix=prefix,
-                                cxt=ur.context
-                            )?;
-                            let check_end = format!("{}}}", prefix);
-                            let prefix = format!("{}  ", prefix);
-                            writeln!(
-                                writer,
-                                "{prefix}ComparisonError {{",
-                                prefix=prefix
-                            )?;
-                            let ce_end = format!("{}}}", prefix);
-                            let prefix = format!("{}  ", prefix);
-                            let width = "PropertyPath".len() + 4;
-                            writeln!(
-                                writer,
-                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}",
-                                width=width,
-                                pp="PropertyPath",
-                                op="Operator",
-                                prefix=prefix,
-                                path=re.value.self_path(),
-                                cmp=crate::rules::eval_context::cmp_str(re.comparison),
-                            )?;
-                            let message = ur.messages.custom_message.as_ref().map_or("", String::as_str);
-                            let error = ur.messages.error_message.as_ref().map_or("", String::as_str);
-                            emit_messages(writer, &prefix, message, error, width)?;
-                            writeln!(writer, "{}", ce_end)?;
-                            writeln!(writer, "{}", check_end)?;
-                        },
-
-                        _ => {}
-                    }
-                },
-
-                GuardClauseReport::Binary(br) => {
-                    match &br.check {
-                        BinaryCheck::UnResolved(vur) => {
-                            emit_retrieval_error(
-                                writer,
-                                &prefix,
-                                vur,
-                                &br.context,
-                                br.messages.custom_message.as_ref().map_or("", String::as_str)
-                            )?;
-                        },
-
-                        BinaryCheck::Resolved(bc) => {
-                            writeln!(
-                                writer,
-                                "{prefix}Check = {cxt} {{",
-                                prefix=prefix,
-                                cxt=br.context
-                            )?;
-                            let check_end = format!("{}}}", prefix);
-                            let prefix = format!("{}  ", prefix);
-                            writeln!(
-                                writer,
-                                "{prefix}ComparisonError {{",
-                                prefix=prefix
-                            )?;
-                            let ce_end = format!("{}}}", prefix);
-                            let prefix = format!("{}  ", prefix);
-                            let width = "PropertyPath".len() + 4;
-                            writeln!(
-                                writer,
-                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
-                                width=width,
-                                pp="PropertyPath",
-                                op="Operator",
-                                val="Value",
-                                cw="ComparedWith",
-                                prefix=prefix,
-                                path=bc.from.self_path(),
-                                value=ValueOnlyDisplay(bc.from),
-                                cmp=crate::rules::eval_context::cmp_str(bc.comparison),
-                                with=ValueOnlyDisplay(bc.to)
-                            )?;
-                            let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
-                            let error = br.messages.error_message.as_ref().map_or("", String::as_str);
-                            emit_messages(writer, &prefix, message, error, width)?;
-                            writeln!(writer, "{}", ce_end)?;
-                            writeln!(writer, "{}", check_end)?;
-                        }
-
-                    }
-
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Debug)]
-struct LocalResourceAggr<'record, 'value: 'record> {
-    name: &'value str,
-    resource_type: &'value str,
-    cdk_path: Option<&'value str>,
-    clauses: HashSet<IdentityHash<'record, ClauseReport<'value>>>,
-    paths: BTreeSet<String>
-}
-
-#[derive(Clone, Debug)]
-struct IdentityHash<'key, T> {
-    key: &'key T
-}
-
-impl<'key, T> Hash for IdentityHash<'key, T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::ptr::hash(self.key, state)
-    }
-}
-
-impl<'key, T> Eq for IdentityHash<'key, T> {}
-impl<'key, T> PartialEq for IdentityHash<'key, T> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.key, other.key)
-    }
+    Ok(width)
 }
 
 fn single_line(writer: &mut dyn Write,
@@ -621,12 +243,50 @@ fn single_line(writer: &mut dyn Write,
             let range = resource.paths.range(rule_name.clone()..)
                 .take_while(|p| p.starts_with(&rule_name)).count();
             if range > 0 {
-                pprint_clauses(
+                struct ErrWriter{};
+                impl super::common::ComparionErrorWriter<'_> for ErrWriter {
+                    fn binary_error_msg(
+                        &self,
+                        writer: &mut dyn Write,
+                        cr: &ClauseReport<'_>,
+                        bc: &BinaryComparison<'_>,
+                        prefix: &str) -> crate::rules::Result<usize> {
+                        binary_err_msg(
+                            writer,
+                            cr,
+                            bc,
+                            prefix
+                        )
+                    }
+
+                    fn unary_error_msg(
+                        &self,
+                        writer: &mut dyn Write,
+                        cr: &ClauseReport<'_>,
+                        re: &UnaryComparison<'_>,
+                        prefix: &str) -> crate::rules::Result<usize> {
+                        unary_err_msg(
+                            writer,
+                            cr,
+                            re,
+                            prefix
+                        )
+                    }
+                }
+                let err_writer = ErrWriter{};
+                super::common::pprint_clauses(
                     writer,
                     each_rule,
                     &resource,
-                    prefix.clone()
+                    prefix.clone(),
+                    &err_writer
                 )?;
+//                pprint_clauses(
+//                    writer,
+//                    each_rule,
+//                    &resource,
+//                    prefix.clone()
+//                )?;
             }
         }
         writeln!(writer, "}}")?;

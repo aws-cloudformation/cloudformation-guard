@@ -404,7 +404,38 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                                     )?
                                                 );
                                             }
-                                        } else {
+                                        } else if let PathAwareValue::List((_, inner)) = key {
+                                            for each_key in inner {
+                                                match each_key {
+                                                    PathAwareValue::String((path, key_to_match)) => {
+                                                        if let Some(next) = map.values.get(key_to_match) {
+                                                            acc.extend(query_retrieval_with_converter(query_index + 1, query, next, resolver, converter)?);
+                                                        } else {
+                                                            acc.extend(
+                                                                to_unresolved_result(
+                                                                    current,
+                                                                    format!("Could not locate key = {} inside struct at path = {}", key_to_match, path),
+                                                                    &query[query_index..]
+                                                                )?
+                                                            );
+                                                        }
+                                                    },
+
+                                                    rest => {
+                                                        return Err(Error::new(
+                                                            ErrorKind::NotComparable(
+                                                                format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
+                                                                        SliceDisplay(query),
+                                                                        key.type_info(),
+                                                                        key.self_value()
+                                                                )
+                                                            )
+                                                        ))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        else {
                                             return Err(Error::new(
                                                 ErrorKind::NotComparable(
                                                     format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
@@ -481,6 +512,27 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 PathAwareValue::List((_path, elements)) => {
                     accumulate(current, query_index, query, elements, resolver, converter)
                 },
+
+                PathAwareValue::Map((_, map)) => {
+                    if name.is_none() {
+                        query_retrieval_with_converter(query_index+1, query, current, resolver, converter)
+                    }
+                    else {
+                        let name = name.as_ref().unwrap().as_str();
+                        accumulate_map(current, map, query_index, query, resolver, converter,
+                                       |index,
+                                        query,
+                                        key,
+                                        value,
+                                        context,
+                                        converter| {
+                                           context.add_variable_capture_key(name, key)?;
+                                           query_retrieval_with_converter(index, query, value, context, converter)
+                                       }
+                        )
+
+                    }
+                }
 
                 //
                 // Often in the place where a list of values is accepted
@@ -1108,6 +1160,13 @@ impl<'value> ValueComparisons<'value> for BinaryCheck<'value> {
         match self {
             BinaryCheck::UnResolved(vur) => Some(vur.value.traversed_to),
             BinaryCheck::Resolved(res) => Some(res.from),
+        }
+    }
+
+    fn value_to(&self) -> Option<&'value PathAwareValue> {
+        match self {
+            BinaryCheck::Resolved(bc) => Some(bc.to),
+            _ => None
         }
     }
 }
