@@ -11,14 +11,14 @@ fn test_deserialize_payload_success() {
 
 #[test]
 #[should_panic]
-fn test_deserialize_payload_bad_input1() {
+fn test_deserialize_payload_malformed_string() {
     let serialized_payload = "{\"data:[\"data as string 1\",\"data as string 2\"], \"rules\":[\"rules as string 1\",\"rules as string 2\"]}";
     validate::deserialize_payload(serialized_payload).unwrap();
 }
 
 #[test]
 #[should_panic]
-fn test_deserialize_payload_bad_input2() {
+fn test_deserialize_payload_unrecognized_property() {
     let serialized_payload = "{\"data\":[\"data as string 1\",\"data as string 2\"], \"wrongProperty\":\"wrongProperty\"}";
     validate::deserialize_payload(serialized_payload).unwrap();
 }
