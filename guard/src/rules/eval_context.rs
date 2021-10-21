@@ -1,7 +1,7 @@
 use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
 use crate::rules::path_value::{PathAwareValue, MapValue};
 use std::collections::{HashMap, HashSet};
-use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, RecordTracer};
+use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, RecordTracer, InComparisonCheck};
 use crate::rules::Result;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
@@ -1149,10 +1149,18 @@ pub(crate) struct BinaryComparison<'value> {
    pub(crate) comparison: (CmpOperator, bool)
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct InComparison<'value> {
+    pub(crate) from: &'value PathAwareValue,
+    pub(crate) to: Vec<&'value PathAwareValue>,
+    pub(crate) comparison: (CmpOperator, bool)
+}
+
 #[derive(Clone, Debug,Serialize)]
 pub(crate) enum BinaryCheck<'value> {
     UnResolved(ValueUnResolved<'value>),
     Resolved(BinaryComparison<'value>),
+    InResolved(InComparison<'value>)
 }
 
 impl<'value> ValueComparisons<'value> for BinaryCheck<'value> {
@@ -1160,6 +1168,7 @@ impl<'value> ValueComparisons<'value> for BinaryCheck<'value> {
         match self {
             BinaryCheck::UnResolved(vur) => Some(vur.value.traversed_to),
             BinaryCheck::Resolved(res) => Some(res.from),
+            BinaryCheck::InResolved(inr) => Some(inr.from)
         }
     }
 
@@ -1617,6 +1626,41 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                             }
                         }
                     },
+
+                    ClauseCheck::InComparison(InComparisonCheck{
+                        status: Status::FAIL,
+                        from,
+                        to,
+                        custom_message,
+                        comparison, ..}) => {
+                        let error_message = format!(
+                            "Check was not compliant as property [{}] was not present in [{}]",
+                            from.resolved().unwrap().self_path(),
+                            SliceDisplay(to)
+                        );
+                        clauses.push(
+                            ClauseReport::Clause(
+                                GuardClauseReport::Binary(
+                                    BinaryReport {
+                                        context: current.context.to_string(),
+                                        messages: Messages {
+                                            custom_message: custom_message.clone(),
+                                            error_message: Some(error_message)
+                                        },
+                                        check: BinaryCheck::InResolved(InComparison {
+                                            from: from.resolved().map_or_else(|| from.unresolved_traversed_to().unwrap(), std::convert::identity),
+                                            to: to.iter().map(|t| match t {
+                                                QueryResult::Resolved(v) => v,
+                                                QueryResult::UnResolved(ur) => ur.traversed_to,
+                                                QueryResult::Literal(l) => *l,
+                                            }).collect(),
+                                            comparison: *comparison
+                                        })
+                                    }
+                                )
+                            )
+                        );
+                    }
 
                     _ => {}
                 }

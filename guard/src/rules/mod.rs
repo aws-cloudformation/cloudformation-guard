@@ -134,6 +134,17 @@ pub(crate) struct ComparisonClauseCheck<'value> {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct InComparisonCheck<'value> {
+    pub(crate) comparison: (CmpOperator, bool),
+    pub(crate) from: QueryResult<'value>,
+    pub(crate) to: Vec<QueryResult<'value>>, // happens with from is unresolved
+    pub(crate) message: Option<String>,
+    pub(crate) custom_message: Option<String>,
+    pub(crate) status: Status,
+}
+
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ValueCheck<'value> {
     pub(crate) from: QueryResult<'value>,
     pub(crate) message: Option<String>,
@@ -159,6 +170,7 @@ pub(crate) struct MissingValueCheck<'value> {
 pub(crate) enum ClauseCheck<'value> {
     Success,
     Comparison(ComparisonClauseCheck<'value>),
+    InComparison(InComparisonCheck<'value>),
     Unary(UnaryValueCheck<'value>),
     NoValueForEmptyCheck(Option<String>),
     DependentRule(MissingValueCheck<'value>),

@@ -4,6 +4,7 @@ use std::fmt::{Formatter, Display};
 use crate::rules::values::{CmpOperator, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
 use crate::rules::path_value::PathAwareValue;
 use std::convert::TryInto;
+use crate::rules::exprs::SliceDisplay;
 
 pub(crate) fn display_comparison((cmp, not): (CmpOperator, bool)) -> String {
     format!("{} {}", if not { "not" } else { "" }, cmp)
@@ -33,6 +34,14 @@ fn write_range<T: Display + PartialOrd>(
 }
 
 pub(crate) struct ValueOnlyDisplay<'value>(pub(crate) &'value PathAwareValue);
+
+impl<'value> std::fmt::Debug for ValueOnlyDisplay<'value> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let as_display = self as &dyn Display;
+        as_display.fmt(f)
+    }
+}
+
 
 impl<'value> Display for ValueOnlyDisplay<'value> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
@@ -180,6 +189,18 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
                             Some(exists) => format!("{}", exists),
                             None => "".to_string(),
                         }
+                    )
+                )?;
+            },
+
+            ClauseCheck::InComparison(check) => {
+                f.write_fmt(
+                    format_args!(
+                        "GuardClauseInBinaryCheck(Status={}, Comparison={}, from={}, to={})",
+                        check.status,
+                        display_comparison(check.comparison),
+                        check.from,
+                        SliceDisplay(&check.to),
                     )
                 )?;
             }

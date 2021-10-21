@@ -3,19 +3,7 @@ use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
 use crate::rules::path_value::traversal::{Traversal, TraversalResult, Node};
-use crate::rules::eval_context::{
-    EventRecord,
-    simplifed_json_from_root,
-    ClauseReport,
-    GuardBlockReport,
-    GuardClauseReport,
-    UnaryReport,
-    UnaryCheck,
-    FileReport,
-    RuleReport,
-    BinaryComparison,
-    BinaryCheck,
-    UnaryComparison};
+use crate::rules::eval_context::{EventRecord, simplifed_json_from_root, ClauseReport, GuardBlockReport, GuardClauseReport, UnaryReport, UnaryCheck, FileReport, RuleReport, BinaryComparison, BinaryCheck, UnaryComparison, InComparison};
 use std::collections::{HashMap, BTreeSet, HashSet};
 
 use lazy_static::lazy_static;
@@ -57,6 +45,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
         root_record: &EventRecord<'value>,
         rules_file: &str,
         data_file: &str,
+        data_content: &[u8],
         data: &Traversal<'value>,
         output_type: OutputFormatType) -> crate::rules::Result<()> {
 
@@ -89,6 +78,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
                     root_record,
                     rules_file,
                     data_file,
+                    data_content,
                     data,
                     output_type
                 )
@@ -257,6 +247,11 @@ fn single_line(writer: &mut dyn Write,
                         Ok(width)
 
                     }
+
+                    fn binary_error_in_msg(&self, writer: &mut dyn Write, cr: &ClauseReport<'_>, bc: &InComparison<'_>, prefix: &str) -> crate::rules::Result<usize> {
+                        todo!()
+                    }
+
 
                     fn unary_error_msg(
                         &self,

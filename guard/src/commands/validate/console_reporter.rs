@@ -282,6 +282,7 @@ impl Reporter for ConsoleReporter {
         root_record: &EventRecord<'value>,
         rules_file_name: &str,
         data_file_name: &str,
+        _data_content: &[u8],
         _data: &Traversal<'value>,
         _outputType: OutputFormatType) -> crate::rules::Result<()> {
         pprint_failed_sub_tree(

@@ -648,7 +648,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
             ComparisonResult::Comparable(ComparisonWithRhs{pair: LhsRhsPair {lhs, rhs},..}) => {
                 by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
-                    .push(each);
+                    .push((each, QueryResult::Resolved(*rhs)));
 //                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
 //                    .or_insert(vec![])
 //                    .push(each);
@@ -657,7 +657,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
             ComparisonResult::NotComparable(NotComparableWithRhs{pair: LhsRhsPair{lhs, rhs}, ..}) => {
                 by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
-                    .push(each);
+                    .push((each, QueryResult::Resolved(*rhs)));
 //                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
 //                    .or_insert(vec![])
 //                    .push(each);
@@ -667,7 +667,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 if let QueryResult::UnResolved(ur) = rhs {
                     by_lhs_value.entry(*lhs )
                         .or_insert(vec![])
-                        .push(each);
+                        .push((each, rhs.clone()));
 //                    by_lhs_value.entry(if is_lhs_rhs_swapped { ur.traversed_to } else { *lhs })
 //                        .or_insert(vec![])
 //                        .push(each)
@@ -677,7 +677,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     };
 
     for (lhs, results) in by_lhs_value.iter() {
-        let found = results.iter().find(|r|
+        let found = results.iter().find(|(r, _rhs)|
             match r {
                 ComparisonResult::Comparable(ComparisonWithRhs{outcome: true, ..}) => true,
                 _ => false
@@ -689,15 +689,18 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 statues.push((QueryResult::Resolved(*lhs), Status::PASS))
             },
             None => {
-                for each_res in results {
-                    report_value(
-                        *each_res,
-                        cmp,
-                        context.clone(),
-                        custom_message.clone(),
-                        eval_context
-                    )?;
-                }
+                eval_context.start_record(&context)?;
+                let to_collected = results.iter().map(|(cr, rhs)|
+                    rhs.clone())
+                    .collect::<Vec<QueryResult<'_>>>();
+                eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
+                    from: QueryResult::Resolved(*lhs),
+                    to: to_collected,
+                    message: None,
+                    custom_message: custom_message.clone(),
+                    status: Status::FAIL,
+                    comparison: cmp
+                })));
                 statues.push((QueryResult::Resolved(*lhs), Status::FAIL))
             }
         }
