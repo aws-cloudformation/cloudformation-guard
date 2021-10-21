@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::convert::TryInto;
 use regex::Regex;
 use lazy_static::*;
-use crate::rules::eval_context::{EventRecord, FileReport, simplifed_json_from_root, ClauseReport, ValueComparisons, BinaryComparison, UnaryComparison, ValueUnResolved, GuardClauseReport, UnaryCheck, BinaryCheck};
+use crate::rules::eval_context::{EventRecord, FileReport, simplifed_json_from_root, ClauseReport, ValueComparisons, BinaryComparison, UnaryComparison, ValueUnResolved, GuardClauseReport, UnaryCheck, BinaryCheck, InComparison};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::commands::validate::OutputFormatType;
 use std::hash::{Hash, Hasher};
@@ -793,6 +793,12 @@ pub(super) trait ComparionErrorWriter<'value> {
                         bc: &BinaryComparison<'_>,
                         prefix: &str) -> crate::rules::Result<usize>;
 
+    fn binary_error_in_msg(&self,
+                           writer: &mut dyn Write,
+                           cr: &ClauseReport<'_>,
+                           bc: &InComparison<'_>,
+                           prefix: &str) -> crate::rules::Result<usize>;
+
     fn unary_error_msg(&self,
                        writer: &mut dyn Write,
                        cr: &ClauseReport<'_>,
@@ -989,6 +995,36 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                                 bc,
                                 &prefix
                             )?;
+                            let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
+                            let error = br.messages.error_message.as_ref().map_or("", String::as_str);
+                            emit_messages(writer, &prefix, message, error, width)?;
+                            writeln!(writer, "{}", ce_end)?;
+                            writeln!(writer, "{}", check_end)?;
+                        },
+
+                        BinaryCheck::InResolved(inr) => {
+                            writeln!(
+                                writer,
+                                "{prefix}Check = {cxt} {{",
+                                prefix=prefix,
+                                cxt=br.context
+                            )?;
+                            let check_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            writeln!(
+                                writer,
+                                "{prefix}ComparisonError {{",
+                                prefix=prefix
+                            )?;
+                            let ce_end = format!("{}}}", prefix);
+                            let prefix = format!("{}  ", prefix);
+                            let width = err_writer.binary_error_in_msg(
+                                writer,
+                                clause,
+                                inr,
+                                &prefix
+                            )?;
+
                             let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
                             let error = br.messages.error_message.as_ref().map_or("", String::as_str);
                             emit_messages(writer, &prefix, message, error, width)?;

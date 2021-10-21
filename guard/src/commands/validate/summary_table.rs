@@ -132,6 +132,7 @@ impl<'r> Reporter for SummaryTable<'r> {
         root_record: &EventRecord<'value>,
         rules_file_name: &str,
         data_file_name: &str,
+        data_content: &[u8],
         _data: &Traversal<'value>,
         _output_format_type: OutputFormatType) -> crate::rules::Result<()> {
 
@@ -191,6 +192,7 @@ impl<'r> Reporter for SummaryTable<'r> {
             root_record,
             rules_file_name,
             data_file_name,
+            data_content,
             _data,
             _output_format_type)
     }

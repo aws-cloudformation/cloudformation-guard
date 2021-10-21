@@ -1,6 +1,6 @@
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
-use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport, ValueComparisons, FileReport};
+use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport, ValueComparisons, FileReport, InComparison};
 use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
@@ -16,7 +16,7 @@ use std::hash::{Hash, Hasher};
 use serde::ser::{SerializeStruct, SerializeMap};
 
 use std::ops::{Deref, DerefMut};
-use std::cmp::Ordering;
+use std::cmp::{Ordering, max};
 use colored::*;
 use crate::rules::display::ValueOnlyDisplay;
 
@@ -28,6 +28,7 @@ use super::common::{
     Node,
     populate_hierarchy_path_trees
 };
+use crate::rules::exprs::SliceDisplay;
 
 
 lazy_static! {
@@ -72,6 +73,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
         root_record: &EventRecord<'value>,
         rules_file: &str,
         data_file: &str,
+        data_content: &[u8],
         data: &Traversal<'value>,
         outputType: OutputFormatType) -> crate::rules::Result<()> {
 
@@ -94,6 +96,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                     root_record,
                     rules_file,
                     data_file,
+                    data_content,
                     data,
                     outputType)
                 )
@@ -258,6 +261,60 @@ fn single_line(writer: &mut dyn Write,
                             prefix
                         )
                     }
+
+                    fn binary_error_in_msg(
+                        &self,
+                        writer: &mut dyn Write,
+                        cr: &ClauseReport<'_>,
+                        bc: &InComparison<'_>,
+                        prefix: &str) -> crate::rules::Result<usize> {
+                        let cut_off = max(bc.to.len(), 5);
+                        let mut collected = Vec::with_capacity(10);
+                        for (idx, each) in bc.to.iter().enumerate() {
+                            collected.push(ValueOnlyDisplay(*each));
+                            if idx >= cut_off {
+                                break;
+                            }
+                        }
+                        let collected = format!("{:?}", collected);
+                        let width = "PropertyPath".len() + 4;
+                        if cut_off >= bc.to.len() {
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                                width=width,
+                                pp="PropertyPath",
+                                op="Operator",
+                                val="Value",
+                                cw="ComparedWith",
+                                prefix=prefix,
+                                path=bc.from.self_path(),
+                                value=ValueOnlyDisplay(bc.from),
+                                cmp=crate::rules::eval_context::cmp_str(bc.comparison),
+                                with=collected
+                            )?;
+                        } else {
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{total_name:<width$}= {total}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                                width=width,
+                                pp="PropertyPath",
+                                op="Operator",
+                                val="Value",
+                                total_name="Total",
+                                cw="ComparedWith",
+                                prefix=prefix,
+                                path=bc.from.self_path(),
+                                value=ValueOnlyDisplay(bc.from),
+                                cmp=crate::rules::eval_context::cmp_str(bc.comparison),
+                                total=bc.to.len(),
+                                with=collected
+                            )?;
+                        }
+                        Ok(width)
+
+                    }
+
 
                     fn unary_error_msg(
                         &self,

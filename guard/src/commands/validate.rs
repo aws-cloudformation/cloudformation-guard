@@ -27,6 +27,7 @@ use crate::rules::{ RecordType, NamedStatus };
 use std::collections::HashMap;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
+use itertools::Itertools;
 
 mod generic_summary;
 mod common;
@@ -35,6 +36,13 @@ mod cfn_reporter;
 mod cfn;
 mod console_reporter;
 mod tf;
+
+#[derive(Eq, Clone, Debug, PartialEq)]
+pub(crate) struct DataFile {
+    content: String,
+    path_value: PathAwareValue,
+    name: String
+}
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -69,6 +77,7 @@ pub(crate) trait Reporter : Debug {
         _root_record: &EventRecord<'value>,
         _rules_file: &str,
         _data_file: &str,
+        _data_file_bytes: &[u8],
         _data: &Traversal<'value>,
         _output_type: OutputFormatType
     ) -> Result<()> { Ok(()) }
@@ -136,75 +145,102 @@ or rules files.
         };
 
         let empty_path = Path::new("");
-        let (merge, data_files): (bool, Vec<(String, String)>) = match app.value_of("data-dir") {
+        let data_files_non_merge: Vec<DataFile> = match app.value_of("data-dir") {
             Some(file_or_dir) => {
                 let base = PathBuf::from_str(file_or_dir)?;
-                let selected = get_files(file_or_dir, cmp)?;
-                let mut streams = Vec::with_capacity(selected.len());
-                for each in selected {
-                    let mut context = String::new();
-                    let mut reader = BufReader::new(File::open(each.as_path())?);
-                    reader.read_to_string(&mut context)?;
-                    let path = each.as_path();
-                    let relative = match path.strip_prefix(base.as_path()) {
-                        Ok(p) => if p != empty_path {
-                            format!("{}", p.display())
-                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                        Err(_) => format!("{}", path.display()),
-                    };
-                    streams.push((context, relative));
-                }
-                (false, streams)
-            },
-            None => {
-                match app.values_of("data") {
-                    Some(files) => {
-                        let mut streams = Vec::with_capacity(files.len());
-                        for each_file in files {
-                            let base = PathBuf::from_str(each_file)?;
-                            let mut context = String::new();
-                            let mut reader = BufReader::new(File::open(base.as_path())?);
-                            reader.read_to_string(&mut context)?;
-                            let path = base.as_path();
-                            streams.push((context, format!("{}", path.display())));
+                let mut streams = Vec::new();
+                for each_entry in walkdir::WalkDir::new(base.clone()) {
+                    if let Ok(file) = each_entry {
+                        if file.path().is_file() {
+                            let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                            if  name.ends_with(".yaml")    ||
+                                name.ends_with(".yml")     ||
+                                name.ends_with(".json")    ||
+                                name.ends_with(".jsn")     ||
+                                name.ends_with(".template")
+                            {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path = file.path();
+                                let relative = match path.strip_prefix(base.as_path()) {
+                                    Ok(p) => if p != empty_path {
+                                        format!("{}", p.display())
+                                    } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                                    Err(_) => format!("{}", path.display()),
+                                };
+                                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
+                                    Ok(value) => PathAwareValue::try_from(value)?,
+                                    Err(_) => {
+                                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                                        PathAwareValue::try_from(value)?
+                                    }
+                                };
+                                streams.push(DataFile{
+                                    name: relative, path_value, content
+                                });
+                            }
                         }
-                        (true, streams)
-                    }
-
-                    None => {
-                        let mut context = String::new();
-                        let mut reader = BufReader::new(std::io::stdin());
-                        reader.read_to_string(&mut context);
-                        (false, vec![(context, "STDIN".to_string())])
                     }
                 }
-
-            }
+                streams
+            },
+            None => vec![]
         };
 
-        let mut data_files= {
-            let mut collected = Vec::with_capacity(data_files.len());
-            for (content, name) in data_files {
-                let entry = match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(value) => (PathAwareValue::try_from(value)?, name),
+        let (mut data_files_to_merge, name, content) = match app.values_of("data") {
+            Some(files) => {
+                let mut primary: Option<PathAwareValue> = None;
+                let mut name = "".to_string();
+                let mut last_content= "".to_string();
+                for each_file in files {
+                    name = each_file.to_string();
+                    let base = PathBuf::from_str(each_file)?;
+                    let mut content = String::new();
+                    let mut reader = BufReader::new(File::open(base.as_path())?);
+                    reader.read_to_string(&mut content)?;
+                    let path_value = match serde_json::from_str::<serde_json::Value>(&content) {
+                        Ok(value) => PathAwareValue::try_from(value)?,
+                        Err(_) => {
+                            let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                            PathAwareValue::try_from(value)?
+                        }
+                    };
+                    last_content = content;
+                    primary = match primary {
+                        Some(mut current) => {
+                            Some(current.merge(path_value)?)
+                        },
+                        None => Some(path_value)
+                    }
+                }
+                (primary.unwrap(), name, last_content)
+            }
+
+            None => {
+                let mut content = String::new();
+                let mut reader = BufReader::new(std::io::stdin());
+                reader.read_to_string(&mut content)?;
+                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(value) => PathAwareValue::try_from(value)?,
                     Err(_) => {
                         let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                        (PathAwareValue::try_from(value)?, name)
+                        PathAwareValue::try_from(value)?
                     }
                 };
-                collected.push(entry);
+                (path_value, "STDIN".to_string(), content)
             }
-            collected
+
         };
 
-        let data_files = if merge {
-            let (mut first, name) = data_files.pop().unwrap();
-            for (value, _) in data_files {
-                first = first.merge(value)?;
-            }
-            vec![(first, name)]
+        let (extra_data, data_files) = if data_files_non_merge.is_empty() {
+            (None, vec![DataFile {
+                name,
+                path_value: data_files_to_merge,
+                content,
+            }])
         } else {
-            data_files
+            (Some(data_files_to_merge), data_files_non_merge)
         };
 
         let verbose = if app.is_present("verbose") {
@@ -304,6 +340,7 @@ or rules files.
                             match evaluate_against_data_input(
                                 data_type,
                                 output_type,
+                                extra_data.clone(),
                                 &data_files,
                                 &rules,
                                 &rule_file_name,
@@ -591,7 +628,8 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 fn evaluate_against_data_input<'r>(data_type: Type,
                                    output: OutputFormatType,
-                                   data_files: &'r [(PathAwareValue, String)],
+                                   extra_data: Option<PathAwareValue>,
+                                   data_files: &'r [DataFile],
                                    rules: &RulesFile<'_>,
                                    rules_file_name: &'r str,
                                    verbose: bool,
@@ -601,7 +639,16 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                                    summary_table: BitFlags<SummaryType>) -> Result<Status> {
     let mut overall = Status::PASS;
     let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
-    for (each, data_file_name) in data_files {
+    let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+    let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+    let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+    let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
+        cfn
+    } else {
+        Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
+            as Box<dyn Reporter>
+    };
+    for file in data_files {
 //        let mut reporters =
 //            match output {
 //                OutputFormatType::YAML |
@@ -616,16 +663,6 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 //                            console_reporter::ConsoleReporter::new(data_file_name, rules_file_name)) as Box<dyn Reporter>]
 //                },
 //            };
-        let traversal = Traversal::from(each);
-        let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
-        let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
-        let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
-        let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
-            cfn
-        } else {
-            Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
-                as Box<dyn Reporter>
-        };
 
 //        let mut reporters = match data_type {
 //            Type::CFNTemplate =>
@@ -642,7 +679,12 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 //        }
 
         if new_engine_version {
-            let mut root_scope = root_scope(rules, each)?;
+            let each = match &extra_data {
+                Some(data) => data.clone().merge(file.path_value.clone())?,
+                None => file.path_value.clone()
+            };
+            let traversal = Traversal::from(&each);
+            let mut root_scope = root_scope(rules, &each)?;
             //let mut tracker = RecordTracker::new(&mut root_scope);
             let status = eval_rules_file(rules, &mut root_scope)?;
             let root_record = root_scope.reset_recorder().extract();
@@ -651,7 +693,8 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                 status,
                 &root_record,
                 rules_file_name,
-                data_file_name,
+                &file.name,
+                file.content.as_bytes(),
                 &traversal,
                 output
             )?;
@@ -665,9 +708,10 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                 overall = Status::FAIL
             }
         } else {
+            let each = &file.path_value;
             let root_context = RootScope::new(rules, each);
             let stacker = StackTracker::new(&root_context);
-            let reporter = ConsoleReporter::new(stacker, reporter.as_ref(), rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
+            let reporter = ConsoleReporter::new(stacker, reporter.as_ref(), rules_file_name, &file.name, verbose, print_json, show_clause_failures);
             let appender = MetadataAppender { delegate: &reporter, root_context: &each };
             let status = rules.evaluate(&each, &appender)?;
             reporter.report(&each, output)?;

@@ -98,6 +98,7 @@ impl Reporter for GenericSummary {
         root_record: &EventRecord<'value>,
         rules_file: &str,
         data_file: &str,
+        _data_content: &[u8],
         data: &Traversal<'value>,
         output_format_type: OutputFormatType) -> crate::rules::Result<()> {
         let renderer = match output_format_type {
