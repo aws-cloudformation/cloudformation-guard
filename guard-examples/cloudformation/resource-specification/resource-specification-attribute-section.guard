@@ -1,0 +1,9 @@
+# For all resource attributes, the type field must be defined
+#
+let attributes =  ResourceType.*.Attributes
+rule attribute_type_not_empty when %attributes !empty {
+    %attributes.* {
+    	PrimitiveType EXISTS OR
+    	Type EXISTS
+    }
+}

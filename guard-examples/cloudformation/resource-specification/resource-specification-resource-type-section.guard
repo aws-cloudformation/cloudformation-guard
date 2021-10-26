@@ -1,0 +1,77 @@
+# There must be a link to the main documentation page for the resource
+#
+rule resource_main_doc_link_exists {
+	ResourceType.*.Documentation EXISTS
+}
+
+# Each resource property must have the Documentation, UpdateType and Required
+# fields
+#
+rule resource_property_checks {
+	ResourceType.*.Properties EXISTS
+	ResourceType.*.Properties.*.Documentation EXISTS
+	ResourceType.*.Properties.*.UpdateType EXISTS
+	ResourceType.*.Properties.*.Required EXISTS
+}
+
+# Each resource property must have a type
+#
+rule resource_property_type_checks {
+	ResourceType.*.Properties.* {
+		PrimitiveType EXISTS OR
+		Type EXISTS
+	}
+
+	# Check for exclusivity, Type and PrimitiveType cannot exist at the same time
+	#
+	ResourceType.*.Properties.* {
+		when PrimitiveType EXISTS {
+			Type NOT EXISTS
+		}
+
+		when Type EXISTS {
+			PrimitiveType NOT EXISTS
+		}
+	}
+}
+
+# Each resource property of type List must have a ItemType defined
+#
+let list_or_map_types = ResourceType.*.Properties.*[ Type IN ['List', 'Map'] ]
+rule list_or_map_types_have_items when %list_or_map_types !empty {
+	%list_or_map_types {
+		ItemType EXISTS OR
+		PrimitiveItemType EXISTS
+	}
+
+	# Check for exclusivity, ItemType and PrimitiveItemType cannot exist at the same time
+	#
+	%list_or_map_types {
+		when ItemType EXISTS {
+			PrimitiveItemType NOT EXISTS
+		}
+
+		when PrimitiveItemType EXISTS {
+			ItemType NOT EXISTS
+		}
+	}
+}
+
+# For any List/Map with a non-primitive item type, the item type must be
+# defined in the spec
+#
+let property_item_types = ResourceType.*.Properties.*[ ItemType EXISTS ]
+rule property_item_type_exists when %property_item_types !empty {
+	let object_name = %property_item_types.ItemType
+	PropertyTypes.%object_name EXISTS
+}
+
+# For any non-primitive type that is used by a property, the type must be defined
+# in the spec
+#
+let resource_type_object_types = ResourceType.*.Properties.*[ Type EXISTS]
+let resource_type_object_types_not_map_or_list = %resource_type_object_types[Type NOT IN ['List', 'Map']]
+rule resource_object_type_exists when %resource_type_object_types_not_map_or_list !empty {
+	let object_name = %resource_type_object_types_not_map_or_list.Type
+	PropertyTypes.%object_name EXISTS
+}

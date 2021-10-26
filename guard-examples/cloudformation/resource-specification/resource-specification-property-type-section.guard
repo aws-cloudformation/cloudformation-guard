@@ -1,0 +1,135 @@
+# For all property types, enforce the mandatory fields
+#
+let property_types = PropertyTypes.*[Properties EXISTS]
+rule property_type_checks when %property_types !empty {
+	%property_types.Documentation EXISTS
+	%property_types.Properties.*.Documentation EXISTS
+	%property_types.Properties.*.Required EXISTS
+	%property_types.Properties.*.UpdateType EXISTS
+
+	%property_types.Properties.* {
+		PrimitiveType EXISTS OR
+		Type EXISTS
+	}
+
+	# Check for exclusivity, Type and PrimitiveType cannot exist at the same time
+	#
+	%property_types.Properties.* {
+		when PrimitiveType EXISTS {
+			Type NOT EXISTS
+		}
+
+		when Type EXISTS {
+			PrimitiveType NOT EXISTS
+		}
+	}
+}
+
+# For all property types that do not have any sub-properties, enforce the mandatory fields
+#
+let property_types_no_properties = PropertyTypes.*[Properties NOT EXISTS]
+rule property_types_checks_no_sub_properties when %property_types_no_properties !empty{
+	%property_types_no_properties.Documentation EXISTS
+	%property_types_no_properties.UpdateType EXISTS
+	%property_types_no_properties.Required EXISTS
+
+	%property_types_no_properties {
+		PrimitiveType EXISTS OR
+		Type EXISTS
+	}
+
+	# Check for exclusivity, Type and PrimitiveType cannot exist at the same time
+	#
+	%property_types_no_properties {
+		when PrimitiveType EXISTS {
+			Type NOT EXISTS
+		}
+
+		when Type EXISTS {
+			PrimitiveType NOT EXISTS
+		}
+	}
+}
+
+# For any List/Map with a non-primitive item type defined within a property of a property type,
+# the item type must be defined in the spec
+#
+let property_type_item_types = PropertyTypes.*.Properties.*[ ItemType EXISTS ]
+rule property_type_item_type_exists when %property_type_item_types !empty {
+	let object_name = %property_type_item_types.ItemType
+	PropertyTypes.%object_name EXISTS
+}
+
+
+# For any List/Map with a non-primitive item type in the propery type section, the item type must be
+# defined in the spec
+#
+let property_type_root_item_types = PropertyTypes.*[ ItemType EXISTS ]
+rule root_property_type_item_type_exists when %property_type_root_item_types !empty {
+	let object_name = %property_type_root_item_types.ItemType
+	PropertyTypes.%object_name EXISTS
+}
+
+# For any non-primitive type that is used by a property of a property type, the type must be defined
+# in the spec
+#
+let property_type_object_types = PropertyTypes.*.Properties.*[ Type EXISTS ]
+let property_type_object_types_not_map_or_list = %property_type_object_types[Type NOT IN ['List', 'Map']]
+rule property_type_object_type_exists when %property_type_object_types_not_map_or_list !empty {
+	let object_name =  %property_type_object_types_not_map_or_list.Type
+	PropertyTypes.%object_name EXISTS
+}
+
+# For any non-primitive type that is used by a property type, the type must be defined
+# in the spec
+#
+let property_type_root_object_types = PropertyTypes.*[ Type EXISTS ]
+let root_property_type_object_types_not_map_or_list = %property_type_root_object_types[Type NOT IN ['List', 'Map']]
+rule root_property_type_object_type_exists when %root_property_type_object_types_not_map_or_list !empty {
+	let object_name =  %root_property_type_object_types_not_map_or_list.Type
+	PropertyTypes.%object_name EXISTS
+}
+
+# Each property type of type List must have a ItemType defined
+#
+let property_type_list_or_map_types = PropertyTypes.*.Properties.*[ Type IN ['List', 'Map'] ]
+rule property_type_list_or_map_types_have_items when %property_type_list_or_map_types !empty {
+	%property_type_list_or_map_types {
+		ItemType EXISTS OR
+		PrimitiveItemType EXISTS
+	}
+
+	# Check for exclusivity, ItemType and PrimitiveItemType cannot exist at the same time
+	#
+	%property_type_list_or_map_types {
+		when ItemType EXISTS {
+			PrimitiveItemType NOT EXISTS
+		}
+
+		when PrimitiveItemType EXISTS {
+			ItemType NOT EXISTS
+		}
+	}
+}
+
+# Each property type with no sub-properties of type List must have a ItemType defined
+#
+let property_root_type_list_or_map_types = PropertyTypes.*[ Type IN ['List', 'Map'] ]
+rule property_root_type_list_or_map_types_have_items when %property_root_type_list_or_map_types !empty {
+	%property_root_type_list_or_map_types {
+		ItemType EXISTS OR
+		PrimitiveItemType EXISTS
+	}
+
+	# Check for exclusivity, ItemType and PrimitiveItemType cannot exist at the same time
+	#
+	%property_root_type_list_or_map_types {
+		when ItemType EXISTS {
+			PrimitiveItemType NOT EXISTS
+		}
+
+		when PrimitiveItemType EXISTS {
+			ItemType NOT EXISTS
+		}
+	}
+}
