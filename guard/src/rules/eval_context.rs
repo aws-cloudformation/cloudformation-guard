@@ -1649,7 +1649,11 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                                         },
                                         check: BinaryCheck::InResolved(InComparison {
                                             from: from.resolved().map_or_else(|| from.unresolved_traversed_to().unwrap(), std::convert::identity),
-                                            to: to.iter().map(|t| match t {
+                                            to: to.iter()
+                                                .filter(|t| match t {
+                                                    QueryResult::Resolved(_) => true,
+                                                    _ => false,
+                                                }).map(|t| match t {
                                                 QueryResult::Resolved(v) => v,
                                                 QueryResult::UnResolved(ur) => ur.traversed_to,
                                                 QueryResult::Literal(l) => *l,

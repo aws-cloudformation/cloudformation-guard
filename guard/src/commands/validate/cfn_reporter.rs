@@ -105,21 +105,21 @@ impl Reporter for CfnReporter {
 
     fn report_eval<'value>(
         &self,
-        write: &mut dyn Write,
+        _write: &mut dyn Write,
         _status: Status,
-        root_record: &EventRecord<'value>,
-        rules_file: &str,
-        data_file: &str,
-        _data_content: &[u8],
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data_file_bytes: &str,
         _data: &Traversal<'value>,
-        output_format_type: OutputFormatType) -> crate::rules::Result<()> {
-        let renderer = match output_format_type {
+        _output_type: OutputFormatType) -> crate::rules::Result<()> {
+        let renderer = match _output_type {
             OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
             OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
             OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
         };
         super::common::report_from_events(
-            root_record, write, data_file, rules_file, renderer.as_ref())
+            _root_record, _write, _data_file, _rules_file, renderer.as_ref())
     }
 }
 

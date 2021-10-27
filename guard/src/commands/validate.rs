@@ -77,7 +77,7 @@ pub(crate) trait Reporter : Debug {
         _root_record: &EventRecord<'value>,
         _rules_file: &str,
         _data_file: &str,
-        _data_file_bytes: &[u8],
+        _data_file_bytes: &str,
         _data: &Traversal<'value>,
         _output_type: OutputFormatType
     ) -> Result<()> { Ok(()) }
@@ -665,7 +665,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                 &root_record,
                 rules_file_name,
                 &file.name,
-                file.content.as_bytes(),
+                &file.content,
                 &traversal,
                 output
             )?;

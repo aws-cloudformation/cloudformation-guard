@@ -277,21 +277,21 @@ impl Reporter for ConsoleReporter {
 
     fn report_eval<'value>(
         &self,
-        write: &mut dyn Write,
-        status: Status,
-        root_record: &EventRecord<'value>,
-        rules_file_name: &str,
-        data_file_name: &str,
-        _data_content: &[u8],
+        _write: &mut dyn Write,
+        _status: Status,
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data_file_bytes: &str,
         _data: &Traversal<'value>,
-        _outputType: OutputFormatType) -> crate::rules::Result<()> {
+        _output_type: OutputFormatType) -> crate::rules::Result<()> {
         pprint_failed_sub_tree(
-            root_record,
+            _root_record,
             "".to_string(),
             true,
-            rules_file_name,
-            data_file_name,
-            write
+            _rules_file,
+            _data_file,
+            _write
         )
     }
 

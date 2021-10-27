@@ -47,6 +47,8 @@ impl<'value> Display for ValueOnlyDisplay<'value> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self.0 {
             PathAwareValue::Null(_path)                         => formatter.write_str("\"NULL\"")?,
+            PathAwareValue::BadValue((_path, value))      => formatter.write_fmt(
+                format_args!("\"{}\"", value))?,
             PathAwareValue::String((_path, value))      => formatter.write_fmt(
                 format_args!("\"{}\"", value))?,
             PathAwareValue::Regex((_path, value))       => formatter.write_fmt(

@@ -2,6 +2,12 @@ use super::*;
 use crate::rules::eval_context::{root_scope, RecordTracker, EventRecord};
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use std::collections::HashMap;
+use grep_searcher::{SinkMatch, SearcherBuilder, LineStep};
+use grep_matcher::{Match, Captures};
+use itertools::misc::Slice;
+use yaml_rust::parser::{MarkedEventReceiver, Parser};
+use yaml_rust::Event;
+use yaml_rust::scanner::Marker;
 
 //
 // All unary function simple tests
@@ -3643,3 +3649,73 @@ fn test_string_in_comparison() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_searcher() -> Result<()> {
+    let resources = r###"
+    Resources:
+      s3:
+        Type: AWS::S3::Bucket
+      s3Policy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+          PolicyDocument:
+            Statement:
+              Resource:
+                Fn::Sub: "aws:arn:s3::${s3}"
+    "###;
+
+    use grep_searcher::Searcher;
+    use grep_searcher::Sink;
+    use grep_matcher::Matcher;
+    use grep_regex::RegexMatcher;
+    use grep_searcher::LineIter;
+    struct MySink{};
+    let matcher = grep_regex::RegexMatcher::new("\\s+(s3):$|\\s+(s3Policy):$").unwrap();
+    SearcherBuilder::new().line_number(true).build().search_slice(
+        &matcher, resources.as_bytes(), grep_searcher::sinks::UTF8(|lnum, line| {
+            let mut captures = matcher.new_captures()?;
+            let _matched = matcher.captures(line.trim_end().as_bytes(), &mut captures)?;
+            // println!("Line {}, Match {}", lnum, line[matched].to_string());
+            Ok(true)
+        }))?;
+
+    Ok(())
+}
+
+#[test]
+fn yaml_loader() -> Result<()> {
+    let docs = r###"
+#    apiVersion: v1
+#    next: true
+#    number: 3
+#    spec:
+#      containers:
+#        - image: blah
+#          second: true
+    Name: !Sub
+      - www.${Domain}
+      - { Domain: !Ref RootDomainName }]
+    "###;
+
+    struct MarkedRecv{};
+    impl MarkedEventReceiver for MarkedRecv {
+        fn on_event(&mut self, ev: Event, mark: Marker) {
+            println!(
+                "Event = {:?}, Location = {:?}",
+                ev,
+                mark
+            );
+        }
+    }
+
+    let mut receiver = MarkedRecv{};
+    let mut parser = Parser::new(docs.chars());
+    parser.load(
+        &mut receiver,
+        true
+    );
+
+    Ok(())
+}
+

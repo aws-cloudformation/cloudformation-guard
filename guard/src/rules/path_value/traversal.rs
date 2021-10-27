@@ -76,6 +76,8 @@ fn from_value<'value>(
                 from_value(each, parent.clone(), nodes);
             }
         },
+
+        PathAwareValue::BadValue(_) => unreachable!(),
     }
 }
 

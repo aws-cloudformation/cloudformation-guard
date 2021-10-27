@@ -29,6 +29,7 @@ use super::common::{
     populate_hierarchy_path_trees
 };
 use crate::rules::exprs::SliceDisplay;
+use grep_searcher::{Searcher, SearcherBuilder};
 
 
 lazy_static! {
@@ -68,37 +69,37 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 
     fn report_eval<'value>(
         &self,
-        write: &mut dyn Write,
-        status: Status,
-        root_record: &EventRecord<'value>,
-        rules_file: &str,
-        data_file: &str,
-        data_content: &[u8],
-        data: &Traversal<'value>,
-        outputType: OutputFormatType) -> crate::rules::Result<()> {
+        _write: &mut dyn Write,
+        _status: Status,
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data_file_bytes: &str,
+        _data: &Traversal<'value>,
+        _output_type: OutputFormatType) -> crate::rules::Result<()> {
 
-        let root = data.root().unwrap();
-        if let Ok(_) = data.at("/Resources", root) {
-            let failure_report = simplifed_json_from_root(root_record)?;
-            Ok(match outputType {
-                OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
-                OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
+        let root = _data.root().unwrap();
+        if let Ok(_) = _data.at("/Resources", root) {
+            let failure_report = simplifed_json_from_root(_root_record)?;
+            Ok(match _output_type {
+                OutputFormatType::YAML => serde_yaml::to_writer(_write, &failure_report)?,
+                OutputFormatType::JSON => serde_json::to_writer_pretty(_write, &failure_report)?,
                 OutputFormatType::SingleLineSummary => single_line(
-                    write, data_file, rules_file, data, failure_report)?,
+                    _write, _data_file, _data_file_bytes, _rules_file, _data, failure_report)?,
             })
         }
         else {
             self.next.map_or(
                 Ok(()), |next|
                 next.report_eval(
-                    write,
-                    status,
-                    root_record,
-                    rules_file,
-                    data_file,
-                    data_content,
-                    data,
-                    outputType)
+                    _write,
+                    _status,
+                    _root_record,
+                    _rules_file,
+                    _data_file,
+                    _data_file_bytes,
+                    _data,
+                    _output_type)
                 )
         }
     }
@@ -146,8 +147,12 @@ fn unary_err_msg(
     Ok(width)
 }
 
+
+use crate::utils;
+
 fn single_line(writer: &mut dyn Write,
                data_file: &str,
+               data_content: &str,
                rules_file: &str,
                data: &Traversal<'_>,
                failure_report: FileReport<'_>) -> crate::rules::Result<()> {
@@ -155,6 +160,8 @@ fn single_line(writer: &mut dyn Write,
     if failure_report.not_compliant.is_empty() {
         return Ok(())
     }
+
+    let mut code_segement = utils::ReadCursor::new(data_content);
 
     let mut path_tree = PathTree::new();
     let mut hierarchy = RuleHierarchy::new();
@@ -212,6 +219,19 @@ fn single_line(writer: &mut dyn Write,
         }
     }
 
+    let mut regex_match = String::from("");
+    for (idx, key) in by_resources.keys().enumerate() {
+        // regex_match += "\\s+" + *key + ":$";
+        if idx != by_resources.len() {
+            regex_match.push('|');
+        }
+    }
+
+    struct ResourceLocations {
+        line: usize,
+        byte_offset: usize,
+    }
+
     writeln!(writer, "Evaluating data {} against rules {}", data_file, rules_file)?;
     let num_of_resources = format!("{}", by_resources.len()).bold();
     writeln!(writer, "Number of non-compliant resources {}", num_of_resources)?;
@@ -254,12 +274,22 @@ fn single_line(writer: &mut dyn Write,
                         cr: &ClauseReport<'_>,
                         bc: &BinaryComparison<'_>,
                         prefix: &str) -> crate::rules::Result<usize> {
-                        binary_err_msg(
+                        let width = "PropertyPath".len() + 4;
+                        writeln!(
                             writer,
-                            cr,
-                            bc,
-                            prefix
-                        )
+                            "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                            width=width,
+                            pp="PropertyPath",
+                            op="Operator",
+                            val="Value",
+                            cw="ComparedWith",
+                            prefix=prefix,
+                            path=bc.from.self_path(),
+                            value=ValueOnlyDisplay(bc.from),
+                            cmp=crate::rules::eval_context::cmp_str(bc.comparison),
+                            with=ValueOnlyDisplay(bc.to)
+                        )?;
+                        Ok(width)
                     }
 
                     fn binary_error_in_msg(

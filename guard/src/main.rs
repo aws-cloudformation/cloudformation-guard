@@ -6,6 +6,7 @@ mod rules;
 mod commands;
 mod command;
 mod migrate;
+mod utils;
 
 use crate::command::Command;
 use rules::errors::Error;

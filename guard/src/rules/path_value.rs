@@ -27,18 +27,55 @@ use serde::ser::{SerializeStruct, SerializeMap};
 // crate level
 //
 
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub(crate) struct Location {
+    pub(crate) line: usize,
+    pub(crate) col: usize,
+}
+
+impl Location {
+    pub(crate) fn new(line: usize, col: usize) -> Self {
+        Location {line, col}
+    }
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(
+            format_args!(
+                "L:{},C:{}",
+                self.line,
+                self.col
+            )
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) struct Path(pub(crate) String);
+pub(crate) struct Path(pub(crate) String, pub(crate) Location);
+
+impl Path {
+    pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
+        Path(path, Location::new(line, col))
+    }
+}
 
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        f.write_fmt(
+            format_args!(
+                "{}[{}]",
+                self.0,
+                self.1
+            )
+        )
     }
 }
 
 impl Path {
     pub(crate) fn root() -> Self {
-        Path("".to_string())
+        Path("".to_string(), Location::default())
     }
 
     pub(crate) fn relative(&self) -> &str {
@@ -53,7 +90,7 @@ impl TryFrom<&str> for Path {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Ok(Path(value.to_string()))
+        Ok(Path(value.to_string(), Location::default()))
     }
 }
 
@@ -69,7 +106,7 @@ impl TryFrom<&[&str]> for Path {
                     acc.push('/'); acc.push_str(part.as_str());
                 }
                 acc
-            })))
+            }), Location::default()))
     }
 }
 
@@ -87,7 +124,14 @@ impl Path {
         let mut copy = self.0.clone();
         copy.push('/');
         copy.push_str(part);
-        Path(copy)
+        Path(copy, self.1.clone())
+    }
+
+    pub(crate) fn extend_str_with_location(&self, part: &str, loc: Location) -> Path {
+        let mut copy = self.0.clone();
+        copy.push('/');
+        copy.push_str(part);
+        Path(copy, loc)
     }
 
     pub(crate) fn extend_string(&self, part: &String) -> Path {
@@ -124,6 +168,15 @@ pub(crate) struct MapValue {
     pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
 }
 
+impl MapValue {
+    pub(crate) fn new() -> MapValue {
+        MapValue {
+            keys: vec![],
+            values: indexmap::IndexMap::new()
+        }
+    }
+}
+
 impl Serialize for MapValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let mut map = serializer.serialize_map(Some(self.values.len()))?;
@@ -152,6 +205,7 @@ impl MapValue {
 #[derive(Debug, Clone,Deserialize)]
 pub(crate) enum PathAwareValue {
     Null(Path),
+    BadValue((Path, String)),
     String((Path, String)),
     Regex((Path, String)),
     Bool((Path, bool)),
@@ -165,9 +219,188 @@ pub(crate) enum PathAwareValue {
     RangeChar((Path, RangeType<char>)),
 }
 
+use yaml_rust::parser::{MarkedEventReceiver, Parser};
+use yaml_rust::{Event, Yaml};
+use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
+
+#[derive(Debug, Default)]
+struct StructureReader {
+    stack: Vec<PathAwareValue>,
+    documents: Vec<PathAwareValue>,
+    map_start_index: Vec<usize>,
+    array_event_index_in_stack: Vec<usize>,
+}
+
+impl StructureReader {
+    fn new() -> StructureReader {
+        StructureReader::default()
+    }
+}
+
+impl MarkedEventReceiver for StructureReader {
+    fn on_event(&mut self, ev: Event, mark: Marker) {
+        match ev {
+            Event::DocumentStart => {
+                self.stack.push(PathAwareValue::Map(
+                    (Path::new("".to_string(), mark.line(), mark.col()),
+                     MapValue{keys: vec![], values: indexmap::IndexMap::new()})));
+            },
+
+            Event::DocumentEnd => {
+                match self.stack.pop() {
+                    Some(doc) => self.documents.push(doc),
+                    None => {}
+                }
+            },
+
+            Event::MappingStart(..) => {
+                let path = self.create_path(mark);
+                self.stack.push(
+                    PathAwareValue::Map((path, MapValue::new()))
+                );
+                self.map_start_index.push(self.stack.len()-1);
+            },
+
+            Event::MappingEnd => {
+                let map_index = self.map_start_index.pop().unwrap();
+                let mut key_values: Vec<PathAwareValue> = self.stack.drain(map_index+1..).collect();
+                let map = match self.stack.last_mut().unwrap() {
+                    PathAwareValue::Map((_, map)) => map,
+                    _ => unreachable!()
+                };
+                while !key_values.is_empty() {
+                    let key = key_values.pop().unwrap();
+                    let value = key_values.pop().unwrap();
+                    let key_str = match &key {
+                        PathAwareValue::String((_, val)) => val.to_string(),
+                        _ => unreachable!()
+                    };
+                    map.keys.push(key);
+                    map.values.insert(key_str, value);
+                }
+            },
+
+            Event::SequenceStart(..) => {
+
+            }
+
+            Event::Scalar(val, stype, _, token) => {
+                let path = self.create_path(mark);
+                let path_value =
+                    if stype != TScalarStyle::Plain {
+                        PathAwareValue::String((path, val))
+                    }
+                    else if let Some(TokenType::Tag(ref handle, ref suffix)) = token {
+                        if handle == "!!" {
+                            Self::handle_type_ref(path, val, suffix.as_ref())
+                        }
+                        else if handle == "!" {
+                            Self::handle_func_ref(path, val, suffix.as_ref())
+                        }
+                        else {
+                            PathAwareValue::String((path, val))
+                        }
+                    }
+                    else {
+                        match Yaml::from_str(&val) {
+                            Yaml::Integer(i) => PathAwareValue::Int((path, i)),
+                            Yaml::Real(_) => val.parse::<f64>().ok().map_or(
+                                PathAwareValue::BadValue((path.clone(),  val)),
+                                |f| PathAwareValue::Float((path, f))
+                            ),
+                            Yaml::Boolean(b) => PathAwareValue::Bool((path, b)),
+                            Yaml::String(s) => PathAwareValue::String((path, s)),
+                            Yaml::Null => PathAwareValue::Null(path),
+                            _ => PathAwareValue::String((path, val))
+                        }
+                    };
+                self.stack.push(path_value);
+            },
+
+            _ => todo!()
+        }
+    }
+}
+
+impl StructureReader {
+
+    fn create_path(
+        &self,
+        marker: Marker
+    ) -> Path {
+        let path = self.stack.last().map_or(
+            "".to_string(),
+            |p| match p {
+                PathAwareValue::String((parent, me)) =>
+                    format!("{}/{}", parent.0, me),
+                PathAwareValue::Map((path, _)) => path.0.clone(),
+                PathAwareValue::List((parent, current)) =>
+                    format!("{}/{}", parent.0, current.len()),
+                _ => unreachable!()
+            }
+        );
+        Path::new(path, marker.line(), marker.col())
+    }
+
+    fn handle_func_ref(
+        path: Path,
+        val: String,
+        fn_ref: &str) -> PathAwareValue
+    {
+        match fn_ref {
+            "Ref" | "Base64" | "Sub" => {
+                let mut map = MapValue::new();
+                let ref_key = path.extend_str(fn_ref);
+                map.keys.push(PathAwareValue::String((path.clone(), fn_ref.to_string())));
+                map.values.insert(
+                    "Ref".to_string(), PathAwareValue::String((ref_key, val)));
+                PathAwareValue::Map((path, map))
+            },
+
+            _ => todo!()
+        }
+    }
+
+    fn handle_type_ref(
+        path: Path,
+        val: String,
+        type_ref: &str) -> PathAwareValue
+    {
+        match type_ref {
+            "bool" => {
+                // "true" or "false"
+                match val.parse::<bool>() {
+                    Err(_) => PathAwareValue::String((path, val)),
+                    Ok(v) => PathAwareValue::Bool((path, v))
+                }
+            }
+            "int" => match val.parse::<i64>() {
+                Err(_) => PathAwareValue::BadValue((path, val)),
+                Ok(v) => PathAwareValue::Int((path, v)),
+            },
+            "float" => match val.parse::<f64>() {
+                Err(_) => PathAwareValue::BadValue((path, val)),
+                Ok(v) => PathAwareValue::Float((path, v)),
+            },
+            "null" => match val.as_ref() {
+                "~" | "null" => PathAwareValue::Null(path),
+                _ => PathAwareValue::BadValue((path, val))
+            },
+            _ => PathAwareValue::String((path, val))
+        }
+    }
+}
+
+pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<PathAwareValue> {
+    let mut reader = StructureReader::new();
+    let parser = Parser::new(from_reader.chars());
+    todo!()
+}
+
 impl Hash for PathAwareValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
+            PathAwareValue::BadValue((_, s))           |
             PathAwareValue::String((_, s))        |
             PathAwareValue::Regex((_, s))               => { s.hash(state); },
 
@@ -423,6 +656,12 @@ impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
                 );
                 Ok((top, serde_json::Value::String(range_encoding)))
             },
+
+            PathAwareValue::BadValue((p, v)) => return Err(Error::new(
+                ErrorKind::NotComparable(
+                    format!("Value at path {}, mapped to a bad value {}", p.0, v)
+                )
+            ))
         }
     }
 }
@@ -814,6 +1053,7 @@ impl PathAwareValue {
     pub(crate) fn self_value(&self) -> (&Path, &PathAwareValue) {
         match self {
             PathAwareValue::Null(path)              => (path, self),
+            PathAwareValue::BadValue((path, _))       => (path, self),
             PathAwareValue::String((path, _))       => (path, self),
             PathAwareValue::Regex((path, _))        => (path, self),
             PathAwareValue::Bool((path, _))         => (path, self),
@@ -831,6 +1071,7 @@ impl PathAwareValue {
     pub(crate) fn type_info(&self) -> &'static str {
         match self {
             PathAwareValue::Null(_path)              => "null",
+            PathAwareValue::BadValue((_path, _))       => "BadValue",
             PathAwareValue::String((_path, _))       => "String",
             PathAwareValue::Regex((_path, _))        => "Regex",
             PathAwareValue::Bool((_path, _))         => "bool",
