@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 #[test]
 fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        crate::rules::values::read_from(r#"
         Resources:
           Helper:
             Type: AWS::S3::Bucket

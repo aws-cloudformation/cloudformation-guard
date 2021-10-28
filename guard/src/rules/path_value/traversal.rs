@@ -76,8 +76,6 @@ fn from_value<'value>(
                 from_value(each, parent.clone(), nodes);
             }
         },
-
-        PathAwareValue::BadValue(_) => unreachable!(),
     }
 }
 
@@ -130,7 +128,7 @@ impl<'value> Traversal<'value> {
                     if p == "#" {
                         return Ok(TraversalResult::Key(current.value.self_path().relative()))
                     }
-                    let pointer = format!("{}{}", current.value.self_path(), p);
+                    let pointer = format!("{}{}", current.value.self_path().0, p);
                     return self.at(&pointer, current)
                 },
 

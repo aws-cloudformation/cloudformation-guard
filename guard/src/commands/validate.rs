@@ -199,7 +199,7 @@ or rules files.
                     let mut content = String::new();
                     let mut reader = BufReader::new(File::open(base.as_path())?);
                     reader.read_to_string(&mut content)?;
-                    let path_value = match serde_json::from_str::<serde_json::Value>(&content) {
+                    let path_value = match crate::rules::values::read_from(&content) {
                         Ok(value) => PathAwareValue::try_from(value)?,
                         Err(_) => {
                             let value = serde_yaml::from_str::<serde_json::Value>(&content)?;

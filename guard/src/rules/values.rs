@@ -4,12 +4,16 @@ use std::hash::{Hash, Hasher};
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
-use crate::rules::errors::{Error};
+use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::parser::Span;
 
 use serde::{Serialize, Deserialize};
 use std::fmt;
 use std::fmt::Display;
+use yaml_rust::parser::{MarkedEventReceiver, Parser};
+use yaml_rust::{Event, Yaml};
+use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
+use crate::rules::path_value::Location;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
@@ -304,6 +308,215 @@ impl <'a> TryFrom<&'a str> for Value {
     fn try_from(value: &'a str) -> std::result::Result<Self, Self::Error> {
         Ok(super::parser::parse_value(Span::new_extra(value, ""))?.1)
     }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) enum MarkedValue {
+    Null(Location),
+    BadValue(String, Location),
+    String(String, Location),
+    Regex(String, Location),
+    Bool(bool, Location),
+    Int(i64, Location),
+    Float(f64, Location),
+    Char(char, Location),
+    List(Vec<MarkedValue>, Location),
+    Map(indexmap::IndexMap<(String, Location), MarkedValue>, Location),
+    RangeInt(RangeType<i64>, Location),
+    RangeFloat(RangeType<f64>, Location),
+    RangeChar(RangeType<char>, Location)
+}
+
+impl MarkedValue {
+    pub(crate) fn location(&self) -> &Location {
+        match self {
+           Self::Null(loc)	|
+           Self::BadValue(_, loc)	|
+           Self::String(_, loc)	|
+           Self::Regex(_, loc)	|
+           Self::Bool(_, loc)	|
+           Self::Int(_, loc)	|
+           Self::Float(_, loc)	|
+           Self::Char(_, loc)	|
+           Self::List(_, loc)	|
+           Self::Map(_, loc)     |
+           Self::RangeInt(_, loc)	|
+           Self::RangeFloat(_, loc)	|
+           Self::RangeChar(_, loc) => {
+               loc
+           }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct StructureReader {
+    stack: Vec<MarkedValue>,
+    documents: Vec<MarkedValue>,
+    last_container_index: Vec<usize>
+}
+
+impl StructureReader {
+    fn new() -> StructureReader {
+        StructureReader::default()
+    }
+}
+
+impl MarkedEventReceiver for StructureReader {
+    fn on_event(&mut self, ev: Event, mark: Marker) {
+        match ev {
+            Event::StreamStart |
+            Event::StreamEnd   |
+            Event::DocumentStart => {},
+
+            Event::DocumentEnd => {
+                self.documents.push(self.stack.pop().unwrap());
+                self.stack.clear();
+                self.last_container_index.clear();
+            },
+
+            Event::MappingStart(..) => {
+                self.stack.push(
+                        MarkedValue::Map(
+                            indexmap::IndexMap::new(),
+                            Location::new(mark.line(), mark.col()))
+                );
+                self.last_container_index.push(self.stack.len()-1);
+            },
+
+            Event::MappingEnd => {
+                let map_index = self.last_container_index.pop().unwrap();
+                let mut key_values: Vec<MarkedValue> = self.stack.drain(map_index+1..).collect();
+                let map = match self.stack.last_mut().unwrap() {
+                    MarkedValue::Map(map, _) => map,
+                    _ => unreachable!()
+                };
+                while !key_values.is_empty() {
+                    let key = key_values.remove(0);
+                    let value = key_values.remove(0);
+                    let key_str = match key {
+                        MarkedValue::String(val, loc) => (val, loc),
+                        _ => unreachable!()
+                    };
+                    map.insert(key_str, value);
+                }
+            },
+
+            Event::SequenceStart(..) => {
+                self.stack.push(
+                    MarkedValue::List(vec![], Location::new(mark.line(), mark.col()))
+                );
+                self.last_container_index.push(self.stack.len()-1);
+            },
+
+            Event::SequenceEnd => {
+                let array_idx = self.last_container_index.pop().unwrap();
+                let values: Vec<MarkedValue> = self.stack.drain(array_idx+1..).collect();
+                let array = self.stack.last_mut().unwrap();
+                match array {
+                    MarkedValue::List(vec, _) => vec.extend(values),
+                    _ => unreachable!()
+                }
+            }
+
+            Event::Scalar(val, stype, _, token) => {
+                //let path = self.create_path(mark);
+                let location = Location::new(mark.line(), mark.col());
+                let path_value =
+                    if stype != TScalarStyle::Plain {
+                        MarkedValue::String(val, location)
+                    }
+                    else if let Some(TokenType::Tag(ref handle, ref suffix)) = token {
+                        if handle == "!!" {
+                            Self::handle_type_ref(val, location, suffix.as_ref())
+                        }
+                        else if handle == "!" {
+                            Self::handle_func_ref(val, location, suffix.as_ref())
+                        }
+                        else {
+                            MarkedValue::String(val, location)
+                        }
+                    }
+                    else {
+                        match Yaml::from_str(&val) {
+                            Yaml::Integer(i) => MarkedValue::Int(i, location),
+                            Yaml::Real(_) => val.parse::<f64>().ok().map_or(
+                                MarkedValue::BadValue(val, location.clone()),
+                                |f| MarkedValue::Float(f, location)
+                            ),
+                            Yaml::Boolean(b) => MarkedValue::Bool(b, location),
+                            Yaml::String(s) => MarkedValue::String(s, location),
+                            Yaml::Null => MarkedValue::Null(location),
+                            _ => MarkedValue::String(val, location)
+                        }
+                    };
+                self.stack.push(path_value);
+            },
+
+            _ => todo!()
+        }
+    }
+}
+
+impl StructureReader {
+
+    fn handle_func_ref(
+        val: String,
+        loc: Location,
+        fn_ref: &str) -> MarkedValue
+    {
+        match fn_ref {
+            "Ref" | "Base64" | "Sub" => {
+                let mut map = indexmap::IndexMap::new();
+                map.insert((fn_ref.to_string(), loc.clone()), MarkedValue::String(val, loc.clone()));
+                MarkedValue::Map(map, loc)
+            },
+
+            _ => todo!()
+        }
+    }
+
+    fn handle_type_ref(
+        val: String,
+        loc: Location,
+        type_ref: &str) -> MarkedValue
+    {
+        match type_ref {
+            "bool" => {
+                // "true" or "false"
+                match val.parse::<bool>() {
+                    Err(_) => MarkedValue::String(val, loc),
+                    Ok(v) => MarkedValue::Bool(v, loc)
+                }
+            }
+            "int" => match val.parse::<i64>() {
+                Err(_) => MarkedValue::BadValue(val, loc),
+                Ok(v) => MarkedValue::Int(v, loc),
+            },
+            "float" => match val.parse::<f64>() {
+                Err(_) => MarkedValue::BadValue(val, loc),
+                Ok(v) => MarkedValue::Float(v, loc),
+            },
+            "null" => match val.as_ref() {
+                "~" | "null" => MarkedValue::Null(loc),
+                _ => MarkedValue::BadValue(val, loc)
+            },
+            _ => MarkedValue::String(val, loc)
+        }
+    }
+}
+
+pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> {
+    let mut reader = StructureReader::new();
+    let mut parser = Parser::new(from_reader.chars());
+    match parser.load(&mut reader, false) {
+        Err(s) => return Err(Error::new(ErrorKind::ParseError(
+            format!("{}", s)
+        ))),
+
+        Ok(e) => {}
+    }
+    return Ok(reader.documents.pop().unwrap())
 }
 
 pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
