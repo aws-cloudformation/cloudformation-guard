@@ -875,7 +875,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                 writer,
                 "{prefix}Rule = {rule} {{",
                 prefix=prefix,
-                rule=rr.name
+                rule=rr.name.bright_magenta()
             )?;
             let rule_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);

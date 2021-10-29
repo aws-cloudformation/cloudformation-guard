@@ -4,6 +4,7 @@ use std::hash::Hash;
 use std::fmt::Formatter;
 use serde::{Serialize, Deserialize};
 use crate::rules::path_value::PathAwareValue;
+use crate::rules::display::ValueOnlyDisplay;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -364,7 +365,7 @@ impl<'loc> std::fmt::Display for LetValue<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             LetValue::AccessClause(acc) => acc.fmt(f)?,
-            LetValue::Value(v) => write!(f, "{:?}", v)?,
+            LetValue::Value(v) => write!(f, "{}", ValueOnlyDisplay(v))?,
             LetValue::FunctionCall(call_expr) => write!(f, "{}", call_expr)?,
         }
         Ok(())

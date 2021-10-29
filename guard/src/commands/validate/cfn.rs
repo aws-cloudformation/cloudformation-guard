@@ -395,25 +395,26 @@ fn single_line(writer: &mut dyn Write,
                         )?;
                         let new_prefix = format!("{}  ", prefix);
                         if let Some((num, line)) = self.code_segment.seek_line(std::cmp::max(1, line-2)) {
+                            let line = format!("{num:>5}.{line}", num=num, line=line).bright_green();
                             writeln!(
                                 writer,
-                                "{prefix}{num:>5}.{line}",
-                                prefix=new_prefix,
-                                num=num,
+                                "{prefix}{line}",
+                                prefix = new_prefix,
                                 line=line
                             )?;
                         }
                         let mut context = 5;
                         loop {
                             match self.code_segment.next() {
-                                Some((num, line)) =>
+                                Some((num, line)) => {
+                                    let line = format!("{num:>5}.{line}", num=num, line=line).bright_green();
                                     writeln!(
                                         writer,
-                                        "{prefix}{num:>5}.{line}",
-                                        prefix=new_prefix,
-                                        num=num,
+                                        "{prefix}{line}",
+                                        prefix = new_prefix,
                                         line=line
-                                    )?,
+                                    )?;
+                                }
                                 None => break,
                             }
                             context -= 1;
