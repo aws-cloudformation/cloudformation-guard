@@ -17,7 +17,7 @@ impl<'buffer> ReadCursor<'buffer> {
     }
 
     pub(crate) fn next(&mut self) -> Option<(usize, &'buffer str)> {
-        if self.line_num + 1 < self.previous_lines.len() {
+        if self.line_num < self.previous_lines.len() {
             self.line_num += 1;
             return Some(self.previous_lines[self.line_num-1].clone())
         }
@@ -41,8 +41,8 @@ impl<'buffer> ReadCursor<'buffer> {
 
     pub(crate) fn seek_line(&mut self, line: usize) -> Option<(usize, &'buffer str)> {
         if self.previous_lines.len() > line {
-            self.line_num = line+1;
-            return self.prev()
+            self.line_num = line;
+            return Some(self.previous_lines[self.line_num-1].clone())
         }
 
         loop {

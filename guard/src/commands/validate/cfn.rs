@@ -161,8 +161,7 @@ fn single_line(writer: &mut dyn Write,
         return Ok(())
     }
 
-    let mut code_segement = utils::ReadCursor::new(data_content);
-
+    let mut code_segment = utils::ReadCursor::new(data_content);
     let mut path_tree = PathTree::new();
     let mut hierarchy = RuleHierarchy::new();
     let root_node = std::rc::Rc::new(String::from(""));
@@ -219,23 +218,10 @@ fn single_line(writer: &mut dyn Write,
         }
     }
 
-    let mut regex_match = String::from("");
-    for (idx, key) in by_resources.keys().enumerate() {
-        // regex_match += "\\s+" + *key + ":$";
-        if idx != by_resources.len() {
-            regex_match.push('|');
-        }
-    }
-
-    struct ResourceLocations {
-        line: usize,
-        byte_offset: usize,
-    }
-
     writeln!(writer, "Evaluating data {} against rules {}", data_file, rules_file)?;
     let num_of_resources = format!("{}", by_resources.len()).bold();
     writeln!(writer, "Number of non-compliant resources {}", num_of_resources)?;
-    for (_, resource) in by_resources {
+    for (resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
         let prefix = String::from("  ");
         writeln!(
@@ -266,10 +252,26 @@ fn single_line(writer: &mut dyn Write,
             let range = resource.paths.range(rule_name.clone()..)
                 .take_while(|p| p.starts_with(&rule_name)).count();
             if range > 0 {
-                struct ErrWriter{};
-                impl super::common::ComparionErrorWriter<'_> for ErrWriter {
+                struct ErrWriter<'w, 'b>{code_segment: &'w mut utils::ReadCursor<'b>};
+                impl<'w, 'b> super::common::ComparisonErrorWriter for ErrWriter<'w, 'b> {
+                    fn missing_property_msg(
+                        &mut self,
+                        writer: &mut dyn Write,
+                        _cr: &ClauseReport<'_>,
+                        bc: Option<&UnResolved<'_>>,
+                        prefix: &str) -> crate::rules::Result<usize> {
+                        if let Some(bc) = bc {
+                            self.emit_code(
+                                writer,
+                                bc.traversed_to.self_path().1.line,
+                                prefix
+                            )?;
+                        }
+                        Ok(0)
+                    }
+
                     fn binary_error_msg(
-                        &self,
+                        &mut self,
                         writer: &mut dyn Write,
                         cr: &ClauseReport<'_>,
                         bc: &BinaryComparison<'_>,
@@ -289,11 +291,12 @@ fn single_line(writer: &mut dyn Write,
                             cmp=crate::rules::eval_context::cmp_str(bc.comparison),
                             with=ValueOnlyDisplay(bc.to)
                         )?;
+                        self.emit_code(writer, bc.from.self_path().1.line, prefix)?;
                         Ok(width)
                     }
 
                     fn binary_error_in_msg(
-                        &self,
+                        &mut self,
                         writer: &mut dyn Write,
                         cr: &ClauseReport<'_>,
                         bc: &InComparison<'_>,
@@ -341,32 +344,37 @@ fn single_line(writer: &mut dyn Write,
                                 with=collected
                             )?;
                         }
+                        self.emit_code(writer, bc.from.self_path().1.line, prefix)?;
                         Ok(width)
 
                     }
 
 
                     fn unary_error_msg(
-                        &self,
+                        &mut self,
                         writer: &mut dyn Write,
                         cr: &ClauseReport<'_>,
                         re: &UnaryComparison<'_>,
                         prefix: &str) -> crate::rules::Result<usize> {
-                        unary_err_msg(
+                        let width = unary_err_msg(
                             writer,
                             cr,
                             re,
                             prefix
-                        )
+                        )?;
+                        self.emit_code(writer, re.value.self_path().1.line, prefix)?;
+                        Ok(width)
                     }
+
+
                 }
-                let err_writer = ErrWriter{};
+                let mut err_writer = ErrWriter{code_segment: &mut code_segment};
                 super::common::pprint_clauses(
                     writer,
                     each_rule,
                     &resource,
                     prefix.clone(),
-                    &err_writer
+                    &mut err_writer
                 )?;
 //                pprint_clauses(
 //                    writer,
@@ -374,6 +382,49 @@ fn single_line(writer: &mut dyn Write,
 //                    &resource,
 //                    prefix.clone()
 //                )?;
+                impl<'w, 'b> ErrWriter<'w, 'b> {
+                    fn emit_code(
+                        &mut self,
+                        writer: &mut dyn Write,
+                        line: usize,
+                        prefix: &str) -> crate::rules::Result<()> {
+                        writeln!(
+                            writer,
+                            "{prefix}Code:",
+                            prefix=prefix
+                        )?;
+                        let new_prefix = format!("{}  ", prefix);
+                        if let Some((num, line)) = self.code_segment.seek_line(std::cmp::max(1, line-2)) {
+                            writeln!(
+                                writer,
+                                "{prefix}{num:>5}.{line}",
+                                prefix=new_prefix,
+                                num=num,
+                                line=line
+                            )?;
+                        }
+                        let mut context = 5;
+                        loop {
+                            match self.code_segment.next() {
+                                Some((num, line)) =>
+                                    writeln!(
+                                        writer,
+                                        "{prefix}{num:>5}.{line}",
+                                        prefix=new_prefix,
+                                        num=num,
+                                        line=line
+                                    )?,
+                                None => break,
+                            }
+                            context -= 1;
+                            if context <= 0 {
+                                break;
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+
             }
         }
         writeln!(writer, "}}")?;

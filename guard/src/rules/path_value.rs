@@ -469,7 +469,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                     values.insert(each_key.to_owned(), value);
                     keys.push(PathAwareValue::String((path.with_location(loc.clone()), each_key.to_string())));
                 }
-                Ok(PathAwareValue::Map((path, MapValue{keys, values})))
+                Ok(PathAwareValue::Map((path.with_location(loc), MapValue{keys, values})))
             },
 
             MarkedValue::BadValue(val, loc) => return Err(

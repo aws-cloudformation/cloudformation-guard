@@ -208,9 +208,9 @@ fn single_line(writer: &mut dyn Write,
                 .take_while(|p| p.starts_with(&rule_name)).count();
             if range > 0 {
                 struct ErrWriter{};
-                impl super::common::ComparionErrorWriter<'_> for ErrWriter {
+                impl super::common::ComparisonErrorWriter for ErrWriter {
                     fn binary_error_msg(
-                        &self,
+                        &mut self,
                         writer: &mut dyn Write,
                         _cr: &ClauseReport<'_>,
                         bc: &BinaryComparison<'_>,
@@ -248,13 +248,13 @@ fn single_line(writer: &mut dyn Write,
 
                     }
 
-                    fn binary_error_in_msg(&self, writer: &mut dyn Write, cr: &ClauseReport<'_>, bc: &InComparison<'_>, prefix: &str) -> crate::rules::Result<usize> {
+                    fn binary_error_in_msg(&mut self, writer: &mut dyn Write, cr: &ClauseReport<'_>, bc: &InComparison<'_>, prefix: &str) -> crate::rules::Result<usize> {
                         todo!()
                     }
 
 
                     fn unary_error_msg(
-                        &self,
+                        &mut self,
                         writer: &mut dyn Write,
                         _cr: &ClauseReport<'_>,
                         re: &UnaryComparison<'_>,
@@ -282,13 +282,13 @@ fn single_line(writer: &mut dyn Write,
 
                     }
                 }
-                let err_writer = ErrWriter{};
+                let mut err_writer = ErrWriter{};
                 super::common::pprint_clauses(
                     writer,
                     each_rule,
                     &resource,
                     prefix.clone(),
-                    &err_writer
+                    &mut err_writer
                 )?;
 //                pprint_clauses(
 //                    writer,

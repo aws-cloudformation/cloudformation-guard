@@ -2,11 +2,11 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, BlockCheck, TypeBlockCheck};
+use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, BlockCheck, TypeBlockCheck, UnResolved};
 use crate::rules::path_value::Path;
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
-use std::io::Write;
+use std::io::{Write, BufWriter};
 use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::convert::TryInto;
 use regex::Regex;
@@ -704,14 +704,51 @@ fn emit_messages(
     error: &str,
     width: usize) -> crate::rules::Result<()> {
     if !message.is_empty() {
-        writeln!(
-            writer,
-            "{prefix}{mh:<width$}= {message}",
-            prefix=prefix,
-            message=message,
-            mh="Message",
-            width=width
-        )?;
+        let message: Vec<&str> = if message.contains(';') {
+            message.split(';').collect()
+        } else if message.contains('\n') {
+            message.split('\n').collect()
+        } else {
+            vec![message]
+        };
+        let message: Vec<&str> = message.iter()
+            .map(|s|
+                s.trim_start().trim_end())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if message.len() > 1 {
+            writeln!(
+                writer,
+                "{prefix}{mh:<width$} {{",
+                prefix = prefix,
+                mh = "Message",
+                width = width
+            )?;
+            for each in message {
+                writeln!(
+                    writer,
+                    "{prefix}  {message}",
+                    prefix=prefix,
+                    message=each,
+                )?;
+            }
+            writeln!(
+                writer,
+                "{prefix}}}",
+                prefix=prefix,
+            )?;
+        }
+        else {
+            writeln!(
+                writer,
+                "{prefix}{mh:<width$}= {message}",
+                prefix=prefix,
+                message=message[0],
+                mh="Message",
+                width=width
+            )?;
+        }
     }
 
     if !error.is_empty() {
@@ -732,8 +769,11 @@ fn emit_retrieval_error(
     writer: &mut dyn Write,
     prefix: &str,
     vur: &ValueUnResolved<'_>,
+    clause: &ClauseReport<'_>,
     context: &str,
-    message: &str) -> crate::rules::Result<()> {
+    message: &str,
+    err_emitter: &mut dyn ComparisonErrorWriter,
+) -> crate::rules::Result<()> {
     writeln!(
         writer,
         "{prefix}Check = {cxt} {{",
@@ -781,29 +821,45 @@ fn emit_retrieval_error(
         )?;
 
     }
+    err_emitter.missing_property_msg(writer, clause, Some(&vur.value), &prefix)?;
     writeln!(writer, "{}", rpe_end)?;
     writeln!(writer, "{}", check_end)?;
     Ok(())
 }
 
-pub(super) trait ComparionErrorWriter<'value> {
-    fn binary_error_msg(&self,
-                        writer: &mut dyn Write,
-                        cr: &ClauseReport<'_>,
-                        bc: &BinaryComparison<'_>,
-                        prefix: &str) -> crate::rules::Result<usize>;
+pub(super) trait ComparisonErrorWriter {
+    fn missing_property_msg(&mut self,
+                            _writer: &mut dyn Write,
+                            _cr: &ClauseReport<'_>,
+                            _bc: Option<&UnResolved<'_>>,
+                            _prefix: &str) -> crate::rules::Result<usize> {
+        Ok(0)
+    }
 
-    fn binary_error_in_msg(&self,
-                           writer: &mut dyn Write,
-                           cr: &ClauseReport<'_>,
-                           bc: &InComparison<'_>,
-                           prefix: &str) -> crate::rules::Result<usize>;
 
-    fn unary_error_msg(&self,
-                       writer: &mut dyn Write,
-                       cr: &ClauseReport<'_>,
-                       bc: &UnaryComparison<'_>,
-                       prefix: &str) -> crate::rules::Result<usize>;
+    fn binary_error_msg(&mut self,
+                        _writer: &mut dyn Write,
+                        _cr: &ClauseReport<'_>,
+                        _bc: &BinaryComparison<'_>,
+                        _prefix: &str) -> crate::rules::Result<usize> {
+        Ok(0)
+    }
+
+    fn binary_error_in_msg(&mut self,
+                           _writer: &mut dyn Write,
+                           _cr: &ClauseReport<'_>,
+                           _bc: &InComparison<'_>,
+                           _prefix: &str) -> crate::rules::Result<usize> {
+        Ok(0)
+    }
+
+    fn unary_error_msg(&mut self,
+                       _writer: &mut dyn Write,
+                       _cr: &ClauseReport<'_>,
+                       _bc: &UnaryComparison<'_>,
+                       _prefix: &str) -> crate::rules::Result<usize> {
+        Ok(0)
+    }
 }
 
 pub(super) fn pprint_clauses<'report, 'value: 'report>(
@@ -811,7 +867,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
     clause: &'report ClauseReport<'value>,
     resource: &LocalResourceAggr<'report, 'value>,
     prefix: String,
-    err_writer: &dyn ComparionErrorWriter<'value>) -> crate::rules::Result<()>
+    err_writer: &mut dyn ComparisonErrorWriter) -> crate::rules::Result<()>
 {
     match clause {
         ClauseReport::Rule(rr) => {
@@ -904,9 +960,16 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
             } else {
                 "Message".len() + 4
             };
+            let mut post_message: Vec<u8> = Vec::new();
+            let width = std::cmp::max(width, err_writer.missing_property_msg(
+                &mut post_message, clause, blk.unresolved.as_ref().map(|ur| ur), &prefix)?);
             let message = blk.messages.custom_message.as_ref().map_or("", String::as_str);
             let error = blk.messages.error_message.as_ref().map_or("", String::as_str);
             emit_messages(writer, &prefix, message, error, width)?;
+            writeln!(writer, "{}", match String::from_utf8(post_message) {
+                Ok(msg) => msg,
+                Err(_) => "".to_string()
+            })?;
             writeln!(writer, "{}", mpv_end)?;
             writeln!(writer, "{}", check_end)?;
         },
@@ -923,8 +986,10 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                                 writer,
                                 &prefix,
                                 vur,
+                                clause,
                                 &ur.context,
-                                ur.messages.custom_message.as_ref().map_or("", String::as_str)
+                                ur.messages.custom_message.as_ref().map_or("", String::as_str),
+                                err_writer
                             )?;
                         },
 
@@ -944,8 +1009,9 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             )?;
                             let ce_end = format!("{}}}", prefix);
                             let prefix = format!("{}  ", prefix);
+                            let mut post_message: Vec<u8> = Vec::new();
                             let width = err_writer.unary_error_msg(
-                                writer,
+                                &mut post_message,
                                 clause,
                                 re,
                                 &prefix
@@ -953,6 +1019,10 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             let message = ur.messages.custom_message.as_ref().map_or("", String::as_str);
                             let error = ur.messages.error_message.as_ref().map_or("", String::as_str);
                             emit_messages(writer, &prefix, message, error, width)?;
+                            writeln!(writer, "{}", match String::from_utf8(post_message) {
+                                Ok(msg) => msg,
+                                Err(_) => "".to_string()
+                            })?;
                             writeln!(writer, "{}", ce_end)?;
                             writeln!(writer, "{}", check_end)?;
                         },
@@ -968,8 +1038,10 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                                 writer,
                                 &prefix,
                                 vur,
+                                clause,
                                 &br.context,
-                                br.messages.custom_message.as_ref().map_or("", String::as_str)
+                                br.messages.custom_message.as_ref().map_or("", String::as_str),
+                                err_writer
                             )?;
                         },
 
@@ -989,8 +1061,9 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             )?;
                             let ce_end = format!("{}}}", prefix);
                             let prefix = format!("{}  ", prefix);
+                            let mut post_message: Vec<u8> = Vec::new();
                             let width = err_writer.binary_error_msg(
-                                writer,
+                                &mut post_message,
                                 clause,
                                 bc,
                                 &prefix
@@ -998,6 +1071,11 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
                             let error = br.messages.error_message.as_ref().map_or("", String::as_str);
                             emit_messages(writer, &prefix, message, error, width)?;
+                            writeln!(writer, "{}", match String::from_utf8(post_message) {
+                                Ok(msg) => msg,
+                                Err(_) => "".to_string()
+                            })?;
+
                             writeln!(writer, "{}", ce_end)?;
                             writeln!(writer, "{}", check_end)?;
                         },
@@ -1018,17 +1096,21 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             )?;
                             let ce_end = format!("{}}}", prefix);
                             let prefix = format!("{}  ", prefix);
+                            let mut post_message: Vec<u8> = Vec::new();
                             let width = err_writer.binary_error_in_msg(
-                                writer,
+                                &mut post_message,
                                 clause,
                                 inr,
                                 &prefix
                             )?;
-
                             let message = br.messages.custom_message.as_ref().map_or("", String::as_str);
                             let error = br.messages.error_message.as_ref().map_or("", String::as_str);
                             emit_messages(writer, &prefix, message, error, width)?;
                             writeln!(writer, "{}", ce_end)?;
+                            writeln!(writer, "{}", match String::from_utf8(post_message) {
+                                Ok(msg) => msg,
+                                Err(_) => "".to_string()
+                            })?;
                             writeln!(writer, "{}", check_end)?;
                         }
 

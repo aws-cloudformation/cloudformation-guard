@@ -364,6 +364,9 @@ impl StructureReader {
 
 impl MarkedEventReceiver for StructureReader {
     fn on_event(&mut self, ev: Event, mark: Marker) {
+        let line = mark.line();
+        let col = mark.col();
+
         match ev {
             Event::StreamStart |
             Event::StreamEnd   |
@@ -379,7 +382,7 @@ impl MarkedEventReceiver for StructureReader {
                 self.stack.push(
                         MarkedValue::Map(
                             indexmap::IndexMap::new(),
-                            Location::new(mark.line(), mark.col()))
+                            Location::new(line, col))
                 );
                 self.last_container_index.push(self.stack.len()-1);
             },
@@ -404,7 +407,7 @@ impl MarkedEventReceiver for StructureReader {
 
             Event::SequenceStart(..) => {
                 self.stack.push(
-                    MarkedValue::List(vec![], Location::new(mark.line(), mark.col()))
+                    MarkedValue::List(vec![], Location::new(line, col))
                 );
                 self.last_container_index.push(self.stack.len()-1);
             },
@@ -421,7 +424,7 @@ impl MarkedEventReceiver for StructureReader {
 
             Event::Scalar(val, stype, _, token) => {
                 //let path = self.create_path(mark);
-                let location = Location::new(mark.line(), mark.col());
+                let location = Location::new(line, col);
                 let path_value =
                     if stype != TScalarStyle::Plain {
                         MarkedValue::String(val, location)

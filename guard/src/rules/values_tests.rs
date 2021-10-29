@@ -360,3 +360,25 @@ fn test_yaml_json_mapping() -> Result<()> {
     println!("{:?}", path_value);
     Ok(())
 }
+
+#[test]
+fn test_yaml_json_mapping_2() -> Result<()> {
+    let resources = r###"
+Resources:
+  s3:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+  s32:
+    Type: AWS::S3::Bucket
+  s33:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead"###;
+
+    let value = super::read_from(resources)?;
+    println!("{:?}", value);
+    let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
+    println!("{:?}", path_value);
+    Ok(())
+}

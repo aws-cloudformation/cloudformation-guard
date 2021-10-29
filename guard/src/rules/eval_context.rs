@@ -1286,6 +1286,7 @@ impl<'value> ClauseReport<'value> {
             Self::Clause(_) => format!("{}/C[{:p}]", parent, self)
         }
     }
+
 }
 
 impl<'value> ValueComparisons<'value> for ClauseReport<'value> {
