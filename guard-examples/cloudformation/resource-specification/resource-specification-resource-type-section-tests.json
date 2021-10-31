@@ -1,0 +1,100 @@
+[
+  {
+  	"name": "Errors in resource type section",
+    "expectations": {
+      "rules": {
+        "resource_main_doc_link_exists": "PASS",
+        "resource_property_checks": "PASS",
+        "resource_property_type_checks" : "FAIL",
+        "list_or_map_types_have_items" : "FAIL",
+        "property_item_type_exists" : "FAIL",
+        "resource_object_type_exists" : "FAIL"
+      }
+    },
+    "input": {
+      "ResourceType": {
+        "AWS::Test::Type": {
+          "Documentation": "http://test-doc-link.html",
+          "Properties" : {
+            "FirstProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true
+            },
+            "SecondProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "ObjectType"
+            },
+            "ThirdProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "List"
+            },
+            "FourthProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "List",
+              "ItemType": "ListObject"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "Valid resource type section",
+    "expectations": {
+      "rules": {
+        "resource_main_doc_link_exists": "PASS",
+        "resource_property_checks": "PASS",
+        "resource_property_type_checks" : "PASS",
+        "list_or_map_types_have_items" : "PASS",
+        "property_item_type_exists" : "PASS",
+        "resource_object_type_exists" : "PASS"
+      }
+    },
+    "input": {
+      "PropertyTypes": {
+        "ObjectType" : {},
+        "ListObject" : {}
+      },
+      "ResourceType": {
+        "AWS::Test::Type": {
+          "Documentation": "http://test-doc-link.html",
+          "Properties" : {
+            "FirstProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "PrimitiveType": "String"
+            },
+            "SecondProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "ObjectType"
+            },
+            "ThirdProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "List",
+              "PrimitiveItemType": "String"
+            },
+            "FourthProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": true,
+              "Type": "List",
+              "ItemType": "ListObject"
+            }
+          }
+        }
+      }
+    }
+  }
+]

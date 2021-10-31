@@ -1,0 +1,162 @@
+[
+  {
+  	"name": "Errors in resource type section",
+    "expectations": {
+      "rules": {
+        "property_type_checks": "FAIL",
+        "property_types_checks_no_sub_properties": "FAIL",
+        "property_type_item_type_exists" : "FAIL",
+        "root_property_type_item_type_exists" : "FAIL",
+        "property_type_object_type_exists" : "FAIL",
+        "root_property_type_object_type_exists" : "FAIL",
+        "property_type_list_or_map_types_have_items" : "FAIL",
+        "property_root_type_list_or_map_types_have_items" : "FAIL"
+      }
+    },
+    "input": {
+      "PropertyTypes": {
+        "FirstPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "Properties": {
+            "FirstSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false
+            },
+            "SecondSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "ObjectType"
+            },
+            "ThirdSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "List"
+            },
+            "FourthSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "List",
+              "ItemType": "ListObject"
+            }
+          }
+        },
+        "SecondPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false
+        },
+        "ThirdPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "ObjectType"
+        },
+        "FourthPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "List"
+        },
+        "FifthPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "List",
+          "ItemType": "ListObject"
+        }
+      }
+    }
+  },
+  {
+    "name": "Valid resource type section",
+    "expectations": {
+      "rules": {
+        "property_type_checks": "PASS",
+        "property_types_checks_no_sub_properties": "PASS",
+        "property_type_item_type_exists" : "PASS",
+        "root_property_type_item_type_exists" : "PASS",
+        "property_type_object_type_exists" : "PASS",
+        "root_property_type_object_type_exists" : "PASS",
+        "property_type_list_or_map_types_have_items" : "PASS",
+        "property_root_type_list_or_map_types_have_items" : "PASS"
+      }
+    },
+    "input": {
+      "PropertyTypes": {
+        "FirstPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "Properties": {
+            "FirstSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "PrimitiveType": "String"
+            },
+            "SecondSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "ObjectType"
+            },
+            "ThirdSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "List",
+              "PrimitiveItemType": "String"
+            },
+            "FourthSubProperty": {
+              "Documentation": "http://test-doc-link.html",
+              "UpdateType": "Mutable",
+              "Required": false,
+              "Type": "List",
+              "ItemType": "ListObject"
+            }
+          }
+        },
+        "SecondPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "PrimitiveType": "String"
+        },
+        "ThirdPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "ObjectType"
+        },
+        "FourthPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "List",
+          "PrimitiveItemType": "String"
+        },
+        "FifthPropertyType": {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "Type": "List",
+          "ItemType": "ListObject"
+        },
+        "ObjectType" : {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "PrimitiveType": "String"
+        },
+        "ListObject" : {
+          "Documentation": "http://test-doc-link.html",
+          "UpdateType": "Mutable",
+          "Required": false,
+          "PrimitiveType": "String"
+        }
+      }
+    }
+  }
+]

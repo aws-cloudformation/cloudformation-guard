@@ -54,7 +54,7 @@ rule property_types_checks_no_sub_properties when %property_types_no_properties 
 # For any List/Map with a non-primitive item type defined within a property of a property type,
 # the item type must be defined in the spec
 #
-let property_type_item_types = PropertyTypes.*.Properties.*[ ItemType EXISTS ]
+let property_type_item_types = %property_types.Properties.*[ ItemType EXISTS ]
 rule property_type_item_type_exists when %property_type_item_types !empty {
 	let object_name = %property_type_item_types.ItemType
 	PropertyTypes.%object_name EXISTS
@@ -73,7 +73,7 @@ rule root_property_type_item_type_exists when %property_type_root_item_types !em
 # For any non-primitive type that is used by a property of a property type, the type must be defined
 # in the spec
 #
-let property_type_object_types = PropertyTypes.*.Properties.*[ Type EXISTS ]
+let property_type_object_types = %property_types.Properties.*[ Type EXISTS ]
 let property_type_object_types_not_map_or_list = %property_type_object_types[Type NOT IN ['List', 'Map']]
 rule property_type_object_type_exists when %property_type_object_types_not_map_or_list !empty {
 	let object_name =  %property_type_object_types_not_map_or_list.Type
@@ -92,7 +92,7 @@ rule root_property_type_object_type_exists when %root_property_type_object_types
 
 # Each property type of type List must have a ItemType defined
 #
-let property_type_list_or_map_types = PropertyTypes.*.Properties.*[ Type IN ['List', 'Map'] ]
+let property_type_list_or_map_types = %property_types.Properties.*[ Type IN ['List', 'Map'] ]
 rule property_type_list_or_map_types_have_items when %property_type_list_or_map_types !empty {
 	%property_type_list_or_map_types {
 		ItemType EXISTS OR

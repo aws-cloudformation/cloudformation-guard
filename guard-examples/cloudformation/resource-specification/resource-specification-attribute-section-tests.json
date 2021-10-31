@@ -1,0 +1,39 @@
+[
+  {
+  	"name": "Errors in attribute section",
+    "expectations": {
+      "rules": {
+        "attribute_type_not_empty": "FAIL"
+      }
+    },
+    "input": {
+        "ResourceType": {
+            "AWS::Test::Type": {
+              "Attributes": {
+                "Arn": {
+                }
+              }
+            }
+        }
+    }
+  },
+  {
+    "name": "Valid attribute section",
+    "expectations": {
+      "rules": {
+        "attribute_type_not_empty": "PASS"
+      }
+    },
+    "input": {
+        "ResourceType": {
+            "AWS::Test::Type": {
+              "Attributes": {
+                "Arn": {
+                  "PrimitiveType": "String"
+                }
+              }
+            }
+        }
+    }
+  }
+]
