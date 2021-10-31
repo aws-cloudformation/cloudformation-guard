@@ -38,7 +38,7 @@ urlencoding = "2.1.0"
 grep-searcher = "0.1.8"
 grep-matcher = "0.1.5"
 grep-regex = "0.1.9"
-yaml-rust = {path = "../../yaml-rust"}
+yaml-rust = {git = "https://github.com/dchakrav-github/yaml-rust"}
 
 [dependencies.serde_json]
 version = "1.0.60"

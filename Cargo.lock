@@ -135,7 +135,7 @@ dependencies = [
  "string-builder",
  "urlencoding",
  "walkdir",
- "yaml-rust 0.4.5",
+ "yaml-rust 0.4.5 (git+https://github.com/dchakrav-github/yaml-rust)",
 ]
 
 [[package]]
@@ -1093,6 +1093,8 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "yaml-rust"
 version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
 ]
@@ -1100,8 +1102,7 @@ dependencies = [
 [[package]]
 name = "yaml-rust"
 version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
+source = "git+https://github.com/dchakrav-github/yaml-rust#c202dd0e0172602a101015260a021fb59700f086"
 dependencies = [
  "linked-hash-map",
 ]

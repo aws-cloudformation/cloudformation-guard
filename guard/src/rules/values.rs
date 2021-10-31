@@ -15,6 +15,8 @@ use yaml_rust::{Event, Yaml};
 use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
 use crate::rules::path_value::Location;
 
+use lazy_static::lazy_static;
+
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
     Eq,
@@ -353,7 +355,8 @@ impl MarkedValue {
 struct StructureReader {
     stack: Vec<MarkedValue>,
     documents: Vec<MarkedValue>,
-    last_container_index: Vec<usize>
+    last_container_index: Vec<usize>,
+    func_support_index: Vec<(usize, (String, Location))>,
 }
 
 impl StructureReader {
@@ -405,7 +408,20 @@ impl MarkedEventReceiver for StructureReader {
                 }
             },
 
-            Event::SequenceStart(..) => {
+            Event::SequenceStart(0, tag) => {
+                if let Some(TokenType::Tag(handle, suffix)) = &tag {
+                    if handle == "!" {
+                        let location = Location::new(line, col);
+                        match Self::handle_sequence_value_func_ref(location.clone(), suffix) {
+                            Some(value) => {
+                                self.stack.push(value);
+                                let fn_ref = Self::short_form_to_long(suffix);
+                                self.func_support_index.push((self.stack.len()-1, (fn_ref.to_owned(), Location::new(line, col))));
+                            },
+                            None => {}
+                        }
+                    }
+                }
                 self.stack.push(
                     MarkedValue::List(vec![], Location::new(line, col))
                 );
@@ -420,25 +436,41 @@ impl MarkedEventReceiver for StructureReader {
                     MarkedValue::List(vec, _) => vec.extend(values),
                     _ => unreachable!()
                 }
+
+                if self.func_support_index.last().map_or(false, |(idx, _)| *idx == array_idx-1) {
+                    let (_, fn_ref) = self.func_support_index.pop().unwrap();
+                    let array = self.stack.pop().unwrap();
+                    let map = self.stack.last_mut().unwrap();
+                    match map {
+                        MarkedValue::Map(map, _) => {
+                            let _ = map.insert(fn_ref, array);
+                        },
+                        MarkedValue::BadValue(..) => {},
+                        _ => unreachable!()
+                    }
+                }
             }
 
             Event::Scalar(val, stype, _, token) => {
                 //let path = self.create_path(mark);
                 let location = Location::new(line, col);
                 let path_value =
-                    if stype != TScalarStyle::Plain {
-                        MarkedValue::String(val, location)
-                    }
-                    else if let Some(TokenType::Tag(ref handle, ref suffix)) = token {
+                    if let Some(TokenType::Tag(ref handle, ref suffix)) = token {
                         if handle == "!!" {
                             Self::handle_type_ref(val, location, suffix.as_ref())
                         }
                         else if handle == "!" {
-                            Self::handle_func_ref(val, location, suffix.as_ref())
+                            Self::handle_single_value_func_ref(val.clone(), location.clone(), suffix.as_ref())
+                                .map_or(
+                                    MarkedValue::String(val, location),
+                                    std::convert::identity
+                                )
                         }
                         else {
                             MarkedValue::String(val, location)
                         }
+                    } else if stype != TScalarStyle::Plain {
+                        MarkedValue::String(val, location)
                     }
                     else {
                         match Yaml::from_str(&val) {
@@ -463,19 +495,82 @@ impl MarkedEventReceiver for StructureReader {
 
 impl StructureReader {
 
-    fn handle_func_ref(
+    fn short_form_to_long(fn_ref: &str) -> &'static str {
+        match fn_ref {
+            "Ref"           => "Ref",
+            "GetAtt"        => "Fn::GetAtt",
+            "Base64"        => "Fn::Base64",
+            "Sub"           => "Fn::Sub",
+            "GetAZs"        => "Fn::GetAZs",
+            "ImportValue"   => "Fn::ImportValue",
+            "Condition"     => "Condition",
+            "RefAll"        => "Fn::RefAll",
+            "Select"            => "Fn::Select",
+            "Split"             => "Fn::Split",
+            "Join"              => "Fn::Join",
+            "FindInMap"         => "Fn::FindInMap",
+            "And"               => "Fn::And",
+            "Equals"            => "Fn::Equals",
+            "Contains"          => "Fn::Contains",
+            "EachMemberIn"      => "Fn::EachMemberIn",
+            "EachMemberEquals"  => "Fn::EachMemberEquals",
+            "ValueOf"           => "Fn::ValueOf",
+            "If"                => "Fn::If",
+            "Not"               => "Fn::Not",
+            "Or"                => "Fn::Or",
+            _ => unreachable!()
+        }
+    }
+
+    fn handle_single_value_func_ref(
         val: String,
         loc: Location,
-        fn_ref: &str) -> MarkedValue
+        fn_ref: &str) -> Option<MarkedValue>
     {
         match fn_ref {
-            "Ref" | "Base64" | "Sub" => {
+            "Ref"           |
+            "Base64"        |
+            "Sub"           |
+            "GetAZs"        |
+            "ImportValue"   |
+            "GetAtt"        |
+            "Condition"     |
+            "RefAll" => {
                 let mut map = indexmap::IndexMap::new();
+                let fn_ref = Self::short_form_to_long(fn_ref);
                 map.insert((fn_ref.to_string(), loc.clone()), MarkedValue::String(val, loc.clone()));
-                MarkedValue::Map(map, loc)
+                Some(MarkedValue::Map(map, loc))
             },
 
-            _ => todo!()
+            _ => None,
+        }
+    }
+
+    fn handle_sequence_value_func_ref(
+        loc: Location,
+        fn_ref: &str) -> Option<MarkedValue> {
+        match fn_ref {
+            "Sub"               |
+            "Select"            |
+            "Split"             |
+            "Join"              |
+            "FindInMap"         |
+            "And"               |
+            "Equals"            |
+            "Contains"          |
+            "EachMemberIn"      |
+            "EachMemberEquals"  |
+            "ValueOf"           |
+            "If"                |
+            "Not"               |
+            "Or" => {
+                let mut map = indexmap::IndexMap::new();
+                let fn_ref = Self::short_form_to_long(fn_ref);
+                map.insert((fn_ref.to_string(), loc.clone()), MarkedValue::Null(loc.clone()));
+                Some(MarkedValue::Map(map, loc))
+            },
+
+            _ => None,
         }
     }
 

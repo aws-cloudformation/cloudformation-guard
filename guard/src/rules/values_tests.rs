@@ -8,6 +8,7 @@ use crate::rules::exprs::{TypeBlock, Rule};
 
 use crate::rules::{ Result, EvaluationContext, EvaluationType, Evaluate, Status, Error, errors::ErrorKind };
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
+use crate::rules::path_value::traversal::{Traversal, TraversalResult};
 
 #[test]
 fn test_convert_from_to_value() -> Result<()> {
@@ -358,27 +359,88 @@ fn test_yaml_json_mapping() -> Result<()> {
     println!("{:?}", value);
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
     println!("{:?}", path_value);
+
+    let value = super::read_from(resources_json)?;
+    println!("{:?}", value);
+    let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
+    println!("{:?}", path_value);
     Ok(())
 }
 
 #[test]
 fn test_yaml_json_mapping_2() -> Result<()> {
     let resources = r###"
+MyNotCondition:
+    !Not [!Equals [!Ref EnvironmentType, prod]]
 Resources:
+  myEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - HVM64
+      InstanceType: m1.small
   s3:
     Type: AWS::S3::Bucket
     Properties:
-      AccessControl: Private
-  s32:
-    Type: AWS::S3::Bucket
-  s33:
-    Type: AWS::S3::Bucket
-    Properties:
-      AccessControl: PublicRead"###;
+      AccessControl: !Sub
+        - /${a}/works
+        - a: this
+
+      Others: !Select [ "1", [ "apples", "grapes", "oranges", "mangoes" ] ]
+      TestJoin: !Join [ ":", [ a, b, c ] ]
+      TestJoinWithRef: !Join [ ":", [ !Ref A, b, c ] ]
+      "###;
 
     let value = super::read_from(resources)?;
     println!("{:?}", value);
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
+    let traversal = Traversal::from(&path_value);
+    let root = traversal.root().unwrap();
+    let test_join = traversal.at("/Resources/s3/Properties/TestJoinWithRef/Fn::Join/1/0", root)?;
+    assert_eq!(matches!(test_join, TraversalResult::Value(_)), true);
+    let condition = traversal.at("/MyNotCondition/Fn::Not/0/Fn::Equals/0/Ref", root)?;
+    assert_eq!(matches!(condition, TraversalResult::Value(_)), true);
+    match condition {
+        TraversalResult::Value(val) => {
+            assert_eq!(val.value().is_scalar(), true);
+            match val.value() {
+                PathAwareValue::String((_, v)) => {
+                    assert_eq!(v, "EnvironmentType");
+                },
+                _ => unreachable!()
+            }
+        },
+        _ => unreachable!()
+    }
+
+    let ec2_image = match traversal.at("/Resources/myEC2Instance/Properties/ImageId/Fn::FindInMap", root)? {
+        TraversalResult::Value(n) => n,
+        _ => unreachable!()
+    };
+    match traversal.at("0/0", ec2_image)?.as_value().unwrap().value() {
+        PathAwareValue::String((_, region)) => {
+            assert_eq!("RegionMap", region);
+        },
+        _ => unreachable!()
+    }
+
+    match traversal.at("0/1/Ref", ec2_image)?.as_value().unwrap().value() {
+        PathAwareValue::String((_, region)) => {
+            assert_eq!("AWS::Region", region);
+        },
+        _ => unreachable!()
+    }
+
+    match traversal.at("0/2", ec2_image)?.as_value().unwrap().value() {
+        PathAwareValue::String((_, region)) => {
+            assert_eq!("HVM64", region);
+        },
+        _ => unreachable!()
+    }
+
+
     println!("{:?}", path_value);
     Ok(())
 }

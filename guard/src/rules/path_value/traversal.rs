@@ -35,6 +35,23 @@ pub(crate) enum TraversalResult<'a, 'b> {
     Key(&'a str)
 }
 
+impl<'a, 'b> TraversalResult<'a, 'b> {
+
+    pub(crate) fn as_value(&self) -> Option<&Node<'_>> {
+        match self {
+            Self::Value(n) => Some(n),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_key(&self) -> Option<&str> {
+        match self {
+            Self::Key(k) => Some(*k),
+            _ => None
+        }
+    }
+}
+
 fn from_value<'value>(
     current: &'value PathAwareValue,
     parent: Option<&'value str>,
@@ -143,7 +160,7 @@ impl<'value> Traversal<'value> {
             None =>
                 return Err(Error::new(ErrorKind::RetrievalError(
                     format!("Path {} did not yield value. Current Path {}, expected sub-paths {:?}",
-                            pointer, node.value().self_path(),
+                            pointer, node.value().self_path().0,
                             self.nodes.range(pointer..)
                 ))))
         }
