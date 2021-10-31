@@ -69,37 +69,37 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 
     fn report_eval<'value>(
         &self,
-        _write: &mut dyn Write,
-        _status: Status,
-        _root_record: &EventRecord<'value>,
-        _rules_file: &str,
-        _data_file: &str,
-        _data_file_bytes: &str,
-        _data: &Traversal<'value>,
-        _output_type: OutputFormatType) -> crate::rules::Result<()> {
+        write: &mut dyn Write,
+        status: Status,
+        root_record: &EventRecord<'value>,
+        rules_file: &str,
+        data_file: &str,
+        data_file_bytes: &str,
+        data: &Traversal<'value>,
+        output_type: OutputFormatType) -> crate::rules::Result<()> {
 
-        let root = _data.root().unwrap();
-        if let Ok(_) = _data.at("/Resources", root) {
-            let failure_report = simplifed_json_from_root(_root_record)?;
-            Ok(match _output_type {
-                OutputFormatType::YAML => serde_yaml::to_writer(_write, &failure_report)?,
-                OutputFormatType::JSON => serde_json::to_writer_pretty(_write, &failure_report)?,
+        let root = data.root().unwrap();
+        if let Ok(_) = data.at("/Resources", root) {
+            let failure_report = simplifed_json_from_root(root_record)?;
+            Ok(match output_type {
+                OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
+                OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
                 OutputFormatType::SingleLineSummary => single_line(
-                    _write, _data_file, _data_file_bytes, _rules_file, _data, failure_report)?,
+                    write, data_file, data_file_bytes, rules_file, data, failure_report)?,
             })
         }
         else {
             self.next.map_or(
                 Ok(()), |next|
                 next.report_eval(
-                    _write,
-                    _status,
-                    _root_record,
-                    _rules_file,
-                    _data_file,
-                    _data_file_bytes,
-                    _data,
-                    _output_type)
+                    write,
+                    status,
+                    root_record,
+                    rules_file,
+                    data_file,
+                    data_file_bytes,
+                    data,
+                    output_type)
                 )
         }
     }

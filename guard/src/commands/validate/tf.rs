@@ -40,47 +40,45 @@ impl<'reporter> Reporter for TfAware<'reporter> {
 
     fn report_eval<'value>(
         &self,
-        _write: &mut dyn Write,
-        _status: Status,
-        _root_record: &EventRecord<'value>,
-        _rules_file: &str,
-        _data_file: &str,
-        _data_file_bytes: &str,
-        _data: &Traversal<'value>,
-        _output_type: OutputFormatType) -> crate::rules::Result<()> {
+        write: &mut dyn Write,
+        status: Status,
+        root_record: &EventRecord<'value>,
+        rules_file: &str,
+        data_file: &str,
+        data_file_bytes: &str,
+        data: &Traversal<'value>,
+        output_type: OutputFormatType) -> crate::rules::Result<()> {
 
-        let root = _data.root().unwrap();
-        let resource_changes = _data.at("/resource_changes", root)?;
-        let tf_version = _data.at("/terraform_version", root)?;
-        let is_tf_plan = match tf_version {
-            TraversalResult::Value(version) => match resource_changes {
-                TraversalResult::Value(_) => true,
+        let root = data.root().unwrap();
+        let is_tf_plan = match data.at("/resource_changes", root) {
+            Ok(_resource_changes) => match data.at("/terraform_version", root) {
+                Ok(_tf_version) => true,
                 _ => false,
             },
             _ => false
         };
 
         if is_tf_plan {
-            let failure_report = simplifed_json_from_root(_root_record)?;
-            Ok(match _output_type {
-                OutputFormatType::YAML => serde_yaml::to_writer(_write, &failure_report)?,
-                OutputFormatType::JSON => serde_json::to_writer_pretty(_write, &failure_report)?,
+            let failure_report = simplifed_json_from_root(root_record)?;
+            Ok(match output_type {
+                OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
+                OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
                 OutputFormatType::SingleLineSummary => single_line(
-                    _write, _data_file, _rules_file, _data, root, failure_report)?,
+                    write, data_file, rules_file, data, root, failure_report)?,
             })
         }
         else {
             self.next.map_or(
                 Ok(()),
                 |next| next.report_eval(
-                    _write,
-                    _status,
-                    _root_record,
-                    _rules_file,
-                    _data_file,
-                    _data_file_bytes,
-                    _data,
-                    _output_type
+                    write,
+                    status,
+                    root_record,
+                    rules_file,
+                    data_file,
+                    data_file_bytes,
+                    data,
+                    output_type
                 )
             )
         }
