@@ -1,6 +1,6 @@
 [
   {
-  	"name": "Errors in resource type section",
+    "name": "Errors in resource type section",
     "expectations": {
       "rules": {
         "resource_main_doc_link_exists": "PASS",

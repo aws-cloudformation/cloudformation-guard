@@ -1,6 +1,6 @@
 [
   {
-  	"name": "Errors in attribute section",
+    "name": "Errors in attribute section",
     "expectations": {
       "rules": {
         "attribute_type_not_empty": "FAIL"

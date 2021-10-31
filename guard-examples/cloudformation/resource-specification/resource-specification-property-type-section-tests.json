@@ -1,6 +1,6 @@
 [
   {
-  	"name": "Errors in resource type section",
+    "name": "Errors in resource type section",
     "expectations": {
       "rules": {
         "property_type_checks": "FAIL",
