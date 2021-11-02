@@ -91,41 +91,49 @@ or failure testing.
             }
             let dir = app.value_of("dir").unwrap();
             let walk = walkdir::WalkDir::new(dir);
+            let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
-            for each_entry in walk.sort_by_file_name() {
+            for each_entry in walk.follow_links(true).sort_by_file_name() {
                 if let Ok(file) = each_entry {
                     if file.path().is_file() {
                         let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
-                        if name.ends_with(".guard")         ||
-                           name.ends_with(".ruleset") {
+                        if name.ends_with(".guard") ||
+                            name.ends_with(".ruleset") {
                             let prefix = name.strip_suffix(".guard").or_else(|| name.strip_suffix(".ruleset"))
                                 .unwrap().to_string();
                             ordered_guard_files.entry(
                                 file.path().parent()
-                                    .map_or("".to_string(),|p| format!("{}", p.display()))).or_insert(vec![])
-                                .push( GuardFile{prefix, file, test_files: vec![]});
+                                    .map_or("".to_string(), |p| format!("{}", p.display()))).or_insert(vec![])
+                                .push(GuardFile { prefix, file, test_files: vec![] });
+                            continue
                         }
-                        else if name.ends_with(".yaml")          ||
-                                name.ends_with(".yml")           ||
-                                name.ends_with(".json")          ||
-                                name.ends_with(".jsn") {
-                            let parent = file.path().parent();
-                            if parent.map_or(false, |p| p.ends_with("tests")) {
-                                parent.unwrap().parent()
-                                    .map(|grand|{
-                                        let grand = format!("{}", grand.display());
-                                        ordered_guard_files.get_mut(&grand)
-                                    }).flatten()
-                                    .map(|candidates| {
-                                        for guard_file in candidates {
-                                            if name.starts_with(&guard_file.prefix) {
-                                                guard_file.test_files.push(file);
-                                                break;
-                                            }
-                                        }
-                                    });
-                            }
+                        else {
+                            non_guard.push(file);
                         }
+                    }
+                }
+            }
+            for file in non_guard {
+                let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
+                if name.ends_with(".yaml")          ||
+                    name.ends_with(".yml")           ||
+                    name.ends_with(".json")          ||
+                    name.ends_with(".jsn") {
+                    let parent = file.path().parent();
+                    if parent.map_or(false, |p| p.ends_with("tests")) {
+                        parent.unwrap().parent()
+                            .map(|grand|{
+                                let grand = format!("{}", grand.display());
+                                ordered_guard_files.get_mut(&grand)
+                            }).flatten()
+                            .map(|candidates| {
+                                for guard_file in candidates {
+                                    if name.starts_with(&guard_file.prefix) {
+                                        guard_file.test_files.push(file);
+                                        break;
+                                    }
+                                }
+                            });
                     }
                 }
             }
@@ -189,7 +197,10 @@ or failure testing.
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => println!("Parse Error on ruleset file {}", e),
                             Ok(rules) => {
-                                exit_code = test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                                let curr_exit_code = test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                                if curr_exit_code != 0 {
+                                    exit_code = curr_exit_code;
+                                }
                             }
                         }
                     }
@@ -300,37 +311,10 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                     by_result.entry(String::from("FAIL")).or_insert(indexmap::IndexSet::new())
                                         .insert(String::from(format!("{}: Expected = {}, Evaluated = {:?}",
                                                                      rule_name, expected, statues)));
+                                    exit_code = 7;
                                 }
                             }
                         }
-
-//                        for rule in &top.children {
-//                            if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name, ..})) = rule.container {
-//                                match each.expectations.rules.get(name) {
-//                                    Some(expectation) => {
-//                                        match Status::try_from(expectation.as_str()) {
-//                                            Err(e) => println!("Incorrect STATUS provided {}", e),
-//                                            Ok(expected_status) => {
-//                                                if got_status != expected_status {
-//                                                    by_result.entry(String::from("FAILED")).or_insert(indexmap::IndexSet::new())
-//                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-//                                                                                     name, expected_status, got_status)));
-//                                                    exit_code = 7;
-//                                                } else {
-//                                                    by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
-//                                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-//                                                                                     name, expected_status, got_status)));
-//                                                }
-//                                            }
-//                                        }
-//                                    },
-//
-//                                    None => {
-//                                        println!("  No Test expectation was set for Rule {}", name)
-//                                    }
-//                                }
-//                            }
-//                        }
 
                         if verbose {
                             super::validate::print_verbose_tree(&top);
