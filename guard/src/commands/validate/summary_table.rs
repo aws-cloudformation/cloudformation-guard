@@ -1,11 +1,11 @@
-use crate::commands::validate::Reporter;
-use std::io::Write;
 use crate::commands::tracker::StatusContext;
+use crate::commands::validate::common::colored_string;
+use crate::commands::validate::Reporter;
 use crate::rules::Status;
 use colored::*;
-use itertools::Itertools;
 use enumflags2::{bitflags, BitFlags};
-use crate::commands::validate::common::colored_string;
+use itertools::Itertools;
+use std::io::Write;
 
 #[bitflags]
 #[repr(u8)]
@@ -16,7 +16,6 @@ pub(super) enum SummaryType {
     SKIP = 0b0100,
 }
 
-
 #[derive(Debug)]
 pub(super) struct SummaryTable<'r> {
     rules_file_name: &'r str,
@@ -25,51 +24,64 @@ pub(super) struct SummaryTable<'r> {
 }
 
 impl<'a> SummaryTable<'a> {
-    pub(crate) fn new<'r>(rules_file_name: &'r str, data_file_name: &'r str, summary_type: BitFlags<SummaryType>) -> SummaryTable<'r> {
+    pub(crate) fn new<'r>(
+        rules_file_name: &'r str,
+        data_file_name: &'r str,
+        summary_type: BitFlags<SummaryType>,
+    ) -> SummaryTable<'r> {
         SummaryTable {
-            rules_file_name, data_file_name, summary_type
+            rules_file_name,
+            data_file_name,
+            summary_type,
         }
     }
 }
 
-fn print_partition(writer: &mut dyn Write,
-                   rules_file_name: &str,
-                   part: &[&StatusContext],
-                   longest: usize) -> crate::rules::Result<()> {
+fn print_partition(
+    writer: &mut dyn Write,
+    rules_file_name: &str,
+    part: &[&StatusContext],
+    longest: usize,
+) -> crate::rules::Result<()> {
     for container in part {
-        writeln!(writer,
-                 "{filename}/{context:<0$}{status}",
-                 longest+4,
-                 filename=rules_file_name,
-                 context=container.context,
-                 status=super::common::colored_string(container.status)
+        writeln!(
+            writer,
+            "{filename}/{context:<0$}{status}",
+            longest + 4,
+            filename = rules_file_name,
+            context = container.context,
+            status = super::common::colored_string(container.status)
         )?;
     }
     Ok(())
 }
 
-
 impl<'r> Reporter for SummaryTable<'r> {
-    fn report(&self,
-              writer: &mut dyn Write,
-              status: Option<Status>,
-              failed_rules: &[&StatusContext],
-              passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize) -> crate::rules::Result<()> {
-
-        let as_vec = passed_or_skipped.iter().map(|s| *s)
-            .collect_vec();
-        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) = as_vec.iter()
-            .partition(|status| match status.status { // This uses the dereference deep trait of Rust
+    fn report(
+        &self,
+        writer: &mut dyn Write,
+        status: Option<Status>,
+        failed_rules: &[&StatusContext],
+        passed_or_skipped: &[&StatusContext],
+        longest_rule_name: usize,
+    ) -> crate::rules::Result<()> {
+        let as_vec = passed_or_skipped.iter().map(|s| *s).collect_vec();
+        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
+            as_vec.iter().partition(|status| match status.status {
+                // This uses the dereference deep trait of Rust
                 Some(Status::SKIP) => true,
-                _ => false
+                _ => false,
             });
 
-        writeln!(writer, "{} Status = {}", self.data_file_name, colored_string(status))?;
+        writeln!(
+            writer,
+            "{} Status = {}",
+            self.data_file_name,
+            colored_string(status)
+        )?;
         if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
             writeln!(writer, "{}", "SKIP rules".bold());
             print_partition(writer, self.rules_file_name, &skipped, longest_rule_name)?;
-
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
@@ -79,7 +91,12 @@ impl<'r> Reporter for SummaryTable<'r> {
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed_rules.is_empty() {
             writeln!(writer, "{}", "FAILED rules".bold());
-            print_partition(writer, self.rules_file_name, failed_rules, longest_rule_name)?;
+            print_partition(
+                writer,
+                self.rules_file_name,
+                failed_rules,
+                longest_rule_name,
+            )?;
         }
 
         writeln!(writer, "---")?;

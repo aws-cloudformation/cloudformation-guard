@@ -1,8 +1,8 @@
 use crate::rules::values::*;
 
-use std::hash::Hash;
+use serde::{Deserialize, Serialize};
 use std::fmt::Formatter;
-use serde::{Serialize, Deserialize};
+use std::hash::Hash;
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -14,7 +14,10 @@ pub(crate) struct FileLocation<'loc> {
 
 impl<'loc> std::fmt::Display for FileLocation<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Location[file:{}, line:{}, column:{}]", self.file_name, self.line, self.column))?;
+        f.write_fmt(format_args!(
+            "Location[file:{}, line:{}, column:{}]",
+            self.file_name, self.line, self.column
+        ))?;
         Ok(())
     }
 }
@@ -75,7 +78,7 @@ impl<'loc> QueryPart<'loc> {
     pub(crate) fn variable(&self) -> Option<&str> {
         let name = match self {
             QueryPart::Key(name) => name,
-            _ => return None
+            _ => return None,
         };
         if name.starts_with('%') {
             name.strip_prefix('%')
@@ -90,7 +93,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
         match self {
             QueryPart::Key(s) => {
                 f.write_str(s.as_str())?;
-            },
+            }
 
             QueryPart::AllIndices => {
                 f.write_str("[*]")?;
@@ -98,19 +101,19 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
 
             QueryPart::AllValues => {
                 f.write_str("*")?;
-            },
+            }
 
             QueryPart::Index(idx) => {
                 write!(f, "{}", idx.to_string())?;
-            },
+            }
 
             QueryPart::Filter(_c) => {
                 f.write_str("(filter-clauses)")?;
-            },
+            }
 
             QueryPart::MapKeyFilter(_clause) => {
                 f.write_str("(map-key-filter-clause)")?;
-            },
+            }
 
             QueryPart::This => {
                 f.write_str("_")?;
@@ -143,7 +146,7 @@ pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardAccessClause<'loc> {
     pub(crate) access_clause: AccessClause<'loc>,
-    pub(crate) negation: bool
+    pub(crate) negation: bool,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
@@ -157,14 +160,14 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
     pub(crate) custom_message: Option<String>,
-    pub(crate) location: FileLocation<'loc>
+    pub(crate) location: FileLocation<'loc>,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct BlockGuardClause<'loc> {
     pub(crate) query: AccessQuery<'loc>,
     pub(crate) block: Block<'loc, GuardClause<'loc>>,
-    pub(crate) location: FileLocation<'loc>
+    pub(crate) location: FileLocation<'loc>,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
@@ -206,7 +209,7 @@ pub(crate) struct TypeBlock<'loc> {
 pub(crate) enum RuleClause<'loc> {
     Clause(GuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
-    TypeBlock(TypeBlock<'loc>)
+    TypeBlock(TypeBlock<'loc>),
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -239,4 +242,3 @@ impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
         Ok(())
     }
 }
-

@@ -1,8 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use cfn_guard;
-
 mod tests {
     use super::*;
     #[test]
@@ -22,8 +20,7 @@ mod tests {
             "#,
         );
         let rule = "AWS::ApiGateway::Method { Properties.AuthorizationType == \"NONE\"}";
-        let expected =
-            r#"
+        let expected = r#"
             [
               {
                 "eval_type": "Rule",
@@ -122,10 +119,13 @@ mod tests {
                 ]
               }
             ]"#;
-        let serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
-        let result = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
-        let expected = serde_json::from_str::<serde_json::Value>(expected).ok().unwrap();
+        let serialized = cfn_guard::run_checks(&data, rule).unwrap();
+        let result = serde_json::from_str::<serde_json::Value>(&serialized)
+            .ok()
+            .unwrap();
+        let expected = serde_json::from_str::<serde_json::Value>(expected)
+            .ok()
+            .unwrap();
         assert_eq!(expected, result);
     }
-
 }

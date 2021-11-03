@@ -3,51 +3,54 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 
-use clap::{App, Arg, ArgMatches, ArgGroup};
+use clap::{App, Arg, ArgGroup, ArgMatches};
 use colored::*;
 
 use crate::command::Command;
-use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
 use crate::commands::aws_meta_appender::MetadataAppender;
-use crate::commands::files::{alpabetical, get_files, iterate_over, last_modified, regular_ordering};
+use crate::commands::files::{
+    alpabetical, get_files, iterate_over, last_modified, regular_ordering,
+};
 use crate::commands::tracker::{StackTracker, StatusContext};
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::commands::validate::summary_table::SummaryType;
+use crate::commands::{ALPHABETICAL, LAST_MODIFIED};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
-use crate::commands::validate::summary_table::SummaryType;
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use enumflags2::{BitFlag, BitFlags};
 use serde::Deserialize;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-mod generic_summary;
-mod common;
-mod summary_table;
 mod cfn_reporter;
+mod common;
+mod generic_summary;
+mod summary_table;
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
     CFNTemplate,
-    Generic
+    Generic,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
     JSON,
-    YAML
+    YAML,
 }
 
-pub(crate) trait Reporter : Debug {
-    fn report(&self,
-              writer: &mut Write,
-              status: Option<Status>,
-              failed_rules: &[&StatusContext],
-              passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize,
+pub(crate) trait Reporter: Debug {
+    fn report(
+        &self,
+        writer: &mut Write,
+        status: Option<Status>,
+        failed_rules: &[&StatusContext],
+        passed_or_skipped: &[&StatusContext],
+        longest_rule_name: usize,
     ) -> Result<()>;
 }
 
@@ -64,7 +67,7 @@ pub(crate) struct Payload {
 
 impl Validate {
     pub(crate) fn new() -> Self {
-        Validate{}
+        Validate {}
     }
 }
 
@@ -72,7 +75,6 @@ impl Command for Validate {
     fn name(&self) -> &'static str {
         "validate"
     }
-
 
     fn command(&self) -> App<'static, 'static> {
         App::new("validate")
@@ -122,17 +124,18 @@ or rules files.
         };
 
         let data_type = match app.value_of("type") {
-            Some(t) =>
+            Some(t) => {
                 if t == "CFNTemplate" {
                     Type::CFNTemplate
                 } else {
                     Type::Generic
-                },
-            None => Type::Generic
+                }
+            }
+            None => Type::Generic,
         };
 
         let output_type = match app.value_of("output-format") {
-            Some(o) =>
+            Some(o) => {
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
                 } else if o == "json" {
@@ -140,7 +143,8 @@ or rules files.
                 } else {
                     OutputFormatType::YAML
                 }
-            None => OutputFormatType::SingleLineSummary
+            }
+            None => OutputFormatType::SingleLineSummary,
         };
 
         let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
@@ -152,12 +156,15 @@ or rules files.
                         "fail" => st.insert(SummaryType::FAIL),
                         "skip" => st.insert(SummaryType::SKIP),
                         "none" => return BitFlags::empty(),
-                        "all" => st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP),
-                        _ => unreachable!()
+                        "all" => {
+                            st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
+                        }
+                        _ => unreachable!(),
                     };
                     st
                 })
-            });
+            },
+        );
 
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
@@ -186,15 +193,19 @@ or rules files.
                         reader.read_to_string(&mut context)?;
                         let path = each.as_path();
                         let relative = match path.strip_prefix(base.as_path()) {
-                            Ok(p) => if p != empty_path {
-                                format!("{}", p.display())
-                            } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                            Ok(p) => {
+                                if p != empty_path {
+                                    format!("{}", p.display())
+                                } else {
+                                    format!("{}", path.file_name().unwrap().to_str().unwrap())
+                                }
+                            }
                             Err(_) => format!("{}", path.display()),
                         };
                         streams.push((context, relative));
                     }
                     streams
-                },
+                }
                 None => {
                     let mut context = String::new();
                     let mut reader = BufReader::new(std::io::stdin());
@@ -203,24 +214,35 @@ or rules files.
                 }
             };
             let base = PathBuf::from_str(file)?;
-            for each_file_content in iterate_over(&files, |content, file|
-                Ok((content, match file.strip_prefix(&base) {
-                    Ok(path) => if path == empty_path {
-                        format!("{}", file.file_name().unwrap().to_str().unwrap())
-                    } else { format!("{}", path.display()) },
-                    Err(_) => format!("{}", file.display()),
-                }))) {
+            for each_file_content in iterate_over(&files, |content, file| {
+                Ok((
+                    content,
+                    match file.strip_prefix(&base) {
+                        Ok(path) => {
+                            if path == empty_path {
+                                format!("{}", file.file_name().unwrap().to_str().unwrap())
+                            } else {
+                                format!("{}", path.display())
+                            }
+                        }
+                        Err(_) => format!("{}", file.display()),
+                    },
+                ))
+            }) {
                 match each_file_content {
                     Err(e) => println!("Unable read content from file {}", e),
                     Ok((file_content, rule_file_name)) => {
                         match parse_rules(&file_content, &rule_file_name) {
                             Err(e) => {
-                                println!("Parsing error handling rules file = {}, Error = {}",
-                                         rule_file_name.underline(), e);
+                                println!(
+                                    "Parsing error handling rules file = {}, Error = {}",
+                                    rule_file_name.underline(),
+                                    e
+                                );
                                 println!("---");
                                 exit_code = 5;
                                 continue;
-                            },
+                            }
 
                             Ok(rules) => {
                                 match evaluate_against_data_input(
@@ -232,7 +254,8 @@ or rules files.
                                     verbose,
                                     print_json,
                                     show_clause_failures,
-                                    summary_type.clone())? {
+                                    summary_type.clone(),
+                                )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
                                         exit_code = 5;
@@ -249,18 +272,31 @@ or rules files.
             reader.read_to_string(&mut context);
             let payload: Payload = deserialize_payload(&context)?;
 
-            let data_collection: Vec<(String, String)> = payload.list_of_data.iter().enumerate().map(|(i, data)|(data.to_string(), format!("DATA_STDIN[{}]", i + 1))).collect();
-            let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
+            let data_collection: Vec<(String, String)> = payload
+                .list_of_data
+                .iter()
+                .enumerate()
+                .map(|(i, data)| (data.to_string(), format!("DATA_STDIN[{}]", i + 1)))
+                .collect();
+            let rules_collection: Vec<(String, String)> = payload
+                .list_of_rules
+                .iter()
+                .enumerate()
+                .map(|(i, rules)| (rules.to_string(), format!("RULES_STDIN[{}]", i + 1)))
+                .collect();
 
             for (each_rules, location) in rules_collection {
-               match parse_rules(&each_rules, &location) {
+                match parse_rules(&each_rules, &location) {
                     Err(e) => {
-                        println!("Parsing error handling rules = {}, Error = {}",
-                                 location.underline(), e);
+                        println!(
+                            "Parsing error handling rules = {}, Error = {}",
+                            location.underline(),
+                            e
+                        );
                         println!("---");
                         exit_code = 5;
                         continue;
-                    },
+                    }
 
                     Ok(rules) => {
                         match evaluate_against_data_input(
@@ -272,7 +308,8 @@ or rules files.
                             verbose,
                             print_json,
                             show_clause_failures,
-                            summary_type.clone())? {
+                            summary_type.clone(),
+                        )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
                                 exit_code = 5;
@@ -298,34 +335,36 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-pub fn validate_and_return_json(
-    data: &str,
-    rules: &str,
-) -> Result<String> {
+pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
-       Ok(value) => PathAwareValue::try_from(value),
-       Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Ok(value) => PathAwareValue::try_from(value),
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
 
     let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
 
     match crate::rules::parser::rules_file(span) {
-
-        Ok(rules) => {
-            match input_data {
-                Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
-                    let reporters = vec![];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json();
-                    return Ok(json_result);
-                }
-                Err(e) => return Err(e),
+        Ok(rules) => match input_data {
+            Ok(root) => {
+                let root_context = RootScope::new(&rules, &root);
+                let stacker = StackTracker::new(&root_context);
+                let reporters = vec![];
+                let reporter = ConsoleReporter::new(
+                    stacker,
+                    &reporters,
+                    "lambda-function",
+                    "input-payload",
+                    true,
+                    true,
+                    false,
+                );
+                rules.evaluate(&root, &reporter)?;
+                let json_result = reporter.get_result_json();
+                return Ok(json_result);
             }
-        }
-        Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+            Err(e) => return Err(e),
+        },
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
@@ -347,7 +386,13 @@ fn indent_spaces(indent: usize) {
 }
 
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
-    let header = format!("{}({}, {})", cxt.eval_type, cxt.context, common::colored_string(cxt.status)).underline();
+    let header = format!(
+        "{}({}, {})",
+        cxt.eval_type,
+        cxt.context,
+        common::colored_string(cxt.status)
+    )
+    .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -357,7 +402,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("From: {:?}", v);
-        },
+        }
         None => {}
     }
     match &cxt.to {
@@ -365,7 +410,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("To: {:?}", v);
-        },
+        }
         None => {}
     }
     match &cxt.msg {
@@ -373,57 +418,80 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("Message: {}", message);
-
-        },
+        }
         None => {}
     }
 
     for child in &cxt.children {
-        print_context(child, depth+1)
+        print_context(child, depth + 1)
     }
 }
 
 fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
-    print!("{file}/{rule:<0$}", longest+4, file=rules_file_name, rule=rule.context);
+    print!(
+        "{file}/{rule:<0$}",
+        longest + 4,
+        file = rules_file_name,
+        rule = rule.context
+    );
     let longest = rules_file_name.len() + longest;
     let mut first = true;
     for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
         let matched = *matched;
-        let header = format!("{}({})", common::colored_string(matched.status), matched.context).underline();
+        let header = format!(
+            "{}({})",
+            common::colored_string(matched.status),
+            matched.context
+        )
+        .underline();
         if !first {
-            print!("{space:>longest$}", space=" ", longest=longest+4)
+            print!("{space:>longest$}", space = " ", longest = longest + 4)
         }
-        let clause = format!("Clause #{}", index+1).bold();
-        println!("{header:<20}{content}", header=clause, content=header);
+        let clause = format!("Clause #{}", index + 1).bold();
+        println!("{header:<20}{content}", header = clause, content = header);
         match &matched.from {
             Some(from) => {
-                print!("{space:>longest$}", space=" ", longest=longest+4);
+                print!("{space:>longest$}", space = " ", longest = longest + 4);
                 let content = format!("Comparing {:?}", from);
-                print!("{header:<20}{content}", header=" ", content=content);
-            },
+                print!("{header:<20}{content}", header = " ", content = content);
+            }
             None => {}
         }
         match &matched.to {
             Some(to) => {
                 println!(" with {:?} failed", to);
-            },
-            None => { print!("\n") }
+            }
+            None => {
+                print!("\n")
+            }
         }
         match &matched.msg {
             Some(m) => {
                 for each in m.split('\n') {
-                    print!("{space:>longest$}", space=" ", longest=longest+4+20);
+                    print!("{space:>longest$}", space = " ", longest = longest + 4 + 20);
                     println!("{}", each);
                 }
-            },
-            None => { print!("\n"); }
+            }
+            None => {
+                print!("\n");
+            }
         }
-        if first { first = false; }
+        if first {
+            first = false;
+        }
     }
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Reporter + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(
+        root: StackTracker<'r>,
+        renderers: &'r Vec<Box<dyn Reporter + 'r>>,
+        rules_file_name: &'r str,
+        data_file_name: &'r str,
+        verbose: bool,
+        print_json: bool,
+        show_clause_failures: bool,
+    ) -> Self {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -449,30 +517,22 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             println!("{}", serialized_user);
-        }
-        else {
-            let longest = top.children.iter()
-                .max_by(|f, s| {
-                    (*f).context.len().cmp(&(*s).context.len())
-                })
+        } else {
+            let longest = top
+                .children
+                .iter()
+                .max_by(|f, s| (*f).context.len().cmp(&(*s).context.len()))
                 .map(|elem| elem.context.len())
                 .unwrap_or(20);
 
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                top.children.iter().partition(|ctx|
-                    match (*ctx).status {
-                       Some(Status::FAIL) => true,
-                        _ => false
-                    });
+                top.children.iter().partition(|ctx| match (*ctx).status {
+                    Some(Status::FAIL) => true,
+                    _ => false,
+                });
 
             for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut output,
-                    top.status.clone(),
-                    &failed,
-                    &rest,
-                    longest
-                )?;
+                each_reporter.report(&mut output, top.status.clone(), &failed, &rest, longest)?;
             }
 
             if self.show_clause_failures {
@@ -505,63 +565,88 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
         self.root_context.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self,
-                      eval_type: EvaluationType,
-                      context: &str,
-                      msg: String,
-                      from: Option<PathAwareValue>,
-                      to: Option<PathAwareValue>,
-                      status: Option<Status>,
-                      cmp: Option<(CmpOperator, bool)>) {
-        self.root_context.end_evaluation(eval_type, context, msg, from, to, status, cmp);
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
+        self.root_context
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
-    fn start_evaluation(&self,
-                        eval_type: EvaluationType,
-                        context: &str) {
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
         self.root_context.start_evaluation(eval_type, context);
     }
-
 }
 
-fn evaluate_against_data_input<'r>(data_type: Type,
-                                   output: OutputFormatType,
-                                   data_files: &'r [(String, String)],
-                                   rules: &RulesFile<'_>,
-                                   rules_file_name: &'r str,
-                                   verbose: bool,
-                                   print_json: bool,
-                                   show_clause_failures: bool,
-                                   summary_table: BitFlags<SummaryType>) -> Result<Status> {
-    let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
-        match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
-            Err(_) => {
-                let value = serde_yaml::from_str::<serde_json::Value>(content)?;
-                Ok((PathAwareValue::try_from(value)?, name.as_str()))
-            }
-        }
-    ).collect();
+fn evaluate_against_data_input<'r>(
+    data_type: Type,
+    output: OutputFormatType,
+    data_files: &'r [(String, String)],
+    rules: &RulesFile<'_>,
+    rules_file_name: &'r str,
+    verbose: bool,
+    print_json: bool,
+    show_clause_failures: bool,
+    summary_table: BitFlags<SummaryType>,
+) -> Result<Status> {
+    let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files
+        .iter()
+        .map(
+            |(content, name)| match serde_json::from_str::<serde_json::Value>(content) {
+                Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
+                Err(_) => {
+                    let value = serde_yaml::from_str::<serde_json::Value>(content)?;
+                    Ok((PathAwareValue::try_from(value)?, name.as_str()))
+                }
+            },
+        )
+        .collect();
 
     let mut overall = Status::PASS;
     for (each, data_file_name) in iterator? {
         let mut reporters = match data_type {
-            Type::CFNTemplate =>
-                vec![
-                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-            Type::Generic =>
-                vec![
-                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
+            Type::CFNTemplate => vec![Box::new(cfn_reporter::CfnReporter::new(
+                data_file_name,
+                rules_file_name,
+                output,
+            )) as Box<dyn Reporter>],
+            Type::Generic => vec![Box::new(generic_summary::GenericSummary::new(
+                data_file_name,
+                rules_file_name,
+                output,
+            )) as Box<dyn Reporter>],
         };
         if !summary_table.is_empty() {
             reporters.insert(
-                0, Box::new(
-                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
+                0,
+                Box::new(summary_table::SummaryTable::new(
+                    rules_file_name,
+                    data_file_name,
+                    summary_table.clone(),
+                )) as Box<dyn Reporter>,
+            );
         }
         let root_context = RootScope::new(rules, &each);
         let stacker = StackTracker::new(&root_context);
-        let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
-        let appender = MetadataAppender{delegate: &reporter, root_context: &each};
+        let reporter = ConsoleReporter::new(
+            stacker,
+            &reporters,
+            rules_file_name,
+            data_file_name,
+            verbose,
+            print_json,
+            show_clause_failures,
+        );
+        let appender = MetadataAppender {
+            delegate: &reporter,
+            root_context: &each,
+        };
         let status = rules.evaluate(&each, &appender)?;
         reporter.report()?;
         if status == Status::FAIL {

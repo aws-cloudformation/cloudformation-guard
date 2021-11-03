@@ -2,19 +2,18 @@ pub(crate) mod errors;
 pub(crate) mod evaluate;
 pub(crate) mod exprs;
 pub(crate) mod parser;
-pub(crate) mod values;
 pub(crate) mod path_value;
-
+pub(crate) mod values;
 
 use errors::Error;
 
-use std::fmt::Formatter;
-use colored::*;
-use crate::rules::path_value::PathAwareValue;
-use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
-use serde::{Serialize};
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
+use colored::*;
+use nom::lib::std::convert::TryFrom;
+use serde::Serialize;
+use std::fmt::Formatter;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -44,9 +43,10 @@ impl TryFrom<&str> for Status {
             "PASS" => Ok(Status::PASS),
             "FAIL" => Ok(Status::FAIL),
             "SKIP" => Ok(Status::SKIP),
-            _ => Err(Error::new(ErrorKind::IncompatibleError(
-                format!("Status code is incorrect {}", value)
-            )))
+            _ => Err(Error::new(ErrorKind::IncompatibleError(format!(
+                "Status code is incorrect {}",
+                value
+            )))),
         }
     }
 }
@@ -61,7 +61,7 @@ pub(crate) enum EvaluationType {
     Filter,
     Conjunction,
     BlockClause,
-    Clause
+    Clause,
 }
 
 impl std::fmt::Display for EvaluationType {
@@ -81,10 +81,8 @@ impl std::fmt::Display for EvaluationType {
     }
 }
 
-
 pub(crate) trait EvaluationContext {
-    fn resolve_variable(&self,
-                        variable: &str) -> Result<Vec<&PathAwareValue>>;
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>>;
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
@@ -96,14 +94,16 @@ pub(crate) trait EvaluationContext {
         from: Option<PathAwareValue>,
         to: Option<PathAwareValue>,
         status: Option<Status>,
-        comparator: Option<(CmpOperator, bool)>
+        comparator: Option<(CmpOperator, bool)>,
     );
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }
 
 pub(crate) trait Evaluate {
-    fn evaluate<'s>(&self,
-                context: &'s PathAwareValue,
-                var_resolver: &'s dyn EvaluationContext) -> Result<Status>;
+    fn evaluate<'s>(
+        &self,
+        context: &'s PathAwareValue,
+        var_resolver: &'s dyn EvaluationContext,
+    ) -> Result<Status>;
 }

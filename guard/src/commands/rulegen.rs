@@ -1,13 +1,13 @@
 use std::fs;
-use std::fs::{File};
+use std::fs::File;
 use std::process;
 
-use std::collections::{HashMap, HashSet};
-use clap::{App, Arg, ArgMatches};
 use crate::command::Command;
 use crate::rules::Result;
-use serde_json::Value;
+use clap::{App, Arg, ArgMatches};
 use itertools::Itertools;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use string_builder::Builder;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -15,7 +15,7 @@ pub(crate) struct Rulegen {}
 
 impl Rulegen {
     pub(crate) fn new() -> Self {
-        Rulegen{}
+        Rulegen {}
     }
 }
 
@@ -23,7 +23,6 @@ impl Command for Rulegen {
     fn name(&self) -> &'static str {
         "rulegen"
     }
-
 
     fn command(&self) -> App<'static, 'static> {
         App::new("rulegen")
@@ -39,7 +38,7 @@ impl Command for Rulegen {
 
         let out = match app.value_of("output") {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
-            None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
+            None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>,
         };
 
         let result = parse_template_and_call_gen(&template_contents);
@@ -49,13 +48,15 @@ impl Command for Rulegen {
     }
 }
 
-pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, HashMap<String, HashSet<String>>>{
+pub fn parse_template_and_call_gen(
+    template_contents: &str,
+) -> HashMap<String, HashMap<String, HashSet<String>>> {
     let cfn_template: HashMap<String, Value> = match serde_yaml::from_str(template_contents) {
         Ok(s) => s,
         Err(e) => {
             println!("Parsing error handling template file, Error = {}", e);
             process::exit(1);
-        },
+        }
     };
 
     let cfn_resources_clone = match cfn_template.get("Resources") {
@@ -65,7 +66,6 @@ pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, H
             process::exit(1);
         }
     };
-
 
     let cfn_resources: HashMap<String, Value> = match serde_json::from_value(cfn_resources_clone) {
         Ok(y) => y,
@@ -78,7 +78,9 @@ pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, H
     gen_rules(cfn_resources)
 }
 
-fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<String, HashSet<String>>> {
+fn gen_rules(
+    cfn_resources: HashMap<String, Value>,
+) -> HashMap<String, HashMap<String, HashSet<String>>> {
     // Create hashmap of resource name, property name and property values
     // For example, the following template:
     //
@@ -129,7 +131,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 
             // Preserve double quotes for strings.
             if prop_val.is_string() {
-                let test_str = format!("{}{}{}", "\"" , no_newline_stripped_val, "\"");
+                let test_str = format!("{}{}{}", "\"", no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
             let resource_name = format!("{}", &cfn_resource["Type"].as_str().unwrap());
@@ -169,21 +171,40 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 //          %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
 //          %aws_ec2_volume_resources.Properties.Encrypted == false
 //     }
-fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut writer : Box<dyn std::io::Write>) {
+fn print_rules(
+    rule_map: HashMap<String, HashMap<String, HashSet<String>>>,
+    mut writer: Box<dyn std::io::Write>,
+) {
     let mut str = Builder::default();
 
     for (resource, properties) in &rule_map {
         let resource_name_underscore = resource.replace("::", "_").to_lowercase();
         let variable_name = format!("{}_resources", resource_name_underscore);
 
-        str.append(format!("let {} = Resources.*[ Type == '{}' ]\n", variable_name, resource));
-        str.append(format!("rule {} when %{} !empty {{\n", resource_name_underscore, variable_name));
+        str.append(format!(
+            "let {} = Resources.*[ Type == '{}' ]\n",
+            variable_name, resource
+        ));
+        str.append(format!(
+            "rule {} when %{} !empty {{\n",
+            resource_name_underscore, variable_name
+        ));
 
         for (property, values) in properties {
             if values.len() > 1 {
-                str.append(format!("  %{}.Properties.{} IN [{}]\n", variable_name, property, values.iter().join(", ")));
+                str.append(format!(
+                    "  %{}.Properties.{} IN [{}]\n",
+                    variable_name,
+                    property,
+                    values.iter().join(", ")
+                ));
             } else {
-                str.append(format!("  %{}.Properties.{} == {}\n", variable_name, property, values.iter().next().unwrap()));
+                str.append(format!(
+                    "  %{}.Properties.{} == {}\n",
+                    variable_name,
+                    property,
+                    values.iter().next().unwrap()
+                ));
             }
         }
 
@@ -199,12 +220,11 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
             //
             // TODO fix with Error return
             //
-            write!(writer,"{}", generated_rules);
-        },
+            write!(writer, "{}", generated_rules);
+        }
         Err(e) => {
             println!("Parsing error with generated rules file, Error = {}", e);
-        },
-
+        }
     }
 }
 
