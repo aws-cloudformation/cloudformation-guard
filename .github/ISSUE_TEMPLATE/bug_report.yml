@@ -1,0 +1,85 @@
+name: Bug Report
+description: Report a bug
+title: "(module name): short issue description"
+labels: [bug, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: |
+        1. Example rules and template that results in the error
+        1. The commands you used to invoke the tool
+        1. The output of a `-v` log level if it's not related to cfn-guard-lambda, or the relevant CloudWatch log messages if it is related to the cfn-guard-lambda
+    validations:
+      required: true
+   
+  - type: markdown
+    attributes:
+      value: |
+        **NOTE: Please be sure that the templates, rules and logs you provide as part of your bug report do not contain any sensitive information.**
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: |
+        What were you trying to achieve by performing the steps above?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: |
+        What is the unexpected behavior you were seeing? If you got an error, paste it here.
+    validations:
+      required: true
+
+  - type: input
+    id: guard-version
+    attributes:
+      label: CloudFormation Guard Version
+      description: Output of `cfn-guard -V`
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: OS
+      description: E.g. MacOS | Windows | Ubuntu
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version
+      description: E.g. Catalina | 10 | 18.04
+    validations:
+      required: false
+
+  - type: textarea
+    id: other
+    attributes:
+      label: Other information
+      description: |
+        e.g. detailed explanation, scrennshots, stacktraces, related issues, suggestions how to fix, links for us to have context, eg. associated pull-request, stackoverflow, slack, etc
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        This is :bug: Bug Report
