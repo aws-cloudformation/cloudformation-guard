@@ -3,6 +3,9 @@ use super::exprs::*;
 use crate::rules::eval_context::{block_scope, ValueScope};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
+use crate::rules::eval::operators::Comparator;
+
+mod operators;
 
 fn exists_operation(value: &QueryResult<'_>) -> Result<bool> {
     Ok(match value {
@@ -649,18 +652,12 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
                     .push((each, QueryResult::Resolved(*rhs)));
-//                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
-//                    .or_insert(vec![])
-//                    .push(each);
             },
 
             ComparisonResult::NotComparable(NotComparableWithRhs{pair: LhsRhsPair{lhs, rhs}, ..}) => {
                 by_lhs_value.entry(*lhs )
                     .or_insert(vec![])
                     .push((each, QueryResult::Resolved(*rhs)));
-//                by_lhs_value.entry(if is_lhs_rhs_swapped { *rhs } else { *lhs })
-//                    .or_insert(vec![])
-//                    .push(each);
             },
 
             ComparisonResult::UnResolvedRhs(UnResolvedRhs{rhs, lhs}) => {
@@ -668,9 +665,6 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                     by_lhs_value.entry(*lhs )
                         .or_insert(vec![])
                         .push((each, rhs.clone()));
-//                    by_lhs_value.entry(if is_lhs_rhs_swapped { ur.traversed_to } else { *lhs })
-//                        .or_insert(vec![])
-//                        .push(each)
                 }
             }
         }
@@ -726,17 +720,174 @@ fn binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
 
     let lhs = eval_context.query(lhs_query)?;
-    if lhs.is_empty() || rhs.is_empty() {
-        return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
+    let results = cmp.compare(&lhs, rhs)?;
+    match results {
+        operators::EvalResult::Skip => return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
+        operators::EvalResult::Result(results) => {
+            let mut statues: Vec<(QueryResult<'_>, Status)> = Vec::with_capacity(lhs.len());
+            for each in results {
+                match each {
+                    operators::ValueEvalResult::LhsUnresolved(ur) => {
+                        eval_context.start_record(&context)?;
+                        eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                            ClauseCheck::Comparison(ComparisonClauseCheck {
+                                status: Status::FAIL,
+                                message: None,
+                                custom_message: custom_message.clone(),
+                                comparison: cmp,
+                                from: QueryResult::UnResolved(ur.clone()),
+                                to: None,
+                            })
+                        ))?;
+                        statues.push((QueryResult::UnResolved(ur), Status::FAIL));
+                    },
+
+                    operators::ValueEvalResult::ComparisonResult(operators::ComparisonResult::RhsUnresolved(urhs, lhs)) => {
+                        eval_context.start_record(&context)?;
+                        eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                            ClauseCheck::Comparison(ComparisonClauseCheck {
+                                status: Status::FAIL,
+                                message: None,
+                                custom_message: custom_message.clone(),
+                                comparison: cmp,
+                                from: QueryResult::Resolved(lhs),
+                                to: Some(QueryResult::UnResolved(urhs)),
+                            })
+                        ))?;
+                        statues.push((QueryResult::Resolved(lhs), Status::FAIL));
+                    },
+
+                    operators::ValueEvalResult::ComparisonResult(operators::ComparisonResult::NotComparable(nc)) => {
+                        eval_context.start_record(&context)?;
+                        eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                            ClauseCheck::Comparison(ComparisonClauseCheck {
+                                status: Status::FAIL,
+                                message: Some(nc.reason),
+                                custom_message: custom_message.clone(),
+                                comparison: cmp,
+                                from: QueryResult::Resolved(nc.pair.lhs),
+                                to: Some(QueryResult::Resolved(nc.pair.rhs)),
+                            })
+                        ))?;
+                        statues.push((QueryResult::Resolved(nc.pair.lhs), Status::FAIL));
+                    },
+
+                    operators::ValueEvalResult::ComparisonResult(operators::ComparisonResult::Success(cmp)) => {
+                        match cmp {
+                            operators::Compare::ListIn(lin) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+                                statues.push((QueryResult::Resolved(lin.lhs), Status::PASS));
+                            },
+
+                            operators::Compare::QueryIn(qin) => {
+                                for each in qin.lhs {
+                                    eval_context.start_record(&context)?;
+                                    eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+                                    statues.push((QueryResult::Resolved(each), Status::PASS));
+                                }
+                            },
+
+                            operators::Compare::Value(pair) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+                                statues.push((QueryResult::Resolved(pair.lhs), Status::PASS));
+                            },
+
+                            operators::Compare::ValueIn(val) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
+                                statues.push((QueryResult::Resolved(val.lhs), Status::PASS));
+                            }
+                        }
+                    },
+
+                    operators::ValueEvalResult::ComparisonResult(operators::ComparisonResult::Fail(cmpr)) => {
+                        match cmpr {
+                            operators::Compare::Value(pair) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                                    ClauseCheck::Comparison(ComparisonClauseCheck {
+                                        status: Status::FAIL,
+                                        message: None,
+                                        custom_message: custom_message.clone(),
+                                        comparison: cmp,
+                                        from: QueryResult::Resolved(pair.lhs),
+                                        to: Some(QueryResult::Resolved(pair.rhs)),
+                                    })
+                                ))?;
+                                statues.push((QueryResult::Resolved(pair.lhs), Status::FAIL));
+                            },
+
+                            operators::Compare::ValueIn(pair) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                                    ClauseCheck::InComparison(InComparisonCheck {
+                                        status: Status::FAIL,
+                                        message: None,
+                                        custom_message: custom_message.clone(),
+                                        comparison: cmp,
+                                        from: QueryResult::Resolved(pair.lhs),
+                                        to: vec![QueryResult::Resolved(pair.rhs)]
+                                    })
+                                ))?;
+                                statues.push((QueryResult::Resolved(pair.lhs), Status::FAIL));
+
+                            },
+
+                            operators::Compare::ListIn(lin) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                                    ClauseCheck::InComparison(InComparisonCheck {
+                                        status: Status::FAIL,
+                                        message: None,
+                                        custom_message: custom_message.clone(),
+                                        comparison: cmp,
+                                        from: QueryResult::Resolved(lin.lhs),
+                                        to: vec![QueryResult::Resolved(lin.rhs)]
+                                    })
+                                ))?;
+                                statues.push((QueryResult::Resolved(lin.lhs), Status::FAIL));
+                            },
+
+                            operators::Compare::QueryIn(qin) => {
+                                let rhs = qin.rhs.iter().map(|e| QueryResult::Resolved(*e)).collect::<Vec<_>>();
+                                for lhs in qin.diff {
+                                    eval_context.start_record(&context)?;
+                                    eval_context.end_record(&context, RecordType::ClauseValueCheck(
+                                        ClauseCheck::InComparison(InComparisonCheck {
+                                            status: Status::FAIL,
+                                            message: None,
+                                            custom_message: custom_message.clone(),
+                                            comparison: cmp,
+                                            from: QueryResult::Resolved(lhs),
+                                            to: rhs.clone()
+                                        })
+                                    ))?;
+                                    statues.push((QueryResult::Resolved(lhs), Status::FAIL));
+                                }
+                            }
+                        }
+                    }
+
+                    operators::ValueEvalResult::UnaryResult(_) => unreachable!()
+                }
+            }
+            Ok(EvaluationResult::QueryValueResult(statues))
+        }
     }
-    real_binary_operation(
-        &lhs,
-        rhs,
-        cmp,
-        context,
-        custom_message,
-        eval_context
-    )
+
+//    if lhs.is_empty() || rhs.is_empty() {
+//        return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
+//    }
+//    real_binary_operation(
+//        &lhs,
+//        rhs,
+//        cmp,
+//        context,
+//        custom_message,
+//        eval_context
+//    )
 }
 
 pub(super) fn real_binary_operation<'value, 'loc: 'value>(
@@ -748,6 +899,12 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>) -> Result<EvaluationResult<'value>> {
 
     let mut statues: Vec<(QueryResult<'_>, Status)> = Vec::with_capacity(lhs.len());
+    let original = cmp;
+    let cmp = if cmp.0 == CmpOperator::Eq && rhs.len() > 1 {
+        (CmpOperator::In, cmp.1)
+    } else {
+        cmp
+    };
     for (idx, each) in lhs.iter().enumerate() {
         match each {
             QueryResult::UnResolved(_ur) => {

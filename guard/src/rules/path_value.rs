@@ -26,8 +26,6 @@ use serde::ser::{SerializeStruct, SerializeMap};
 //
 // crate level
 //
-
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub(crate) struct Location {
     pub(crate) line: usize,
@@ -222,9 +220,57 @@ pub(crate) enum PathAwareValue {
     RangeChar((Path, RangeType<char>)),
 }
 
-use yaml_rust::parser::{MarkedEventReceiver, Parser};
-use yaml_rust::{Event, Yaml};
-use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
+impl PathAwareValue {
+    pub(crate) fn as_string(&self) -> Option<&str> {
+        match self {
+            PathAwareValue::String((_, v)) => Some(v),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_regex(&self) -> Option<&str> {
+        match self {
+            PathAwareValue::Regex((_, v)) => Some(v),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_bool(&self) -> Option<bool> {
+        match self {
+            PathAwareValue::Bool((_, v)) => Some(*v),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_int(&self) -> Option<i64> {
+        match self {
+            PathAwareValue::Int((_, v)) => Some(*v),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_float(&self) -> Option<f64> {
+        match self {
+            PathAwareValue::Float((_, v)) => Some(*v),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_list(&self) -> Option<&Vec<PathAwareValue>> {
+        match self {
+            PathAwareValue::List((_, list)) => Some(list),
+            _ => None
+        }
+    }
+
+    pub(crate) fn as_map(&self) -> Option<&MapValue> {
+        match self {
+            PathAwareValue::Map((_, map)) => Some(map),
+            _ => None
+        }
+    }
+}
+
 
 impl Hash for PathAwareValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -928,7 +974,11 @@ impl PathAwareValue {
     }
 
     pub(crate) fn is_scalar(&self) -> bool {
-        !self.is_list() || !self.is_map()
+        !self.is_list() && !self.is_map()
+    }
+
+    pub(crate) fn is_string(&self) -> bool {
+        if let PathAwareValue::String(_) = self { true } else { false }
     }
 
     pub(crate) fn self_path(&self) -> &Path {
