@@ -649,35 +649,6 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             as Box<dyn Reporter>
     };
     for file in data_files {
-//        let mut reporters =
-//            match output {
-//                OutputFormatType::YAML |
-//                OutputFormatType::JSON => {
-//                    vec![
-//                        Box::new(structured_output_reporter::StructureOutputReporter::new(data_file_name, rules_file_name, output))
-//                            as Box<dyn Reporter>]
-//                },
-//                OutputFormatType::SingleLineSummary => {
-//                    vec![
-//                        Box::new(
-//                            console_reporter::ConsoleReporter::new(data_file_name, rules_file_name)) as Box<dyn Reporter>]
-//                },
-//            };
-
-//        let mut reporters = match data_type {
-//            Type::CFNTemplate =>
-//                vec![
-//                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-//            Type::Generic =>
-//                vec![
-//                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-//        };
-//        if !summary_table.is_empty() {
-//            reporters.insert(
-//                0, Box::new(
-//                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
-//        }
-
         if new_engine_version {
             let each = match &extra_data {
                 Some(data) => data.clone().merge(file.path_value.clone())?,
