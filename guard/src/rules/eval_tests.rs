@@ -3614,7 +3614,6 @@ fn using_resource_names_for_assessment() -> Result<()> {
     Ok(())
 }
 
-#[test]
 fn test_string_in_comparison() -> Result<()> {
     let resources = r###"
     Resources:
