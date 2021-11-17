@@ -320,23 +320,40 @@ fn contained_in<'value>(
         PathAwareValue::List((_, lhsl)) =>
             match rhs_value {
                 PathAwareValue::List((_, rhsl)) => {
-                    let diff = lhsl.iter().filter(|each| !rhsl.contains(*each))
-                        .collect::<Vec<_>>();
-                    if diff.is_empty() {
-                        ValueEvalResult::ComparisonResult(
-                            ComparisonResult::Success(
-                                Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value))
-                            )
-                        )
-                    }
-                    else {
-                        ValueEvalResult::ComparisonResult(
-                            ComparisonResult::Fail(
-                                Compare::ListIn(
-                                    ListIn::new(diff, lhs_value, rhs_value)
+                    if rhsl.len() > 0 && rhsl[0].is_list() {
+                        if rhsl.contains(lhs_value) {
+                            ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Success(
+                                    Compare::ListIn(ListIn::new(vec![], lhs_value, rhs_value))
                                 )
                             )
-                        )
+                        }
+                        else {
+                            ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Success(
+                                    Compare::ListIn(ListIn::new(vec![lhs_value], lhs_value, rhs_value))
+                                )
+                            )
+                        }
+                    }
+                    else {
+                        let diff = lhsl.iter().filter(|each| !rhsl.contains(*each))
+                            .collect::<Vec<_>>();
+                        if diff.is_empty() {
+                            ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Success(
+                                    Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value))
+                                )
+                            )
+                        } else {
+                            ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Fail(
+                                    Compare::ListIn(
+                                        ListIn::new(diff, lhs_value, rhs_value)
+                                    )
+                                )
+                            )
+                        }
                     }
                 },
 
@@ -579,12 +596,22 @@ impl Comparator for EqOperation {
                     Vec::push
                 );
 
+                let diff = if lhs_selected.len() > rhs_selected.len() {
+                    lhs_selected.iter().filter(|e| !rhs_selected.contains(*e))
+                        .map(|e| *e)
+                        .collect::<Vec<_>>()
+                } else {
+                    rhs_selected.iter().filter(|e| !lhs_selected.contains(*e))
+                        .map(|e| *e)
+                        .collect::<Vec<_>>()
+                };
+
                 results.push(
-                    if lhs_selected == rhs_selected {
+                    if diff.is_empty() {
                         ValueEvalResult::ComparisonResult(
                             ComparisonResult::Success(
                                 Compare::QueryIn(
-                                    QueryIn::new(vec![], lhs_selected, rhs_selected)
+                                    QueryIn::new(diff, lhs_selected, rhs_selected)
                                 )
                             )
                         )
@@ -592,7 +619,7 @@ impl Comparator for EqOperation {
                         ValueEvalResult::ComparisonResult(
                             ComparisonResult::Fail(
                                 Compare::QueryIn(
-                                    QueryIn::new(vec![], lhs_selected, rhs_selected)
+                                    QueryIn::new(diff, lhs_selected, rhs_selected)
                                 )
                             )
                         )
