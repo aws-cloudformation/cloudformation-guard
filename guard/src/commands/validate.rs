@@ -21,11 +21,28 @@ use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
+use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope, simplifed_json_from_root};
+use crate::rules::eval::eval_rules_file;
+use crate::rules::{ RecordType, NamedStatus };
+use std::collections::HashMap;
+use crate::rules::path_value::traversal::Traversal;
+use crate::commands::validate::tf::TfAware;
+use itertools::Itertools;
 
 mod generic_summary;
 mod common;
 mod summary_table;
 mod cfn_reporter;
+mod cfn;
+mod console_reporter;
+mod tf;
+
+#[derive(Eq, Clone, Debug, PartialEq)]
+pub(crate) struct DataFile {
+    content: String,
+    path_value: PathAwareValue,
+    name: String
+}
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
@@ -42,12 +59,28 @@ pub(crate) enum OutputFormatType {
 
 pub(crate) trait Reporter : Debug {
     fn report(&self,
-              writer: &mut Write,
+              writer: &mut dyn Write,
               status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
               longest_rule_name: usize,
+              rules_file: &str,
+              data_file: &str,
+              data: &Traversal<'_>,
+              output_type: OutputFormatType
     ) -> Result<()>;
+
+    fn report_eval<'value>(
+        &self,
+        _write: &mut dyn Write,
+        _status: Status,
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data_file_bytes: &str,
+        _data: &Traversal<'value>,
+        _output_type: OutputFormatType
+    ) -> Result<()> { Ok(()) }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -77,7 +110,11 @@ rules and data files. The directory being pointed to must contain only data file
 or rules files.
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML")
+                .multiple(true))
+            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
+                .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
@@ -85,8 +122,8 @@ or rules files.
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
-                .default_value("all")
-                .help("control if the summary table needs to be displayed. --show-summary all (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
+                .default_value("fail")
+                .help("control if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
             )
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
@@ -108,33 +145,102 @@ or rules files.
         };
 
         let empty_path = Path::new("");
-        let data_files = match app.value_of("data") {
+        let data_files_non_merge: Vec<DataFile> = match app.value_of("data-dir") {
             Some(file_or_dir) => {
                 let base = PathBuf::from_str(file_or_dir)?;
-                let selected = get_files(file_or_dir, cmp)?;
-                let mut streams = Vec::with_capacity(selected.len());
-                for each in selected {
-                    let mut context = String::new();
-                    let mut reader = BufReader::new(File::open(each.as_path())?);
-                    reader.read_to_string(&mut context)?;
-                    let path = each.as_path();
-                    let relative = match path.strip_prefix(base.as_path()) {
-                        Ok(p) => if p != empty_path {
-                            format!("{}", p.display())
-
-                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                        Err(_) => format!("{}", path.display()),
-                    };
-                    streams.push((context, relative));
+                let mut streams = Vec::new();
+                for each_entry in walkdir::WalkDir::new(base.clone()) {
+                    if let Ok(file) = each_entry {
+                        if file.path().is_file() {
+                            let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                            if  name.ends_with(".yaml")    ||
+                                name.ends_with(".yml")     ||
+                                name.ends_with(".json")    ||
+                                name.ends_with(".jsn")     ||
+                                name.ends_with(".template")
+                            {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path = file.path();
+                                let relative = match path.strip_prefix(base.as_path()) {
+                                    Ok(p) => if p != empty_path {
+                                        format!("{}", p.display())
+                                    } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                                    Err(_) => format!("{}", path.display()),
+                                };
+                                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
+                                    Ok(value) => PathAwareValue::try_from(value)?,
+                                    Err(_) => {
+                                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                                        PathAwareValue::try_from(value)?
+                                    }
+                                };
+                                streams.push(DataFile{
+                                    name: relative, path_value, content
+                                });
+                            }
+                        }
+                    }
                 }
                 streams
             },
-            None => {
-                let mut context = String::new();
-                let mut reader = BufReader::new(std::io::stdin());
-                reader.read_to_string(&mut context);
-                vec![(context, "STDIN".to_string())]
+            None => vec![]
+        };
+
+        let (mut data_files_to_merge, name, content) = match app.values_of("data") {
+            Some(files) => {
+                let mut primary: Option<PathAwareValue> = None;
+                let mut name = "".to_string();
+                let mut last_content= "".to_string();
+                for each_file in files {
+                    name = each_file.to_string();
+                    let base = PathBuf::from_str(each_file)?;
+                    let mut content = String::new();
+                    let mut reader = BufReader::new(File::open(base.as_path())?);
+                    reader.read_to_string(&mut content)?;
+                    let path_value = match crate::rules::values::read_from(&content) {
+                        Ok(value) => PathAwareValue::try_from(value)?,
+                        Err(_) => {
+                            let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                            PathAwareValue::try_from(value)?
+                        }
+                    };
+                    last_content = content;
+                    primary = match primary {
+                        Some(mut current) => {
+                            Some(current.merge(path_value)?)
+                        },
+                        None => Some(path_value)
+                    }
+                }
+                (primary.unwrap(), name, last_content)
             }
+
+            None => {
+                let mut content = String::new();
+                let mut reader = BufReader::new(std::io::stdin());
+                reader.read_to_string(&mut content)?;
+                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(value) => PathAwareValue::try_from(value)?,
+                    Err(_) => {
+                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                        PathAwareValue::try_from(value)?
+                    }
+                };
+                (path_value, "STDIN".to_string(), content)
+            }
+
+        };
+
+        let (extra_data, data_files) = if data_files_non_merge.is_empty() {
+            (None, vec![DataFile {
+                name,
+                path_value: data_files_to_merge,
+                content,
+            }])
+        } else {
+            (Some(data_files_to_merge), data_files_non_merge)
         };
 
         let verbose = if app.is_present("verbose") {
@@ -169,7 +275,7 @@ or rules files.
         };
 
         let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
-            SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP,
+            SummaryType::FAIL.into(),
             |v| {
                 v.fold(BitFlags::empty(), |mut st, elem| {
                     match elem {
@@ -186,11 +292,31 @@ or rules files.
 
         let print_json = app.is_present("print-json");
         let show_clause_failures = app.is_present("show-clause-failures");
+        let new_version_eval_engine = !app.is_present("old_eval_engine_version");
 
         let base = PathBuf::from_str(file)?;
-        let files = get_files(file, cmp)?;
+        let rules = if base.is_file() {
+            vec![base.clone()]
+        } else {
+            let mut rule_files = Vec::new();
+            for each in walkdir::WalkDir::new(base.clone()) {
+                if let Ok(entry) = each {
+                    if entry.path().is_file() &&
+                       entry.path().file_name().map(|s| s.to_str()).flatten()
+                           .map_or(false, |s|
+                                s.ends_with(".guard") ||
+                                s.ends_with(".ruleset")
+                           )
+                    {
+                        rule_files.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+            rule_files
+        };
+
         let mut exit_code = 0;
-        for each_file_content in iterate_over(&files, |content, file|
+        for each_file_content in iterate_over(&rules, |content, file|
             Ok((content, match file.strip_prefix(&base) {
                 Ok(path) => if path == empty_path {
                     format!("{}", file.file_name().unwrap().to_str().unwrap())
@@ -214,12 +340,14 @@ or rules files.
                             match evaluate_against_data_input(
                                 data_type,
                                 output_type,
+                                extra_data.clone(),
                                 &data_files,
                                 &rules,
                                 &rule_file_name,
                                 verbose,
                                 print_json,
                                 show_clause_failures,
+                                new_version_eval_engine,
                                 summary_type.clone())? {
                                 Status::SKIP | Status::PASS => continue,
                                 Status::FAIL => {
@@ -247,17 +375,25 @@ pub fn validate_and_return_json(
     let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
 
     match crate::rules::parser::rules_file(span) {
-
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
-                    let reporters = vec![];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json();
-                    return Ok(json_result);
+                    let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
+                    //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
+                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
+                    let mut tracker = root_scope.reset_recorder();
+                    let event = tracker.final_event.unwrap();
+                    let file_report = simplifed_json_from_root(&event)?;
+                    Ok(serde_json::to_string_pretty(&file_report)?)
+
+
+//                    let root_context = RootScope::new(&rules, &root);
+//                    let stacker = StackTracker::new(&root_context);
+//                    let reporters = vec![];
+//                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
+//                    rules.evaluate(&root, &reporter)?;
+//                    let json_result = reporter.get_result_json();
+//                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }
@@ -269,7 +405,7 @@ pub fn validate_and_return_json(
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
-    reporters: &'r Vec<Box<dyn Reporter + 'r>>,
+    reporters: &'r dyn Reporter,
     rules_file_name: &'r str,
     data_file_name: &'r str,
     verbose: bool,
@@ -281,6 +417,32 @@ fn indent_spaces(indent: usize) {
     for _idx in 0..indent {
         print!("{}", INDENT)
     }
+}
+
+//
+// https://vallentin.dev/2019/05/14/pretty-print-tree
+//
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool)
+{
+    let prefix_current = if last { "`- " } else { "|- " };
+    println!(
+        "{}{}{}",
+        prefix,
+        prefix_current,
+        current);
+
+    let prefix_child = if last { "   " } else { "|  " };
+    let prefix = prefix + prefix_child;
+    if !current.children.is_empty() {
+        let last_child = current.children.len() - 1;
+        for (i, child) in current.children.iter().enumerate() {
+            pprint_tree(child, prefix.clone(), i == last_child);
+        }
+    }
+}
+
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
+    pprint_tree(root, "".to_string(), true);
 }
 
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
@@ -360,10 +522,10 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<Box<dyn Reporter + 'r>>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, renderer: &'r dyn Reporter, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
-            reporters: renderers,
+            reporters: renderer,
             rules_file_name,
             data_file_name,
             verbose,
@@ -378,7 +540,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
     }
 
-    fn report(self) -> crate::rules::Result<()> {
+    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> crate::rules::Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         let mut output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
@@ -402,15 +564,18 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                         _ => false
                     });
 
-            for each_reporter in self.reporters {
-                each_reporter.report(
+            let traversal = Traversal::from(root);
+
+            self.reporters.report(
                     &mut output,
                     top.status.clone(),
                     &failed,
                     &rest,
-                    longest
-                )?;
-            }
+                    longest,
+                    self.rules_file_name,
+                    self.data_file_name,
+                    &traversal,
+                    output_format_type)?;
 
             if self.show_clause_failures {
                 println!("{}", "Clause Failure Summary".bold());
@@ -463,46 +628,67 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 fn evaluate_against_data_input<'r>(data_type: Type,
                                    output: OutputFormatType,
-                                   data_files: &'r [(String, String)],
+                                   extra_data: Option<PathAwareValue>,
+                                   data_files: &'r [DataFile],
                                    rules: &RulesFile<'_>,
                                    rules_file_name: &'r str,
                                    verbose: bool,
                                    print_json: bool,
                                    show_clause_failures: bool,
+                                   new_engine_version: bool,
                                    summary_table: BitFlags<SummaryType>) -> Result<Status> {
-    let iterator: Result<Vec<(PathAwareValue, &str)>> = data_files.iter().map(|(content, name)|
-        match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(value) => Ok((PathAwareValue::try_from(value)?, name.as_str())),
-            Err(_) => {
-                let value = serde_yaml::from_str::<serde_json::Value>(content)?;
-                Ok((PathAwareValue::try_from(value)?, name.as_str()))
-            }
-        }
-    ).collect();
-
     let mut overall = Status::PASS;
-    for (each, data_file_name) in iterator? {
-        let mut reporters = match data_type {
-            Type::CFNTemplate =>
-                vec![
-                    Box::new(cfn_reporter::CfnReporter::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-            Type::Generic =>
-                vec![
-                    Box::new(generic_summary::GenericSummary::new(data_file_name, rules_file_name, output)) as Box<dyn Reporter>],
-        };
-        if !summary_table.is_empty() {
-            reporters.insert(
-                0, Box::new(
-                    summary_table::SummaryTable::new(rules_file_name, data_file_name, summary_table.clone())) as Box<dyn Reporter>);
-        }
-        let root_context = RootScope::new(rules, &each);
-        let stacker = StackTracker::new(&root_context);
-        let reporter = ConsoleReporter::new(stacker, &reporters, rules_file_name, data_file_name, verbose, print_json, show_clause_failures);
-        let appender = MetadataAppender{delegate: &reporter, root_context: &each};
-        let status = rules.evaluate(&each, &appender)?;
-        reporter.report()?;
-        if status == Status::FAIL {
-            overall = Status::FAIL
+    let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
+    let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+    let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+    let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+    let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
+        cfn
+    } else {
+        Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
+            as Box<dyn Reporter>
+    };
+    for file in data_files {
+        if new_engine_version {
+            let each = match &extra_data {
+                Some(data) => data.clone().merge(file.path_value.clone())?,
+                None => file.path_value.clone()
+            };
+            let traversal = Traversal::from(&each);
+            let mut root_scope = root_scope(rules, &each)?;
+            //let mut tracker = RecordTracker::new(&mut root_scope);
+            let status = eval_rules_file(rules, &mut root_scope)?;
+            let root_record = root_scope.reset_recorder().extract();
+            reporter.report_eval(
+                &mut write_output,
+                status,
+                &root_record,
+                rules_file_name,
+                &file.name,
+                &file.content,
+                &traversal,
+                output
+            )?;
+            if verbose {
+                print_verbose_tree(&root_record);
+            }
+            if print_json {
+                println!("{}", serde_json::to_string_pretty(&root_record)?)
+            }
+            if status == Status::FAIL {
+                overall = Status::FAIL
+            }
+        } else {
+            let each = &file.path_value;
+            let root_context = RootScope::new(rules, each);
+            let stacker = StackTracker::new(&root_context);
+            let reporter = ConsoleReporter::new(stacker, reporter.as_ref(), rules_file_name, &file.name, verbose, print_json, show_clause_failures);
+            let appender = MetadataAppender { delegate: &reporter, root_context: &each };
+            let status = rules.evaluate(&each, &appender)?;
+            reporter.report(&each, output)?;
+            if status == Status::FAIL {
+                overall = Status::FAIL
+            }
         }
     }
     Ok(overall)

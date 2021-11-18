@@ -5,6 +5,7 @@ mod rules;
 mod commands;
 mod command;
 mod migrate;
+mod utils;
 
 pub extern "C" fn run_checks(
     data: &str,

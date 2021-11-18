@@ -14,43 +14,41 @@ use crate::rules::errors::{Error, ErrorKind};
 
 use super::EvaluationType;
 use crate::rules::Status;
+use crate::rules::eval_context::EventRecord;
+use crate::rules::path_value::traversal::Traversal;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)/(?P<rest>.*$)").ok().unwrap();
 }
 
 #[derive(Debug)]
-pub(crate) struct CfnReporter<'a> {
-    data_file_name: &'a str,
-    rules_file_name: &'a str,
-    output_format_type: OutputFormatType,
-    render: Box<dyn GenericReporter>,
-}
+pub(crate) struct CfnReporter{}
 
-impl<'a> CfnReporter<'a> {
-    pub(crate) fn new<'r>(data_file_name: &'r str,
-                          rules_file_name: &'r str,
-                          output_format_type: OutputFormatType) -> CfnReporter<'r> {
+impl CfnReporter {
+    pub(crate) fn new() -> Self {
         CfnReporter {
-            data_file_name,
-            rules_file_name,
-            output_format_type,
-            render: match output_format_type {
-                OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
-            }
         }
     }
 }
 
-impl<'a> Reporter for CfnReporter<'a> {
+impl Reporter for CfnReporter {
+
     fn report(&self,
               writer: &mut dyn Write,
               _status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize) -> crate::rules::Result<()> {
+              longest_rule_name: usize,
+              rules_file: &str,
+              data_file: &str,
+              _data: &Traversal<'_>,
+              output_format_type: OutputFormatType) -> crate::rules::Result<()> {
+
+        let renderer = match output_format_type {
+            OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
+            OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+            OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
+        };
         let failed = if !failed_rules.is_empty() {
             let mut by_resource_name = HashMap::new();
             for (idx, each_failed_rule) in failed_rules.iter().enumerate() {
@@ -101,8 +99,27 @@ impl<'a> Reporter for CfnReporter<'a> {
             });
         let skipped = skipped.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
         let passed = passed.iter().map(|s| s.context.clone()).collect::<HashSet<String>>();
-        self.render.report(writer, self.rules_file_name, self.data_file_name, failed, passed, skipped, longest_rule_name)?;
+        renderer.report(writer, rules_file, data_file, failed, passed, skipped, longest_rule_name)?;
         Ok(())
+    }
+
+    fn report_eval<'value>(
+        &self,
+        _write: &mut dyn Write,
+        _status: Status,
+        _root_record: &EventRecord<'value>,
+        _rules_file: &str,
+        _data_file: &str,
+        _data_file_bytes: &str,
+        _data: &Traversal<'value>,
+        _output_type: OutputFormatType) -> crate::rules::Result<()> {
+        let renderer = match _output_type {
+            OutputFormatType::SingleLineSummary => Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>,
+            OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>,
+            OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>,
+        };
+        super::common::report_from_events(
+            _root_record, _write, _data_file, _rules_file, renderer.as_ref())
     }
 }
 
