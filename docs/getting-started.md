@@ -5,6 +5,7 @@ This section demonstrates how you can complete the core Guard tasks of writing, 
 **Topics**
 + [Prerequisites](#getting-started-prerequisites)
 + [Overview of using Guard rules](#getting-started-overview)
++ [Migrating Guard 1\.0 rules to Guard 2\.0](migrate-rules.md)
 + [Writing AWS CloudFormation Guard rules](writing-rules.md)
 + [Testing AWS CloudFormation Guard rules](testing-rules.md)
 + [Validating input data against AWS CloudFormation Guard rules](validating-rules.md)

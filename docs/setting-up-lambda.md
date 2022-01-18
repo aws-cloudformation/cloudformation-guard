@@ -1,8 +1,8 @@
 # Installing Guard as an AWS Lambda function<a name="setting-up-lambda"></a>
 
-You can install AWS CloudFormation Guard through Cargo, the Rust package manager\. *Guard as an AWS Lambda* function \(`cfn-guard-lambda`\) is a lightweight wrapper around Guard \(cfn\-guard\) that can be used as a Lambda function\.
+You can install AWS CloudFormation Guard through Cargo, the Rust package manager\. *Guard as an AWS Lambda* function \(`cfn-guard-lambda`\) is a lightweight wrapper around Guard \(\) that can be used as a Lambda function\.
 
-## Install Guard as a Lambda<a name="w15aac10c16b5"></a>
+## Install Guard as a Lambda<a name="w15aab9c16b5"></a>
 
 ### Prerequisites<a name="guard-as-lambda-prerequisites"></a>
 
@@ -86,7 +86,7 @@ Cargo is the Rust package manager\. Complete the following steps to install Rust
    cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap
    ```
 
-1. Run the following command to submit `cfn-guard`as a Lambda function to your account\.
+1. Run the following command to submit ``as a Lambda function to your account\.
 
    ```
    aws lambda create-function --function-name cfnGuard \

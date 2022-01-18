@@ -59,3 +59,7 @@ cfn-guard test \
 ```
 PASS|FAIL Expected Rule = rule_name, Status = SKIP|FAIL|PASS, Got Status = SKIP|FAIL|PASS
 ```
+
+## See also<a name="cfn-guard-test-see-also"></a>
+
+[Testing Guard rules](testing-rules.md)

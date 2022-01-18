@@ -2,6 +2,8 @@
 
 You can use the AWS CloudFormation Guard built\-in unit testing framework to verify that your Guard rules work as intended\. This section provides a walkthrough of how to write a unit testing file and how to use it to test your rules file with the `test` command\.
 
+Your unit test file must have one of the following extensions: `.json`, `.JSON`, `.jsn`, `.yaml`, `.YAML`, or `.yml`\.
+
 **Topics**
 + [Prerequisites](#testing-rules-prerequisites)
 + [Overview of Guard unit testing files](#testing-rules-overview)

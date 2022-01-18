@@ -21,6 +21,7 @@ Amazon's trademarks and trade dress may not be used in
       + [Installing Guard (Windows)](setting-up-windows.md)
    + [Installing Guard as an AWS Lambda function](setting-up-lambda.md)
 + [Getting started with AWS CloudFormation Guard](getting-started.md)
+   + [Migrating Guard 1.0 rules to Guard 2.0](migrate-rules.md)
    + [Writing AWS CloudFormation Guard rules](writing-rules.md)
       + [Defining queries and filtering](query-and-filtering.md)
       + [Assigning and referencing variables in AWS CloudFormation Guard rules](variables.md)

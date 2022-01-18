@@ -8,7 +8,7 @@ For more information about Guard, see [What is Guard?](docs/what-is.md). To get 
 
 > **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.0 because Guard 2.0 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.0 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. For information about migrating Guard rules, see [Migrating 1.0 rules to 2.0](docs/what-is.md#migrate-rules-how-to).
 > 
-> You can find code related to Guard2.0 on the main branch of the repo and code related to Guard 1.0 on the [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
+> You can find code related to Guard 2.0 on the main branch of the repo and code related to Guard 1.0 on the [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
 
 **Guard In Action**
 
@@ -20,7 +20,7 @@ For more information about Guard, see [What is Guard?](docs/what-is.md). To get 
 * [Guard DSL](#guard-dsl)
   * [Tenets](#tenets)
   * [Features of Guard DSL](#features-of-guard-dsl)
-* [Installation](#installation)
+* [Installation](#installing-the-guard-cli)
   * [How does Guard CLI work?](#how-does-guard-cli-work?)
 * [License](#license)
 
@@ -38,22 +38,22 @@ For more information about Guard, see [What is Guard?](docs/what-is.md). To get 
 **3) What is a clause in Guard?**
 > A clause is an assertion that evaluates to true or false. For more information about clauses, see [Writing rules](docs/writing-rules.md). 
 
-**4) What are the supported** **types** **that can I use to define clauses?**
+**4) What are the supported** **types** **that I can use to define clauses?**
 > For a list of supported types, see [the query|value literal property of Guard rule clauses](docs/writing-rules.md#clauses-properties-value-literal).
 
 **5) What binary and unary comparison operators can I use?**
 > For a list of supported binary and unary comparison operators, see [the operator property of Guard rule clauses](docs/writing-rules.md#clauses-properties-operator).
 
 **6) How can I define advanced policy rules?**
-> You can define advanced policy rules using Conjunctive Normal Form. For more information about defining advanced poilcy rules, see [Defining queries and filtering](docs/query-and-filtering.md).
+> You can define advanced policy rules using Conjunctive Normal Form. For more information about defining advanced policy rules, see [Defining queries and filtering](docs/query-and-filtering.md) and [Composing named-rule blocks](docs/named-rule-block-composition.md).
 
 **7) Can I easily test policy rules?**
 > Yes. Guard supports a built-in unit testing framework to test policy rules and clauses. This gives customers confidence that their Guard policy rules work as intended. For more information about the unit testing framework, see [Testing Guard rules](docs/testing-rules.md).
 
 **8)** **Does Guard support rule categories?**
-> Yes. Guard supports running several rule sets together for validating policies. You can create multiple rules files, each with its own intended purpose. For example, you can create one rules file for Amazon S3, a second one for Amazon DynamoDB, a third one for access management, and so on. Alternatively, you can create a rules file for all of your security related rules, a second one for cost compliance, and so on. You can use Guard to validate all of these rules files. For more information about rule sets, see [Composing named-rule blocks](docs/named-rule-block-composition.md).
+> Yes. Guard supports running several rules files together for validating policies. You can create multiple rules files, each with its own intended purpose. For example, you can create one rules file for Amazon S3, a second one for Amazon DynamoDB, a third one for access management, and so on. Alternatively, you can create a rules file for all of your security related rules, a second one for cost compliance, and so on. You can use Guard to validate all of these rules files. For more information, see [Validating input data against Guard rules](validating-rules.md).
 
-**9) When can I evaluate Guard policies?**
+**9) Where can I use Guard?**
 > Guard supports the entire spectrum of end-to-end evaluation of policy checks. The tool supports bringing in shift-left practices as close as running it directly at development time, integrated into code repositories via hooks like GitHub Actions for pull requests, and into CI/CD pipelines such as AWS CodePipeline pipelines and Jenkins (just exec process).
 
 **10) What are you not telling me? This sounds too good to be true.**

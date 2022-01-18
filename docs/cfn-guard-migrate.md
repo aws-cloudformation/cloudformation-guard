@@ -37,3 +37,7 @@ cfn-guard migrate \
 --output output.json \
 --rules rules.guard
 ```
+
+## See also<a name="cfn-guard-migrate-see-also"></a>
+
+[Migrating Guard 1\.0 rules to Guard 2\.0](migrate-rules.md)

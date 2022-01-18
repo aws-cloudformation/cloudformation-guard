@@ -2,7 +2,7 @@
 
 On a Windows host, you can install AWS CloudFormation Guard by using Cargo, the Rust package manager\. 
 
-## Prerequisites<a name="w15aac10c11c16b5"></a>
+## Prerequisites<a name="w15aab9c11c16b5"></a>
 
 Complete these prerequisites before you install Guard on your Windows host:
 + [Install Microsoft Visual C\+\+ Build Tools](#install-build-tools)
