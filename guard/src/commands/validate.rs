@@ -298,37 +298,6 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-pub fn validate_and_return_json(
-    data: &str,
-    rules: &str,
-) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
-       Ok(value) => PathAwareValue::try_from(value),
-       Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
-    };
-
-    let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
-
-    match crate::rules::parser::rules_file(span) {
-
-        Ok(rules) => {
-            match input_data {
-                Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
-                    let reporters = vec![];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json();
-                    return Ok(json_result);
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
