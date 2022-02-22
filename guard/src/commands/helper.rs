@@ -15,7 +15,10 @@ pub fn validate_and_return_json(
 ) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
        Ok(value) => PathAwareValue::try_from(value),
-       Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+       Err(e) => {
+           let value = serde_yaml::from_str::<serde_json::Value>(&data)?;
+           PathAwareValue::try_from(value)
+       }
     };
 
     let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
