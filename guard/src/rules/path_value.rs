@@ -4,7 +4,6 @@ use std::convert::{TryFrom, TryInto};
 // Std Libraries
 //
 use std::fmt::Formatter;
-use std::fmt::Write;
 use serde::Serialize;
 
 

@@ -2,8 +2,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status};
-use crate::rules::path_value::Path;
+use crate::rules::{EvaluationType, Status};
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
 use std::io::Write;

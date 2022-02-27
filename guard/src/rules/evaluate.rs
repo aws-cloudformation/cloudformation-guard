@@ -2,11 +2,9 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Formatter;
 
-use colored::Colorize;
-
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenConditions, WhenGuardClause};
+use crate::rules::exprs::{GuardClause, GuardNamedRuleClause, QueryPart, RuleClause, TypeBlock, BlockGuardClause, WhenGuardClause};
 use crate::rules::exprs::{AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile, SliceDisplay};
 use crate::rules::path_value::{Path, PathAwareValue, QueryResolver};
 use crate::rules::values::*;

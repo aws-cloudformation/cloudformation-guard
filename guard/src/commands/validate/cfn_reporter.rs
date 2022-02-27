@@ -2,15 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
-use colored::*;
 use lazy_static::*;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::{find_all_failing_clauses, NameInfo, GenericReporter, StructuredSummary, StructureType};
-use crate::rules::errors::{Error, ErrorKind};
 
 use super::EvaluationType;
 use crate::rules::Status;

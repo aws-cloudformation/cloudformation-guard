@@ -1,7 +1,6 @@
 use crate::rules::{EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
 use nom::lib::std::fmt::Formatter;
 use serde::{Serialize};
-use std::cell::Ref;
 use crate::rules::values::CmpOperator;
 
 #[derive(Serialize, Debug)]

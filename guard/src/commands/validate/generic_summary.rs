@@ -2,16 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
-use colored::*;
-use serde::Serialize;
-
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::find_all_failing_clauses;
 use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
-use itertools::Itertools;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary<'a> {
