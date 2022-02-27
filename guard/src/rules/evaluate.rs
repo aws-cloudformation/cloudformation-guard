@@ -679,7 +679,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
     fn evaluate<'s>(&self,
                     context: &'s PathAwareValue,
                     var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        Ok('outer: loop {
+        Ok(loop {
             let mut num_passes = 0;
             let mut num_fails = 0;
             let item_name = std::any::type_name::<T>();
