@@ -122,7 +122,8 @@ mod tests {
                 ]
               }
             ]"#;
-        let serialized =   cfn_guard::run_checks(&data, &rule).unwrap();
+        let verbose = true;
+        let serialized =   cfn_guard::run_checks(&data, &rule, verbose).unwrap();
         let result = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();
         let expected = serde_json::from_str::<serde_json::Value>(expected).ok().unwrap();
         assert_eq!(expected, result);

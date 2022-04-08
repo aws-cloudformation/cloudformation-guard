@@ -23,7 +23,7 @@ use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
 
-mod generic_summary;
+pub(crate) mod generic_summary;
 mod common;
 mod summary_table;
 mod cfn_reporter;
@@ -43,7 +43,7 @@ pub(crate) enum OutputFormatType {
 
 pub(crate) trait Reporter : Debug {
     fn report(&self,
-              writer: &mut Write,
+              writer: &mut dyn Write,
               status: Option<Status>,
               failed_rules: &[&StatusContext],
               passed_or_skipped: &[&StatusContext],
@@ -404,10 +404,40 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         }
     }
 
-    pub fn get_result_json(self) -> String {
+    pub fn get_result_json(self) -> Result<String> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
+        if self.verbose {
+            Ok(format!("{}", serde_json::to_string_pretty(&top.children).unwrap()))
+        }
+        else {
+            let mut output = Vec::new();
+            let longest = top.children.iter()
+                .max_by(|f, s| {
+                    (*f).context.len().cmp(&(*s).context.len())
+                })
+                .map(|elem| elem.context.len())
+                .unwrap_or(20);
+            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
+                top.children.iter().partition(|ctx|
+                    match (*ctx).status {
+                        Some(Status::FAIL) => true,
+                        _ => false
+                    });
+            for each_reporter in self.reporters {
+                each_reporter.report(
+                    &mut output,
+                    top.status.clone(),
+                    &failed,
+                    &rest,
+                    longest
+                )?;
+            }
+            match String::from_utf8(output) {
+                Ok (s) => Ok(s),
+                Err(e) =>  Err(Error::new(ErrorKind::ParseError(e.to_string())))
+            }
+        }
     }
 
     fn report(self) -> crate::rules::Result<()> {
