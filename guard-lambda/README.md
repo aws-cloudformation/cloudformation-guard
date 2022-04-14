@@ -9,7 +9,20 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 * [Calling the Lambda Function](#calling-the-lambda-function)
 * [FAQs](#faqs)
 
-## Installation
+## Installation using SAM
+
+### Dependencies
+
+* [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-getting-started.html) and permission to deploy resources with CloudFormation
+* [Docker](https://docs.docker.com/get-docker/) or another container runtime supported by SAM CLI
+
+### Building and deploying
+
+1. Run `sam build --use-container` to build the function
+2. Run `sam deploy --guided` to deploy the template with CloudFormation (after successfully deploying, you can use `sam deploy` without `--guided` for updates).
+3. The name of the function will be shown in the `GuardFunctionName` Output
+
+## Manual Installation
 
 ### Dependencies
 
@@ -30,8 +43,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
     linker = "x86_64-linux-musl-gcc"
     ```
 1. Ensure you're in the `guard-lambda` directory
-1. Run `cargo build --release --target x86_64-unknown-linux-musl`. For [a custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html), AWS Lambda looks for an executable called `bootstrap` in the deployment package zip. Rename the generated `cfn-lambda` executable to `bootstrap` and add it to a zip archive.
-1. Run `cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap`.
+1. Run `cargo build --release --target x86_64-unknown-linux-musl`. For [a custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html), AWS Lambda looks for an executable called `bootstrap` in the deployment package zip. Rename the generated `cfn-guard-lambda` executable to `bootstrap` and add it to a zip archive. This can be done with `cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap`.
 1. Run the following command to submit cfn-guard as a AWS Lambda to your account:
 
 ```bash
@@ -57,7 +69,8 @@ The payload JSON to `cfn-guard-lambda` requires the following two fields:
 To invoke the submitted cfn-guard as a AWS Lambda function run:
 
 ```bash
-aws lambda invoke --function-name cfnGuardLambda \
+name=cfnGuardLambda  # replace this when deploying with CloudFormation/SAM
+aws lambda invoke --function-name $name \
   --payload "{"data": "<input data>", "rules" : ["<input rules 1>", "<input rules 2>", ...]}" \
   output.json
 ```
@@ -66,7 +79,8 @@ The above works for AWS CLI version 1. If you are planning to use the AWS CLI ve
 ### Example
 
 ```bash
-aws lambda invoke --function-name cfnGuard --payload '{"data": "{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}}}", "rules" : [ "Resources.*[ Type == /EC2::Volume/ ].Properties.Encrypted == false" ]}' output.json
+name=cfnGuardLambda  # replace this when deploying with CloudFormation/SAM
+aws lambda invoke --function-name $name --payload '{"data": "{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}}}", "rules" : [ "Resources.*[ Type == /EC2::Volume/ ].Properties.Encrypted == false" ]}' output.json
 ```
 
 ## FAQs
