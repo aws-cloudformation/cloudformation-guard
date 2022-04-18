@@ -167,7 +167,7 @@ impl GenericReporter for SingleLineSummary {
     {
         writeln!(writer, "Evaluation of rules {} against data {}", rules_file_name, data_file_name)?;
         if !failed.is_empty() {
-            writeln!(writer, "--");
+            writeln!(writer, "--")?;
         }
         for (_rule, clauses) in failed {
             super::common::print_name_info(

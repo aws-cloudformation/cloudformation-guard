@@ -850,7 +850,7 @@ fn evaluate_against_data_input<'r>(
             }
         } else {
             let each = &file.path_value;
-            let root_context = RootScope::new(rules, each);
+            let root_context = RootScope::new(rules, each)?;
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
             let reporter = ConsoleReporter::new(

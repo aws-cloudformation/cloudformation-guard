@@ -387,7 +387,7 @@ fn test_with_data(
                         by_result
                     } else {
                         let root = PathAwareValue::try_from(each.input)?;
-                        let context = RootScope::new(rules, &root);
+                        let context = RootScope::new(rules, &root)?;
                         let stacker = StackTracker::new(&context);
                         rules.evaluate(&root, &stacker)?;
                         let expectations = each.expectations.rules;

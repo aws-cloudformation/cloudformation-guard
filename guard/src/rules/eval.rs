@@ -695,7 +695,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                     custom_message: custom_message.clone(),
                     status: Status::FAIL,
                     comparison: cmp
-                })));
+                })))?;
                 statues.push((QueryResult::Resolved(*lhs), Status::FAIL))
             }
         }

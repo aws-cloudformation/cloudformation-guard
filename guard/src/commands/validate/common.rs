@@ -113,7 +113,7 @@ impl GenericReporter for StructuredSummary {
         match &self.hierarchy_type {
             StructureType::JSON => writeln!(writer, "{}", serde_json::to_string(&value)?),
             StructureType::YAML => writeln!(writer, "{}", serde_yaml::to_string(&value)?),
-        };
+        }?;
         Ok(())
     }
 }
@@ -519,7 +519,7 @@ pub(super) fn print_name_info<R, U, B>(
                                  data=data_file_name,
                                  rule_name=each.rule,
                                  msg=each.message.replace('\n', "; ")
-                        );
+                        )?;
                         continue;
                     }
                 };

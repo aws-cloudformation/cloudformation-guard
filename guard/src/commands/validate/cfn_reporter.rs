@@ -136,7 +136,7 @@ impl super::common::GenericReporter for SingleLineReporter {
         writeln!(writer, "Evaluation of rules {} for template {}, number of resource failures = {}",
                  rules_file_name, data_file_name, by_resource_name.len())?;
         if !by_resource_name.is_empty() {
-            writeln!(writer, "--");
+            writeln!(writer, "--")?;
         }
         //
         // Agreed on text
