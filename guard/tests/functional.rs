@@ -145,7 +145,14 @@ mod tests {
                   ]
                 }"#;
         let verbose = true;
-        let serialized = cfn_guard::run_checks(&data, &rule, verbose).unwrap();
+        use cfn_guard::*;
+        let serialized = run_checks(ValidateInput {
+            content: &data,
+            file_name: "functional_test.json",
+        }, ValidateInput {
+            content: &rule,
+            file_name: "functional_test.rule",
+        }, verbose).unwrap();
         let result = serde_json::from_str::<serde_json::Value>(&serialized)
             .ok()
             .unwrap();
