@@ -11,6 +11,10 @@ fn default_as_true() -> bool {
     true
 }
 
+fn default_as_empty() -> String {
+    "".to_string()
+}
+
 #[derive(Deserialize, Debug)]
 struct CustomEvent {
     #[serde(rename = "data")]
@@ -19,7 +23,7 @@ struct CustomEvent {
     rules: Vec<String>,
     #[serde(rename = "verbose", default="default_as_true")] // for backward compatibility
     verbose: bool,
-    #[serde(rename = "s3_output_bucket")]
+    #[serde(rename = "s3_output_bucket", default="default_as_empty")]
     s3_output_bucket: String,
 }
 
@@ -31,6 +35,11 @@ struct CustomOutput {
 #[derive(Debug, Serialize)]
 struct FailureResponse {
     pub body: String, 
+}
+
+#[derive(Debug, Serialize)]
+struct SuccessMessage{
+    pub message: String, 
 }
 
 // Implement Display for the Failure response so that we can then implement Error.
@@ -95,10 +104,10 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
     }
 
     //let response: CustomOutput;
-    let mut resp = Vec::new();
+    let mut response = Vec::new();
 
     if e.s3_output_bucket.is_empty() {
-        resp = results_vec;
+        response = results_vec;
     }else {
         // No extra configuration is needed as long as your Lambda has 
         // the necessary permissions attached to its role.
@@ -118,13 +127,14 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
             &body
         ).await?;
 
-        let resp_message = &format!("Successfully stored the incoming request in S3 with the name '{}'", &filename);
-        
-        let j = serde_json::from_str(resp_message).unwrap();
-        resp.push(j);
+        let j = serde_json::json!({
+            "message": format!("Successfully stored the incoming request in S3 with the name '{}'", &filename)
+        });
+        let json_value: serde_json::Value = serde_json::from_value(j)?;
+        response.push(json_value);
     }
 
     Ok(CustomOutput {
-        message: resp,
+        message: response,
     })
 }
