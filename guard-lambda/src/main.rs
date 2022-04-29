@@ -84,7 +84,7 @@ pub async fn upload_object_to_s3(client: &aws_sdk_s3::Client, bucket_name: &str,
             }
         })?;
     
-    info!("Successfully stored the incoming request in S3 with the name '{}'", &key);
+    info!("Successfully stored the scan results in S3 with the name '{}'", &key);
 
     //println!("Uploaded file: {}", file_name);
     Ok(())
@@ -128,7 +128,7 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
         ).await?;
 
         let j = serde_json::json!({
-            "message": format!("Successfully stored the incoming request in S3 with the name '{}'", &filename)
+            "message": format!("Successfully stored the scan results in S3 with the name '{}'", &filename)
         });
         let json_value: serde_json::Value = serde_json::from_value(j)?;
         response.push(json_value);
