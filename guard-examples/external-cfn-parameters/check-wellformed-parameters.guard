@@ -6,6 +6,8 @@ rule has_correct_keys when %all_parameters !empty {
         ParameterKey exists
         ParameterValue exists
         << Required keys exist >>
+        UsePreviousValue not exists
+        ResolvedValue not exists
     }
 }
 
