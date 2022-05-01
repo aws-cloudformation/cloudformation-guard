@@ -1,0 +1,30 @@
+---
+- name: DoesNotApplyToEmptyFiles
+  input: []
+  expectations:
+    rules:
+      has_correct_keys: SKIP
+- name: FindsRequiredKeys
+  input: [
+    {"ParameterKey": "pIgnore", "ParameterValue": "arn:aws:s3:::bucket_name/key_name"}
+  ]
+  expectations:
+    rules:
+      has_correct_keys: PASS
+      has_likely_valid_arn: PASS
+- name: FindsMalformedArn
+  input: [
+    {"ParameterKey": "pIgnore", "ParameterValue": "arn:aws:foo:bar:baz"}
+  ]
+  expectations:
+    rules:
+      has_correct_keys: PASS
+      has_likely_valid_arn: FAIL
+- name: ChecksForMissingKeys
+  input: [
+    {"ParameterKey": "pIgnore", "ParmeterValue": "arn:aws:s3:::bucket_name/key_name"}
+  ]
+  expectations:
+    rules:
+      has_correct_keys: FAIL
+      has_likely_valid_arn: SKIP
