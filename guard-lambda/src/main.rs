@@ -84,9 +84,9 @@ pub async fn upload_object_to_s3(client: &aws_sdk_s3::Client, bucket_name: &str,
             }
         })?;
     
-    info!("Successfully stored the scan results in S3 with the name '{}'", &key);
+    let s3_location = format!("s3://{}/{}", bucket_name, key);
+    info!("Successfully stored the scan results in S3 with the name '{}'", &s3_location);
 
-    //println!("Uploaded file: {}", file_name);
     Ok(())
 }
 
