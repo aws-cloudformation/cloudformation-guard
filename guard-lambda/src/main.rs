@@ -103,7 +103,6 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
         results_vec.push(json_value)
     }
 
-    //let response: CustomOutput;
     let mut response = Vec::new();
 
     if e.s3_output_bucket.is_empty() {
