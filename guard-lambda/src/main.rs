@@ -6,6 +6,8 @@ use lambda_runtime::{handler_fn, Context, Error};
 use log::{self, LevelFilter, info, error};
 use serde_derive::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
+use std::time::{SystemTime};
+use chrono::prelude::{DateTime, Utc};
 
 fn default_as_true() -> bool {
     true
@@ -23,8 +25,18 @@ struct CustomEvent {
     rules: Vec<String>,
     #[serde(rename = "verbose", default="default_as_true")] // for backward compatibility
     verbose: bool,
-    #[serde(rename = "s3_output_bucket", default="default_as_empty")]
-    s3_output_bucket: String,
+    #[serde(rename = "s3_publisher")]
+    s3_publisher: Option<S3Publisher>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct S3Publisher {
+    #[serde(rename = "bucket_name")]
+    bucket_name: String,
+    #[serde(rename = "base_prefix", default="default_as_empty")]
+    base_prefix: String,
+    #[serde(rename = "base_suffix", default="default_as_empty")]
+    base_suffix: String,
 }
 
 #[derive(Serialize)]
@@ -40,6 +52,12 @@ struct FailureResponse {
 #[derive(Debug, Serialize)]
 struct SuccessMessage{
     pub message: String, 
+}
+
+// method to initialize the timestamp string
+fn iso8601(st: &std::time::SystemTime) -> String {
+    let dt: DateTime<Utc> = st.clone().into();
+    format!("{}", dt.format("%+"))
 }
 
 // Implement Display for the Failure response so that we can then implement Error.
@@ -62,12 +80,18 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn upload_object_to_s3(client: &aws_sdk_s3::Client, bucket_name: &str, key: &str, b: &str) -> Result<(), Error> {
-    //let body = ByteStream::from_static(b.as_bytes()).await;
+pub async fn upload_object_to_s3(client: &aws_sdk_s3::Client, s3_publisher: S3Publisher, b: &str) -> Result<String, Error> {
+    
+    let base_suffix = if s3_publisher.base_suffix.is_empty() { ".json" } else { &s3_publisher.base_suffix };
+    let key = format!("{base_prefix}{disambiguitor}{base_suffix}", 
+        base_prefix = &s3_publisher.base_prefix, 
+        disambiguitor = iso8601(&SystemTime::now()), 
+        base_suffix = &base_suffix);
+
     client
         .put_object()
-        .bucket(bucket_name)
-        .key(key)
+        .bucket(&s3_publisher.bucket_name)
+        .key(&key)
         .body(b.as_bytes().to_owned().into())
         .content_type("text/plain")
         .send()
@@ -84,10 +108,10 @@ pub async fn upload_object_to_s3(client: &aws_sdk_s3::Client, bucket_name: &str,
             }
         })?;
     
-    let s3_location = format!("s3://{}/{}", bucket_name, key);
+    let s3_location = format!("s3://{}/{}", s3_publisher.bucket_name, key);
     info!("Successfully stored the scan results in S3 with the name '{}'", &s3_location);
 
-    Ok(())
+    Ok(s3_location)
 }
 
 pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
@@ -105,7 +129,7 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
 
     let mut response = Vec::new();
 
-    if e.s3_output_bucket.is_empty() {
+    if e.s3_publisher.is_none() {
         response = results_vec;
     }else {
         // No extra configuration is needed as long as your Lambda has 
@@ -115,19 +139,16 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
         // Create an S3 client
         let client = aws_sdk_s3::Client::new(&config);
 
-        // Generate a filename based on when the request was received.
-        let filename = format!("{}.json", time::OffsetDateTime::now_utc().unix_timestamp());
         let body = serde_json::to_string(&results_vec)?;
         
-        upload_object_to_s3(
+        let s3_location = upload_object_to_s3(
             &client,
-            &e.s3_output_bucket, 
-            &filename, 
+            e.s3_publisher.unwrap(),
             &body
         ).await?;
 
         let j = serde_json::json!({
-            "message": format!("Successfully stored the scan results in S3 with the name '{}'", &filename)
+            "message": format!("Successfully stored the scan results in S3 with the name '{}'", &s3_location)
         });
         let json_value: serde_json::Value = serde_json::from_value(j)?;
         response.push(json_value);
