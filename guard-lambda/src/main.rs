@@ -73,8 +73,7 @@ impl std::error::Error for FailureResponse {}
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-
-    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+    SimpleLogger::new().with_level(LevelFilter::Info).with_utc_timestamps().init().unwrap();
     let func = handler_fn(call_cfn_guard);
     lambda_runtime::run(func).await?;
     Ok(())
