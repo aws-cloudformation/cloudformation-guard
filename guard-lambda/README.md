@@ -20,6 +20,8 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 * If building on Ubuntu, you'll need to run `sudo apt-get update; sudo apt install build-essential` if you haven't already
 * If building on CentOS/RHEL you'll need to add the `musl-libc` package repository to your yum config (see https://copr.fedorainfracloud.org/coprs/ngompa/musl-libc/)
 
+> :warning: **If you are sending lambda output to an S3 bucket**: you will need to add necesary permissions, that allows lambda fucntion to write into S3. (https://aws.amazon.com/blogs/security/writing-iam-policies-how-to-grant-access-to-an-amazon-s3-bucket/)
+
 ### Mac/Ubuntu
 
 1. Install and configure the [dependencies](#dependencies).
