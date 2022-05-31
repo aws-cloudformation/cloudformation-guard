@@ -176,7 +176,7 @@ fn single_line(writer: &mut dyn Write,
 
     let root = data.root().unwrap();
     let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range("/Resources/"..) {
+    for (key, value) in path_tree.range("/Resources"..) {
         let resource_name = match CFN_RESOURCES.captures(*key) {
             Some(cap) => {
                 cap.get(1).unwrap().as_str()

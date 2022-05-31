@@ -550,6 +550,7 @@ impl StructureReader {
         loc: Location,
         fn_ref: &str) -> Option<MarkedValue> {
         match fn_ref {
+            "GetAtt"            |
             "Sub"               |
             "Select"            |
             "Split"             |

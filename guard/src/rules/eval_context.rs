@@ -313,8 +313,14 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             _ => query_index+1
                         }
                     } else { query_index+1 };
-                    let mut scope = ValueScope { root: value, parent: resolver };
-                    resolved.extend(query_retrieval_with_converter(index, query, value, &mut scope, converter)?);
+
+                    if index < query.len() {
+                        let mut scope = ValueScope { root: value, parent: resolver };
+                        resolved.extend(query_retrieval_with_converter(index, query, value, &mut scope, converter)?);
+                    }
+                    else {
+                        resolved.push(each)
+                    }
                 }
             }
         }

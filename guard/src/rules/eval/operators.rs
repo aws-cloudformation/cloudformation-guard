@@ -407,14 +407,22 @@ impl Comparator for InOperation {
             },
 
             (Some(l), None) => {
-                selected(
+                let rhs = selected(
                     rhs, |ur| results.push(
                         ValueEvalResult::ComparisonResult(
                             ComparisonResult::RhsUnresolved(ur.clone(), l))),
                     Vec::push
-                ).into_iter().for_each(|r|
-                    results.push(contained_in(l, r))
                 );
+
+                if rhs.iter().any(|elem| elem.is_list()) {
+                    rhs.into_iter().for_each(|r|
+                        results.push(contained_in(l, r))
+                    );
+                }
+                else if l.is_list() {
+
+                }
+
             },
 
             (None, Some(r)) => {
