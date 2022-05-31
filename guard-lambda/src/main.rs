@@ -7,12 +7,18 @@ use log::{self, LevelFilter, info};
 use serde_derive::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
 
+fn default_as_true() -> bool {
+    true
+}
+
 #[derive(Deserialize, Debug)]
 struct CustomEvent {
     #[serde(rename = "data")]
     data: String,
     #[serde(rename = "rules")]
     rules: Vec<String>,
+    #[serde(rename = "verbose", default="default_as_true")] // for backward compatibility
+    verbose: bool,
 }
 
 #[derive(Serialize)]
@@ -31,10 +37,10 @@ async fn main() -> Result<(), Error> {
 
 pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
     info!("Template is: [{}]", &e.data);
-    info!("Rule Set is: [{:?}]", &e.rules);
+    info!("Rules are: [{:?}]", &e.rules);
     let mut results_vec = Vec::new();
     for rule in e.rules.iter() {
-        let result = match cfn_guard::run_checks(&e.data, &rule) {
+        let result = match cfn_guard::run_checks(&e.data, &rule, e.verbose) {
             Ok(t) => t,
             Err(e) => (e.to_string()),
         };

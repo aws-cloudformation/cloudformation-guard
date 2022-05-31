@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgMatches, ArgGroup};
 use colored::*;
 
 use crate::command::Command;
@@ -19,6 +19,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::{BitFlag, BitFlags};
+use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
 use crate::rules::eval_context::{RecordTracker, EventRecord, root_scope, simplifed_json_from_root};
@@ -29,7 +30,7 @@ use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
 use itertools::Itertools;
 
-mod generic_summary;
+pub(crate) mod generic_summary;
 mod common;
 mod summary_table;
 mod cfn_reporter;
@@ -86,6 +87,14 @@ pub(crate) trait Reporter : Debug {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Validate {}
 
+#[derive(Deserialize, Debug)]
+pub(crate) struct Payload {
+    #[serde(rename = "rules")]
+    list_of_rules: Vec<String>,
+    #[serde(rename = "data")]
+    list_of_data: Vec<String>,
+}
+
 impl Validate {
     pub(crate) fn new() -> Self {
         Validate{}
@@ -109,22 +118,21 @@ Note - When pointing the command to a directory, the directory may not contain a
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files").required(true))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a file or dir for data files in JSON or YAML")
-                .multiple(true))
-            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
-            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
-                .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
+            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files"))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a data file or dir for data files in JSON or YAML").multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
                 .possible_values(&["json","yaml","single-line-summary"])
-                .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name("show-summary").long("show-summary").takes_value(true).use_delimiter(true).multiple(true)
+                .default_value("single-line-summary")
+                .help("Specify the format in which the output should be displayed"))
+            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true).help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
+                .help("uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
+            .arg(Arg::with_name("show-summary").long("show-summary").short("S").takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
                 .default_value("fail")
-                .help("control if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off)")
-            )
+                .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
             .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
             .arg(Arg::with_name("alphabetical").long("alphabetical").short("a").required(false).help("Validate files in a directory ordered alphabetically"))
@@ -134,6 +142,16 @@ or rules files.
                 .help("Verbose logging"))
             .arg(Arg::with_name("print-json").long("print-json").short("p").required(false)
                 .help("Print output in json format"))
+            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true)
+                .help("Provide a file or dir for data files in JSON or YAML"))
+            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
+                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
+            .arg(Arg::with_name("payload").long("payload").short("P")
+                .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
+                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
+            .group(ArgGroup::with_name("required_flags")
+                .args(&["rules", "payload"])
+                .required(true))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
@@ -249,7 +267,7 @@ or rules files.
             false
         };
 
-        let data_type = match app.value_of("type")  {
+        let data_type = match app.value_of("type") {
             Some(t) =>
                 if t == "CFNTemplate" {
                     Type::CFNTemplate
@@ -294,65 +312,107 @@ or rules files.
         let show_clause_failures = app.is_present("show-clause-failures");
         let new_version_eval_engine = !app.is_present("old_eval_engine_version");
 
-        let base = PathBuf::from_str(file)?;
-        let rules = if base.is_file() {
-            vec![base.clone()]
-        } else {
-            let mut rule_files = Vec::new();
-            for each in walkdir::WalkDir::new(base.clone()) {
-                if let Ok(entry) = each {
-                    if entry.path().is_file() &&
-                       entry.path().file_name().map(|s| s.to_str()).flatten()
-                           .map_or(false, |s|
-                                s.ends_with(".guard") ||
-                                s.ends_with(".ruleset")
-                           )
-                    {
-                        rule_files.push(entry.path().to_path_buf());
+
+        let mut exit_code = 0;
+        if app.is_present("rules") {
+            let base = PathBuf::from_str(file)?;
+            let rules = if base.is_file() {
+                vec![base.clone()]
+            } else {
+                let mut rule_files = Vec::new();
+                for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
+                    if let Ok(entry) = each {
+                        if entry.path().is_file() &&
+                            entry.path().file_name().map(|s| s.to_str()).flatten()
+                                .map_or(false, |s|
+                                    s.ends_with(".guard") ||
+                                        s.ends_with(".ruleset")
+                                )
+                        {
+                            rule_files.push(entry.path().to_path_buf());
+                        }
+                    }
+                }
+                rule_files
+            };
+            for each_file_content in iterate_over(&rules, |content, file|
+                Ok((content, match file.strip_prefix(&base) {
+                    Ok(path) => if path == empty_path {
+                        format!("{}", file.file_name().unwrap().to_str().unwrap())
+                    } else { format!("{}", path.display()) },
+                    Err(_) => format!("{}", file.display()),
+                }))) {
+                match each_file_content {
+                    Err(e) => println!("Unable read content from file {}", e),
+                    Ok((file_content, rule_file_name)) => {
+                        let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
+                        match crate::rules::parser::rules_file(span) {
+                            Err(e) => {
+                                println!("Parsing error handling rule file = {}, Error = {}",
+                                         rule_file_name.underline(), e);
+                                println!("---");
+                                exit_code = 5;
+                                continue;
+                            },
+
+                            Ok(rules) => {
+                                match evaluate_against_data_input(
+                                    data_type,
+                                    output_type,
+                                    extra_data.clone(),
+                                    &data_files,
+                                    &rules,
+                                    &rule_file_name,
+                                    verbose,
+                                    print_json,
+                                    show_clause_failures,
+                                    new_version_eval_engine,
+                                    summary_type.clone())? {
+                                    Status::SKIP | Status::PASS => continue,
+                                    Status::FAIL => {
+                                        exit_code = 5;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            rule_files
-        };
+        } else {
+            let mut context = String::new();
+            let mut reader = BufReader::new(std::io::stdin());
+            reader.read_to_string(&mut context);
+            let payload: Payload = deserialize_payload(&context)?;
 
-        let mut exit_code = 0;
-        for each_file_content in iterate_over(&rules, |content, file|
-            Ok((content, match file.strip_prefix(&base) {
-                Ok(path) => if path == empty_path {
-                    format!("{}", file.file_name().unwrap().to_str().unwrap())
-                } else { format!("{}", path.display() )},
-                Err(_) => format!("{}", file.display()),
-            }))) {
-            match each_file_content {
-                Err(e) => println!("Unable read content from file {}", e),
-                Ok((file_content, rule_file_name)) => {
-                    let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                    match crate::rules::parser::rules_file(span) {
-                        Err(e) => {
-                            println!("Parsing error handling rule file = {}, Error = {}",
-                                     rule_file_name.underline(), e);
-                            println!("---");
-                            exit_code = 5;
-                            continue;
-                        },
+            let data_collection: Vec<(String, String)> = payload.list_of_data.iter().enumerate().map(|(i, data)|(data.to_string(), format!("DATA_STDIN[{}]", i + 1))).collect();
+            let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
 
-                        Ok(rules) => {
-                            match evaluate_against_data_input(
-                                data_type,
-                                output_type,
-                                extra_data.clone(),
-                                &data_files,
-                                &rules,
-                                &rule_file_name,
-                                verbose,
-                                print_json,
-                                show_clause_failures,
-                                new_version_eval_engine,
-                                summary_type.clone())? {
-                                Status::SKIP | Status::PASS => continue,
-                                Status::FAIL => {
-                                    exit_code = 5;
-                                }
+            for (each_rules, location) in rules_collection {
+               match parse_rules(&each_rules, &location) {
+                    Err(e) => {
+                        println!("Parsing error handling rules = {}, Error = {}",
+                                 location.underline(), e);
+                        println!("---");
+                        exit_code = 5;
+                        continue;
+                    },
+
+                    Ok(rules) => {
+                        match evaluate_against_data_input(
+                            data_type,
+                            output_type,
+                            extra_data.clone(),
+                            &data_collection,
+                            &rules,
+                            &location,
+                            verbose,
+                            print_json,
+                            show_clause_failures,
+                            new_version_eval_engine,
+                            summary_type.clone())? {
+                            Status::SKIP | Status::PASS => continue,
+                            Status::FAIL => {
+                                exit_code = 5;
                             }
                         }
                     }
@@ -386,20 +446,24 @@ pub fn validate_and_return_json(
                     let file_report = simplifed_json_from_root(&event)?;
                     Ok(serde_json::to_string_pretty(&file_report)?)
 
-
-//                    let root_context = RootScope::new(&rules, &root);
-//                    let stacker = StackTracker::new(&root_context);
-//                    let reporters = vec![];
-//                    let reporter = ConsoleReporter::new(stacker, &reporters, "lambda-function", "input-payload", true, true, false);
-//                    rules.evaluate(&root, &reporter)?;
-//                    let json_result = reporter.get_result_json();
-//                    return Ok(json_result);
                 }
                 Err(e) => return Err(e),
             }
         }
         Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
+}
+
+fn deserialize_payload(payload: &str) -> Result<Payload> {
+    match serde_json::from_str::<Payload>(payload) {
+        Ok(value) => Ok(value),
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+    }
+}
+
+fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Result<RulesFile<'r>> {
+    let span = crate::rules::parser::Span::new_extra(rules_file_content, rules_file_name);
+    crate::rules::parser::rules_file(span)
 }
 
 #[derive(Debug)]
@@ -534,10 +598,40 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         }
     }
 
-    pub fn get_result_json(self) -> String {
+    pub fn get_result_json(self) -> Result<String> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        return format!("{}", serde_json::to_string_pretty(&top.children).unwrap());
+        if self.verbose {
+            Ok(format!("{}", serde_json::to_string_pretty(&top.children).unwrap()))
+        }
+        else {
+            let mut output = Vec::new();
+            let longest = top.children.iter()
+                .max_by(|f, s| {
+                    (*f).context.len().cmp(&(*s).context.len())
+                })
+                .map(|elem| elem.context.len())
+                .unwrap_or(20);
+            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
+                top.children.iter().partition(|ctx|
+                    match (*ctx).status {
+                        Some(Status::FAIL) => true,
+                        _ => false
+                    });
+            for each_reporter in self.reporters {
+                each_reporter.report(
+                    &mut output,
+                    top.status.clone(),
+                    &failed,
+                    &rest,
+                    longest
+                )?;
+            }
+            match String::from_utf8(output) {
+                Ok (s) => Ok(s),
+                Err(e) =>  Err(Error::new(ErrorKind::ParseError(e.to_string())))
+            }
+        }
     }
 
     fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> crate::rules::Result<()> {
@@ -693,3 +787,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
     }
     Ok(overall)
 }
+
+#[cfg(test)]
+#[path = "validate_tests.rs"]
+mod validate_tests;

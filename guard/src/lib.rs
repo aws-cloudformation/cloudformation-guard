@@ -10,6 +10,7 @@ mod utils;
 pub extern "C" fn run_checks(
     data: &str,
     rules: &str,
+    verbose: bool
 ) -> crate::rules::Result<String> {
-    return  crate::commands::helper::validate_and_return_json(&data, &rules);
+    return  crate::commands::helper::validate_and_return_json(&data, &rules, verbose);
 }
