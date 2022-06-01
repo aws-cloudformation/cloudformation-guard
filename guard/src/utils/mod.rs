@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 #[derive(Debug, Clone)]
 pub(crate) struct ReadCursor<'buffer> {
     line_num: usize,

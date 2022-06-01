@@ -3,7 +3,6 @@ use crate::rules::{RecordType, BlockCheck, ClauseCheck, Status, QueryResult};
 use std::fmt::{Formatter, Display};
 use crate::rules::values::{CmpOperator, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
 use crate::rules::path_value::PathAwareValue;
-use std::convert::TryInto;
 use crate::rules::exprs::SliceDisplay;
 
 pub(crate) fn display_comparison((cmp, not): (CmpOperator, bool)) -> String {

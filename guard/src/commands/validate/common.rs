@@ -2,17 +2,15 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, path_value, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, BlockCheck, TypeBlockCheck, UnResolved};
-use crate::rules::path_value::Path;
+use crate::rules::{EvaluationType, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, UnResolved};
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
-use std::io::{Write, BufWriter};
+use std::io::Write;
 use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::convert::TryInto;
 use regex::Regex;
 use lazy_static::*;
 use crate::rules::eval_context::{EventRecord, FileReport, simplifed_json_from_root, ClauseReport, ValueComparisons, BinaryComparison, UnaryComparison, ValueUnResolved, GuardClauseReport, UnaryCheck, BinaryCheck, InComparison};
-use crate::rules::errors::{Error, ErrorKind};
 use crate::commands::validate::OutputFormatType;
 use std::hash::{Hash, Hasher};
 

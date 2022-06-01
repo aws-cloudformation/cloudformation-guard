@@ -3,7 +3,7 @@ use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
 use crate::rules::path_value::traversal::{Traversal, TraversalResult, Node};
-use crate::rules::eval_context::{EventRecord, simplifed_json_from_root, ClauseReport, GuardBlockReport, GuardClauseReport, UnaryReport, UnaryCheck, FileReport, RuleReport, BinaryComparison, BinaryCheck, UnaryComparison, InComparison};
+use crate::rules::eval_context::{EventRecord, simplifed_json_from_root, ClauseReport, FileReport, RuleReport, BinaryComparison, UnaryComparison, InComparison};
 use std::collections::{HashMap, BTreeSet, HashSet};
 
 use lazy_static::lazy_static;
@@ -109,7 +109,7 @@ use super::common::{
     IdentityHash
 };
 use crate::rules::path_value::PathAwareValue;
-use nom::{InputTakeAtPosition, Slice};
+use nom::Slice;
 use colored::*;
 use crate::rules::display::ValueOnlyDisplay;
 
@@ -205,7 +205,7 @@ fn single_line(writer: &mut dyn Write,
             let range = resource.paths.range(rule_name.clone()..)
                 .take_while(|p| p.starts_with(&rule_name)).count();
             if range > 0 {
-                struct ErrWriter{};
+                struct ErrWriter{}
                 impl super::common::ComparisonErrorWriter for ErrWriter {
                     fn binary_error_msg(
                         &mut self,

@@ -4,7 +4,6 @@ use crate::rules::path_value::{PathAwareValue, Path};
 use urlencoding;
 use std::convert::TryFrom;
 use nom::Slice;
-use crate::rules::errors::ErrorKind::Errors;
 use crate::rules::errors::{Error, ErrorKind};
 
 pub(crate) fn url_decode(args: &[QueryResult<'_>]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {

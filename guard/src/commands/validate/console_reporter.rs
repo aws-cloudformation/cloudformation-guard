@@ -4,7 +4,6 @@ use crate::rules::{Status, RecordType, ClauseCheck, NamedStatus, BlockCheck, Que
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::values::CmpOperator;
-use std::convert::TryInto;
 use crate::rules::path_value::traversal::Traversal;
 
 #[derive(Debug)]

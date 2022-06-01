@@ -18,8 +18,7 @@ use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
 use serde::{Serialize};
 use crate::rules::values::CmpOperator;
-use crate::rules::exprs::{QueryPart, GuardAccessClause, ParameterizedRule};
-use crate::rules::eval_context::Scope;
+use crate::rules::exprs::{QueryPart, ParameterizedRule};
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 

@@ -15,8 +15,6 @@ use yaml_rust::{Event, Yaml};
 use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
 use crate::rules::path_value::Location;
 
-use lazy_static::lazy_static;
-
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
     Eq,

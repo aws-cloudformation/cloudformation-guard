@@ -1,22 +1,16 @@
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
-use crate::rules::eval_context::{ClauseReport, EventRecord, UnaryCheck, simplifed_json_from_root, GuardClauseReport, UnaryComparison, ValueUnResolved, BinaryCheck, BinaryComparison, RuleReport, ValueComparisons, FileReport, InComparison};
+use crate::rules::eval_context::{ClauseReport, EventRecord, simplifed_json_from_root, UnaryComparison, BinaryComparison, RuleReport, FileReport, InComparison};
 use std::io::Write;
 use crate::rules::Status;
 use crate::commands::tracker::StatusContext;
-use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use lazy_static::lazy_static;
 use crate::rules::UnResolved;
 use regex::Regex;
 use crate::rules::path_value::PathAwareValue;
-use crate::rules::errors::{Error, ErrorKind};
-use serde::{Serialize, Serializer};
-use crate::rules::values::CmpOperator;
-use std::hash::Hash;
-use serde::ser::{SerializeStruct, SerializeMap};
 
-use std::ops::{Deref, DerefMut};
-use std::cmp::{Ordering, max};
+use std::cmp::max;
 use colored::*;
 use crate::rules::display::ValueOnlyDisplay;
 
@@ -25,11 +19,8 @@ use super::common::{
     IdentityHash,
     RuleHierarchy,
     PathTree,
-    Node,
     populate_hierarchy_path_trees
 };
-use crate::rules::exprs::SliceDisplay;
-use grep_searcher::{Searcher, SearcherBuilder};
 
 
 lazy_static! {
@@ -252,7 +243,7 @@ fn single_line(writer: &mut dyn Write,
             let range = resource.paths.range(rule_name.clone()..)
                 .take_while(|p| p.starts_with(&rule_name)).count();
             if range > 0 {
-                struct ErrWriter<'w, 'b>{code_segment: &'w mut utils::ReadCursor<'b>};
+                struct ErrWriter<'w, 'b>{code_segment: &'w mut utils::ReadCursor<'b>}
                 impl<'w, 'b> super::common::ComparisonErrorWriter for ErrWriter<'w, 'b> {
                     fn missing_property_msg(
                         &mut self,

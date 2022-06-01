@@ -8,7 +8,6 @@ use enumflags2::{bitflags, BitFlags};
 use crate::commands::validate::common::colored_string;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::RecordType;
-use std::collections::HashMap;
 use crate::rules::path_value::traversal::Traversal;
 
 #[bitflags]

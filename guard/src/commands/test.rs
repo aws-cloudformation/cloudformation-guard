@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 use std::fs::File;
-use std::path::{PathBuf, Path};
+use std::path::PathBuf;
 
 use clap::{App, Arg, ArgMatches, ArgGroup};
 
@@ -13,16 +13,14 @@ use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 
-use std::collections::{HashMap, BTreeMap, HashSet};
+use std::collections::{HashMap, BTreeMap};
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker};
 use serde::{Serialize, Deserialize};
 use itertools::Itertools;
-use crate::rules::eval_context::RecordTracker;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::Status::SKIP;
 use walkdir::DirEntry;
-use std::process::exit;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}

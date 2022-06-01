@@ -2,16 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
-use colored::*;
-use serde::Serialize;
-
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::commands::validate::common::find_all_failing_clauses;
-use crate::rules::{EvaluationType, Status, RecordType, NamedStatus};
+use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
-use itertools::Itertools;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
 
