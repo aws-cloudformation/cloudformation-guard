@@ -18,7 +18,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
-use enumflags2::{BitFlag, BitFlags};
+use enumflags2::BitFlags;
 use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
@@ -28,7 +28,8 @@ use crate::rules::{ RecordType, NamedStatus };
 use std::collections::HashMap;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
-use itertools::Itertools;
+use crate::rules::path_value::PathAwareValue::Null;
+use crate::rules::path_value::Path as PathValuePath;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -384,7 +385,12 @@ or rules files.
             reader.read_to_string(&mut context);
             let payload: Payload = deserialize_payload(&context)?;
 
-            let data_collection: Vec<(String, String)> = payload.list_of_data.iter().enumerate().map(|(i, data)|(data.to_string(), format!("DATA_STDIN[{}]", i + 1))).collect();
+            let data_collection: Vec<DataFile> = payload.list_of_data.iter()
+                .enumerate().map(|(i, data)|DataFile{
+                content:  data.to_string(),
+                path_value: Null(PathValuePath("".to_string(), Default::default())),
+                name: format!("DATA_STDIN[{}]", i + 1)
+            }).collect();
             let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
 
             for (each_rules, location) in rules_collection {
@@ -469,7 +475,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
-    reporters: &'r dyn Reporter,
+    reporters: &'r Vec<&'r dyn Reporter>,
     rules_file_name: &'r str,
     data_file_name: &'r str,
     verbose: bool,
@@ -586,10 +592,10 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
 }
 
 impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderer: &'r dyn Reporter, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<&'r dyn Reporter>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
-            reporters: renderer,
+            reporters: renderers,
             rules_file_name,
             data_file_name,
             verbose,
@@ -598,7 +604,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         }
     }
 
-    pub fn get_result_json(self) -> Result<String> {
+    pub fn get_result_json(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<String> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         if self.verbose {
@@ -618,18 +624,25 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                         Some(Status::FAIL) => true,
                         _ => false
                     });
+
+            let traversal = Traversal::from(root);
+
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
                     top.status.clone(),
                     &failed,
                     &rest,
-                    longest
-                )?;
+                    longest,
+                    self.rules_file_name,
+                    self.data_file_name,
+                    &traversal,
+                    output_format_type)?;
             }
+
             match String::from_utf8(output) {
-                Ok (s) => Ok(s),
-                Err(e) =>  Err(Error::new(ErrorKind::ParseError(e.to_string())))
+                Ok(s) => Ok(s),
+                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string())))
             }
         }
     }
@@ -642,8 +655,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             println!("{}", serialized_user);
-        }
-        else {
+        } else {
             let longest = top.children.iter()
                 .max_by(|f, s| {
                     (*f).context.len().cmp(&(*s).context.len())
@@ -654,13 +666,14 @@ impl<'r, 'loc> ConsoleReporter<'r> {
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
                 top.children.iter().partition(|ctx|
                     match (*ctx).status {
-                       Some(Status::FAIL) => true,
+                        Some(Status::FAIL) => true,
                         _ => false
                     });
 
             let traversal = Traversal::from(root);
 
-            self.reporters.report(
+            for each_reporter in self.reporters {
+                each_reporter.report(
                     &mut output,
                     top.status.clone(),
                     &failed,
@@ -670,6 +683,7 @@ impl<'r, 'loc> ConsoleReporter<'r> {
                     self.data_file_name,
                     &traversal,
                     output_format_type)?;
+            }
 
             if self.show_clause_failures {
                 println!("{}", "Clause Failure Summary".bold());
@@ -723,7 +737,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 fn evaluate_against_data_input<'r>(data_type: Type,
                                    output: OutputFormatType,
                                    extra_data: Option<PathAwareValue>,
-                                   data_files: &'r [DataFile],
+                                   data_files: &'r Vec<DataFile>,
                                    rules: &RulesFile<'_>,
                                    rules_file_name: &'r str,
                                    verbose: bool,
@@ -776,7 +790,8 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             let each = &file.path_value;
             let root_context = RootScope::new(rules, each);
             let stacker = StackTracker::new(&root_context);
-            let reporter = ConsoleReporter::new(stacker, reporter.as_ref(), rules_file_name, &file.name, verbose, print_json, show_clause_failures);
+            let renderers = vec![reporter.as_ref()];
+            let reporter = ConsoleReporter::new(stacker, &renderers, rules_file_name, &file.name, verbose, print_json, show_clause_failures);
             let appender = MetadataAppender { delegate: &reporter, root_context: &each };
             let status = rules.evaluate(&each, &appender)?;
             reporter.report(&each, output)?;

@@ -12,7 +12,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::errors::{Error, ErrorKind};
 use serde::{Serialize, Serializer};
 use crate::rules::values::CmpOperator;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use serde::ser::{SerializeStruct, SerializeMap};
 
 use std::ops::{Deref, DerefMut};
@@ -376,12 +376,7 @@ fn single_line(writer: &mut dyn Write,
                     prefix.clone(),
                     &mut err_writer
                 )?;
-//                pprint_clauses(
-//                    writer,
-//                    each_rule,
-//                    &resource,
-//                    prefix.clone()
-//                )?;
+
                 impl<'w, 'b> ErrWriter<'w, 'b> {
                     fn emit_code(
                         &mut self,

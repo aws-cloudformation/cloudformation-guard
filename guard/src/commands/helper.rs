@@ -30,25 +30,16 @@ pub fn validate_and_return_json(
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    // @TO-DO: Remove alternative code
-                    // Option 1
-                    // let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                    // //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
-                    // let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
-                    // let event = root_scope.reset_recorder().extract();
-                    // Ok(serde_json::to_string_pretty(&event)?)
-
-                    // Option 2
                     let root_context = RootScope::new(&rules, &root);
                     let stacker = StackTracker::new(&root_context);
                     let data_file_name: &str = "lambda-payload";
                     let rules_file_name: &str = "lambda-run";
-                    let reporters = vec![
-                        Box::new(GenericSummary::new(&data_file_name, &rules_file_name, OutputFormatType::JSON)) as Box<dyn Reporter>
-                    ];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, &rules_file_name, &data_file_name, verbose, true, false);
+                    let renderer = &GenericSummary::new() as &dyn Reporter;
+                    let renderers = vec![renderer];
+                    let reporter = ConsoleReporter::new(stacker, &renderers, &rules_file_name, &data_file_name, verbose, true, false);
                     rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json()?;
+                    let json_result = reporter.get_result_json(
+                        &root, OutputFormatType::JSON)?;
                     return Ok(json_result);
                 }
                 Err(e) => return Err(e),
