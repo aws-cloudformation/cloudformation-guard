@@ -14,7 +14,7 @@ use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::PathAwareValue;
+use crate::rules::path_value::{Location, Path as PathValuePath, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::BitFlags;
@@ -26,7 +26,6 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
 use crate::rules::path_value::PathAwareValue::Null;
-use crate::rules::path_value::Path as PathValuePath;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -116,16 +115,18 @@ Note - When pointing the command to a directory, the directory may not contain a
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file or a directory of rules files"))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true).help("Provide a data file or dir for data files in JSON or YAML").multiple(true).conflicts_with("payload"))
+            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true)
+                .help("Provide a rules file or a directory of rules files"))
+            .arg(Arg::with_name("data").long("data").short("d").takes_value(true)
+                .help("Provide a data file or dir for data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml")
+                .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
                 .possible_values(&["json","yaml","single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::with_name("data-dir").long("data-dir").takes_value(true)
-                .help("Provide a file or dir for data files in JSON or YAML"))
             .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name("show-summary").long("show-summary").short("S").takes_value(true).use_delimiter(true).multiple(true)
@@ -150,7 +151,6 @@ or rules files.
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file = app.value_of("rules").unwrap();
         let cmp = if app.is_present("last-modified") {
             last_modified
         } else {
@@ -158,103 +158,140 @@ or rules files.
         };
 
         let empty_path = Path::new("");
-        let data_files_non_merge: Vec<DataFile> = match app.value_of("data-dir") {
-            Some(file_or_dir) => {
-                let base = PathBuf::from_str(file_or_dir)?;
-                let mut streams = Vec::new();
-                for each_entry in walkdir::WalkDir::new(base.clone()) {
-                    if let Ok(file) = each_entry {
-                        if file.path().is_file() {
-                            let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                            if  name.ends_with(".yaml")    ||
-                                name.ends_with(".yml")     ||
-                                name.ends_with(".json")    ||
-                                name.ends_with(".jsn")     ||
-                                name.ends_with(".template")
-                            {
-                                let mut content = String::new();
-                                let mut reader = BufReader::new(File::open(file.path())?);
-                                reader.read_to_string(&mut content)?;
-                                let path = file.path();
-                                let relative = match path.strip_prefix(base.as_path()) {
-                                    Ok(p) => if p != empty_path {
-                                        format!("{}", p.display())
-                                    } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                                    Err(_) => format!("{}", path.display()),
-                                };
-                                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
-                                    Ok(value) => PathAwareValue::try_from(value)?,
-                                    Err(_) => {
-                                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                        PathAwareValue::try_from(value)?
-                                    }
-                                };
-                                streams.push(DataFile{
-                                    name: relative, path_value, content
-                                });
+        let mut streams: Vec<DataFile> = Vec::new();
+        let data_files: Vec<DataFile> = match app.values_of("data") {
+            Some(list_of_file_or_dir) => {
+                for file_or_dir in list_of_file_or_dir {
+                    let base = PathBuf::from_str(file_or_dir)?;
+                    for each_entry in walkdir::WalkDir::new(base.clone()) {
+                        if let Ok(file) = each_entry {
+                            if file.path().is_file() {
+                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                                if name.ends_with(".yaml") ||
+                                    name.ends_with(".yml") ||
+                                    name.ends_with(".json") ||
+                                    name.ends_with(".jsn") ||
+                                    name.ends_with(".template")
+                                {
+                                    let mut content = String::new();
+                                    let mut reader = BufReader::new(File::open(file.path())?);
+                                    reader.read_to_string(&mut content)?;
+                                    let path = file.path();
+                                    let relative = match path.strip_prefix(base.as_path()) {
+                                        Ok(p) => if p != empty_path {
+                                            format!("{}", p.display())
+                                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
+                                        Err(_) => format!("{}", path.display()),
+                                    };
+                                    let path_value = match crate::rules::values::read_from(&content) {
+                                        Ok(value) => PathAwareValue::try_from(value)?,
+                                        Err(_) => {
+                                            let value = match serde_json::from_str::<serde_json::Value>(&content) {
+                                                Ok(value) => PathAwareValue::try_from(value)?,
+                                                Err(_) => {
+                                                    let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                                                    PathAwareValue::try_from(value)?
+                                                }
+                                            };
+                                            value
+                                        }
+                                    };
+                                    streams.push(DataFile {
+                                        name: relative,
+                                        path_value,
+                                        content
+                                    });
+                                }
                             }
                         }
                     }
                 }
                 streams
             },
-            None => vec![]
-        };
-
-        let (mut data_files_to_merge, name, content) = match app.values_of("data") {
-            Some(files) => {
-                let mut primary: Option<PathAwareValue> = None;
-                let mut name = "".to_string();
-                let mut last_content= "".to_string();
-                for each_file in files {
-                    name = each_file.to_string();
-                    let base = PathBuf::from_str(each_file)?;
+            None => {
+                if app.is_present("rules") {
                     let mut content = String::new();
-                    let mut reader = BufReader::new(File::open(base.as_path())?);
+                    let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
                     let path_value = match crate::rules::values::read_from(&content) {
                         Ok(value) => PathAwareValue::try_from(value)?,
                         Err(_) => {
-                            let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                            PathAwareValue::try_from(value)?
+                            let value = match serde_json::from_str::<serde_json::Value>(&content) {
+                                Ok(value) => PathAwareValue::try_from(value)?,
+                                Err(_) => {
+                                    let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                                    PathAwareValue::try_from(value)?
+                                }
+                            };
+                            value
                         }
                     };
-                    last_content = content;
-                    primary = match primary {
-                        Some(mut current) => {
-                            Some(current.merge(path_value)?)
-                        },
-                        None => Some(path_value)
-                    }
+                    streams.push(DataFile {
+                        name: "STDIN".to_string(),
+                        path_value,
+                        content
+                    });
+                    streams
                 }
-                (primary.unwrap(), name, last_content)
+                else { vec![] } // expect Payload, since rules aren't specified
             }
-
-            None => {
-                let mut content = String::new();
-                let mut reader = BufReader::new(std::io::stdin());
-                reader.read_to_string(&mut content)?;
-                let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(value) => PathAwareValue::try_from(value)?,
-                    Err(_) => {
-                        let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                        PathAwareValue::try_from(value)?
-                    }
-                };
-                (path_value, "STDIN".to_string(), content)
-            }
-
         };
 
-        let (extra_data, data_files) = if data_files_non_merge.is_empty() {
-            (None, vec![DataFile {
-                name,
-                path_value: data_files_to_merge,
-                content,
-            }])
-        } else {
-            (Some(data_files_to_merge), data_files_non_merge)
-        };
+        // @TO-DO: Expect accepting multiple --input-values or --parameters for merged files using the following code
+        // let (mut data_files_to_merge, name, content) = match app.values_of("data") {
+        //     Some(files) => {
+        //         let mut primary: Option<PathAwareValue> = None;
+        //         let mut name = "".to_string();
+        //         let mut last_content= "".to_string();
+        //         for each_file in files {
+        //             name = each_file.to_string();
+        //             let base = PathBuf::from_str(each_file)?;
+        //             let mut content = String::new();
+        //             let mut reader = BufReader::new(File::open(base.as_path())?);
+        //             reader.read_to_string(&mut content)?;
+        //             let path_value = match crate::rules::values::read_from(&content) {
+        //                 Ok(value) => PathAwareValue::try_from(value)?,
+        //                 Err(_) => {
+        //                     let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+        //                     PathAwareValue::try_from(value)?
+        //                 }
+        //             };
+        //             last_content = content;
+        //             primary = match primary {
+        //                 Some(mut current) => {
+        //                     Some(current.merge(path_value)?)
+        //                 },
+        //                 None => Some(path_value)
+        //             }
+        //         }
+        //         (primary.unwrap(), name, last_content)
+        //     }
+        //
+        //     None => {
+        //         let mut content = String::new();
+        //         let mut reader = BufReader::new(std::io::stdin());
+        //         reader.read_to_string(&mut content)?;
+        //         let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
+        //             Ok(value) => PathAwareValue::try_from(value)?,
+        //             Err(_) => {
+        //                 let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+        //                 PathAwareValue::try_from(value)?
+        //             }
+        //         };
+        //         (path_value, "STDIN".to_string(), content)
+        //     }
+        //
+        // };
+        //
+        // let (extra_data, data_files) = if data_files_non_merge.is_empty() {
+        //     (None, vec![DataFile {
+        //         name,
+        //         path_value: data_files_to_merge,
+        //         content,
+        //     }])
+        // } else {
+        //     (Some(data_files_to_merge), data_files_non_merge)
+        // };
 
         let verbose = if app.is_present("verbose") {
             true
@@ -307,9 +344,9 @@ or rules files.
         let show_clause_failures = app.is_present("show-clause-failures");
         let new_version_eval_engine = !app.is_present("old_eval_engine_version");
 
-
         let mut exit_code = 0;
         if app.is_present("rules") {
+            let file = app.value_of("rules").unwrap();
             let base = PathBuf::from_str(file)?;
             let rules = if base.is_file() {
                 vec![base.clone()]
@@ -354,7 +391,7 @@ or rules files.
                                 match evaluate_against_data_input(
                                     data_type,
                                     output_type,
-                                    extra_data.clone(),
+                                    None, // extra_data.clone(),
                                     &data_files,
                                     &rules,
                                     &rule_file_name,
@@ -378,13 +415,28 @@ or rules files.
             let mut reader = BufReader::new(std::io::stdin());
             reader.read_to_string(&mut context);
             let payload: Payload = deserialize_payload(&context)?;
-
-            let data_collection: Vec<DataFile> = payload.list_of_data.iter()
-                .enumerate().map(|(i, data)|DataFile{
-                content:  data.to_string(),
-                path_value: Null(PathValuePath("".to_string(), Default::default())),
-                name: format!("DATA_STDIN[{}]", i + 1)
-            }).collect();
+            let mut data_collection: Vec<DataFile> = Vec::new();
+            for (i, data) in payload.list_of_data.iter().enumerate() {
+                let mut content = data.to_string();
+                let path_value = match crate::rules::values::read_from(&content) {
+                    Ok(value) => PathAwareValue::try_from(value)?,
+                    Err(_) => {
+                        let value = match serde_json::from_str::<serde_json::Value>(&content) {
+                            Ok(value) => PathAwareValue::try_from(value)?,
+                            Err(_) => {
+                                let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
+                                PathAwareValue::try_from(value)?
+                            }
+                        };
+                        value
+                    }
+                };
+                data_collection.push(DataFile {
+                    name: format!("DATA_STDIN[{}]", i + 1),
+                    path_value,
+                    content
+                });
+            }
             let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
 
             for (each_rules, location) in rules_collection {
@@ -401,7 +453,7 @@ or rules files.
                         match evaluate_against_data_input(
                             data_type,
                             output_type,
-                            extra_data.clone(),
+                            None, // extra_data.clone(),
                             &data_collection,
                             &rules,
                             &location,
