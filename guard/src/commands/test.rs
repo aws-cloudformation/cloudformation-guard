@@ -78,16 +78,16 @@ or failure testing.
         } else {
             regular_ordering
         };
-        let verbose = app.is_present("verbose");
-        let new_engine = !app.is_present("prev-engine");
+        let verbose = app.is_present(VERBOSE.0);
+        let new_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
-        if app.is_present("directory-only") {
+        if app.is_present(DIRECTORY_ONLY) {
             struct GuardFile {
                 prefix: String,
                 file: walkdir::DirEntry,
                 test_files: Vec<walkdir::DirEntry>
             }
-            let dir = app.value_of("dir").unwrap();
+            let dir = app.value_of(DIRECTORY.0).unwrap();
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
@@ -162,8 +162,8 @@ or failure testing.
 
         }
         else {
-            let file = app.value_of("rules-file").unwrap();
-            let data = app.value_of("test-data").unwrap();
+            let file = app.value_of(RULES_FILE.0).unwrap();
+            let data = app.value_of(TEST_DATA.0).unwrap();
             let data_test_files = get_files_with_filter(&data, cmp, |entry| {
                 entry.file_name().to_str()
                     .map(|name|
