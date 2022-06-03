@@ -2,6 +2,7 @@ use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
+use std::cmp;
 
 use clap::{App, Arg, ArgMatches, ArgGroup};
 use colored::*;
@@ -14,7 +15,7 @@ use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::{Location, Path as PathValuePath, PathAwareValue};
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::commands::validate::summary_table::SummaryType;
 use enumflags2::BitFlags;
@@ -25,7 +26,6 @@ use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_ro
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
-use crate::rules::path_value::PathAwareValue::Null;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -183,18 +183,9 @@ or rules files.
                                         } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
                                         Err(_) => format!("{}", path.display()),
                                     };
-                                    let path_value = match crate::rules::values::read_from(&content) {
-                                        Ok(value) => PathAwareValue::try_from(value)?,
-                                        Err(_) => {
-                                            let value = match serde_json::from_str::<serde_json::Value>(&content) {
-                                                Ok(value) => PathAwareValue::try_from(value)?,
-                                                Err(_) => {
-                                                    let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                                    PathAwareValue::try_from(value)?
-                                                }
-                                            };
-                                            value
-                                        }
+                                    let path_value = match get_path_aware_value_from_data(&content) {
+                                        Ok(T) => T,
+                                        Err(E) => return Err(E)
                                     };
                                     streams.push(DataFile {
                                         name: relative,
@@ -213,18 +204,9 @@ or rules files.
                     let mut content = String::new();
                     let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
-                    let path_value = match crate::rules::values::read_from(&content) {
-                        Ok(value) => PathAwareValue::try_from(value)?,
-                        Err(_) => {
-                            let value = match serde_json::from_str::<serde_json::Value>(&content) {
-                                Ok(value) => PathAwareValue::try_from(value)?,
-                                Err(_) => {
-                                    let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                    PathAwareValue::try_from(value)?
-                                }
-                            };
-                            value
-                        }
+                    let path_value = match get_path_aware_value_from_data(&content) {
+                        Ok(T) => T,
+                        Err(E) => return Err(E)
                     };
                     streams.push(DataFile {
                         name: "STDIN".to_string(),
@@ -418,18 +400,9 @@ or rules files.
             let mut data_collection: Vec<DataFile> = Vec::new();
             for (i, data) in payload.list_of_data.iter().enumerate() {
                 let mut content = data.to_string();
-                let path_value = match crate::rules::values::read_from(&content) {
-                    Ok(value) => PathAwareValue::try_from(value)?,
-                    Err(_) => {
-                        let value = match serde_json::from_str::<serde_json::Value>(&content) {
-                            Ok(value) => PathAwareValue::try_from(value)?,
-                            Err(_) => {
-                                let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-                                PathAwareValue::try_from(value)?
-                            }
-                        };
-                        value
-                    }
+                let path_value = match get_path_aware_value_from_data(&content) {
+                    Ok(T) => T,
+                    Err(E) => return Err(E)
                 };
                 data_collection.push(DataFile {
                     name: format!("DATA_STDIN[{}]", i + 1),
@@ -847,6 +820,32 @@ fn evaluate_against_data_input<'r>(data_type: Type,
         }
     }
     Ok(overall)
+}
+
+fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
+    let path_value = match crate::rules::values::read_from(content) {
+        Ok(value) => PathAwareValue::try_from(value)?,
+        Err(_) => {
+            let value = match serde_json::from_str::<serde_json::Value>(content) {
+                Ok(value) => PathAwareValue::try_from(value)?,
+                Err(_) => {
+                    let value = match serde_yaml::from_str::<serde_json::Value>(content) {
+                        Ok(value) => PathAwareValue::try_from(value)?,
+                        Err(_) => {
+                            let str_len: usize =  cmp::min(content.len(), 100);
+                            return Err(Error::new(ErrorKind::ParseError(
+                                format!("Unable to parse data beginning with \n{}\n ...", &content[..str_len]))
+                            ))
+                        }
+
+                    };
+                    value
+                }
+            };
+            value
+        }
+    };
+    Ok(path_value)
 }
 
 #[cfg(test)]
