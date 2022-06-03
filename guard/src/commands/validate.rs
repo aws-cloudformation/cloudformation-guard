@@ -22,6 +22,7 @@ use enumflags2::BitFlags;
 use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
+use Type::CFNTemplate;
 use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
 use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::eval::eval_rules_file;
@@ -285,7 +286,7 @@ or rules files.
         let data_type = match app.value_of(TYPE.0) {
             Some(t) =>
                 if t == "CFNTemplate" {
-                    Type::CFNTemplate
+                    CFNTemplate
                 }
                 else {
                     Type::Generic
