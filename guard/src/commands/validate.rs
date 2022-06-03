@@ -22,6 +22,7 @@ use enumflags2::BitFlags;
 use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
+use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
 use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
@@ -100,12 +101,12 @@ impl Validate {
 
 impl Command for Validate {
     fn name(&self) -> &'static str {
-        "validate"
+        VALIDATE
     }
 
 
     fn command(&self) -> App<'static, 'static> {
-        App::new("validate")
+        App::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure. 
 You can point rules flag to a rules directory and point data flag to a data directory. 
 When pointed to a directory it will read all rules in the directory file and evaluate 
@@ -115,47 +116,47 @@ Note - When pointing the command to a directory, the directory may not contain a
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true)
+            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true)
                 .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
                 .multiple(true).conflicts_with("payload"))
-            .arg(Arg::with_name("data").long("data").short("d").takes_value(true)
+            .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
-            .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
+            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name("output-format").long("output-format").short("o").takes_value(true)
+            .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
                 .possible_values(&["json","yaml","single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::with_name("old_eval_engine_version").long("prev-engine").takes_value(false)
+            .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
-            .arg(Arg::with_name("show-summary").long("show-summary").short("S").takes_value(true).use_delimiter(true).multiple(true)
+            .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
                 .possible_values(&["none", "all", "pass", "fail", "skip"])
                 .default_value("fail")
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::with_name("show-clause-failures").long("show-clause-failures").short("s").takes_value(false).required(false)
+            .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
-            .arg(Arg::with_name("alphabetical").long("alphabetical").short("a").required(false).help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::with_name("last-modified").long("last-modified").short("m").required(false).conflicts_with("alphabetical")
+            .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).required(false).help("Validate files in a directory ordered alphabetically"))
+            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with("alphabetical")
                 .help("Validate files in a directory ordered by last modified times"))
-            .arg(Arg::with_name("verbose").long("verbose").short("v").required(false)
+            .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
                 .help("Verbose logging"))
-            .arg(Arg::with_name("print-json").long("print-json").short("p").required(false)
+            .arg(Arg::with_name(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).required(false)
                 .help("Print output in json format"))
-            .arg(Arg::with_name("payload").long("payload").short("P")
+            .arg(Arg::with_name(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1)
                 .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
-            .group(ArgGroup::with_name("required_flags")
-                .args(&["rules", "payload"])
+            .group(ArgGroup::with_name(REQUIRED_FLAGS)
+                .args(&[RULES.0, PAYLOAD.0])
                 .required(true))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let cmp = if app.is_present("last-modified") {
+        let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
             alpabetical
@@ -163,7 +164,7 @@ or rules files.
 
         let empty_path = Path::new("");
         let mut streams: Vec<DataFile> = Vec::new();
-        let data_files: Vec<DataFile> = match app.values_of("data") {
+        let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
                     let base = PathBuf::from_str(file_or_dir)?;
@@ -200,7 +201,7 @@ or rules files.
                 streams
             },
             None => {
-                if app.is_present("rules") {
+                if app.is_present(RULES.0) {
                     let mut content = String::new();
                     let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
@@ -220,7 +221,7 @@ or rules files.
         };
 
         // @TO-DO: Expect accepting multiple --input-values or --parameters for merged files using the following code
-        // let (mut data_files_to_merge, name, content) = match app.values_of("data") {
+        // let (mut data_files_to_merge, name, content) = match app.values_of(DATA.0) {
         //     Some(files) => {
         //         let mut primary: Option<PathAwareValue> = None;
         //         let mut name = "".to_string();
@@ -275,13 +276,13 @@ or rules files.
         //     (Some(data_files_to_merge), data_files_non_merge)
         // };
 
-        let verbose = if app.is_present("verbose") {
+        let verbose = if app.is_present(VERBOSE.0) {
             true
         } else {
             false
         };
 
-        let data_type = match app.value_of("type") {
+        let data_type = match app.value_of(TYPE.0) {
             Some(t) =>
                 if t == "CFNTemplate" {
                     Type::CFNTemplate
@@ -292,7 +293,7 @@ or rules files.
             None => Type::Generic
         };
 
-        let output_type = match app.value_of("output-format") {
+        let output_type = match app.value_of(OUTPUT_FORMAT.0) {
             Some(o) =>
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
@@ -306,7 +307,7 @@ or rules files.
             None => OutputFormatType::SingleLineSummary
         };
 
-        let summary_type: BitFlags<SummaryType> = app.values_of("show-summary").map_or(
+        let summary_type: BitFlags<SummaryType> = app.values_of(SHOW_SUMMARY.0).map_or(
             SummaryType::FAIL.into(),
             |v| {
                 v.fold(BitFlags::empty(), |mut st, elem| {
@@ -322,13 +323,13 @@ or rules files.
                 })
             });
 
-        let print_json = app.is_present("print-json");
-        let show_clause_failures = app.is_present("show-clause-failures");
-        let new_version_eval_engine = !app.is_present("old_eval_engine_version");
+        let print_json = app.is_present(PRINT_JSON.0);
+        let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
+        let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
-        if app.is_present("rules") {
-            let list_of_file_or_dir = app.values_of("rules").unwrap();
+        if app.is_present(RULES.0) {
+            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
