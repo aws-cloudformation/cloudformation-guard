@@ -116,10 +116,14 @@ rules and data files. The directory being pointed to must contain only data file
 or rules files.
 "#)
             .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true)
-                .help("Provide a rules file or a directory of rules files"))
+                .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
+                          \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
+                .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name("data").long("data").short("d").takes_value(true)
-                .help("Provide a data file or dir for data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml")
+                .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
+                          \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name("type").long("type").short("t").takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
@@ -328,29 +332,30 @@ or rules files.
 
         let mut exit_code = 0;
         if app.is_present("rules") {
-            let file = app.value_of("rules").unwrap();
-            let base = PathBuf::from_str(file)?;
-            let rules = if base.is_file() {
-                vec![base.clone()]
+            let list_of_file_or_dir = app.values_of("rules").unwrap();
+            let mut rules = Vec::new();
+            for file_or_dir in list_of_file_or_dir {
+            let base = PathBuf::from_str(file_or_dir)?;
+            if base.is_file() {
+                rules.push(base.clone())
             } else {
-                let mut rule_files = Vec::new();
-                for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
-                    if let Ok(entry) = each {
-                        if entry.path().is_file() &&
-                            entry.path().file_name().map(|s| s.to_str()).flatten()
-                                .map_or(false, |s|
-                                    s.ends_with(".guard") ||
-                                        s.ends_with(".ruleset")
-                                )
-                        {
-                            rule_files.push(entry.path().to_path_buf());
+                    for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
+                        if let Ok(entry) = each {
+                            if entry.path().is_file() &&
+                                entry.path().file_name().map(|s| s.to_str()).flatten()
+                                    .map_or(false, |s|
+                                        s.ends_with(".guard") ||
+                                            s.ends_with(".ruleset")
+                                    )
+                            {
+                                rules.push(entry.path().to_path_buf());
+                            }
                         }
                     }
                 }
-                rule_files
-            };
+            }
             for each_file_content in iterate_over(&rules, |content, file|
-                Ok((content, match file.strip_prefix(&base) {
+                Ok((content, match file.strip_prefix(&file) {
                     Ok(path) => if path == empty_path {
                         format!("{}", file.file_name().unwrap().to_str().unwrap())
                     } else { format!("{}", path.display()) },
