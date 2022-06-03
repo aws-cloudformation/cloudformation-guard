@@ -171,11 +171,7 @@ or rules files.
                         if let Ok(file) = each_entry {
                             if file.path().is_file() {
                                 let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                                if name.ends_with(".yaml") ||
-                                    name.ends_with(".yml") ||
-                                    name.ends_with(".json") ||
-                                    name.ends_with(".jsn") ||
-                                    name.ends_with(".template")
+                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
                                 {
                                     let mut content = String::new();
                                     let mut reader = BufReader::new(File::open(file.path())?);
@@ -344,8 +340,8 @@ or rules files.
                             if entry.path().is_file() &&
                                 entry.path().file_name().map(|s| s.to_str()).flatten()
                                     .map_or(false, |s|
-                                        s.ends_with(".guard") ||
-                                            s.ends_with(".ruleset")
+                                        has_a_supported_extension(&s.to_string(),
+                                                                  &RULE_FILE_SUPPORTED_EXTENSIONS)
                                     )
                             {
                                 rules.push(entry.path().to_path_buf());
@@ -851,6 +847,10 @@ fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
         }
     };
     Ok(path_value)
+}
+
+fn has_a_supported_extension(name: &String, extensions: &[&str]) -> bool {
+    extensions.into_iter().any(|extension| name.ends_with(extension))
 }
 
 #[cfg(test)]
