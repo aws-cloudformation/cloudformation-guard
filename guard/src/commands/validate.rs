@@ -23,7 +23,7 @@ use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
 use Type::CFNTemplate;
-use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED, MERGE, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
+use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
 use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
@@ -128,9 +128,11 @@ or rules files.
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
-                     .help("Provide a file in JSON or YAML that specifies any additional parameters to use along with data files. This can be used add more context of mutually exclusive properties from data files. \
-                      Supports passing multiple values of files by using this option repeatedly.\
-                          \nExample:\n --input-parameters param1.yaml --input-parameters param2.yaml")
+                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                           All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
+                           expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values of files by using this option repeatedly.\
+                          \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
+                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                      .multiple(true))
             .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
@@ -227,23 +229,33 @@ or rules files.
         };
 
         let extra_data = match app.values_of(INPUT_PARAMETERS.0) {
-            Some(list_of_input_parameter_files) => {
+            Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
-                for each_file in list_of_input_parameter_files {
-                    let base = PathBuf::from_str(each_file)?;
-                    let mut content = String::new();
-                    let mut reader = BufReader::new(File::open(base.as_path())?);
-                    reader.read_to_string(&mut content)?;
-                    let path_value = match get_path_aware_value_from_data(&content) {
-                        Ok(T) => T,
-                        Err(E) => return Err(E)
-                    };
-                    primary_path_value = match primary_path_value {
-                        Some(mut current) => {
-                            Some(current.merge(path_value)?)
-                        },
-                        None => Some(path_value)
-                    };
+                for file_or_dir in list_of_file_or_dir {
+                    let base = PathBuf::from_str(file_or_dir)?;
+                    for each_entry in walkdir::WalkDir::new(base.clone()) {
+                        if let Ok(file) = each_entry {
+                            if file.path().is_file() {
+                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
+                                {
+                                    let mut content = String::new();
+                                    let mut reader = BufReader::new(File::open(file.path())?);
+                                    reader.read_to_string(&mut content)?;
+                                    let path_value = match get_path_aware_value_from_data(&content) {
+                                        Ok(T) => T,
+                                        Err(E) => return Err(E)
+                                    };
+                                    primary_path_value = match primary_path_value {
+                                        Some(mut current) => {
+                                            Some(current.merge(path_value)?)
+                                        },
+                                        None => Some(path_value)
+                                    };
+                                }
+                            }
+                        }
+                    }
                 }
                 primary_path_value
             }
