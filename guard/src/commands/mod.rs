@@ -23,6 +23,7 @@ pub(crate) const ALPHABETICAL: (&str, &str) = ("alphabetical", "a");
 pub(crate) const DATA: (&str, &str) = ("data", "d");
 pub(crate) const LAST_MODIFIED: (&str, &str) = ("last-modified", "m");
 pub(crate) const OUTPUT_FORMAT: (&str, &str) = ("output-format", "o");
+pub(crate) const INPUT_PARAMETERS: (&str, &str) = ("input-parameters", "i");
 pub(crate) const PAYLOAD: (&str, &str) = ("payload", "P");
 pub(crate) const PREVIOUS_ENGINE: (&str, &str) = ("previous-engine","E");
 pub(crate) const PRINT_JSON: (&str, &str) = ("print-json", "p");

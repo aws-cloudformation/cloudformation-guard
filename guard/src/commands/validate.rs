@@ -23,7 +23,7 @@ use serde::Deserialize;
 use std::path::{PathBuf, Path};
 use std::str::FromStr;
 use Type::CFNTemplate;
-use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
+use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED, MERGE, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
 use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
@@ -127,6 +127,11 @@ or rules files.
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
+            .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
+                     .help("Provide a file in JSON or YAML that specifies any additional parameters to use along with data files. This can be used add more context of mutually exclusive properties from data files. \
+                      Supports passing multiple values of files by using this option repeatedly.\
+                          \nExample:\n --input-parameters param1.yaml --input-parameters param2.yaml")
+                     .multiple(true))
             .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
@@ -142,7 +147,7 @@ or rules files.
             .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
             .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).required(false).help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with("alphabetical")
+            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with(ALPHABETICAL.0)
                 .help("Validate files in a directory ordered by last modified times"))
             .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
                 .help("Verbose logging"))
@@ -221,61 +226,29 @@ or rules files.
             }
         };
 
-        // @TO-DO: Expect accepting multiple --input-values or --parameters for merged files using the following code
-        // let (mut data_files_to_merge, name, content) = match app.values_of(DATA.0) {
-        //     Some(files) => {
-        //         let mut primary: Option<PathAwareValue> = None;
-        //         let mut name = "".to_string();
-        //         let mut last_content= "".to_string();
-        //         for each_file in files {
-        //             name = each_file.to_string();
-        //             let base = PathBuf::from_str(each_file)?;
-        //             let mut content = String::new();
-        //             let mut reader = BufReader::new(File::open(base.as_path())?);
-        //             reader.read_to_string(&mut content)?;
-        //             let path_value = match crate::rules::values::read_from(&content) {
-        //                 Ok(value) => PathAwareValue::try_from(value)?,
-        //                 Err(_) => {
-        //                     let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-        //                     PathAwareValue::try_from(value)?
-        //                 }
-        //             };
-        //             last_content = content;
-        //             primary = match primary {
-        //                 Some(mut current) => {
-        //                     Some(current.merge(path_value)?)
-        //                 },
-        //                 None => Some(path_value)
-        //             }
-        //         }
-        //         (primary.unwrap(), name, last_content)
-        //     }
-        //
-        //     None => {
-        //         let mut content = String::new();
-        //         let mut reader = BufReader::new(std::io::stdin());
-        //         reader.read_to_string(&mut content)?;
-        //         let path_value= match serde_json::from_str::<serde_json::Value>(&content) {
-        //             Ok(value) => PathAwareValue::try_from(value)?,
-        //             Err(_) => {
-        //                 let value = serde_yaml::from_str::<serde_json::Value>(&content)?;
-        //                 PathAwareValue::try_from(value)?
-        //             }
-        //         };
-        //         (path_value, "STDIN".to_string(), content)
-        //     }
-        //
-        // };
-        //
-        // let (extra_data, data_files) = if data_files_non_merge.is_empty() {
-        //     (None, vec![DataFile {
-        //         name,
-        //         path_value: data_files_to_merge,
-        //         content,
-        //     }])
-        // } else {
-        //     (Some(data_files_to_merge), data_files_non_merge)
-        // };
+        let extra_data = match app.values_of(INPUT_PARAMETERS.0) {
+            Some(list_of_input_parameter_files) => {
+                let mut primary_path_value: Option<PathAwareValue> = None;
+                for each_file in list_of_input_parameter_files {
+                    let base = PathBuf::from_str(each_file)?;
+                    let mut content = String::new();
+                    let mut reader = BufReader::new(File::open(base.as_path())?);
+                    reader.read_to_string(&mut content)?;
+                    let path_value = match get_path_aware_value_from_data(&content) {
+                        Ok(T) => T,
+                        Err(E) => return Err(E)
+                    };
+                    primary_path_value = match primary_path_value {
+                        Some(mut current) => {
+                            Some(current.merge(path_value)?)
+                        },
+                        None => Some(path_value)
+                    };
+                }
+                primary_path_value
+            }
+            None => None
+        };
 
         let verbose = if app.is_present(VERBOSE.0) {
             true
@@ -376,7 +349,7 @@ or rules files.
                                 match evaluate_against_data_input(
                                     data_type,
                                     output_type,
-                                    None, // extra_data.clone(),
+                                    extra_data.clone(),
                                     &data_files,
                                     &rules,
                                     &rule_file_name,
@@ -429,7 +402,7 @@ or rules files.
                         match evaluate_against_data_input(
                             data_type,
                             output_type,
-                            None, // extra_data.clone(),
+                            None,
                             &data_collection,
                             &rules,
                             &location,
@@ -786,7 +759,6 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             };
             let traversal = Traversal::from(&each);
             let mut root_scope = root_scope(rules, &each)?;
-            //let mut tracker = RecordTracker::new(&mut root_scope);
             let status = eval_rules_file(rules, &mut root_scope)?;
             let root_record = root_scope.reset_recorder().extract();
             reporter.report_eval(
