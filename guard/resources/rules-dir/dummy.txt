@@ -1,0 +1,2 @@
+This is a dummy text file, supposed to be a placeholder for a file that
+does not get scanned when a directory argument is passed. Do not delete.

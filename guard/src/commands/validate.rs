@@ -84,7 +84,7 @@ pub(crate) trait Reporter : Debug {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Validate {}
+pub struct Validate {}
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct Payload {
@@ -95,7 +95,7 @@ pub(crate) struct Payload {
 }
 
 impl Validate {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Validate{}
     }
 }

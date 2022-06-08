@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod rules;
-mod commands;
-mod command;
+pub mod commands;
+pub mod command;
 mod migrate;
 mod utils;
 

@@ -1,5 +1,5 @@
-use crate::commands::validate;
-use crate::command::Command;
+use super::super::*;
+use super::*;
 
 #[test]
 fn test_deserialize_payload_success() {
@@ -28,4 +28,25 @@ fn test_deserialize_payload_unrecognized_property() {
 fn test_deserialize_payload_empty_input() {
     let serialized_payload = "";
     validate::deserialize_payload(serialized_payload).unwrap();
+}
+
+
+#[test]
+fn test_supported_extensions() {
+    // Data extensions
+    assert!(has_a_supported_extension(&"blah.json".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    assert!(has_a_supported_extension(&"blah.jsn".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    assert!(has_a_supported_extension(&"blah.yaml".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    assert!(has_a_supported_extension(&"blah.template".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    assert!(has_a_supported_extension(&"blah.yml".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    // unsupported
+    assert!(!has_a_supported_extension(&"blah.txt".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+    assert!(!has_a_supported_extension(&"blah".to_string(), &DATA_FILE_SUPPORTED_EXTENSIONS));
+
+    // Rules extensions
+    assert!(has_a_supported_extension(&"blah.guard".to_string(), &RULE_FILE_SUPPORTED_EXTENSIONS));
+    assert!(has_a_supported_extension(&"blah.ruleset".to_string(), &RULE_FILE_SUPPORTED_EXTENSIONS));
+    // unsupported
+    assert!(!has_a_supported_extension(&"blah.txt".to_string(), &RULE_FILE_SUPPORTED_EXTENSIONS));
+    assert!(!has_a_supported_extension(&"blah".to_string(), &RULE_FILE_SUPPORTED_EXTENSIONS));
 }
