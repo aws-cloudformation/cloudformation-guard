@@ -13,6 +13,9 @@ mod common_test_helpers;
 //
 // Constants
 //
+// Application metadata
+pub const APP_NAME: &str = "cfn-guard";
+pub const APP_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 // Commands
 pub(crate)  const MIGRATE: &str = "migrate";
 pub(crate)  const PARSE_TREE: &str = "parse-tree";

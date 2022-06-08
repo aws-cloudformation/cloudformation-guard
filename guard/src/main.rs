@@ -11,13 +11,14 @@ mod utils;
 use crate::command::Command;
 use rules::errors::Error;
 use std::process::exit;
+use crate::commands::{APP_NAME, APP_VERSION};
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
 
 fn main() -> Result<(), Error>{
     let mut app =
-        App::new("cfn-guard")
-            .version(VERSION)
+        App::new(APP_NAME)
+            .version(APP_VERSION)
             .about(r#"
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
