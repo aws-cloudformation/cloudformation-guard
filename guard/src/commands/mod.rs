@@ -19,6 +19,7 @@ pub const APP_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 // Commands
 pub(crate)  const MIGRATE: &str = "migrate";
 pub(crate)  const PARSE_TREE: &str = "parse-tree";
+pub(crate) const RULEGEN: &str = "rulegen";
 pub(crate)  const TEST: &str = "test";
 pub const VALIDATE: &str = "validate";
 // Arguments for validate
@@ -36,7 +37,7 @@ pub(crate) const TYPE: (&str, &str) = ("type", "t");
 pub(crate) const VERBOSE: (&str, &str) = ("verbose", "v");
 // Arguments for validate, migrate, parse tree
 pub const RULES: (&str, &str) = ("rules", "r");
-// Arguments for migrate, parse-tree
+// Arguments for migrate, parse-tree, rulegen
 pub(crate) const OUTPUT: (&str, &str) = ("output", "o");
 // Arguments for parse-tree
 pub(crate) const PRINT_YAML: (&str, &str) = ("print-yaml", "y");
@@ -44,6 +45,8 @@ pub(crate) const PRINT_YAML: (&str, &str) = ("print-yaml", "y");
 pub(crate) const RULES_FILE: (&str, &str) = ("rules-file", "r");
 pub(crate) const TEST_DATA: (&str, &str) = ("test-data", "t");
 pub(crate) const DIRECTORY: (&str, &str) = ("dir", "d");
+// Arguments for rulegen
+pub(crate) const TEMPLATE: (&str, &str) = ("template", "t");
 // Arg group for validate
 pub(crate)  const REQUIRED_FLAGS: &str = "required_flags";
 // Arg group for test
