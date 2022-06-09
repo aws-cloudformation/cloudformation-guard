@@ -340,4 +340,136 @@ mod tests {
         assert_eq!(0, utils::cfn_guard_test_command(args));
     }
 
+    #[test]
+    fn test_single_data_file_malformed_rules_file(){
+        let data_arg = utils::get_full_path_for_resource_file("resources/s3-server-side-encryption-template-non-compliant-2.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/malformed-rule.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_malformed_data_file_single_rules_file(){
+        let data_arg = utils::get_full_path_for_resource_file("resources/malformed-template.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/s3_bucket_server_side_encryption_enabled_2.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_single_data_file_single_rules_file_malformed_input_parameters_file(){
+        let data_arg = utils::get_full_path_for_resource_file("resources/db_resource.yaml");
+        let input_parameters_arg = utils::get_full_path_for_resource_file("resources/malformed-template.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/db_param_port_rule.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg,
+                        &input_parameters_option, &input_parameters_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_single_data_file_blank_rules_file(){
+        // The parsing exits with status code 5 = FAIL for allowing other rules to get evaluated even when one of them fails to get parsed
+        let data_arg = utils::get_full_path_for_resource_file("resources/s3-server-side-encryption-template-non-compliant-2.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/blank-rule.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg];
+        assert_eq!(5, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_single_data_file_blank_and_valid_rules_file(){
+        // The parsing exits with status code 5 = FAIL for allowing other rules to get evaluated even when one of them fails to get parsed
+        let data_arg = utils::get_full_path_for_resource_file("resources/s3-server-side-encryption-template-non-compliant-2.yaml");
+        let rules_arg1 = utils::get_full_path_for_resource_file("resources/blank-rule.guard");
+        let rules_arg2 = utils::get_full_path_for_resource_file("resources/s3_bucket_server_side_encryption_enabled_2.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg1,
+                        &rules_option, &rules_arg2];
+        assert_eq!(5, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_blank_data_file_single_rules_file(){
+        let data_arg = utils::get_full_path_for_resource_file("resources/blank-template.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/s3_bucket_server_side_encryption_enabled_2.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_blank_and_valid_data_file_single_rules_file(){
+        let data_arg1 = utils::get_full_path_for_resource_file("resources/blank-template.yaml");
+        let data_arg2 = utils::get_full_path_for_resource_file("resources/s3-server-side-encryption-template-non-compliant-2.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/s3_bucket_server_side_encryption_enabled_2.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg1,
+                        &data_option, &data_arg2,
+                        &rules_option, &rules_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_single_data_file_single_rules_file_blank_input_parameters_file() {
+        let data_arg = utils::get_full_path_for_resource_file("resources/db_resource.yaml");
+        let input_parameters_arg = utils::get_full_path_for_resource_file("resources/blank-template.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/db_param_port_rule.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg,
+                        &input_parameters_option, &input_parameters_arg];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
+    #[test]
+    fn test_single_data_file_single_rules_file_blank_and_valid_input_parameters_file() {
+        let data_arg = utils::get_full_path_for_resource_file("resources/db_resource.yaml");
+        let input_parameters_arg1 = utils::get_full_path_for_resource_file("resources/blank-template.yaml");
+        let input_parameters_arg2 = utils::get_full_path_for_resource_file("resources/input-parameters-dir/db_params.yaml");
+        let rules_arg = utils::get_full_path_for_resource_file("resources/db_param_port_rule.guard");
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
+        let args = vec![VALIDATE,
+                        &data_option, &data_arg,
+                        &rules_option, &rules_arg,
+                        &input_parameters_option, &input_parameters_arg1,
+                        &input_parameters_option, &input_parameters_arg2];
+        // -1 status code equates to Error being thrown
+        assert_eq!(-1, utils::cfn_guard_test_command(args));
+    }
+
 }

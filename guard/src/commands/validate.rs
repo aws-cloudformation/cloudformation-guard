@@ -810,29 +810,34 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 }
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
-    let path_value = match crate::rules::values::read_from(content) {
-        Ok(value) => PathAwareValue::try_from(value)?,
-        Err(_) => {
-            let value = match serde_json::from_str::<serde_json::Value>(content) {
-                Ok(value) => PathAwareValue::try_from(value)?,
-                Err(_) => {
-                    let value = match serde_yaml::from_str::<serde_json::Value>(content) {
-                        Ok(value) => PathAwareValue::try_from(value)?,
-                        Err(_) => {
-                            let str_len: usize =  cmp::min(content.len(), 100);
-                            return Err(Error::new(ErrorKind::ParseError(
-                                format!("Unable to parse data beginning with \n{}\n ...", &content[..str_len]))
-                            ))
-                        }
-
-                    };
-                    value
-                }
-            };
-            value
-        }
-    };
-    Ok(path_value)
+    if content.trim().is_empty() {
+        return Err(Error::new(ErrorKind::ParseError(
+            format!("blank data"))
+        ))
+    } else {
+        let path_value = match crate::rules::values::read_from(content) {
+            Ok(value) => PathAwareValue::try_from(value)?,
+            Err(_) => {
+                let value = match serde_json::from_str::<serde_json::Value>(content) {
+                    Ok(value) => PathAwareValue::try_from(value)?,
+                    Err(_) => {
+                        let value = match serde_yaml::from_str::<serde_json::Value>(content) {
+                            Ok(value) => PathAwareValue::try_from(value)?,
+                            Err(_) => {
+                                let str_len: usize = cmp::min(content.len(), 100);
+                                return Err(Error::new(ErrorKind::ParseError(
+                                    format!("data beginning with \n{}\n ...", &content[..str_len]))
+                                ))
+                            }
+                        };
+                        value
+                    }
+                };
+                value
+            }
+        };
+        Ok(path_value)
+    }
 }
 
 fn has_a_supported_extension(name: &String, extensions: &[&str]) -> bool {
