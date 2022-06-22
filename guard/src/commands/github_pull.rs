@@ -8,6 +8,22 @@ pub struct GitHubSource {
     pub version_needed: String
 }
 
+impl GitHubSource {
+    pub fn new(user: String, repo: String, file_name: String, access_token:String, version_needed: String) -> Self {
+        GitHubSource {
+            user,
+            repo,
+            file_name,
+            access_token,
+            version_needed
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("GitHubSource user({}) repo ({}) file_name({}) access_token({}) version_needed({})",
+                &self.user, &self.repo, &self.file_name, &self.access_token, &self.version_needed)
+    }
+}
 impl Pull for GitHubSource {
     fn pull(&self) -> octocrab::Result<ContentItems> {
         let octo = octocrab::OctocrabBuilder::new()
@@ -24,7 +40,7 @@ impl Pull for GitHubSource {
         Ok(repo)
     }
 
-    fn read_config(&self, user: String, repo: String, file_name: String, access_token:String) ->GitHubSource {
+    fn read_config(&self) ->GitHubSource {
         let settings = Config::builder()
             .add_source(config::File::with_name("src/config"))
             .build()
