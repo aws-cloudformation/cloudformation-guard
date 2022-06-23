@@ -52,8 +52,6 @@ pub(crate)  const REQUIRED_FLAGS: &str = "required_flags";
 // Arg group for test
 pub(crate)  const RULES_AND_TEST_FILE: &str = "rules-and-test-file";
 pub(crate)  const DIRECTORY_ONLY: &str =  "directory-only";
-// Arg for Github pull
-pub(crate) const URL: (&str, &str) = ("file-url", "u");
 
 
 pub(crate) const  DATA_FILE_SUPPORTED_EXTENSIONS: [&'static str; 5] = [".yaml",
