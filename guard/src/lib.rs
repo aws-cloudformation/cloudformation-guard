@@ -1,10 +1,11 @@
-// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 mod rules;
-mod commands;
-mod command;
+pub mod commands;
+pub mod command;
 mod migrate;
+mod utils;
 
 pub extern "C" fn run_checks(
     data: &str,

@@ -10,7 +10,6 @@ use nom::character::complete::{space0, space1};
 use std::hash::{Hash, Hasher};
 use std::fmt;
 use std::fmt::Display;
-use std::collections::HashMap;
 
 #[cfg(test)]
 #[path = "parser_tests.rs"]

@@ -13,6 +13,7 @@ use crate::rules::errors::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::str::FromStr;
 use itertools::Itertools;
+use crate::commands::{MIGRATE, OUTPUT, RULES};
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
@@ -31,25 +32,25 @@ impl Migrate {
 
 impl Command for Migrate {
     fn name(&self) -> &'static str {
-        "migrate"
+        MIGRATE
     }
 
 
     fn command(&self) -> App<'static, 'static> {
-        App::new("migrate")
+        App::new(MIGRATE)
             .about(r#"Migrates 1.0 rules to 2.0 compatible rules.
 "#)
-            .arg(Arg::with_name("rules").long("rules").short("r").takes_value(true).help("Provide a rules file").required(true))
-            .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("Write migrated rules to output file").required(false))
+            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true).help("Provide a rules file").required(true))
+            .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write migrated rules to output file").required(false))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file_input = app.value_of("rules").unwrap();
+        let file_input = app.value_of(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();
         let file = File::open(file_input)?;
 
-        let mut out= match app.value_of("output") {
+        let mut out= match app.value_of(OUTPUT.0) {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };

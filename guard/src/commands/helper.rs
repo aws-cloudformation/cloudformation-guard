@@ -1,4 +1,4 @@
-// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules::errors::{Error, ErrorKind};
@@ -34,12 +34,12 @@ pub fn validate_and_return_json(
                     let stacker = StackTracker::new(&root_context);
                     let data_file_name: &str = "lambda-payload";
                     let rules_file_name: &str = "lambda-run";
-                    let reporters = vec![
-                        Box::new(GenericSummary::new(&data_file_name, &rules_file_name, OutputFormatType::JSON)) as Box<dyn Reporter>
-                    ];
-                    let reporter = ConsoleReporter::new(stacker, &reporters, &rules_file_name, &data_file_name, verbose, true, false);
+                    let renderer = &GenericSummary::new() as &dyn Reporter;
+                    let renderers = vec![renderer];
+                    let reporter = ConsoleReporter::new(stacker, &renderers, &rules_file_name, &data_file_name, verbose, true, false);
                     rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json()?;
+                    let json_result = reporter.get_result_json(
+                        &root, OutputFormatType::JSON)?;
                     return Ok(json_result);
                 }
                 Err(e) => return Err(e),

@@ -153,6 +153,7 @@ impl From<std::convert::Infallible> for Error {
 }
 
 use crate::rules::parser::{Span, ParserError};
+use crate::rules::errors::ErrorKind::IncompatibleError;
 
 impl <'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     fn from(err: nom::Err<(Span<'a>, nom::error::ErrorKind)>) -> Self {
@@ -177,3 +178,13 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
         Error(ErrorKind::ParseError(msg))
     }
 }
+
+impl serde::ser::Error for Error {
+    fn custom<T>(msg: T) -> Self where T: Display {
+        Error::new(IncompatibleError(msg.to_string()))
+    }
+}
+
+impl serde::ser::StdError for Error {}
+
+

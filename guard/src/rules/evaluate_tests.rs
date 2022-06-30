@@ -1,5 +1,6 @@
 use super::*;
 use super::super::path_value;
+use super::super::path_value::Path;
 use crate::rules::parser::{rules_file, Span};
 use crate::commands::files::read_file_content;
 use std::fs::File;
@@ -543,7 +544,7 @@ rule deny_egress when %sgs NOT EMPTY {
         let root_context = RootScope::new(&rules_file, each);
         let reporter = Reporter(&root_context);
         let status = rules_file.evaluate(each, &reporter)?;
-        println!("{}", format!("Status {} = {}", index, status).underline());
+        println!("{}", format!("Status {} = {}", index, status));
     }
 
     let sample = r#"{ "Resources": {} }"#;
