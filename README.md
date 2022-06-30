@@ -1,3 +1,6 @@
+**Note:**
+We are excited to release Guard 2.1! We recommend building locally from source code or to install using pre-built binaries. Due to dependencies on [one of the PRs](https://github.com/chyh1990/yaml-rust/pull/180) for [yaml-rust](https://github.com/chyh1990/yaml-rust) library, we are not currently able to publish to various package managers including crates.io.
+
 # AWS CloudFormation Guard
 
 **Validate Cloud Environments with Policy-as-Code**
