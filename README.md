@@ -4,17 +4,17 @@
 
 AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies. 
 
-Guard 2.0 release is a complete re-write of the earlier 1.0 version to make the tool general-purpose. With Guard 2.0, developers can continue writing policies for CloudFormation Templates. In addition, developers can use Guard in the following business domains:
+Guard 2.1 release is a complete re-write of the earlier 1.0 version to make the tool general-purpose. With Guard 2.1, developers can continue writing policies for CloudFormation Templates. In addition, developers can use Guard in the following business domains:
 
 1. **Preventative Governance and Compliance (shift left):** validate Infrastructure-as-code (IaC) or infrastructure/service compositions such as CloudFormation Templates, CloudFormation ChangeSets, Terraform JSON configuration files, Kubernetes configurations, and more against Guard policies representing your organizational best practices for security, compliance, and more. For example, developers can use Guard policies with
     1. Terraform plan (in JSON format) for deployment safety assessment checks or Terraform state files to detect live state deviations.
     2. Static assessment of IaC templates to determine network reachability like Amazon Redshift cluster deployed inside a VPC and prevent the provision of such stacks.
 2. **Detective Governance and Compliance:** validate conformity of Configuration Management Database (CMDB) resources such as AWS Config-based configuration items (CIs). For example, developers can use Guard policies against AWS Config CIs to continuously monitor state of deployed AWS and non-AWS resources, detect violations from policies, and trigger remediation.
-3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 2.0, you can prevent such changes in your CI/CD pipelines. 
+3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 2.1, you can prevent such changes in your CI/CD pipelines. 
 
-> **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.0 because Guard 2.0 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.0 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. To migrate from Guard 1.0 to Guard 2.0, 1) use migrate command to transition your existing 1.0 rules to 2.0 rules and 2) read all new Guard 2.0 features.
+> **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.1 because Guard 2.1 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.1 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. To migrate from Guard 1.0 to Guard 2.1, 1) use migrate command to transition your existing 1.0 rules to 2.0 rules and 2) read all new Guard 2.1 features.
 > 
-> You can find code related to Guard2.0 on the main branch of the repo and code related to Guard 1.0 on [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
+> You can find code related to Guard 2.1 on the main branch of the repo and code related to Guard 1.0 on [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
 
 **Guard In Action**
 
@@ -216,7 +216,7 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 2.0
+cfn-guard 2.1
 
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
   policy-as-code as rules to validate against any structed hierarchical data (like JSON/YAML).
