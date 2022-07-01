@@ -66,7 +66,7 @@ impl GitHubSource {
             user,
             repo,
             file_name,
-            access_token: credentials.get("API_key").unwrap(),
+            access_token: credentials.get("github_api").unwrap(),
             version_needed:configs.get("version_needed").unwrap(),
             experimental: configs.get("experimental").unwrap(),
             version_download: (),
@@ -90,7 +90,7 @@ impl GitHubSource {
 
     pub fn validate_credential(){
         let args = read_config("src/ExternalSourceCredentials");
-        let api_key = args.get("API_key").unwrap();
+        let api_key = args.get("github_api").unwrap();
         if api_key.is_empty() || api_key.is_numeric(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string")))
         }
