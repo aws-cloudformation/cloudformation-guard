@@ -1,3 +1,4 @@
-pub trait Pull {
-    fn pull(&self) -> octocrab::Result<ContentItems>;
+trait ExternalSource {
+    // A void to process ruleset from external source
+    fn process(&self);
 }
