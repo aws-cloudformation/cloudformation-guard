@@ -9,6 +9,7 @@ pub struct GitHubSource {
     pub file_name: String,
     pub access_token: String,
     pub version_needed: String,
+    pub experimental: String,
     pub version_download: String::new(),
     pub file_content: String::new()
 }
@@ -56,23 +57,45 @@ impl AuthenticatedSource for GitHubSource {
 
 /// Constructor and class method
 impl GitHubSource {
-    pub fn new(user: String, repo: String, file_name: String, access_token:String, version_needed: String) -> Self {
+    pub fn new(user: String, repo: String, file_name: String) -> Self {
+        let configs = validate_config();
+        let credentials = validate_credential();
+
         GitHubSource {
             octo: (),
             user,
             repo,
             file_name,
-            access_token,
-            version_needed,
+            access_token: credentials.get("API_key").unwrap(),
+            version_needed:configs.get("version_needed").unwrap(),
+            experimental: configs.get("experimental").unwrap(),
             version_download: (),
             file_content: ()
         }
     }
 
-    // "src/ExternalSourceConfig"
-    // let version_needed = args.get("version_needed").unwrap();
-    // let experimental = args.get("experimental").unwrap();
-    // return GitHubSource::new(user,repo,file_name,access_token,version_needed,experimental);
+    // helper method to validate input
+    pub fn validate_config(){
+        let args = read_config("src/ExternalSourceConfig");
+        let version_needed = args.get("version_needed").unwrap();
+        let experimental = args.get("experimental").unwrap();
+        if version_needed.is_empty() || version_needed.is_numeric(){
+            return Err(Error::new(ErrorKind::StringValue("Version must be string")))
+        }
+        if !experimental.eq("true") || !experimental.eq("false"){
+        return Err(Error::new(ErrorKind::StringValue("Experimental must be true or false")))
+        }
+        return args
+    }
+
+    pub fn validate_credential(){
+        let args = read_config("src/ExternalSourceCredentials");
+        let api_key = args.get("API_key").unwrap();
+        if api_key.is_empty() || api_key.is_numeric(){
+            return Err(Error::new(ErrorKind::StringValue("Version must be string")))
+        }
+        return args
+    }
 
     /// Function to print detail of the instance
     pub fn to_string(&self) -> String {

@@ -81,6 +81,10 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
         ErrorKind::MissingValue(err) => {
             format!("There was no variable or value object to resolve. Error = {}", err)
         }
+
+        ErrorKind::StringValue(err) => {
+            format!("Value should be string {}", err)
+        }
     }
 }
 
@@ -112,7 +116,8 @@ pub enum ErrorKind {
     IncompatibleError(String),
     NotComparable(String),
     ConversionError(std::convert::Infallible),
-    Errors(Vec<ErrorKind>)
+    Errors(Vec<ErrorKind>),
+    StringValue(String)
 }
 
 impl From<std::fmt::Error> for Error {
