@@ -3,8 +3,10 @@ use crate::rules::values::*;
 use std::hash::Hash;
 use std::fmt::Formatter;
 use serde::{Serialize, Deserialize};
+use crate::rules::path_value::PathAwareValue;
+use crate::rules::display::ValueOnlyDisplay;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
     pub(crate) line: u32,
     pub(crate) column: u32,
@@ -19,10 +21,11 @@ impl<'loc> std::fmt::Display for FileLocation<'loc> {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum LetValue<'loc> {
-    Value(Value),
+    Value(PathAwareValue),
     AccessClause(AccessQuery<'loc>),
+    FunctionCall(FunctionExpr<'loc>),
 }
 
 ///
@@ -31,7 +34,7 @@ pub(crate) enum LetValue<'loc> {
 /// from incoming context. Access expressions support **predicate** queries to help
 /// match specific selections [crate::rules::common::walk_type]
 ///
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct LetExpr<'loc> {
     pub(crate) var: String,
     pub(crate) value: LetValue<'loc>,
@@ -52,15 +55,15 @@ pub(crate) struct LetExpr<'loc> {
 /// DynamoDB Table we can use the following `resources.*[type=/AWS::Dynamo/]`
 ///
 ///
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum QueryPart<'loc> {
     This,
     Key(String),
-    MapKeyFilter(MapKeyFilterClause<'loc>),
-    AllValues,
-    AllIndices,
+    MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
+    AllValues(Option<String>),
+    AllIndices(Option<String>),
     Index(i32),
-    Filter(Conjunctions<GuardClause<'loc>>),
+    Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 
 impl<'loc> QueryPart<'loc> {
@@ -92,11 +95,11 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 f.write_str(s.as_str())?;
             },
 
-            QueryPart::AllIndices => {
+            QueryPart::AllIndices(_name) => {
                 f.write_str("[*]")?;
             }
 
-            QueryPart::AllValues => {
+            QueryPart::AllValues(_name) => {
                 f.write_str("*")?;
             },
 
@@ -104,12 +107,12 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
                 write!(f, "{}", idx.to_string())?;
             },
 
-            QueryPart::Filter(_c) => {
-                f.write_str("(filter-clauses)")?;
+            QueryPart::Filter(name, _c) => {
+                f.write_fmt(format_args!("{} (filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
             },
 
-            QueryPart::MapKeyFilter(_clause) => {
-                f.write_str("(map-key-filter-clause)")?;
+            QueryPart::MapKeyFilter(name, _clause) => {
+                f.write_fmt(format_args!("{} (map-key-filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
             },
 
             QueryPart::This => {
@@ -120,7 +123,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct AccessQuery<'loc> {
     pub(crate) query: Vec<QueryPart<'loc>>,
     pub(crate) match_all: bool,
@@ -128,7 +131,7 @@ pub(crate) struct AccessQuery<'loc> {
 
 //pub(crate) type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct AccessClause<'loc> {
     pub(crate) query: AccessQuery<'loc>,
     pub(crate) comparator: (CmpOperator, bool),
@@ -137,22 +140,42 @@ pub(crate) struct AccessClause<'loc> {
     pub(crate) location: FileLocation<'loc>,
 }
 
+impl<'loc> Default for AccessClause<'loc> {
+    fn default() -> Self {
+        AccessClause {
+            query: AccessQuery {
+                query: vec![],
+                match_all: true,
+            },
+            custom_message: None,
+            location: FileLocation {
+                file_name: "",
+                line: 0,
+                column: 0
+            },
+            compare_with: None,
+            comparator: (CmpOperator::Eq, false)
+        }
+    }
+}
+
 pub(crate) type Disjunctions<T> = Vec<T>;
 pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardAccessClause<'loc> {
     pub(crate) access_clause: AccessClause<'loc>,
     pub(crate) negation: bool
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct MapKeyFilterClause<'loc> {
     pub(crate) comparator: (CmpOperator, bool),
     pub(crate) compare_with: LetValue<'loc>,
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
@@ -160,56 +183,74 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) location: FileLocation<'loc>
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct BlockGuardClause<'loc> {
     pub(crate) query: AccessQuery<'loc>,
     pub(crate) block: Block<'loc, GuardClause<'loc>>,
-    pub(crate) location: FileLocation<'loc>
+    pub(crate) location: FileLocation<'loc>,
+    pub(crate) not_empty: bool,
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct WhenGuardBlockClause<'loc> {
     pub(crate) conditions: WhenConditions<'loc>,
     pub(crate) block: Block<'loc, GuardClause<'loc>>,
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct ParameterizedNamedRuleClause<'loc> {
+    pub(crate) parameters: Vec<LetValue<'loc>>,
+    pub(crate) named_rule: GuardNamedRuleClause<'loc>,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct FunctionExpr<'loc> {
+    pub(crate) parameters: Vec<LetValue<'loc>>,
+    pub(crate) name: String,
+    pub(crate) location: FileLocation<'loc>,
+}
+
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
+    ParameterizedNamedRule(ParameterizedNamedRuleClause<'loc>),
     BlockClause(BlockGuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum WhenGuardClause<'loc> {
     Clause(GuardAccessClause<'loc>),
     NamedRule(GuardNamedRuleClause<'loc>),
+    ParameterizedNamedRule(ParameterizedNamedRuleClause<'loc>),
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<WhenGuardClause<'loc>>;
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct Block<'loc, T> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) conjunctions: Conjunctions<T>,
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TypeBlock<'loc> {
     pub(crate) type_name: String,
     pub(crate) conditions: Option<WhenConditions<'loc>>,
     pub(crate) block: Block<'loc, GuardClause<'loc>>, // only contains access clauses
+    pub(crate) query: Vec<QueryPart<'loc>>,
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum RuleClause<'loc> {
     Clause(GuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
     TypeBlock(TypeBlock<'loc>)
 }
 
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Rule<'loc> {
     pub(crate) rule_name: String,
     pub(crate) conditions: Option<WhenConditions<'loc>>,
@@ -217,10 +258,18 @@ pub(crate) struct Rule<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ParameterizedRule<'loc> {
+    pub(crate) parameter_names: indexmap::IndexSet<String>,
+    pub(crate) rule: Rule<'loc>,
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RulesFile<'loc> {
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub(crate) guard_rules: Vec<Rule<'loc>>,
+    pub(crate) parameterized_rules: Vec<ParameterizedRule<'loc>>,
 }
+
 pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
 impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -240,3 +289,90 @@ impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
     }
 }
 
+impl<'loc> std::fmt::Display for GuardClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GuardClause::Clause(individual) => individual.fmt(f)?,
+            GuardClause::BlockClause(block) => block.fmt(f)?,
+            _ => unimplemented!()
+        }
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for BlockGuardClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {{ ", self.query)?;
+        for each in &self.block.conjunctions {
+            let len = each.len();
+            for idx in 0..len-2 {
+                write!(f, "{} or ", each[idx])?;
+            }
+            write!(f, "{}; ", each[len])?;
+        }
+        write!(f, " }}")?;
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}",
+            if self.negation { "not" } else { "" },
+            self.access_clause
+        )?;
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for AccessClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}",
+            self.query,
+            display_comparator(self.comparator),
+            match &self.compare_with {
+                Some(value) => format!("{}", value),
+                None => "".to_string(),
+            }
+        )?;
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for AccessQuery<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", SliceDisplay(&self.query))?;
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}(", self.name)?;
+        let last_index = self.parameters.len() - 1;
+        for (idx, each_param) in self.parameters.iter().enumerate() {
+            write!(f, "{}", each_param)?;
+            if idx != last_index {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")?;
+        Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for LetValue<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LetValue::AccessClause(acc) => acc.fmt(f)?,
+            LetValue::Value(v) => write!(f, "{}", ValueOnlyDisplay(v))?,
+            LetValue::FunctionCall(call_expr) => write!(f, "{}", call_expr)?,
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn display_comparator(cmp: (CmpOperator, bool)) -> String {
+    let (op, not) = cmp;
+    format!("{}{} ", if not { "not "} else { "" }, op)
+}

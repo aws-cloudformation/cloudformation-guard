@@ -1,6 +1,6 @@
 use crate::rules::{EvaluationContext, Status, EvaluationType, Result};
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
-use crate::rules::exprs::{QueryPart, AccessQuery};
+use crate::rules::exprs::AccessQuery;
 use std::convert::TryFrom;
 use crate::rules::values::CmpOperator;
 

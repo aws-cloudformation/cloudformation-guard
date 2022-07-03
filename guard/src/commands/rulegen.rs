@@ -9,6 +9,7 @@ use crate::rules::Result;
 use serde_json::Value;
 use itertools::Itertools;
 use string_builder::Builder;
+use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Rulegen {}
@@ -20,24 +21,22 @@ impl Rulegen {
 }
 
 impl Command for Rulegen {
-    fn name(&self) -> &'static str {
-        "rulegen"
-    }
+    fn name(&self) -> &'static str { RULEGEN }
 
 
     fn command(&self) -> App<'static, 'static> {
-        App::new("rulegen")
+        App::new(RULEGEN)
             .about(r#"Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
 "#)
-            .arg(Arg::with_name("template").long("template").short("t").takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("Write to output file").required(false))
+            .arg(Arg::with_name(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
+            .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
     }
 
     fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file = app.value_of("template").unwrap();
+        let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 
-        let out = match app.value_of("output") {
+        let out = match app.value_of(OUTPUT.0) {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };

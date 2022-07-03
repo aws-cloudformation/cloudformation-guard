@@ -37,7 +37,7 @@ rule sns_cross_account_only_allowed_accounts {
                         # when accessed via any AWS services, ensure that source account is only from allowed lists
                         # We want to check StringEquals, StringLike, ArnEquals, ArnLike checks
                         # 
-                        let expected_conditions = Condition[ keys == /String(Equals|Like)|Arn(Equals|Like)/ ].*
+                        let expected_conditions = Condition[ keys == /String(Equals|Like)|Arn(Equals|Like)/ ]
 
                         # 
                         # Ensure that these are specified, else it is an error 
@@ -47,7 +47,7 @@ rule sns_cross_account_only_allowed_accounts {
                         # 
                         # Then extract values against these (aws|AWS):[sS]ourceAccount, (aws|AWS):[sS]ourceOwner, (aws|AWS):[sS]ource(Arn|ARN)
                         # 
-                        let source_accounts = %expected_conditions[ keys == /(aws|AWS):[sS]ource(Account|Owner|Arn|ARN)/ ].*
+                        let source_accounts = %expected_conditions[ keys == /(aws|AWS):[sS]ource(Account|Owner|Arn|ARN)/ ]
 
                         # 
                         # It is an error to not specify this. Ensure the ones specified match allowed accounts

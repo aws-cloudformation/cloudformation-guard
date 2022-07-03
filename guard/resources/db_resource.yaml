@@ -1,0 +1,17 @@
+# ---
+# AWSTemplateFormatVersion: 2010-09-09
+# Description: CloudFormation - Redshift Cluster with proper DB name, port and metadata
+
+Resources:
+  myCluster: 
+    Type: "AWS::Redshift::Cluster"
+    Properties:
+      DBName: "mydb"
+      MasterUsername: "master"
+      MasterUserPassword: 
+        Ref: "MasterUserPassword"
+      NodeType: "ds2.xlarge"
+      ClusterType: "single-node"
+      Tags:
+        - Key: foo
+          Value: bar
