@@ -1,13 +1,11 @@
 trait AuthenticatedSource {
-    fn authenticate(&self);
-    fn get_version(&self);
-    fn pull(&self);
-}
+    // TODO: success or failure
+    async fn authenticate(&self)-> i32;
 
-impl<T> ExternalSource for T where T: AuthenticatedSource {
-    fn process(&self) {
-        self.authenticate();
-        self.get_version();
-        self.pull();
-    }
+    async fn authorize(&self)-> i32;
+    // TODO:check cache to see if versioning is there
+    // true or false
+    fn change_detected(&self)->bool; // TODO: rename change_detected
+    // TODO: true or false, conditional on get_version
+    async fn pull(&self);
 }

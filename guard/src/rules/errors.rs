@@ -80,10 +80,14 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
 
         ErrorKind::MissingValue(err) => {
             format!("There was no variable or value object to resolve. Error = {}", err)
-        }
+        },
 
         ErrorKind::StringValue(err) => {
             format!("Value should be string {}", err)
+        },
+
+        ErrorKind::AuthenticationError(err) => {
+            format!("Could not authenticate for external source: {}", err)
         }
     }
 }
@@ -117,7 +121,8 @@ pub enum ErrorKind {
     NotComparable(String),
     ConversionError(std::convert::Infallible),
     Errors(Vec<ErrorKind>),
-    StringValue(String)
+    StringValue(String),
+    AuthenticationError(String)
 }
 
 impl From<std::fmt::Error> for Error {

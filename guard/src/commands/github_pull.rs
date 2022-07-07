@@ -3,7 +3,7 @@ use octocrab;
 
 /// This is a class for getting file from GitHub
 pub struct GitHubSource {
-    pub octo: octocrab::repos::RepoHandler::new(),
+    pub octocrab_instance: octocrab::repos::RepoHandler::new(),
     pub user: String,
     pub repo: String,
     pub file_name: String,
@@ -16,30 +16,60 @@ pub struct GitHubSource {
 
 /// inheriting from authenticated source
 impl AuthenticatedSource for GitHubSource {
-    fn authenticate(&self){
-        self.octo = octocrab::OctocrabBuilder::new()
+    async fn authenticate(&self)->i32{
+        let mut exit_code = 0;
+        self.octocrab_instance = octocrab::OctocrabBuilder::new()
         .personal_token(self.access_token)
         .build()
         .unwrap();
+        let user = self.octocrab_instance.current().user().await?;
+        if let Err(octocrab::Error::GitHubError) = user() {
+            println!("Invalid access token");
+            exit_code = 1;
+        }
+        if exit_code == 1 {
+            return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential")))
+        }
+        return exit_code;
     }
 
-    fn get_version(&self){
-        // pull all available version into a page
-        let page = self.octo
-            .repos(self.owner, self.repo_name)
-            .releases()
-            .list()
-            .per_page(100)
-            .page(1u32)
-            .send()
-            .await?;
-        let mut versions:Vec<String> = Vec::new();
-        for item in page.take_items(){
-            let tag_cleaned = item.tag_name.replace("v", "");
-            // TODO: remove the "pre", filter unstable if experimental is false
-            versions.push(tag_cleaned)
-        };
-        self.version_download = self.get_satisfied(versions);
+    async fn authorize(&self)->i32{
+        let mut exit_code = 0;
+        let authenticate_code = self.authenticate();
+        // if succeed
+        if authenticate_code == 0 {
+            let tags = self.octocrab_instance.repos(owner, repo_name).list_tags().send().await?;
+            if let Err(octocrab::Error::GitHubError) = tags() {
+                println!("The user might not have permission");
+                exit_code = 1;
+            }
+            if exit_code == 1 {
+                return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission")))
+            }
+            return exit_code;
+        }
+    }
+
+
+    fn change_detected(&self, local_metadata:String)->bool{
+        let mut changed = false;
+        let authorize_code = self.authorize();
+        if authorize_code == 0 {
+            let page = self.octo
+                .repos(self.owner, self.repo_name)
+                .releases()
+                .list()
+                .send()
+                .await?;
+            let mut versions:Vec<String> = Vec::new();
+            for item in page.take_items(){
+                let tag_cleaned = item.tag_name.replace("v", "");
+                // TODO: remove the "pre", filter unstable if experimental is false
+                versions.push(tag_cleaned)
+            };
+            // TODO: list_version, read config, check cache(placeholder)
+            self.version_download = self.get_satisfied(versions);
+        }
     }
 
     fn pull(&self){
@@ -62,7 +92,7 @@ impl GitHubSource {
         let credentials = validate_credential();
 
         GitHubSource {
-            octo: (),
+            octocrab_instance: (),
             user,
             repo,
             file_name,
@@ -78,6 +108,9 @@ impl GitHubSource {
     pub fn validate_config(){
         let args = read_config("src/ExternalSourceConfig");
         let version_needed = args.get("version_needed").unwrap();
+        if !validate_version(version_needed){
+            return Err(Error::new(ErrorKind::StringValue("Version must be in the appropriate format")))
+        }
         let experimental = args.get("experimental").unwrap();
         if version_needed.is_empty() || version_needed.is_numeric(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string")))
