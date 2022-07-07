@@ -64,25 +64,33 @@ impl AuthenticatedSource for GitHubSource {
             let mut versions:Vec<String> = Vec::new();
             for item in page.take_items(){
                 let tag_cleaned = item.tag_name.replace("v", "");
-                // TODO: remove the "pre", filter unstable if experimental is false
+                if !self.experimental{
+                    if tag_cleaned.contains("beta") || tag_cleaned.contains("pre"){
+                        continue;
+                    }
+                }
                 versions.push(tag_cleaned)
             };
-            // TODO: list_version, read config, check cache(placeholder)
             self.version_download = self.get_satisfied(versions);
+            if self.version_download != local_metadata {
+                changed = true;
+            }
         }
+        return changed
     }
 
     fn pull(&self){
-        let repo = self.octo
-            .repos(self.user, self.repo_name)
-            .get_content()
-            .path(self.file_name)
-            .r#ref(self.version_download)
-            .send()
-            .await?;
-        Ok(repo)
+        if change_detected {
+            let repo = self.octo
+                .repos(self.user, self.repo_name)
+                .get_content()
+                .path(self.file_name)
+                .r#ref(self.version_download)
+                .send()
+                .await?;
+            Ok(repo)
+        }
     }
-
 }
 
 /// Constructor and class method
@@ -91,6 +99,7 @@ impl GitHubSource {
         let configs = validate_config();
         let credentials = validate_credential();
 
+
         GitHubSource {
             octocrab_instance: (),
             user,
@@ -98,7 +107,10 @@ impl GitHubSource {
             file_name,
             access_token: credentials.get("github_api").unwrap(),
             version_needed:configs.get("version_needed").unwrap(),
-            experimental: configs.get("experimental").unwrap(),
+            experimental: bool = match configs.get("experimental").unwrap() {
+                 "true" => true,
+                "false" => false,
+            },
             version_download: (),
             file_content: ()
         }
