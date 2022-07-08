@@ -740,7 +740,7 @@ fn emit_messages(
         else {
             writeln!(
                 writer,
-                "{prefix}{mh:<width$}= {message}",
+                "{prefix}{mh:<width$} = {message}",
                 prefix=prefix,
                 message=message[0],
                 mh="Message",
@@ -752,7 +752,7 @@ fn emit_messages(
     if !error.is_empty() {
         writeln!(
             writer,
-            "{prefix}{eh:<width$}= {error}",
+            "{prefix}{eh:<width$} = {error}",
             prefix=prefix,
             error=error,
             eh="Error",
