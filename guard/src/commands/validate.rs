@@ -317,6 +317,12 @@ or rules files.
         if app.is_present(RULES.0) {
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
+            // TODO: add check URL
+            // add regex as constant GitHubURLregex
+            // two case:
+            // 1/single rule file github url list_of_file_or_dir, put into "external source folder" pull into ther,
+            // contains the file location
+            // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
             if base.is_file() {

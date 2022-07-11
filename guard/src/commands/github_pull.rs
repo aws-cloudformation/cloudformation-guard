@@ -1,5 +1,8 @@
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use octocrab;
+use crate::{SUCCESS_CODE,FAILURE_CODE};
+use std::fs;
+
 
 /// This is a class for getting file from GitHub
 pub struct GitHubSource {
@@ -16,62 +19,52 @@ pub struct GitHubSource {
 
 /// inheriting from authenticated source
 impl AuthenticatedSource for GitHubSource {
-    async fn authenticate(&self)->i32{
-        let mut exit_code = 0;
+    async fn authenticate(&self)->Result<(),Error>{
+        let mut exit_code;
         self.octocrab_instance = octocrab::OctocrabBuilder::new()
         .personal_token(self.access_token)
         .build()
         .unwrap();
         let user = self.octocrab_instance.current().user().await?;
-        if let Err(octocrab::Error::GitHubError) = user() {
-            println!("Invalid access token");
-            exit_code = 1;
+        match user {
+            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
+            Ok(user) => exit_code = SUCCESS_CODE;
         }
-        if exit_code == 1 {
-            return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential")))
-        }
-        return exit_code;
+    }
+       Ok(exit_code)
     }
 
-    async fn authorize(&self)->i32{
-        let mut exit_code = 0;
-        let authenticate_code = self.authenticate();
-        // if succeed
-        if authenticate_code == 0 {
-            let tags = self.octocrab_instance.repos(owner, repo_name).list_tags().send().await?;
-            if let Err(octocrab::Error::GitHubError) = tags() {
-                println!("The user might not have permission");
-                exit_code = 1;
-            }
-            if exit_code == 1 {
-                return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission")))
-            }
-            return exit_code;
+    async fn check_authorization(&self)->Result<(),Error>{
+        let mut exit_code;
+        let tags = self.octocrab_instance.repos(owner, repo_name).list_tags().send().await?;
+        match user {
+            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission"))),
+            Ok(user) => exit_code = SUCCESS_CODE;
         }
+            Ok(exit_code)
     }
 
 
-    fn change_detected(&self, local_metadata:String)->bool{
-        let mut changed = false;
-        let authorize_code = self.authorize();
-        if authorize_code == 0 {
+   async fn change_detected(&self, local_metadata:String)->bool{
+            let mut changed;
             let page = self.octo
                 .repos(self.owner, self.repo_name)
                 .releases()
                 .list()
                 .send()
                 .await?;
+            Ok(page);
             let mut versions:Vec<String> = Vec::new();
             for item in page.take_items(){
-                let tag_cleaned = item.tag_name.replace("v", "");
                 if !self.experimental{
-                    if tag_cleaned.contains("beta") || tag_cleaned.contains("pre"){
+                    if item.prerelease {
                         continue;
                     }
                 }
+                tag_cleaned = item.tag_name.replace("v", "");
                 versions.push(tag_cleaned)
             };
-            self.version_download = self.get_satisfied(versions);
+            self.version_download = self.get_most_correct_version(versions);
             if self.version_download != local_metadata {
                 changed = true;
             }
@@ -79,17 +72,22 @@ impl AuthenticatedSource for GitHubSource {
         return changed
     }
 
-    fn pull(&self){
-        if change_detected {
-            let repo = self.octo
+    fn pull(&self) -> String{
+        let repo = self.octocrab_instance
                 .repos(self.user, self.repo_name)
                 .get_content()
                 .path(self.file_name)
                 .r#ref(self.version_download)
                 .send()
                 .await?;
-            Ok(repo)
-        }
+        Ok(repo)
+        let contents = repo.take_items();
+        let c = &contents[0];
+        let data = c.decoded_content().unwrap();
+        fs::create_dir_all("external_src/")?;
+        let file_path = concat!("external_src/",self.file_name);
+        fs::write(file_path, data).expect("Unable to write file");
+        return file_path;
     }
 }
 
@@ -151,7 +149,7 @@ impl GitHubSource {
 
 
     /// Function to get latest version
-    pub fn get_satisfied(&self, versions:&Vec<String>) -> String {
+    pub fn get_most_correct_version(&self, versions:&Vec<String>) -> String {
         let req = Version::parse(&self.version_needed).unwrap();
         let mut output;
         // dependency resolution

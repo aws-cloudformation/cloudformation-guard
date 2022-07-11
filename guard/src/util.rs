@@ -16,7 +16,8 @@ fn read_config(file_name:String) -> HashMap<String, String> {
 
 /// Function to check version format
 fn validate_version(version_name:String) -> bool {
-    let mut output = false
+    let mut output = false;
+    // add regex as constant semanticversioningnaming convention
     let re = Regex::new(r"^(\d+\.)?(\d+\.)?(\*|\d+)$").unwrap();
     let caps = re.captures(version_name).unwrap();
     if &caps[0] {
