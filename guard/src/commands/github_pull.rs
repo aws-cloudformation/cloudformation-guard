@@ -54,7 +54,7 @@ impl AuthenticatedSource for GitHubSource {
                 .send()
                 .await?;
             Ok(page);
-            let mut versions:Vec<String> = Vec::new();
+            let mut versions:HashMap<String,String> = HashMap::new();
             for item in page.take_items(){
                 if !self.experimental{
                     if item.prerelease {
@@ -62,7 +62,7 @@ impl AuthenticatedSource for GitHubSource {
                     }
                 }
                 tag_cleaned = item.tag_name.replace("v", "");
-                versions.push(tag_cleaned)
+                versions.insert(tag_cleaned, item.node_id);
             };
             self.version_download = self.get_most_correct_version(versions);
             if self.version_download != local_metadata {
@@ -148,15 +148,16 @@ impl GitHubSource {
 
 
     /// Function to get latest version
-    pub fn get_most_correct_version(&self, versions:&Vec<String>) -> String {
+    pub fn get_most_correct_version(&self, versions:&HashMap<String,String>) -> String {
         let req = Version::parse(&self.version_needed).unwrap();
         let mut output;
         // dependency resolution
-        for version in versions.rev() {
+        let available_versions:Vec<String> = versions.keys().cloned().collect();
+        for version in available_versions.rev() {
             // get version from the reverse order
             if Version::parse(&version).unwrap().matches(&req){
                 // get the latest satisfying version
-                output = version;
+                output = versions.get(version);
                 break
             }
         }
