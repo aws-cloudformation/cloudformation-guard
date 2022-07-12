@@ -323,6 +323,29 @@ or rules files.
             // 1/single rule file github url list_of_file_or_dir, put into "external source folder" pull into ther,
             // contains the file location
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
+            let github_regex = Regex::new(GITHUB_URL).unwrap();
+            if github_regex.is_match(list_of_file_or_dir){
+                let mut authenticate_code, authorization_code, changed;
+                let mut final_output;
+                let capture_group = github_regex.captures(list_of_file_or_dir).unwrap();
+                let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
+                let mut split = github_main_info.split("/");
+                let vec: Vec<&str> = split.collect();
+                let github_instance = GitHubSource::new(vec[0],vec[1],&vec[2..].join("/"));
+                let authenticate_code = github_instance.authenticate();
+
+                if authenticate_code == SUCCESS_CODE{
+                    authorization_code = github_instance.check_authorization();
+                }
+
+                if authorization_code == SUCCESS_CODE{
+                    changed = github_instance.change_detected();
+                }
+
+                if changed {
+                    final_output = github_instance.pull();
+                }
+            }
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
             if base.is_file() {

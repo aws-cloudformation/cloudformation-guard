@@ -147,7 +147,6 @@ impl GitHubSource {
     }
 
 
-
     /// Function to get latest version
     pub fn get_most_correct_version(&self, versions:&Vec<String>) -> String {
         let req = Version::parse(&self.version_needed).unwrap();
