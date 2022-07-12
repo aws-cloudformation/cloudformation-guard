@@ -28,6 +28,7 @@ use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_ro
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
+use crate::commands::github_pull::GitHubSource;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -325,7 +326,9 @@ or rules files.
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
             let github_regex = Regex::new(GITHUB_URL).unwrap();
             if github_regex.is_match(list_of_file_or_dir){
-                let mut authenticate_code, authorization_code, changed;
+                let mut authenticate_code;
+                let mut authorization_code;
+                let mut changed;
                 let mut final_output;
                 let capture_group = github_regex.captures(list_of_file_or_dir).unwrap();
                 let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
@@ -339,7 +342,7 @@ or rules files.
                 }
 
                 if authorization_code == SUCCESS_CODE{
-                    changed = github_instance.change_detected();
+                    changed = github_instance.change_detected("string");
                 }
 
                 if changed {
