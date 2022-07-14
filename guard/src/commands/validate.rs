@@ -30,12 +30,12 @@ use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
 
 pub(crate) mod generic_summary;
+pub(crate) mod tf;
+pub(crate) mod cfn;
 mod common;
 mod summary_table;
 mod cfn_reporter;
-mod cfn;
 mod console_reporter;
-mod tf;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {

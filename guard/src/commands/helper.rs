@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::evaluate::RootScope;
 use crate::rules::path_value::PathAwareValue;
-use crate::commands::tracker::StackTracker;
-use crate::commands::validate::{ConsoleReporter, OutputFormatType, Reporter};
-use crate::rules::{Evaluate, Result};
+use crate::commands::validate::{OutputFormatType, Reporter};
+use crate::rules::{Result};
 use std::convert::TryFrom;
+use std::io::BufWriter;
 use crate::commands::validate::generic_summary::GenericSummary;
+use crate::commands::validate::tf::TfAware;
+use crate::commands::validate::cfn::CfnAware;
+use crate::rules::path_value::traversal::Traversal;
+use crate::rules::eval::eval_rules_file;
+use crate::rules::eval_context::root_scope;
 
 pub fn validate_and_return_json(
     data: &str,
@@ -24,24 +28,47 @@ pub fn validate_and_return_json(
     };
 
     let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
+    let concat_rules = rules;
 
     match crate::rules::parser::rules_file(span) {
 
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let root_context = RootScope::new(&rules, &root);
-                    let stacker = StackTracker::new(&root_context);
                     let data_file_name: &str = "lambda-payload";
                     let rules_file_name: &str = "lambda-run";
-                    let renderer = &GenericSummary::new() as &dyn Reporter;
-                    let renderers = vec![renderer];
-                    let reporter = ConsoleReporter::new(stacker, &renderers, &rules_file_name, &data_file_name, verbose, true, false);
-                    rules.evaluate(&root, &reporter)?;
-                    let json_result = reporter.get_result_json(
-                        &root, OutputFormatType::JSON)?;
-                    return Ok(json_result);
-                }
+
+                    let traversal = Traversal::from(&root);
+                    let mut root_scope = root_scope(&rules, &root)?;
+                    let status = eval_rules_file(&rules, &mut root_scope)?;
+                    let root_record = root_scope.reset_recorder().extract();
+
+                    let mut write_output = BufWriter::new(Vec::new());
+                    let generic: Box<dyn Reporter> = Box::new(GenericSummary::new()) as Box<dyn Reporter>;
+                    let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
+                    let cfn: Box<dyn Reporter> = Box::new(CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+                    let reporter: Box<dyn Reporter> = cfn;
+
+                    reporter.report_eval(
+                      &mut write_output,
+                      status,
+                      &root_record,
+                      rules_file_name,
+                      data_file_name,
+                      concat_rules,
+                      &traversal,
+                      OutputFormatType::JSON
+                    )?;
+
+                    if verbose {
+                      return Ok(serde_json::to_string_pretty(&root_record)?);
+                    }
+
+                    match String::from_utf8(write_output.buffer().to_vec()) {
+                      Ok(val) => return Ok(val),
+                      Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+                    }
+                },
                 Err(e) => return Err(e),
             }
         }
