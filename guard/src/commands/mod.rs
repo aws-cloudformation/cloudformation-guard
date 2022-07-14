@@ -7,6 +7,7 @@ pub(crate) mod parse_tree;
 pub(crate) mod migrate;
 pub(crate) mod github_pull;
 pub(crate) mod authenticated_source;
+pub(crate) mod util;
 
 mod tracker;
 mod aws_meta_appender;

@@ -5,71 +5,71 @@ use async_trait::async_trait;
 use crate::rules::errors::{Error, ErrorKind};
 use crate::commands::authenticated_source::AuthenticatedSource;
 use std::collections::HashMap;
+use crate::commands::util::{read_config,validate_version};
 
 
 /// This is a class for getting file from GitHub
 pub struct GitHubSource {
-    pub octocrab_instance: octocrab::repos::RepoHandler::new(),
+    pub octocrab_instance: octocrab::Octocrab,
     pub user: String,
     pub repo: String,
     pub file_name: String,
     pub access_token: String,
     pub version_needed: String,
-    pub experimental: String,
-    pub version_download: String::new(),
-    pub file_content: String::new()
+    pub experimental: bool,
+    pub version_download: String,
+    pub file_content: String
 }
 
 /// inheriting from authenticated source
 #[async_trait]
-impl AuthenticatedSource for GitHubSource {
+impl AuthenticatedSource for GitHubSource{
     fn authenticate(&self)->Result<(),Error>{
         // let mut exit_code;
         self.octocrab_instance = octocrab::OctocrabBuilder::new()
         .personal_token(self.access_token)
         .build()
         .unwrap();
-        let user = self.octocrab_instance.current().user().await;
+        let user = self.octocrab_instance.current().user();
         match user {
             Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
             Ok(user)=>(),
         }
-        Ok();
+        Ok(())
     }
 
 
 
     fn check_authorization(&self)->Result<(),Error>{
         let mut exit_code;
-        let tags = self.octocrab_instance.repos(owner, repo_name).list_tags().send().await?;
+        let tags = self.octocrab_instance.repos(self.owner, self.repo).list_tags().send();
         match tags {
-            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission"))),
+            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission".to_string()))),
             Ok(tags)=>(),
         }
-        Ok();
+        Ok(())
     }
 
 
    fn change_detected(&self, local_metadata:String)->bool{
             let mut changed;
-            let page = self.octo
-                .repos(self.owner, self.repo_name)
+            let page = self.octocrab_instance
+                .repos(self.owner, self.repo)
                 .releases()
                 .list()
-                .send()
-                .await;
+                .send();
             Ok(page);
             let mut versions:HashMap<String,String> = HashMap::new();
             for item in page.take_items(){
-                if !self.experimental{
+                if self.experimental==false{
                     if item.prerelease {
                         continue;
                     }
                 }
-                tag_cleaned = item.tag_name.replace("v", "");
+                let tag_cleaned = item.tag_name.replace("v", "");
                 versions.insert(tag_cleaned, item.node_id);
             };
-            self.version_download = self.get_most_correct_version(versions);
+            self.version_download = self.get_most_correct_version(&versions);
             if self.version_download != local_metadata {
                 changed = true;
             }
@@ -78,12 +78,11 @@ impl AuthenticatedSource for GitHubSource {
 
     fn pull(&self) -> String{
         let repo = self.octocrab_instance
-                .repos(self.user, self.repo_name)
+                .repos(self.user, self.repo)
                 .get_content()
                 .path(self.file_name)
                 .r#ref(self.version_download)
-                .send()
-                .await;
+                .send();
         Ok(repo);
         let contents = repo.take_items();
         let c = &contents[0];
@@ -103,8 +102,11 @@ impl AuthenticatedSource for GitHubSource {
 /// Constructor and class method
 impl GitHubSource {
     pub fn new(user: String, repo: String, file_name: String) -> Self {
-        let configs = validate_config();
-        let credentials = validate_credential();
+        let configs = Self::validate_config();
+        let credentials = Self::validate_credential();
+        let access_token = credentials.get("api_token").unwrap();
+        let version_needed = configs.get("version_needed").unwrap();
+        let experimental = configs.get("experimental").unwrap();
 
 
         GitHubSource {
@@ -112,9 +114,9 @@ impl GitHubSource {
             user,
             repo,
             file_name,
-            access_token: credentials.get("github_api").unwrap(),
-            version_needed:configs.get("version_needed").unwrap(),
-            experimental: bool = match configs.get("experimental").unwrap() {
+            access_token: access_token,
+            version_needed: version_needed,
+            experimental: match experimental {
                  "true" => true,
                 "false" => false,
             },
@@ -124,8 +126,8 @@ impl GitHubSource {
     }
 
     // helper method to validate input
-    pub fn validate_config(){
-        let args = read_config("src/ExternalSourceConfig");
+    pub fn validate_config()->HashMap<String,String>{
+        let args = read_config("src/ExternalSourceConfig".to_string());
         let version_needed = args.get("version_needed").unwrap();
         if !validate_version(version_needed){
             return Err(Error::new(ErrorKind::StringValue("Version must be in the appropriate format")))
@@ -140,8 +142,8 @@ impl GitHubSource {
         return args
     }
 
-    pub fn validate_credential(){
-        let args = read_config("src/ExternalSourceCredentials");
+    pub fn validate_credential()->HashMap<String,String>{
+        let args = read_config("src/ExternalSourceCredentials".to_string());
         let api_key = args.get("github_api").unwrap();
         if api_key.is_empty() || api_key.is_numeric(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string")))
@@ -150,14 +152,14 @@ impl GitHubSource {
     }
 
     /// Function to print detail of the instance
-    pub fn to_string(&self) -> String {
+    pub fn to_string(self: &Self) -> String {
         format!("GitHubSource user({}) repo ({}) file_name({}) access_token({}) version_needed({})",
                 &self.user, &self.repo, &self.file_name, &self.access_token, &self.version_needed)
     }
 
 
     /// Function to get latest version
-    pub fn get_most_correct_version(&self, versions:&HashMap<String,String>) -> String {
+    pub fn get_most_correct_version(self: &Self, versions:&HashMap<String,String>) -> String {
         let req = Version::parse(&self.version_needed).unwrap();
         let mut output;
         // dependency resolution
