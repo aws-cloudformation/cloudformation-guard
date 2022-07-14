@@ -7,7 +7,7 @@ use std::collections::HashMap;
 /// Function to read config from TOML
 pub fn read_config(file_name:String) -> HashMap<String, String> {
     let settings = Config::builder()
-        .add_source(config::File::with_name(file_name))
+        .add_source(config::File::with_name(&file_name))
         .build()
         .unwrap();
 

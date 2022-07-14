@@ -65,5 +65,5 @@ pub(crate) const  DATA_FILE_SUPPORTED_EXTENSIONS: [&'static str; 5] = [".yaml",
 pub(crate) const  RULE_FILE_SUPPORTED_EXTENSIONS: [&'static str; 2] = [".guard",
                                                                      ".ruleset"];
 
-pub(crate) const SEMANTIC_VERSION_NAMING: &String = r"^(\d+\.)?(\d+\.)?(\*|\d+)$";
-pub(crate) const GITHUB_URL: &String= r"(http:\/\/www\.|https:\/\/www\.|http:\/\/|https:\/\/)?(raw.githubusercontent.com)?(\/.*)?$";
+pub(crate) const SEMANTIC_VERSION_NAMING: &'static str = r"^(\d+\.)?(\d+\.)?(\*|\d+)$";
+pub(crate) const GITHUB_URL: &'static str = r"(http:\/\/www\.|https:\/\/www\.|http:\/\/|https:\/\/)?(raw.githubusercontent.com)?(\/.*)?$";

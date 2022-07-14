@@ -31,6 +31,7 @@ use crate::commands::validate::tf::TfAware;
 use crate::commands::github_pull::GitHubSource;
 use regex::Regex;
 use crate::commands::GITHUB_URL;
+use crate::commands::authenticated_source::AuthenticatedSource;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -327,34 +328,46 @@ or rules files.
             // contains the file location
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
             let github_regex = Regex::new(GITHUB_URL).unwrap();
-            if github_regex.is_match(list_of_file_or_dir){
-                let mut authenticate_code;
-                let mut authorization_code;
-                let mut changed;
-                let mut final_output;
-                let capture_group = github_regex.captures(list_of_file_or_dir).unwrap();
-                let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
-                let mut split = github_main_info.split("/");
-                let vec: Vec<&str> = split.collect();
-                let github_repo = GitHubSource::new(vec[0],vec[1],&vec[2..].join("/"));
-                match github_repo.authenticate() {
-                    Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
-                    Ok() => () // TODO: look for this
-                }
+            for file_or_dir in list_of_file_or_dir{
+                if github_regex.is_match(file_or_dir) { async{
+                    let mut changed;
+                    let mut final_output;
+                    let capture_group = github_regex.captures(file_or_dir).unwrap();
+                    let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
+                    let mut split = github_main_info.split("/");
+                    let vec: Vec<&str> = split.collect();
+                    //TODO: change user to owner
+                    let github_user = vec[0].to_string();
+                    let github_repo_name = vec[1].to_string();
+                    let github_file_path = vec[2..].join("/");
+                    let github_repo = GitHubSource::new(github_user,github_repo_name,github_file_path);
+                    match github_repo.authenticate().await {
+                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                        Ok(_) => (),// TODO: look for this
+                    }
 
-                match github_repo.check_authorization() {
-                    Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
-                    Ok() => () // TODO: look for this
-                }
-                changed = github_repo.change_detected("string");
+                    match github_repo.check_authorization().await{
+                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                        Ok(_) => (), // TODO: look for this
+                    }
 
-                if changed {
-                    final_output = github_repo.pull();
-                }
-                // else {
-                //     // use the path from "external file/folder"
-                // }
+                    let changed_check = github_repo.change_detected("string".to_string()).await;
+                    match changed_check {
+                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                        Ok(_) => changed = changed_check.unwrap()
+                    }
+                    //TODO:if block
+                    if changed == true {
+                        final_output = github_repo.pull().await;
+                        Ok(())
+                    } else {
+                        println!("same version, not pulling");
+                        Ok(())
+                    }
+                };
+            };
             }
+
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
             if base.is_file() {
