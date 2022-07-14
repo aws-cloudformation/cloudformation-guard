@@ -134,22 +134,22 @@ impl GitHubSource {
             return Err(Error::new(ErrorKind::StringValue("Version must be in the appropriate format".to_string())))
         }
         let experimental = args.get("experimental").unwrap();
-        if version_needed.is_empty() || version_needed.is_numeric(){
+        if version_needed.is_empty() {
             return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
         }
         if !experimental.eq("true") || !experimental.eq("false"){
         return Err(Error::new(ErrorKind::StringValue("Experimental must be true or false".to_string())))
         }
-        return args.settings.try_deserialize::<HashMap<String, String>>().unwrap();
+        Ok(args)
     }
 
     pub fn validate_credential()->Result<HashMap<String,String>,Error>{
         let args = read_config("src/ExternalSourceCredentials".to_string());
         let api_key = args.get("github_api").unwrap();
-        if api_key.is_empty() || api_key.is_numeric(){
+        if api_key.is_empty(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
         }
-        return args.settings.try_deserialize::<HashMap<String, String>>().unwrap();
+        Ok(args)
     }
 
     /// Function to print detail of the instance
@@ -165,7 +165,7 @@ impl GitHubSource {
         let mut output;
         // dependency resolution
         let available_versions:Vec<String> = versions.keys().cloned().collect();
-        for version in available_versions.to_iter().rev() {
+        for version in available_versions.iter().rev() {
             // get version from the reverse order
             if Version::parse(&version).unwrap().matches(&req){
                 // get the latest satisfying version
