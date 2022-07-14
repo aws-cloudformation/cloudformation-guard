@@ -29,6 +29,8 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
 use crate::commands::github_pull::GitHubSource;
+use regex::Regex;
+use crate::commands::GITHUB_URL;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -334,20 +336,24 @@ or rules files.
                 let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
                 let mut split = github_main_info.split("/");
                 let vec: Vec<&str> = split.collect();
-                let github_instance = GitHubSource::new(vec[0],vec[1],&vec[2..].join("/"));
-                let authenticate_code = github_instance.authenticate();
-
-                if authenticate_code == SUCCESS_CODE{
-                    authorization_code = github_instance.check_authorization();
+                let github_repo = GitHubSource::new(vec[0],vec[1],&vec[2..].join("/"));
+                match github_repo.authenticate() {
+                    Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
+                    Ok() => () // TODO: look for this
                 }
 
-                if authorization_code == SUCCESS_CODE{
-                    changed = github_instance.change_detected("string");
+                match github_repo.check_authorization() {
+                    Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
+                    Ok() => () // TODO: look for this
                 }
+                changed = github_repo.change_detected("string");
 
                 if changed {
-                    final_output = github_instance.pull();
+                    final_output = github_repo.pull();
                 }
+                // else {
+                //     // use the path from "external file/folder"
+                // }
             }
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;

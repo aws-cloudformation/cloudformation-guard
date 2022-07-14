@@ -1,6 +1,8 @@
-trait AuthenticatedSource {
-    async fn authenticate(&self)-> i32;
-    async fn authorize(&self)-> i32;
-    fn change_detected(&self)->bool;
-    async fn pull(&self);
+use async_trait::async_trait;
+#[async_trait]
+pub trait AuthenticatedSource {
+    fn authenticate(&self)-> i32;
+    fn check_authorization(&self)-> i32;
+    fn change_detected(&self,local_metadata:String)->bool;
+    fn pull(&self);
 }

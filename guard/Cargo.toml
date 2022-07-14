@@ -41,6 +41,8 @@ grep-regex = "0.1.9"
 yaml-rust = {git = "https://github.com/dchakrav-github/yaml-rust"}
 config = "0.13.1"
 semver = "1.0.10"
+octocrab = "0.16"
+async-trait = "0.1.56"
 
 [dependencies.serde_json]
 version = "1.0.60"

@@ -1,0 +1,7 @@
+"aws-cloudformation/aws-guard-rules-registry/rules/aws/amazon_s3/s3_bucket_ssl_requests_only.guard":"nodeid:001fdfsdlaj"
+#global version
+github-owner:aws-cloudformation
+github-repo:aws-guard-rules-registry
+version: 1.1
+branch:"main"
+files:["rules/aws/amazon_s3/s3_bucket_ssl_requests_only.guard"]

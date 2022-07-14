@@ -1,7 +1,10 @@
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use octocrab;
-use crate::{SUCCESS_CODE,FAILURE_CODE};
 use std::fs;
+use async_trait::async_trait;
+use crate::rules::errors::{Error, ErrorKind};
+use crate::commands::authenticated_source::AuthenticatedSource;
+use std::collections::HashMap;
 
 
 /// This is a class for getting file from GitHub
@@ -18,41 +21,43 @@ pub struct GitHubSource {
 }
 
 /// inheriting from authenticated source
+#[async_trait]
 impl AuthenticatedSource for GitHubSource {
-    async fn authenticate(&self)->Result<(),Error>{
-        let mut exit_code;
+    fn authenticate(&self)->Result<(),Error>{
+        // let mut exit_code;
         self.octocrab_instance = octocrab::OctocrabBuilder::new()
         .personal_token(self.access_token)
         .build()
         .unwrap();
-        let user = self.octocrab_instance.current().user().await?;
+        let user = self.octocrab_instance.current().user().await;
         match user {
             Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential"))),
-            Ok(user) => exit_code = SUCCESS_CODE;
+            Ok(user)=>(),
         }
-    }
-       Ok(exit_code)
+        Ok();
     }
 
-    async fn check_authorization(&self)->Result<(),Error>{
+
+
+    fn check_authorization(&self)->Result<(),Error>{
         let mut exit_code;
         let tags = self.octocrab_instance.repos(owner, repo_name).list_tags().send().await?;
-        match user {
+        match tags {
             Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission"))),
-            Ok(user) => exit_code = SUCCESS_CODE;
+            Ok(tags)=>(),
         }
-            Ok(exit_code)
+        Ok();
     }
 
 
-   async fn change_detected(&self, local_metadata:String)->bool{
+   fn change_detected(&self, local_metadata:String)->bool{
             let mut changed;
             let page = self.octo
                 .repos(self.owner, self.repo_name)
                 .releases()
                 .list()
                 .send()
-                .await?;
+                .await;
             Ok(page);
             let mut versions:HashMap<String,String> = HashMap::new();
             for item in page.take_items(){
@@ -68,8 +73,7 @@ impl AuthenticatedSource for GitHubSource {
             if self.version_download != local_metadata {
                 changed = true;
             }
-        }
-        return changed
+        return changed;
     }
 
     fn pull(&self) -> String{
@@ -79,14 +83,19 @@ impl AuthenticatedSource for GitHubSource {
                 .path(self.file_name)
                 .r#ref(self.version_download)
                 .send()
-                .await?;
-        Ok(repo)
+                .await;
+        Ok(repo);
         let contents = repo.take_items();
         let c = &contents[0];
         let data = c.decoded_content().unwrap();
-        fs::create_dir_all("external_src/")?;
-        let file_path = concat!("external_src/",self.file_name);
+        fs::create_dir_all("external-source/")?; // TODO: CONSTANT?
+        // fs::create_dir_all("external-source/github")?; // TODO: log message
+        // let file_path = concat!("external-source/github",file_name);
+        let splitted_path:Vec<&str> = self.file_name.split("/").collect();
+        let file_name = splitted_path.last();
+        let file_path = format!("external-source/{}",file_name);
         fs::write(file_path, data).expect("Unable to write file");
+        // let cache_path = concat!("external-source/github.toml");
         return file_path;
     }
 }

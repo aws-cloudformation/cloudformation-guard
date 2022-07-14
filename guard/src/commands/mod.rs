@@ -5,6 +5,8 @@ pub(crate) mod test;
 pub(crate) mod helper;
 pub(crate) mod parse_tree;
 pub(crate) mod migrate;
+pub(crate) mod github_pull;
+pub(crate) mod authenticated_source;
 
 mod tracker;
 mod aws_meta_appender;
@@ -61,3 +63,6 @@ pub(crate) const  DATA_FILE_SUPPORTED_EXTENSIONS: [&'static str; 5] = [".yaml",
                                                                       ".template"];
 pub(crate) const  RULE_FILE_SUPPORTED_EXTENSIONS: [&'static str; 2] = [".guard",
                                                                      ".ruleset"];
+
+pub(crate) const SEMANTIC_VERSION_NAMING: &String = r"^(\d+\.)?(\d+\.)?(\*|\d+)$";
+pub(crate) const GITHUB_URL: &String= r"(http:\/\/www\.|https:\/\/www\.|http:\/\/|https:\/\/)?(raw.githubusercontent.com)?(\/.*)?$";
