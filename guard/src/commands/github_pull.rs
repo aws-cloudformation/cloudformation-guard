@@ -1,4 +1,4 @@
-use semver::{BuildMetadata, Prerelease, Version, VersionReq};
+use semver::{Version,VersionReq};
 use octocrab;
 use std::fs;
 use async_trait::async_trait;
@@ -10,7 +10,7 @@ use crate::commands::util::{read_config,validate_version};
 
 /// This is a class for getting file from GitHub
 pub struct GitHubSource {
-    pub octocrab_instance: octocrab::OctocrabBuilder,
+    pub octocrab_instance: octocrab::Octocrab,
     pub user: String,
     pub repo: String,
     pub file_name: String,
@@ -24,14 +24,14 @@ pub struct GitHubSource {
 /// inheriting from authenticated source
 #[async_trait]
 impl AuthenticatedSource for GitHubSource{
-    async fn authenticate(&self)->Result<(),Error>{
+    async fn authenticate(&mut self)->Result<(),Error>{
         self.octocrab_instance = octocrab::OctocrabBuilder::new()
-        .personal_token(self.access_token)
+        .personal_token(self.access_token.to_string())
         .build()
         .unwrap();
         let user = self.octocrab_instance.current().user().await;
         match user {
-            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+            Err(_e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
             Ok(user)=>(),
         }
         Ok(())
@@ -40,27 +40,25 @@ impl AuthenticatedSource for GitHubSource{
 
 
     async fn check_authorization(&self)->Result<(),Error>{
-        let mut exit_code;
-        let tags = self.octocrab_instance.repos(self.user, self.repo).list_tags().send().await;
+        let tags = self.octocrab_instance.repos(&self.user, &self.repo).list_tags().send().await;
         match tags  {
-            Err(octocrab::Error::GitHubError) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission".to_string()))),
+            Err(_e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub permission".to_string()))),
             Ok(tags)=>(),
         }
         Ok(())
     }
 
 
-   async fn change_detected(&self, local_metadata:String)->Result<bool,Error>{
-            let mut changed;
+   async fn change_detected(&mut self, local_metadata:String)->Result<bool,Error>{
+            let mut changed = false;
             let page = self.octocrab_instance
-                .repos(self.user, self.repo)
+                .repos(&self.user, &self.repo)
                 .releases()
                 .list()
                 .send()
                 .await;
-            Ok(page);
             let mut versions:HashMap<String,String> = HashMap::new();
-            for item in page.take_items(){
+            for item in page.unwrap().take_items(){
                 if self.experimental==false{
                     if item.prerelease {
                         continue;
@@ -69,33 +67,34 @@ impl AuthenticatedSource for GitHubSource{
                 let tag_cleaned = item.tag_name.replace("v", "");
                 versions.insert(tag_cleaned, item.node_id);
             };
-            self.version_download = self.get_most_correct_version(&versions);
+            self.version_download = self.get_most_correct_version(versions);
             if self.version_download != local_metadata {
                 changed = true;
             }
-        return changed;
+        Ok(changed)
     }
 
     async fn pull(&self) -> Result<String,Error>{
         let repo = self.octocrab_instance
-                .repos(self.user, self.repo)
+                .repos(&self.user, &self.repo)
                 .get_content()
-                .path(self.file_name)
-                .r#ref(self.version_download)
+                .path(&self.file_name)
+                .r#ref(&self.version_download)
                 .send().await;
-        Ok(repo);
-        let contents = repo.take_items();
+        let contents = repo.unwrap().take_items();
         let c = &contents[0];
         let data = c.decoded_content().unwrap();
         fs::create_dir_all("external-source/")?; // TODO: CONSTANT?
         // fs::create_dir_all("external-source/github")?; // TODO: log message
         // let file_path = concat!("external-source/github",file_name);
-        let splitted_path:Vec<&str> = self.file_name.split("/").collect();
-        let file_name = splitted_path.last();
-        let file_path = format!("external-source/{}",file_name);
-        fs::write(file_path, data).expect("Unable to write file");
+        // let splitted_path:Vec<&str> = self.file_name.split("/").collect();
+        let (_, file_name) = self.file_name.rsplit_once('/').unwrap();
+        let mut file_path = String::new();
+        file_path += &"external-source/".to_string();
+        file_path += file_name;
+        fs::write(&file_path, data).expect("Unable to write file");
         // let cache_path = concat!("external-source/github.toml");
-        return file_path;
+        Ok(file_path)
     }
 }
 
@@ -114,7 +113,9 @@ impl GitHubSource {
 
 
         GitHubSource {
-            octocrab_instance: octocrab::OctocrabBuilder::new(),
+            octocrab_instance: octocrab::OctocrabBuilder::new()
+                .build()
+                .unwrap(),
             user,
             repo,
             file_name,
@@ -160,16 +161,17 @@ impl GitHubSource {
 
 
     /// Function to get latest version
-    pub fn get_most_correct_version(self: &Self, versions:&HashMap<String,String>) -> String {
-        let req = Version::parse(&self.version_needed).unwrap();
-        let mut output;
+    pub fn get_most_correct_version(self: &Self, versions:HashMap<String,String>) -> String {
+        let req = VersionReq::parse(&self.version_needed).unwrap();
+        let mut output:String = "".to_string();
         // dependency resolution
         let available_versions:Vec<String> = versions.keys().cloned().collect();
         for version in available_versions.iter().rev() {
             // get version from the reverse order
-            if Version::parse(&version).unwrap().matches(&req){
+            let parsed_version = Version::parse(&version).unwrap();
+            if req.matches(&parsed_version){
                 // get the latest satisfying version
-                output = versions.get(&version);
+                output = versions.get(&version.to_string()).as_deref().unwrap().to_string();
                 break
             }
         }

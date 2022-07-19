@@ -328,7 +328,8 @@ or rules files.
             // contains the file location
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
             let github_regex = Regex::new(GITHUB_URL).unwrap();
-            for file_or_dir in list_of_file_or_dir{
+            let list_of_file_or_dir_copy = list_of_file_or_dir.clone();
+            for file_or_dir in list_of_file_or_dir_copy{
                 if github_regex.is_match(file_or_dir) { async{
                     let mut changed;
                     let mut final_output;
@@ -340,7 +341,7 @@ or rules files.
                     let github_user = vec[0].to_string();
                     let github_repo_name = vec[1].to_string();
                     let github_file_path = vec[2..].join("/");
-                    let github_repo = GitHubSource::new(github_user,github_repo_name,github_file_path);
+                    let mut github_repo = GitHubSource::new(github_user,github_repo_name,github_file_path);
                     match github_repo.authenticate().await {
                         Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
                         Ok(_) => (),// TODO: look for this
