@@ -32,6 +32,8 @@ use crate::commands::github_pull::GitHubSource;
 use regex::Regex;
 use crate::commands::GITHUB_URL;
 use crate::commands::authenticated_source::AuthenticatedSource;
+use std::collections::HashMap;
+use futures::executor::block_on;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -327,48 +329,52 @@ or rules files.
             // 1/single rule file github url list_of_file_or_dir, put into "external source folder" pull into ther,
             // contains the file location
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
-            let github_regex = Regex::new(GITHUB_URL).unwrap();
+            let github_regex = Regex::new(r#"(http:\\/\\/www\\.|https:\\/\\/www\\.|http:\\/\\/|https:\\/\\/)?(raw.githubusercontent.com)?(\\/.*)?$"#).unwrap();
             let list_of_file_or_dir_copy = list_of_file_or_dir.clone();
             for file_or_dir in list_of_file_or_dir_copy{
-                if github_regex.is_match(file_or_dir) { async{
-                    let mut changed;
-                    let mut final_output;
-                    let capture_group = github_regex.captures(file_or_dir).unwrap();
-                    let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
-                    let mut split = github_main_info.split("/");
-                    let vec: Vec<&str> = split.collect();
-                    //TODO: change user to owner
-                    let github_user = vec[0].to_string();
-                    let github_repo_name = vec[1].to_string();
-                    let github_file_path = vec[2..].join("/");
-                    let mut github_repo = GitHubSource::new(github_user,github_repo_name,github_file_path);
-                    match github_repo.authenticate().await {
-                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
-                        Ok(_) => (),// TODO: look for this
-                    }
+                if github_regex.is_match(file_or_dir) {
+                   // tokio::spawn( async{ github_integrate()});
+                    let future = github_integrate(file_or_dir.to_string());
+                    block_on(future);
 
-                    match github_repo.check_authorization().await{
-                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
-                        Ok(_) => (), // TODO: look for this
-                    }
-
-                    let changed_check = github_repo.change_detected("string".to_string()).await;
-                    match changed_check {
-                        Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
-                        Ok(_) => changed = changed_check.unwrap()
-                    }
-                    //TODO:if block
-                    if changed == true {
-                        final_output = github_repo.pull().await;
-                        Ok(())
-                    } else {
-                        println!("same version, not pulling");
-                        Ok(())
-                    }
-                };
+                //     let mut changed;
+                //     let mut final_output;
+                //     let capture_group = github_regex.captures(file_or_dir).unwrap();
+                //     let github_main_info = capture_group.get(2).map_or("", |m| m.as_str());
+                //     let mut split = github_main_info.split("/");
+                //     let vec: Vec<&str> = split.collect();
+                //     //TODO: change user to owner
+                //     let github_user = vec[0].to_string();
+                //     let github_repo_name = vec[1].to_string();
+                //     let github_file_path = vec[2..].join("/");
+                //     let mut github_repo = GitHubSource::new(github_user,github_repo_name,github_file_path);
+                //     match github_repo.authenticate().await {
+                //         Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                //         Ok(_) => (),// TODO: look for this
+                //     }
+                //
+                //     match github_repo.check_authorization().await{
+                //         Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                //         Ok(_) => (), // TODO: look for this
+                //     }
+                //
+                //     let changed_check = github_repo.change_detected("string".to_string()).await;
+                //     match changed_check {
+                //         Err(e) => return Err(Error::new(ErrorKind::AuthenticationError("Invalid GitHub credential".to_string()))),
+                //         Ok(_) => changed = changed_check.unwrap()
+                //     }
+                //     //TODO:if block
+                //     if changed == true {
+                //         final_output = github_repo.pull().await;
+                //         Ok(())
+                //     } else {
+                //         println!("same version, not pulling");
+                //         Ok(());
+                //     }
+                //         Ok(());
+                // };
             };
             }
-
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
             if base.is_file() {
@@ -486,6 +492,41 @@ or rules files.
         }
         Ok(exit_code)
     }
+}
+
+// #[tokio::main]
+async fn github_integrate(file_or_dir:String) {
+    let mut changed = false;
+    let mut final_output = "".to_string();
+    let mut split = file_or_dir.split("/");
+    let vec: Vec<&str> = split.collect();
+    println!("{:?}",vec);
+    // //TODO: change user to owner
+    let github_owner = vec[3].to_string();
+    let github_repo_name = vec[4].to_string();
+    let github_file_path = vec[6..].join("/");
+    let mut github_repo = GitHubSource::new(github_owner,github_repo_name,github_file_path);
+    // match github_repo.authenticate().await {
+    //     Err(e) => (),
+    //     Ok(_) => (),// TODO: look for this
+    // }
+    // match github_repo.check_authorization().await{
+    //     Err(e) => (),
+    //     Ok(_) => (), // TODO: look for this
+    // }
+    //
+    // let changed_check = github_repo.change_detected("string".to_string()).await;
+    // match changed_check {
+    //     Err(e) => (),
+    //     Ok(_) => changed = changed_check.unwrap()
+    // }
+    // //TODO:if block
+    // if changed == true {
+    //     let file_pulled = github_repo.pull().await;
+    //     final_output = file_pulled.unwrap();
+    // } else {
+    //     println!("same version, not pulling");
+    // };
 }
 
 pub fn validate_and_return_json(

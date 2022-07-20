@@ -13,3 +13,4 @@ cmake-build-debug
 *gcda
 **/._*
 guard/src/ExternalSourceCredential.toml
+sample

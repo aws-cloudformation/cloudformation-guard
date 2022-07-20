@@ -1,2 +1,2 @@
-version_needed = "<=1.0.0"
+version_needed = ">=1.0.0"
 experimental = true # get beta

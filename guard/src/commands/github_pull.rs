@@ -57,6 +57,7 @@ impl AuthenticatedSource for GitHubSource{
                 .list()
                 .send()
                 .await;
+            // let page = self.get_page().await;
             let mut versions:HashMap<String,String> = HashMap::new();
             for item in page.unwrap().take_items(){
                 if self.experimental==false{
@@ -129,23 +130,24 @@ impl GitHubSource {
 
     // helper method to validate input
     pub fn validate_config()->Result<HashMap<String,String>,Error>{
-        let args = read_config("src/ExternalSourceConfig".to_string());
+        //TODO: use relative path
+        let args = read_config("guard/src/ExternalSourceConfig".to_string());
         let version_needed = args.get("version_needed").unwrap();
-        if !validate_version(version_needed.to_string()){
-            return Err(Error::new(ErrorKind::StringValue("Version must be in the appropriate format".to_string())))
-        }
+        // if !validate_version(version_needed.to_string()){
+        //     return Err(Error::new(ErrorKind::StringValue("Version must be in the appropriate format".to_string())))
+        // }
         let experimental = args.get("experimental").unwrap();
-        if version_needed.is_empty() {
-            return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
-        }
-        if !experimental.eq("true") || !experimental.eq("false"){
-        return Err(Error::new(ErrorKind::StringValue("Experimental must be true or false".to_string())))
-        }
+        // if version_needed.is_empty() {
+        //     return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
+        // }
+        // if !experimental.eq("true") || !experimental.eq("false"){
+        // return Err(Error::new(ErrorKind::StringValue("Experimental must be true or false".to_string())))
+        // }
         Ok(args)
     }
 
     pub fn validate_credential()->Result<HashMap<String,String>,Error>{
-        let args = read_config("src/ExternalSourceCredentials".to_string());
+        let args = read_config("guard/src/ExternalSourceCredential".to_string());
         let api_key = args.get("github_api").unwrap();
         if api_key.is_empty(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
@@ -177,6 +179,7 @@ impl GitHubSource {
         }
         return output;
     }
+
 }
 
 
