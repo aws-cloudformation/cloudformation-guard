@@ -37,8 +37,6 @@ impl AuthenticatedSource for GitHubSource{
         Ok(())
     }
 
-
-
     async fn check_authorization(&self)->Result<(),Error>{
         let tags = self.octocrab_instance.repos(&self.user, &self.repo).list_tags().send().await;
         match tags  {
@@ -48,8 +46,7 @@ impl AuthenticatedSource for GitHubSource{
         Ok(())
     }
 
-
-   async fn change_detected(&mut self, local_metadata:String)->Result<bool,Error>{
+    async fn change_detected(&mut self, local_metadata:String)->Result<bool,Error>{
             let mut changed = false;
             let page = self.octocrab_instance
                 .repos(&self.user, &self.repo)
@@ -57,7 +54,6 @@ impl AuthenticatedSource for GitHubSource{
                 .list()
                 .send()
                 .await;
-            // let page = self.get_page().await;
             let mut versions:HashMap<String,String> = HashMap::new();
             for item in page.unwrap().take_items(){
                 if self.experimental==false{
@@ -66,9 +62,21 @@ impl AuthenticatedSource for GitHubSource{
                     }
                 }
                 let tag_cleaned = item.tag_name.replace("v", "");
-                versions.insert(tag_cleaned, item.node_id);
+                versions.insert(tag_cleaned, item.tag_name);
             };
-            self.version_download = self.get_most_correct_version(versions);
+            let correct_version = self.get_most_correct_version(versions);
+            // self.version_download = correct_version;
+            // get the SHA tag of the release
+            let tag_page = self.octocrab_instance
+                .repos(&self.user, &self.repo)
+                .list_tags()
+                .send()
+                .await;
+            for tag in tag_page.unwrap().take_items(){
+                if tag.name == correct_version {
+                    self.version_download = tag.commit.sha.to_string();
+                }
+            };
             if self.version_download != local_metadata {
                 changed = true;
             }
@@ -80,21 +88,33 @@ impl AuthenticatedSource for GitHubSource{
                 .repos(&self.user, &self.repo)
                 .get_content()
                 .path(&self.file_name)
-                .r#ref(&self.version_download)
-                .send().await;
+                .r#ref("master")// should be .r#ref(&self.version_download)
+                .send()
+                .await;
         let contents = repo.unwrap().take_items();
         let c = &contents[0];
         let data = c.decoded_content().unwrap();
-        fs::create_dir_all("external-source/")?; // TODO: CONSTANT?
-        // fs::create_dir_all("external-source/github")?; // TODO: log message
-        // let file_path = concat!("external-source/github",file_name);
-        // let splitted_path:Vec<&str> = self.file_name.split("/").collect();
-        let (_, file_name) = self.file_name.rsplit_once('/').unwrap();
+        let mut root_folder = String::new();
+        root_folder += &"external-source/github/".to_string();
+        root_folder += &self.repo.to_string();
+        root_folder += "/";
+        fs::create_dir_all(&root_folder)?;
+        let splitted_path:Vec<&str> = self.file_name.split("/").collect();
+        // get everything but the last string which is the file name
+        let mut subfolder = String::new();
+        subfolder += &root_folder.to_string();
+        for subfolder_name in splitted_path.split_last().unwrap().1 {
+            subfolder += subfolder_name;
+            subfolder += "/";
+            fs::create_dir_all(&subfolder)?;
+        }
+        let file_name = splitted_path.split_last().unwrap().0;
         let mut file_path = String::new();
-        file_path += &"external-source/".to_string();
+        file_path += &subfolder.to_string();
         file_path += file_name;
         fs::write(&file_path, data).expect("Unable to write file");
         // let cache_path = concat!("external-source/github.toml");
+        println!("Downloaded to {}",file_path);
         Ok(file_path)
     }
 }
@@ -148,7 +168,7 @@ impl GitHubSource {
 
     pub fn validate_credential()->Result<HashMap<String,String>,Error>{
         let args = read_config("guard/src/ExternalSourceCredential".to_string());
-        let api_key = args.get("github_api").unwrap();
+        let api_key = args.get("api_token").unwrap();
         if api_key.is_empty(){
             return Err(Error::new(ErrorKind::StringValue("Version must be string".to_string())))
         }
