@@ -320,7 +320,7 @@ or rules files.
 
         let mut exit_code = 0;
         if app.is_present(RULES.0) {
-            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
+            let mut list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             // TODO: add check URL
             // add regex as constant GitHubURLregex
@@ -330,11 +330,22 @@ or rules files.
             // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
             let github_regex = Regex::new(r#"(http:\\/\\/www\\.|https:\\/\\/www\\.|http:\\/\\/|https:\\/\\/)?(raw.githubusercontent.com)?(\\/.*)?$"#).unwrap();
             let list_of_file_or_dir_copy = list_of_file_or_dir.clone();
+            let mut external_file_download_path = "".to_string();
+            let mut url_detected = false;
             for file_or_dir in list_of_file_or_dir_copy{
                 if github_regex.is_match(file_or_dir) {
-                    let external_file_download = github_integrate(file_or_dir.to_string());
-                    println!("{}",external_file_download.unwrap().to_string());
+                    external_file_download_path = github_integrate(file_or_dir.to_string()).unwrap();
+                    url_detected = true;
             };
+            }
+            // TODO: This is a hacky way
+            let mut new_app = App::new("myapp")
+                .arg(Arg::with_name("output")
+                    .short("o")
+                    .takes_value(true))
+                .get_matches_from(vec!["myapp", "-o", &external_file_download_path]);
+            if url_detected == true {
+                list_of_file_or_dir = new_app.values_of("output").unwrap();
             }
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
