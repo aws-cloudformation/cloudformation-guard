@@ -12,3 +12,4 @@ cmake-build-debug
 *gcno
 *gcda
 **/._*
+/guard/src/ExternalSourceCredential.toml

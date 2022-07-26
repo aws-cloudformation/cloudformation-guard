@@ -28,6 +28,11 @@ use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_ro
 use crate::rules::eval::eval_rules_file;
 use crate::rules::path_value::traversal::Traversal;
 use crate::commands::validate::tf::TfAware;
+use crate::commands::github_pull::GitHubSource;
+use regex::Regex;
+use crate::commands::GITHUB_URL;
+use crate::commands::authenticated_source::AuthenticatedSource;
+use std::collections::HashMap;
 
 pub(crate) mod generic_summary;
 mod common;
@@ -315,7 +320,31 @@ or rules files.
 
         let mut exit_code = 0;
         if app.is_present(RULES.0) {
-            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
+            let mut list_of_file_or_dir = app.values_of(RULES.0).unwrap();
+            // TODO: add regex as constant GitHubURLregex
+            // two case:
+            // 1/single rule file github url list_of_file_or_dir, put into "external source folder" pull into ther,
+            // contains the file location
+            // 2/profile -> create the same directory as profile -> list_of_file_or_dir = external source folder/profile
+            let github_regex = Regex::new(r#"(http:\\/\\/www\\.|https:\\/\\/www\\.|http:\\/\\/|https:\\/\\/)?(raw.githubusercontent.com)?(\\/.*)?$"#).unwrap();
+            let list_of_file_or_dir_copy = list_of_file_or_dir.clone();
+            let mut external_file_download_path = "".to_string();
+            let mut url_detected = false;
+            for file_or_dir in list_of_file_or_dir_copy{
+                if github_regex.is_match(file_or_dir) {
+                    external_file_download_path = github_integrate(file_or_dir.to_string()).unwrap();
+                    url_detected = true;
+                };
+            }
+            // TODO: This is a hacky way
+            let mut new_app = App::new("myapp")
+                .arg(Arg::with_name("output")
+                    .short("o")
+                    .takes_value(true))
+                .get_matches_from(vec!["myapp", "-o", &external_file_download_path]);
+            if url_detected == true {
+                list_of_file_or_dir = new_app.values_of("output").unwrap();
+            }
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
             let base = PathBuf::from_str(file_or_dir)?;
@@ -434,6 +463,38 @@ or rules files.
         }
         Ok(exit_code)
     }
+}
+
+#[tokio::main]
+async fn github_integrate(file_or_dir:String) -> Result<String> {
+    let mut changed = false;
+    let mut final_output = "".to_string();
+    let mut split = file_or_dir.split("/");
+    let vec: Vec<&str> = split.collect();
+    let github_owner = vec[3].to_string();
+    let github_repo_name = vec[4].to_string();
+    let github_file_path = vec[6..].join("/");
+    let mut github_repo = GitHubSource::new(github_owner,github_repo_name,github_file_path);
+    match github_repo.authenticate().await {
+        Err(e) => (),
+        Ok(_) => (),
+    }
+    match github_repo.check_authorization().await{
+        Err(e) => (),
+        Ok(_) => (),
+    }
+    let changed_check = github_repo.change_detected("string".to_string()).await;
+    match changed_check {
+        Err(e) => (),
+        Ok(_) => changed = changed_check.unwrap()
+    }
+    if changed == true {
+        let file_pulled = github_repo.pull().await;
+        final_output = file_pulled.unwrap();
+    } else {
+        println!("same version, not pulling");
+    };
+    Ok(final_output)
 }
 
 pub fn validate_and_return_json(
