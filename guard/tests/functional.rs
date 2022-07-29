@@ -27,105 +27,121 @@ mod tests {
         );
         let rule = "AWS::ApiGateway::Method { Properties.AuthorizationType == \"NONE\"}";
         let expected =
-            r#"[{
-                "eval_type": "Rule",
-                "context": "default",
-                "msg": "DEFAULT MESSAGE(FAIL)",
-                "from": null,
-                "to": null,
-                "status": "FAIL",
-                "comparator": null,
-                "children": [
-                  {
-                    "eval_type": "Type",
-                    "context": "AWS::ApiGateway::Method",
-                    "msg": "DEFAULT MESSAGE(FAIL)",
-                    "from": null,
-                    "to": null,
-                    "status": "FAIL",
-                    "comparator": null,
-                    "children": [
-                      {
-                        "eval_type": "Filter",
-                        "context": "Path=/Resources/VPC[L:0,C:0],Type=MapElement",
-                        "msg": "DEFAULT MESSAGE(PASS)",
-                        "from": null,
-                        "to": null,
-                        "status": "PASS",
-                        "comparator": null,
-                        "children": [
-                          {
-                            "eval_type": "Conjunction",
-                            "context": "cfn_guard::rules::exprs::GuardClause",
-                            "msg": "DEFAULT MESSAGE(PASS)",
-                            "from": null,
-                            "to": null,
-                            "status": "PASS",
-                            "comparator": null,
-                            "children": [
-                              {
-                                "eval_type": "Clause",
-                                "context": " Type EQUALS  \"AWS::ApiGateway::Method\"",
-                                "msg": "DEFAULT MESSAGE(PASS)",
-                                "from": null,
-                                "to": null,
-                                "status": "PASS",
-                                "comparator": [
-                                  "Eq",
-                                  false
-                                ],
-                                "children": []
-                              }
-                            ]
-                          }
-                        ]
+            r#"{
+                  "context": "File(rules=1)",
+                  "container": {
+                    "FileCheck": {
+                      "name": "",
+                      "status": "FAIL",
+                      "message": null
+                    }
+                  },
+                  "children": [
+                    {
+                      "context": "default",
+                      "container": {
+                        "RuleCheck": {
+                          "name": "default",
+                          "status": "FAIL",
+                          "message": null
+                        }
                       },
-                      {
-                        "eval_type": "Type",
-                        "context": "AWS::ApiGateway::Method#0(/Resources/VPC[L:0,C:0])",
-                        "msg": "DEFAULT MESSAGE(FAIL)",
-                        "from": null,
-                        "to": null,
-                        "status": "FAIL",
-                        "comparator": null,
-                        "children": [
-                          {
-                            "eval_type": "Conjunction",
-                            "context": "cfn_guard::rules::exprs::GuardClause",
-                            "msg": "DEFAULT MESSAGE(FAIL)",
-                            "from": null,
-                            "to": null,
-                            "status": "FAIL",
-                            "comparator": null,
-                            "children": [
-                              {
-                                "eval_type": "Clause",
-                                "context": " Properties.AuthorizationType EQUALS  \"NONE\"",
-                                "msg": "DEFAULT MESSAGE(FAIL)",
-                                "from": {
-                                  "path": "/Resources/VPC/Properties/AuthorizationType",
-                                  "value": "10.0.0.0/24"
-                                },
-                                "to": {
-                                  "path": "",
-                                  "value": "NONE"
-                                },
+                      "children": [
+                        {
+                          "context": "TypeBlock#AWS::ApiGateway::Method",
+                          "container": {
+                            "TypeCheck": {
+                              "type_name": "AWS::ApiGateway::Method",
+                              "block": {
+                                "at_least_one_matches": false,
                                 "status": "FAIL",
-                                "comparator": [
-                                  "Eq",
-                                  false
-                                ],
-                                "children": []
+                                "message": null
                               }
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]"#;
+                            }
+                          },
+                          "children": [
+                            {
+                              "context": "Filter/Map#1",
+                              "container": {
+                                "Filter": "PASS"
+                              },
+                              "children": [
+                                {
+                                  "context": "GuardAccessClause#block Type EQUALS  \"AWS::ApiGateway::Method\"",
+                                  "container": {
+                                    "GuardClauseBlockCheck": {
+                                      "at_least_one_matches": false,
+                                      "status": "PASS",
+                                      "message": null
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "context": " Type EQUALS  \"AWS::ApiGateway::Method\"",
+                                      "container": {
+                                        "ClauseValueCheck": "Success"
+                                      },
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "context": "TypeBlock#AWS::ApiGateway::Method/0",
+                              "container": {
+                                "TypeBlock": "FAIL"
+                              },
+                              "children": [
+                                {
+                                  "context": "GuardAccessClause#block Properties.AuthorizationType EQUALS  \"NONE\"",
+                                  "container": {
+                                    "GuardClauseBlockCheck": {
+                                      "at_least_one_matches": false,
+                                      "status": "FAIL",
+                                      "message": null
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "context": " Properties.AuthorizationType EQUALS  \"NONE\"",
+                                      "container": {
+                                        "ClauseValueCheck": {
+                                          "Comparison": {
+                                            "comparison": [
+                                              "Eq",
+                                              false
+                                            ],
+                                            "from": {
+                                              "Resolved": {
+                                                "path": "/Resources/VPC/Properties/AuthorizationType",
+                                                "value": "10.0.0.0/24"
+                                              }
+                                            },
+                                            "to": {
+                                              "Resolved": {
+                                                "path": "",
+                                                "value": "NONE"
+                                              }
+                                            },
+                                            "message": null,
+                                            "custom_message": null,
+                                            "status": "FAIL"
+                                          }
+                                        }
+                                      },
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }"#;
         let verbose = true;
         let serialized =   cfn_guard::run_checks(&data, &rule, verbose).unwrap();
         let result = serde_json::from_str::<serde_json::Value>(&serialized).ok().unwrap();

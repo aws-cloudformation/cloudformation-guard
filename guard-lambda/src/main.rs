@@ -11,19 +11,19 @@ fn default_as_true() -> bool {
     true
 }
 
-#[derive(Deserialize, Debug)]
-struct CustomEvent {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CustomEvent {
     #[serde(rename = "data")]
-    data: String,
+    pub data: String,
     #[serde(rename = "rules")]
-    rules: Vec<String>,
+    pub rules: Vec<String>,
     #[serde(rename = "verbose", default="default_as_true")] // for backward compatibility
-    verbose: bool,
+    pub verbose: bool,
 }
 
 #[derive(Serialize)]
-struct CustomOutput {
-    message: Vec<serde_json::Value>,
+pub struct CustomOutput {
+    pub message: Vec<serde_json::Value>,
 }
 
 #[tokio::main]
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
+pub async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
     info!("Template is: [{}]", &e.data);
     info!("Rules are: [{:?}]", &e.rules);
     let mut results_vec = Vec::new();
@@ -51,3 +51,23 @@ pub(crate) async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<Custom
         message: results_vec,
     })
 }
+
+impl std::fmt::Display for CustomEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", serde_json::to_string_pretty(&self).unwrap());
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for CustomOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        for message in &self.message {
+            write!(f, "{}", match serde_json::to_string_pretty(message) {
+                Ok(message) => message,
+                Err(_) => unreachable!()
+            })?;
+        }
+        Ok(())
+    }
+}
+
