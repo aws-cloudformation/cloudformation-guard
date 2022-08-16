@@ -10,6 +10,7 @@ use crate::rules::{EvaluationType, Status};
 use super::common::*;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::values::CmpOperator;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary {}
@@ -133,7 +134,9 @@ fn unary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &N
 }
 
 fn binary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
-    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match expected value [{expected}]. Error Message [{msg}]",
+    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because \
+     provided value [{provided}] {op_msg} {cmp_msg} [{expected}]. Error \
+     Message [{msg}]",
                path=info.path,
                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                op_msg=op_msg,
@@ -141,7 +144,15 @@ fn binary_error_message(rules_file: &str, data_file: &str, op_msg: &str, info: &
                rules=rules_file,
                rule=info.rule,
                msg=info.message.replace("\n", ";"),
-               expected=info.expected.as_ref().map_or(&serde_json::Value::Null, |v| v)
+               expected=info.expected.as_ref().map_or(&serde_json::Value::Null, |v| v),
+        cmp_msg=info.comparison.as_ref().map_or("", |c| {
+            if c.operator == CmpOperator::In {
+                "match expected value in"
+            }
+            else {
+                "match expected value"
+            }
+        })
     ))
 }
 
