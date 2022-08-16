@@ -2,7 +2,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::rules::{EvaluationType, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, UnResolved};
+use crate::rules::{EvaluationType, Status, RecordType, ClauseCheck, QueryResult, NamedStatus, UnResolved, InComparisonCheck};
 use crate::rules::values::CmpOperator;
 use std::fmt::Debug;
 use std::io::Write;
@@ -16,8 +16,8 @@ use std::hash::{Hash, Hasher};
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
-    operator: CmpOperator,
-    not_operator_exists: bool,
+    pub(super) operator: CmpOperator,
+    pub(super) not_operator_exists: bool,
 }
 
 impl From<(CmpOperator, bool)> for Comparison {
@@ -260,6 +260,36 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                 message: String::from(msg.as_ref().map_or("", |s| s.as_str())),
                 ..Default::default()
             },
+
+        Some(RecordType::ClauseValueCheck(ClauseCheck::InComparison(incomp))) => {
+            let provided = match incomp.from.resolved() {
+                Some(val) => {
+                    let (_, value): (String, serde_json::Value) = val.try_into()?;
+                    Some(value)
+                }
+                None => None,
+            };
+            let mut to = Vec::new();
+            for each in &incomp.to {
+                let (_, expected): (String, serde_json::Value) = match each {
+                    QueryResult::Literal(l) => (*l).try_into()?,
+                    QueryResult::Resolved(v) => (*v).try_into()?,
+                    QueryResult::UnResolved(ur) => ur.traversed_to.try_into()?,
+                };
+                to.push(expected);
+            }
+            NameInfo {
+                rule: rule_name,
+                comparison: Some(Comparison {
+                    not_operator_exists: incomp.comparison.1,
+                    operator: incomp.comparison.0.clone()
+                }),
+                provided,
+                expected: Some(serde_json::Value::Array(to)),
+                message: String::from(incomp.message.as_ref().map_or("", |s| s.as_str())),
+                    ..Default::default()
+            }
+        },
 
         _ => unreachable!()
     })
