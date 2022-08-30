@@ -330,7 +330,7 @@ fn contained_in<'value>(
                         }
                         else {
                             ValueEvalResult::ComparisonResult(
-                                ComparisonResult::Success(
+                                ComparisonResult::Fail(
                                     Compare::ListIn(ListIn::new(vec![lhs_value], lhs_value, rhs_value))
                                 )
                             )
@@ -419,10 +419,32 @@ impl Comparator for InOperation {
                         results.push(contained_in(l, r))
                     );
                 }
-                else if l.is_list() {
-
+                else {
+                    if let PathAwareValue::List((_, list)) = l {
+                        let diff: Vec<&PathAwareValue> = list.iter().filter(
+                            |elem| !rhs.contains(&elem)).collect();
+                        if diff.is_empty() {
+                            results.push(ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Success(Compare::QueryIn(QueryIn {
+                                    diff, rhs,
+                                    lhs: vec![l]
+                                }))
+                            ));
+                        }
+                        else {
+                            results.push(ValueEvalResult::ComparisonResult(
+                                ComparisonResult::Fail(Compare::QueryIn(QueryIn {
+                                    diff, rhs,
+                                    lhs: vec![l]
+                                }))
+                            ));
+                        }
+                    }
+                    else {
+                        rhs.iter().for_each(|rhs_elem|
+                            results.push(contained_in(l, rhs_elem)));
+                    }
                 }
-
             },
 
             (None, Some(r)) => {

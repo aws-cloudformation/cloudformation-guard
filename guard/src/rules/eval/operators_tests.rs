@@ -910,6 +910,33 @@ fn test_operator_in_query_to_query_not_ok() -> crate::rules::Result<()> {
 }
 
 #[test]
+fn test_operator_in_literal_list_in_query_ok() -> crate::rules::Result<()> {
+    let lhs_value = PathAwareValue::List((Path::root(), vec![
+        PathAwareValue::String((Path::root(), String::from("Name"))),
+        PathAwareValue::String((Path::root(), String::from("Environment")))
+    ]));
+    let lhs = QueryResult::Literal(&lhs_value);
+    let rhs_value = PathAwareValue::String((Path::root(), String::from("Environment")));
+    let rhs = QueryResult::Resolved(&rhs_value);
+    match CmpOperator::In.compare(&[lhs], &[rhs]) {
+        Ok(EvalResult::Result(result)) => {
+            for each in result {
+                match each {
+                    ValueEvalResult::ComparisonResult(
+                        ComparisonResult::Fail(Compare::QueryIn(
+                           QueryIn { diff, .. }))) => {
+                        assert_eq!(diff.is_empty(), false, "{:?}", diff);
+                    },
+                    _ => unreachable!()
+                }
+            }
+        }
+        _ => unreachable!()
+    }
+    Ok(())
+}
+
+#[test]
 fn test_operator_in_scalar_literal_to_query_ok_with_unresolved() -> crate::rules::Result<()> {
     let scalar_literal_value = PathAwareValue::String((Path::new("Literal".to_string(), 0, 0), "*".to_string()));
     let scalar_literal = vec![
