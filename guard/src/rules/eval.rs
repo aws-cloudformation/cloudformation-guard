@@ -24,6 +24,7 @@ fn element_empty_operation(value: &QueryResult<'_>) -> Result<bool>
                 PathAwareValue::List((_, list)) => list.is_empty(),
                 PathAwareValue::Map((_, map)) => map.is_empty(),
                 PathAwareValue::String((_, string)) => string.is_empty(),
+                PathAwareValue::Bool((_, boolean)) => (*boolean).to_string().is_empty(),
                 _ => return Err(Error::new(ErrorKind::IncompatibleError(
                     format!("Attempting EMPTY operation on type {} that does not support it at {}",
                             value.type_info(), value.self_path())
