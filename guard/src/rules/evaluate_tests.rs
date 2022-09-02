@@ -31,8 +31,8 @@ fn read_data(file: File) -> Result<Value> {
     let context = read_file_content(file)?;
     match serde_json::from_str::<serde_json::Value>(&context) {
         Ok(value) => Value::try_from(value),
-        Err(_) => {
-            let value = serde_yaml::from_str::<serde_json::Value>(&context)?;
+        Err(e) => {
+            let value = serde_yaml::from_str::<serde_yaml::Value>(&context)?;
             Value::try_from(value)
         }
     }
@@ -2254,7 +2254,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
     }
     "###;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let context = RootScope::new(&rule_eval, &value);
     let status = rule_eval.evaluate(&value, &context)?;

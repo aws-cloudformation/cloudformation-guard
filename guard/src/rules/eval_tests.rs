@@ -857,13 +857,13 @@ fn block_guard_pass() -> Result<()> {
                             match guard_rec.container.as_ref().unwrap() {
                                 RecordType::ClauseValueCheck(
                                     ClauseCheck::Comparison(ComparisonClauseCheck {
-                                        status: Status::FAIL,
-                                        custom_message: Some(msg),
-                                        message: None,
-                                        comparison: (CmpOperator::Eq, true),
-                                        from: QueryResult::Resolved(fromQ),
-                                        to: Some(QueryResult::Resolved(_))
-                                    })) => {
+                                                                status: Status::FAIL,
+                                                                custom_message: Some(msg),
+                                                                message: None,
+                                                                comparison: (CmpOperator::Eq, true),
+                                                                from: QueryResult::Resolved(fromQ),
+                                                                to: Some(QueryResult::Resolved(_))
+                                                            })) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");
                                     assert_eq!(fromQ.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                                 }
@@ -1603,21 +1603,21 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
                 },
 
                 RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
-                    status, from, to, .. })) => {
+                                                                         status, from, to, .. })) => {
                     assert_eq!(to.is_some(), true);
                     assert_eq!(status, Status::FAIL);
-                        match from {
-                            QueryResult::Resolved(res) => {
-                                assert_eq!(
-                                    res.self_path().0.as_str() == "/Resources/second/Properties/Name" ||
+                    match from {
+                        QueryResult::Resolved(res) => {
+                            assert_eq!(
+                                res.self_path().0.as_str() == "/Resources/second/Properties/Name" ||
                                     res.self_path().0.as_str() == "/Resources/failed/Properties/Name",
-                                    true
-                                );
-                            },
+                                true
+                            );
+                        },
 
-                            _ => unreachable!()
-                        }
-                    },
+                        _ => unreachable!()
+                    }
+                },
 
                 RecordType::ClauseValueCheck(ClauseCheck::Success) => {},
 
@@ -1735,7 +1735,7 @@ Resources:
     }
     "###;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let mut context = root_scope(&rule_eval, &value)?;
     let status = eval_rules_file(&rule_eval, &mut context)?;
@@ -2552,8 +2552,8 @@ fn rule_test_type_blocks() -> Result<()> {
     for each in failed_clause {
         match &each.container {
             Some(RecordType::ClauseValueCheck(
-                ClauseCheck::Comparison(
-                   ComparisonClauseCheck{from, status, to, ..}))) => {
+                     ClauseCheck::Comparison(
+                         ComparisonClauseCheck{from, status, to, ..}))) => {
                 assert_eq!(*status, Status::FAIL);
                 assert_eq!(from.resolved(), None);
                 assert_eq!(*to, None);
@@ -2777,8 +2777,8 @@ rule iam_basic_checks {
     for each in failed_clause {
         match &each.container {
             Some(RecordType::ClauseValueCheck(ClauseCheck::MissingBlockValue(ValueCheck{
-                status, from, ..
-            }))) => {
+                                                                                 status, from, ..
+                                                                             }))) => {
                 assert_eq!(*status, Status::FAIL);
                 assert_eq!(from.resolved(), None);
                 match from.unresolved_traversed_to() {

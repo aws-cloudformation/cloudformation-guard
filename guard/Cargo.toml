@@ -42,7 +42,7 @@ grep-regex = "0.1.9"
 yaml-rust = { git = "https://github.com/dchakrav-github/yaml-rust" }
 
 [dependencies.serde_json]
-version = "1.0.60"
+version = "1.0.85"
 features = ["preserve_order"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
