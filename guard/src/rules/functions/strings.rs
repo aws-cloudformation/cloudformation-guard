@@ -39,7 +39,7 @@ pub(crate) fn json_parse(args: &[QueryResult<'_>]) -> crate::rules::Result<Vec<O
             QueryResult::Literal(v) |
             QueryResult::Resolved(v) => {
                 if let PathAwareValue::String((path, val)) = v {
-                    let value = serde_yaml::from_str::<serde_json::Value>(val)?;
+                    let value = serde_yaml::from_str::<serde_yaml::Value>(val)?;
                     aggr.push(
                         Some(
                             PathAwareValue::try_from((&value, path.clone()))?)

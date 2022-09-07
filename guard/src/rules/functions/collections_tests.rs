@@ -10,7 +10,7 @@ use std::convert::TryFrom;
 fn test_count_function() -> crate::rules::Result<()> {
     let value_str = r#"Resources: {}"#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
 
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
@@ -21,7 +21,7 @@ fn test_count_function() -> crate::rules::Result<()> {
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
 
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
@@ -38,7 +38,7 @@ fn test_count_function() -> crate::rules::Result<()> {
         Type: AWS::S3::Bucket
     "#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::S3::Bucket' ]"#)?;

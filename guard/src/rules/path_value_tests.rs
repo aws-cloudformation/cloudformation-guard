@@ -352,7 +352,7 @@ fn map_keys_filter_test() -> Result<(), Error> {
 #[test]
 fn merge_values_test() -> Result<(), Error> {
     let resources = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -360,7 +360,7 @@ fn merge_values_test() -> Result<(), Error> {
     )?;
 
     let parameters = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         PARAMETERS:
             ORG_IDS: ["o-2324/"]
         "#)?
@@ -376,7 +376,7 @@ fn merge_values_test() -> Result<(), Error> {
     assert_eq!(matches!(resources_map.values.get("PARAMETERS"), Some(_)), true);
 
     let parameters = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         PARAMETERS:
             ORG_IDS: ["o-2324/"]
         "#)?
