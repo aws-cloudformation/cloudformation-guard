@@ -108,12 +108,12 @@ impl Command for Validate {
 
     fn command(&self) -> App<'static, 'static> {
         App::new(VALIDATE)
-            .about(r#"Evaluates rules against the data files to determine success or failure. 
-You can point rules flag to a rules directory and point data flag to a data directory. 
-When pointed to a directory it will read all rules in the directory file and evaluate 
+            .about(r#"Evaluates rules against the data files to determine success or failure.
+You can point rules flag to a rules directory and point data flag to a data directory.
+When pointed to a directory it will read all rules in the directory file and evaluate
 them against the data files found in the directory. The command can also point to a
 single file and it would work as well.
-Note - When pointing the command to a directory, the directory may not contain a mix of 
+Note - When pointing the command to a directory, the directory may not contain a mix of
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
@@ -818,22 +818,10 @@ fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
             Err(_) => {
-                let value = match serde_json::from_str::<serde_json::Value>(content) {
-                    Ok(value) => PathAwareValue::try_from(value)?,
-                    Err(_) => {
-                        let value = match serde_yaml::from_str::<serde_json::Value>(content) {
-                            Ok(value) => PathAwareValue::try_from(value)?,
-                            Err(_) => {
-                                let str_len: usize = cmp::min(content.len(), 100);
-                                return Err(Error::new(ErrorKind::ParseError(
-                                    format!("data beginning with \n{}\n ...", &content[..str_len]))
-                                ))
-                            }
-                        };
-                        value
-                    }
-                };
-                value
+                let str_len: usize = cmp::min(content.len(), 100);
+                return Err(Error::new(ErrorKind::ParseError(
+                    format!("data beginning with \n{}\n ...", &content[..str_len]))
+                ))
             }
         };
         Ok(path_value)

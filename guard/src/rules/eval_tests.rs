@@ -16,7 +16,7 @@ use yaml_rust::scanner::Marker;
 fn test_all_unary_functions() -> Result<()> {
     let path_value = PathAwareValue::try_from("{}")?;
     let non_empty_path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           ec2:
             Type: AWS::EC2::Instance
@@ -26,10 +26,10 @@ fn test_all_unary_functions() -> Result<()> {
         "#)?
     )?;
     let list_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"[1, 2, 3]"#)?
+        serde_yaml::from_str::<serde_yaml::Value>(r#"[1, 2, 3]"#)?
     )?;
     let empty_list_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"[]"#)?
+        serde_yaml::from_str::<serde_yaml::Value>(r#"[]"#)?
     )?;
     let string_value = PathAwareValue::try_from(r#""String""#)?;
     let empty_string_value = PathAwareValue::try_from(r#""""#)?;
@@ -314,7 +314,7 @@ fn test_all_unary_functions() -> Result<()> {
 #[test]
 fn query_empty_and_non_empty() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -376,7 +376,7 @@ fn query_empty_and_non_empty() -> Result<()> {
 #[test]
 fn each_lhs_value_not_comparable() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Parameters:
           allowed_images: [ami-123456789012, ami-01234567890]
         Resources:
@@ -461,7 +461,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
 #[test]
 fn each_lhs_value_eq_compare() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Parameters:
           allowed_images: [ami-123456789012, ami-01234567890]
         Resources:
@@ -531,7 +531,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
 #[test]
 fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Parameters:
           allowed_images: [ami-123456789012, ami-01234567890]
         Resources:
@@ -595,7 +595,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
 #[test]
 fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Parameters:
           allowed_images: [ami-123456789012, ami-01234567890]
         Resources:
@@ -694,7 +694,7 @@ macro_rules! test_case {
 #[test]
 fn binary_comparisons_gt_ge() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         values:
           int: 10
           ints: [20, 10]
@@ -731,7 +731,7 @@ fn binary_comparisons_gt_ge() -> Result<()> {
 #[test]
 fn binary_comparisons_lt_le() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         values:
           int: 10
           ints: [20, 10]
@@ -792,7 +792,7 @@ Resources:
       VpcId: vpc-123abc
     "###;
     let rules = RulesFile::try_from(rulegen_created)?;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let mut root = root_scope(&rules, &value)?;
     //let mut tracker = RecordTracker::new(&mut root);
     let status = eval_rules_file(&rules, &mut root)?;
@@ -803,7 +803,7 @@ Resources:
 #[test]
 fn block_guard_pass() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           iam:
             Type: AWS::IAM::Role
@@ -857,13 +857,13 @@ fn block_guard_pass() -> Result<()> {
                             match guard_rec.container.as_ref().unwrap() {
                                 RecordType::ClauseValueCheck(
                                     ClauseCheck::Comparison(ComparisonClauseCheck {
-                                        status: Status::FAIL,
-                                        custom_message: Some(msg),
-                                        message: None,
-                                        comparison: (CmpOperator::Eq, true),
-                                        from: QueryResult::Resolved(fromQ),
-                                        to: Some(QueryResult::Resolved(_))
-                                    })) => {
+                                                                status: Status::FAIL,
+                                                                custom_message: Some(msg),
+                                                                message: None,
+                                                                comparison: (CmpOperator::Eq, true),
+                                                                from: QueryResult::Resolved(fromQ),
+                                                                to: Some(QueryResult::Resolved(_))
+                                                            })) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");
                                     assert_eq!(fromQ.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                                 }
@@ -906,7 +906,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
       - Principal: ['*', 's3:*']
     "###;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
 
     //
@@ -959,7 +959,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
       - Principal: ['*', 's3:*']
     "###;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     //
     // Evaluate the SOME clause again, it must pass with ths value as well
@@ -989,7 +989,7 @@ fn block_evaluation() -> Result<()> {
                 Resource: ['*', "aws:"]
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
         EndpointConfiguration == ["PRIVATE"]
@@ -1033,7 +1033,7 @@ fn block_evaluation_fail() -> Result<()> {
                 Resource: ['*', "aws:"]
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
@@ -1053,7 +1053,7 @@ fn block_evaluation_fail() -> Result<()> {
 #[test]
 fn variable_projections() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           s3_bucket:
             Type: AWS::S3::Bucket
@@ -1091,7 +1091,7 @@ fn variable_projections() -> Result<()> {
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           s3_bucket:
             Type: AWS::S3::Bucket
@@ -1187,7 +1187,7 @@ fn variable_projections_failures() -> Result<()> {
 #[test]
 fn query_cross_joins() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           s3_bucket:
             Type: AWS::S3::Bucket
@@ -1223,7 +1223,7 @@ fn query_cross_joins() -> Result<()> {
     assert_eq!(status, Status::SKIP);
 
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
           s3_bucket:
             Type: AWS::S3::Bucket
@@ -1450,7 +1450,7 @@ fn test_for_in_and_not_in() -> Result<()> {
         ]
     }"#;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(statments)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
     let mut eval = BasicQueryTesting{ root: &value, recorder: None };
 
     let clause = GuardClause::try_from(r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
@@ -1485,7 +1485,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
             - 22
             - 101
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting{ root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::PASS);
@@ -1498,7 +1498,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
             - 101
             - 100000
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting{ root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
@@ -1546,7 +1546,7 @@ fn test_inner_when_skipped() -> Result<()> {
           Description: ''
           ManagedPolicyName: OperatorPolicy
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
@@ -1565,7 +1565,7 @@ fn test_inner_when_skipped() -> Result<()> {
           Description: ''
           ManagedPolicyName: AdminPolicy
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::SKIP);
@@ -1573,13 +1573,13 @@ fn test_inner_when_skipped() -> Result<()> {
     let value_str = r#"
     Resources: {}
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::SKIP);
 
     let value_str = r#"{}"#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting { root: &value, recorder: None };
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::FAIL);
@@ -1603,21 +1603,21 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
                 },
 
                 RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
-                    status, from, to, .. })) => {
+                                                                         status, from, to, .. })) => {
                     assert_eq!(to.is_some(), true);
                     assert_eq!(status, Status::FAIL);
-                        match from {
-                            QueryResult::Resolved(res) => {
-                                assert_eq!(
-                                    res.self_path().0.as_str() == "/Resources/second/Properties/Name" ||
+                    match from {
+                        QueryResult::Resolved(res) => {
+                            assert_eq!(
+                                res.self_path().0.as_str() == "/Resources/second/Properties/Name" ||
                                     res.self_path().0.as_str() == "/Resources/failed/Properties/Name",
-                                    true
-                                );
-                            },
+                                true
+                            );
+                        },
 
-                            _ => unreachable!()
-                        }
-                    },
+                        _ => unreachable!()
+                    }
+                },
 
                 RecordType::ClauseValueCheck(ClauseCheck::Success) => {},
 
@@ -1657,7 +1657,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     "###;
 
     let rules = Rule::try_from(rule)?;
-    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let mut asserter = ReportAssertions{};
     let mut root = BasicQueryTesting { root: &values, recorder: Some(&mut asserter) };
     let status = eval_rule(&rules, &mut root)?;
@@ -1735,7 +1735,7 @@ Resources:
     }
     "###;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let mut context = root_scope(&rule_eval, &value)?;
     let status = eval_rules_file(&rule_eval, &mut context)?;
@@ -2000,7 +2000,7 @@ fn test_map_keys_function() -> Result<()> {
                     'aws:IsSecure': true
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
 
     let rule_str = r#"
@@ -2031,7 +2031,7 @@ rule check_rest_api_is_private_and_has_access {
                     'aws:sourceVpc': ['vpc-1234']
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let mut root = root_scope(&rule, &value)?;
     let status = eval_rules_file(&rule, &mut root)?;
@@ -2044,7 +2044,7 @@ rule check_rest_api_is_private_and_has_access {
 fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
     let resources = r#"Tags: []"#;
     let values = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let claused_failure_spec = GuardClause::try_from(
         r#"Tags[*].Key == /Name/"#)?;
     let mut eval = BasicQueryTesting { root: &values, recorder: None };
@@ -2100,7 +2100,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let resources = r#"Resources: {}"#;
     let values = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting { root: &values, recorder: None };
 
     let clause_failure_spec = GuardClause::try_from(
@@ -2137,7 +2137,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
           ImageId: ami-1234554657
     "#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting { root: &values, recorder: None };
     let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
     assert_eq!(status, Status::SKIP);
@@ -2147,7 +2147,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     //
     let resources = r#"{}"#;
     let values = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting { root: &values, recorder: None };
     let clause_failure_spec = GuardClause::try_from(
         r#"Resources exists"#)?;
@@ -2227,7 +2227,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
 
     let rules_file = RulesFile::try_from(rules)?;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
     let mut eval = root_scope(&rules_file, &path_value)?;
     let status = eval_rules_file(&rules_file, &mut eval)?;
@@ -2286,7 +2286,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
               Principal: '*'
     "#;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
     let mut eval = root_scope(&rules_file, &path_value)?;
     let status = eval_rules_file(&rules_file, &mut eval)?;
@@ -2313,7 +2313,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
               Principal: ['*']
     "#;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
     let mut eval = eval.reset_root(&path_value)?;
     let status = eval_rules_file(&rules_file, &mut eval)?;
@@ -2342,7 +2342,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
               Principal: ['*']
     "###;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
     let mut eval = eval.reset_root(&path_value)?;
     //
@@ -2414,7 +2414,7 @@ fn filter_based_with_join_pass_use_cases() -> Result<()> {
     "###;
 
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
     let rules_file = RulesFile::try_from(rules)?;
     let mut eval = root_scope(&rules_file, &path_value)?;
@@ -2539,7 +2539,7 @@ fn rule_test_type_blocks() -> Result<()> {
     "###;
 
     let root = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value)?
+        serde_yaml::from_str::<serde_yaml::Value>(value)?
     )?;
     let rules_file = RulesFile::try_from(r)?;
     let mut root_context = root_scope(&rules_file, &root)?;
@@ -2552,8 +2552,8 @@ fn rule_test_type_blocks() -> Result<()> {
     for each in failed_clause {
         match &each.container {
             Some(RecordType::ClauseValueCheck(
-                ClauseCheck::Comparison(
-                   ComparisonClauseCheck{from, status, to, ..}))) => {
+                     ClauseCheck::Comparison(
+                         ComparisonClauseCheck{from, status, to, ..}))) => {
                 assert_eq!(*status, Status::FAIL);
                 assert_eq!(from.resolved(), None);
                 assert_eq!(*to, None);
@@ -2777,8 +2777,8 @@ rule iam_basic_checks {
     for each in failed_clause {
         match &each.container {
             Some(RecordType::ClauseValueCheck(ClauseCheck::MissingBlockValue(ValueCheck{
-                status, from, ..
-            }))) => {
+                                                                                 status, from, ..
+                                                                             }))) => {
                 assert_eq!(*status, Status::FAIL);
                 assert_eq!(from.resolved(), None);
                 match from.unresolved_traversed_to() {
@@ -3482,7 +3482,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
     let clause = r#"algorithms == ["KMS"]"#;
     let value = r#"algorithms: KMS"#;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value)?
+        serde_yaml::from_str::<serde_yaml::Value>(value)?
     )?;
     let guard_clause = GuardClause::try_from(clause)?;
     let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
@@ -3492,7 +3492,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
     let clause = r#"algorithms == ["KMS", "SSE"]"#;
     let value = r#"algorithms: KMS"#;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value)?
+        serde_yaml::from_str::<serde_yaml::Value>(value)?
     )?;
     let guard_clause = GuardClause::try_from(clause)?;
     let mut eval = BasicQueryTesting { root: &path_value, recorder: None };
@@ -3540,7 +3540,7 @@ fn parameterized_evaluations() -> Result<()> {
                 Effect: Allow
     "###;
     let template = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(template_value)?
+        serde_yaml::from_str::<serde_yaml::Value>(template_value)?
     )?;
 
     let mut eval = root_scope(&rules_files, &template)?;
@@ -3561,7 +3561,7 @@ fn parameterized_evaluations() -> Result<()> {
             Effect: Allow
     "###;
     let config_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(aws_config_value)?
+        serde_yaml::from_str::<serde_yaml::Value>(aws_config_value)?
     )?;
 
     let mut eval = root_scope(&rules_files, &config_value)?;
@@ -3589,7 +3589,7 @@ fn using_resource_names_for_assessment() -> Result<()> {
     "###;
 
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?
     )?;
 
     let rules_file = r###"
@@ -3627,7 +3627,7 @@ fn test_string_in_comparison() -> Result<()> {
                 Fn::Sub: "aws:arn:s3::${s3}"
     "###;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(resources)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
 
     let rules = r###"
     let s3_buckets = Resources[ bucket_names | Type == 'AWS::S3::Bucket' ]

@@ -31,8 +31,8 @@ fn read_data(file: File) -> Result<Value> {
     let context = read_file_content(file)?;
     match serde_json::from_str::<serde_json::Value>(&context) {
         Ok(value) => Value::try_from(value),
-        Err(_) => {
-            let value = serde_yaml::from_str::<serde_json::Value>(&context)?;
+        Err(e) => {
+            let value = serde_yaml::from_str::<serde_yaml::Value>(&context)?;
             Value::try_from(value)
         }
     }
@@ -1318,7 +1318,7 @@ fn test_map_keys_function() -> Result<()> {
                     'aws:IsSecure': true
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
 
     let rule_str = r#"
@@ -1347,7 +1347,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
                     'aws:sourceVpc': ['vpc-1234']
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let root = RootScope::new(&rule, &value);
     let status = rule.evaluate(&value, &root)?;
@@ -1481,7 +1481,7 @@ Resources:
       VpcId: vpc-123abc
     "###;
     let rules = RulesFile::try_from(rulegen_created)?;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let root = RootScope::new(&rules, &value);
     let status = rules.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
@@ -1495,7 +1495,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
       - Principal: ['*', 's3:*']
     "###;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let dummy = DummyEval{};
 
     //
@@ -1549,7 +1549,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
       - Principal: ['*', 's3:*']
     "###;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     //
     // Evaluate the SOME clause again, it must pass with ths value as well
     //
@@ -1579,7 +1579,7 @@ fn block_evaluation() -> Result<()> {
                 Resource: ['*', "aws:"]
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
         EndpointConfiguration == ["PRIVATE"]
@@ -1623,7 +1623,7 @@ fn block_evaluation_fail() -> Result<()> {
                 Resource: ['*', "aws:"]
 
     "#;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
         EndpointConfiguration == ["PRIVATE"]
@@ -1718,7 +1718,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     "###;
 
     let rules_files = RulesFile::try_from(rule)?;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let root = RootScope::new(&rules_files, &value);
     let status = rules_files.evaluate(&value, &root)?;
@@ -1749,7 +1749,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     "###;
 
     let rules_files = RulesFile::try_from(rule)?;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let root = RootScope::new(&rules_files, &value);
     let status = rules_files.evaluate(&value, &root)?;
@@ -1778,7 +1778,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     "###;
 
     let rules_files = RulesFile::try_from(rule)?;
-    let value = serde_yaml::from_str::<serde_json::Value>(value_str)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let root = RootScope::new(&rules_files, &value);
     let status = rules_files.evaluate(&value, &root)?;
@@ -1950,7 +1950,7 @@ fn test_for_not_in() -> Result<()> {
     }"#;
 
     let clause = GuardClause::try_from(r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(statments)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
     let dummy = DummyEval{};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
@@ -1974,7 +1974,7 @@ fn test_rule_with_range_test() -> Result<()> {
             - 22
             - 101
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let dummy = DummyEval{};
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
@@ -2024,7 +2024,7 @@ fn test_inner_when_skipped() -> Result<()> {
           Description: ''
           ManagedPolicyName: OperatorPolicy
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
@@ -2043,19 +2043,19 @@ fn test_inner_when_skipped() -> Result<()> {
           Description: ''
           ManagedPolicyName: AdminPolicy
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::SKIP);
 
     let value_str = r#"
     Resources: {}
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"{}"#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
@@ -2120,7 +2120,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     }
 
     let rules = Rule::try_from(rule)?;
-    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let reporter = Reporter{};
     let status = rules.evaluate(&values, &reporter)?;
     assert_eq!(status, Status::FAIL);
@@ -2187,7 +2187,7 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
     }
 
     let rules = RulesFile::try_from(rule)?;
-    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(value)?)?;
+    let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let root = RootScope::new(&rules, &values);
     let reporter = Reporter{ root: &root };
     let status = rules.evaluate(&values, &reporter)?;
@@ -2254,7 +2254,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
     }
     "###;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_json::Value>(template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let context = RootScope::new(&rule_eval, &value);
     let status = rule_eval.evaluate(&value, &context)?;

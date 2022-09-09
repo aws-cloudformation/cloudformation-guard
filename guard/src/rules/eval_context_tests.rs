@@ -103,7 +103,7 @@ fn empty_value_return_unresolved() -> Result<()> {
 #[test]
 fn non_empty_value_return_results() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -149,7 +149,7 @@ fn non_empty_value_return_results() -> Result<()> {
 fn non_empty_value_mixed_results() -> Result<()> {
     let query = AccessQuery::try_from("Resources.*.Properties.Tags")?.query;
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -187,7 +187,7 @@ fn non_empty_value_mixed_results() -> Result<()> {
 #[test]
 fn non_empty_value_with_missing_list_property() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -226,7 +226,7 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
 #[test]
 fn non_empty_value_with_empty_list_property() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
@@ -266,7 +266,7 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
 #[test]
 fn map_filter_keys() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3Bucket:
              Type: AWS::S3::Bucket
@@ -357,7 +357,7 @@ fn map_filter_keys() -> Result<()> {
 #[test]
 fn test_with_converter() -> Result<()> {
     let path_value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(r#"
+        serde_yaml::from_str::<serde_yaml::Value>(r#"
         Resources:
            s3:
              Type: AWS::S3::Bucket
