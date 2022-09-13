@@ -552,7 +552,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
 impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
     type Error = Error;
 
-    fn try_into(self) -> std::result::Result<(String, serde_json::Value), Self::Error> {
+    fn try_into(self) -> Result<(String, serde_json::Value), Self::Error> {
         let top = self.self_path().0.clone();
         match self {
             PathAwareValue::Null(_) => Ok((top, serde_json::Value::Null)),
