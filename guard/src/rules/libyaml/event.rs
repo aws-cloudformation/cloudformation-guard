@@ -14,7 +14,6 @@ use unsafe_libyaml as sys;
 
 #[derive(Debug)]
 pub(crate) enum Event<'input> {
-    NoEvent,
     StreamStart,
     StreamEnd,
     DocumentStart,
@@ -68,7 +67,6 @@ pub(crate) unsafe fn convert_event<'input>(
             tag: optional_tag(sys.data.mapping_start.tag),
         }),
         sys::YAML_MAPPING_END_EVENT => Event::MappingEnd,
-        sys::YAML_NO_EVENT => Event::NoEvent,
         _ => unimplemented!(),
     }
 }

@@ -5,7 +5,7 @@ use crate::rules::{
     libyaml::{
         event::{Event, Scalar, SequenceStart, ScalarStyle},
         parser::Parser,
-        error::{Error, Mark},
+        error::Error,
     },
 };
 
@@ -25,33 +25,25 @@ impl Loader {
 
         loop {
             match parser.next() {
-                Ok((event, mark)) => match event {
-                    Event::NoEvent => break,
-                    _ => self.handle_event(event, mark)
-                },
+                Ok((event, location)) => {
+                    match event {
+                        Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
+                        Event::DocumentEnd => {
+                            self.documents.push(self.stack.pop().unwrap());
+                            self.stack.clear();
+                            self.last_container_index.clear();
+                            return Ok(self.documents.pop().unwrap());
+                        }
+                        Event::MappingStart(..) => self.handle_mapping_start(location),
+                        Event::MappingEnd => self.handle_mapping_end(),
+                        Event::SequenceStart(sequence_start) => self.handle_sequence_start(sequence_start, location),
+                        Event::SequenceEnd => self.handle_sequence_end(),
+                        Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
+                        _ => todo!()
+                    };
+                }
                 Err(e) => return Err(e),
             };
-        }
-
-        return Ok(self.documents.pop().unwrap());
-    }
-
-    fn handle_event(&mut self, event: Event, mark: Mark) {
-        let location = Location::new(mark.line(), mark.column());
-
-        match event {
-            Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
-            Event::DocumentEnd => {
-                self.documents.push(self.stack.pop().unwrap());
-                self.stack.clear();
-                self.last_container_index.clear();
-            }
-            Event::MappingStart(..) => self.handle_mapping_start(location),
-            Event::MappingEnd => self.handle_mapping_end(),
-            Event::SequenceStart(sequence_start) => self.handle_sequence_start(sequence_start, location),
-            Event::SequenceEnd => self.handle_sequence_end(),
-            Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
-            _ => todo!()
         }
     }
 

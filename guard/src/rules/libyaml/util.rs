@@ -5,6 +5,9 @@ use std::{
     ptr::{addr_of, NonNull},
 };
 
+use unsafe_libyaml as sys;
+use crate::rules::path_value::Location;
+
 pub(crate) struct Owned<T, Init = T> {
     ptr: NonNull<T>,
     marker: PhantomData<NonNull<Init>>,
@@ -46,5 +49,13 @@ impl<T, Init> Deref for Owned<T, Init> {
 impl<T, Init> Drop for Owned<T, Init> {
     fn drop(&mut self) {
         let _ = unsafe { Box::from_raw(self.ptr.as_ptr()) };
+    }
+}
+
+
+pub(crate) fn system_mark_to_location(mark: sys::yaml_mark_t) -> Location {
+    Location {
+        line: mark.line as usize,
+        col: mark.column as usize,
     }
 }

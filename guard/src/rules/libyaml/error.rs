@@ -1,4 +1,10 @@
-use crate::rules::libyaml::cstr::CStr;
+use crate::rules::{
+    libyaml::{
+        cstr::CStr,
+        util::system_mark_to_location
+    },
+    path_value::Location,
+};
 use std::{
     fmt::{self, Debug, Display},
     ptr::NonNull,
@@ -11,9 +17,9 @@ pub(crate) struct Error {
     kind: sys::yaml_error_type_t,
     problem: CStr<'static>,
     problem_offset: u64,
-    problem_mark: Mark,
+    problem_location: Location,
     context: Option<CStr<'static>>,
-    context_mark: Mark,
+    context_location: Location,
 }
 
 impl Error {
@@ -25,16 +31,12 @@ impl Error {
                 None => CStr::from_bytes_with_nul(b"libyaml parser failed but there is no error\0"),
             },
             problem_offset: (*parser).problem_offset,
-            problem_mark: Mark {
-                sys: (*parser).problem_mark,
-            },
+            problem_location: system_mark_to_location((*parser).problem_mark),
             context: match NonNull::new((*parser).context as *mut _) {
                 Some(context) => Some(CStr::from_ptr(context)),
                 None => None,
             },
-            context_mark: Mark {
-                sys: (*parser).context_mark,
-            },
+            context_location: system_mark_to_location((*parser).context_mark),
         }
     }
 }
@@ -42,18 +44,18 @@ impl Error {
 impl Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(formatter, "{}", self.problem)?;
-        if self.problem_mark.sys.line != 0 || self.problem_mark.sys.column != 0 {
-            write!(formatter, " at {}", self.problem_mark)?;
+        if self.problem_location.line != 0 || self.problem_location.col != 0 {
+            write!(formatter, " at {}", self.problem_location)?;
         } else if self.problem_offset != 0 {
             write!(formatter, " at position {}", self.problem_offset)?;
         }
         if let Some(context) = &self.context {
             write!(formatter, ", {}", context)?;
-            if (self.context_mark.sys.line != 0 || self.context_mark.sys.column != 0)
-                && (self.context_mark.sys.line != self.problem_mark.sys.line
-                || self.context_mark.sys.column != self.problem_mark.sys.column)
+            if (self.context_location.line != 0 || self.context_location.col != 0)
+                && (self.context_location.line != self.problem_location.line
+                || self.context_location.col != self.problem_location.col)
             {
-                write!(formatter, " at {}", self.context_mark)?;
+                write!(formatter, " at {}", self.context_location)?;
             }
         }
         Ok(())
@@ -76,63 +78,16 @@ impl Debug for Error {
             formatter.field("kind", &format_args!("{}", kind));
         }
         formatter.field("problem", &self.problem);
-        if self.problem_mark.sys.line != 0 || self.problem_mark.sys.column != 0 {
-            formatter.field("problem_mark", &self.problem_mark);
+        if self.problem_location.line != 0 || self.problem_location.col != 0 {
+            formatter.field("problem_mark", &self.problem_location);
         } else if self.problem_offset != 0 {
             formatter.field("problem_offset", &self.problem_offset);
         }
         if let Some(context) = &self.context {
             formatter.field("context", context);
-            if self.context_mark.sys.line != 0 || self.context_mark.sys.column != 0 {
-                formatter.field("context_mark", &self.context_mark);
+            if self.context_location.line != 0 || self.context_location.col != 0 {
+                formatter.field("context_mark", &self.context_location);
             }
-        }
-        formatter.finish()
-    }
-}
-
-#[derive(Copy, Clone)]
-pub(crate) struct Mark {
-    pub(super) sys: sys::yaml_mark_t,
-}
-
-impl Mark {
-    pub fn index(&self) -> usize {
-        self.sys.index as usize
-    }
-
-    pub fn line(&self) -> usize {
-        self.sys.line as usize
-    }
-
-    pub fn column(&self) -> usize {
-        self.sys.column as usize
-    }
-}
-
-impl Display for Mark {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        if self.sys.line != 0 || self.sys.column != 0 {
-            write!(
-                formatter,
-                "line {} column {}",
-                self.sys.line + 1,
-                self.sys.column + 1,
-            )
-        } else {
-            write!(formatter, "position {}", self.sys.index)
-        }
-    }
-}
-
-impl Debug for Mark {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let mut formatter = formatter.debug_struct("Mark");
-        if self.sys.line != 0 || self.sys.column != 0 {
-            formatter.field("line", &(self.sys.line + 1));
-            formatter.field("column", &(self.sys.column + 1));
-        } else {
-            formatter.field("index", &self.sys.index);
         }
         formatter.finish()
     }

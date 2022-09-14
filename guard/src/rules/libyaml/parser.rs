@@ -1,7 +1,11 @@
-use crate::rules::libyaml::{
-    error::{Error, Mark, Result},
-    util::Owned,
-    event::{convert_event, Event}
+use crate::rules::{
+    libyaml::{
+        error::{Error, Result},
+        util::Owned,
+        event::{convert_event, Event},
+        util::system_mark_to_location,
+    },
+    path_value::Location,
 };
 
 use std::{
@@ -38,7 +42,7 @@ impl<'input> Parser<'input> {
         Parser { pin }
     }
 
-    pub fn next(&mut self) -> Result<(Event<'input>, Mark)> {
+    pub fn next(&mut self) -> Result<(Event<'input>, Location)> {
         let mut event = MaybeUninit::<sys::yaml_event_t>::uninit();
         unsafe {
             let parser = addr_of_mut!((*self.pin.ptr).sys);
@@ -50,12 +54,10 @@ impl<'input> Parser<'input> {
                 return Err(Error::parse_error(parser));
             }
             let ret = convert_event(&*event, &(*self.pin.ptr).input);
-            let mark = Mark {
-                sys: (*event).start_mark,
-            };
+            let location = system_mark_to_location((*event).start_mark);
 
             sys::yaml_event_delete(event);
-            Ok((ret, mark))
+            Ok((ret, location))
         }
     }
 }
