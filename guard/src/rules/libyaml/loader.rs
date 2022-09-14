@@ -4,7 +4,8 @@ use crate::{
         path_value::Location,
         values::MarkedValue,
         libyaml::{
-            parser::{Parser, Event, Scalar, SequenceStart, ScalarStyle},
+            event::{Event, Scalar, SequenceStart, ScalarStyle},
+            parser::Parser,
             error::Mark,
         }
     }
