@@ -1,7 +1,6 @@
 use crate::rules::libyaml::cstr::CStr;
 use std::{
     fmt::{self, Debug, Display},
-    mem::MaybeUninit,
     ptr::NonNull,
 };
 use unsafe_libyaml as sys;

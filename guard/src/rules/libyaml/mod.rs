@@ -1,7 +1,7 @@
-pub mod cstr;
-pub mod util;
-pub mod parser;
-pub mod tag;
-pub mod error;
+mod cstr;
+mod util;
+mod parser;
+mod tag;
+mod error;
+mod event;
 pub mod loader;
-pub mod event;

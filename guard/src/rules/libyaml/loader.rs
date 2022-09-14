@@ -1,16 +1,13 @@
 use std::borrow::Cow;
-use crate::{
-    rules::{
-        path_value::Location,
-        values::MarkedValue,
-        libyaml::{
-            event::{Event, Scalar, SequenceStart, ScalarStyle},
-            parser::Parser,
-            error::Mark,
-        },
-    }
+use crate::rules::{
+    path_value::Location,
+    values::MarkedValue,
+    libyaml::{
+        event::{Event, Scalar, SequenceStart, ScalarStyle},
+        parser::Parser,
+        error::{Error, Mark},
+    },
 };
-use crate::rules::libyaml::error::Error;
 
 #[derive(Debug, Default)]
 pub struct Loader {

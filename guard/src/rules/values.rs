@@ -1,17 +1,21 @@
-use std::convert::TryFrom;
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    convert::TryFrom,
+    fmt,
+    fmt::Display,
+};
 
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
-use crate::rules::errors::{Error, ErrorKind};
-use crate::rules::parser::Span;
+use crate::rules::{
+    parser::Span,
+    errors::{Error, ErrorKind},
+    libyaml::loader::Loader,
+    path_value::Location,
+};
 
 use serde::{Serialize, Deserialize};
-use std::fmt;
-use std::fmt::Display;
-use crate::rules::libyaml;
-use crate::rules::path_value::Location;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
@@ -409,7 +413,7 @@ impl MarkedValue {
 }
 
 pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> {
-    let mut loader = libyaml::loader::Loader::new();
+    let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
         Err(e) => Err(Error::new(ErrorKind::ParseError(

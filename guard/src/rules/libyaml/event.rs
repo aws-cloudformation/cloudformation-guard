@@ -5,12 +5,10 @@ use std::{
     fmt,
     fmt::Debug,
 };
-use crate::{
-    rules::libyaml::{
-        tag::Tag,
-        cstr::CStr,
-        cstr,
-    }
+use crate::rules::libyaml::{
+    tag::Tag,
+    cstr::CStr,
+    cstr,
 };
 use unsafe_libyaml as sys;
 

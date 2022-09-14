@@ -1,6 +1,7 @@
 use crate::rules::libyaml::{
     error::{Error, Mark, Result},
     util::Owned,
+    event::{convert_event, Event}
 };
 
 use std::{
@@ -10,7 +11,6 @@ use std::{
 };
 
 use unsafe_libyaml as sys;
-use crate::rules::libyaml::event::{convert_event, Event};
 
 pub(crate) struct Parser<'input> {
     pin: Owned<ParserPinned<'input>>,
