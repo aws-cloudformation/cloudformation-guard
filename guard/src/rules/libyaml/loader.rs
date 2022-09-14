@@ -7,7 +7,7 @@ use crate::{
             event::{Event, Scalar, SequenceStart, ScalarStyle},
             parser::Parser,
             error::Mark,
-        }
+        },
     }
 };
 use crate::rules::libyaml::error::Error;
@@ -36,7 +36,7 @@ impl Loader {
             };
         }
 
-        return Ok(self.documents.pop().unwrap())
+        return Ok(self.documents.pop().unwrap());
     }
 
     fn handle_event(&mut self, event: Event, mark: Mark) {

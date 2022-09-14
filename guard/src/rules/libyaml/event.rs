@@ -3,13 +3,13 @@ use std::{
     borrow::Cow,
     slice,
     fmt,
-    fmt::Debug
+    fmt::Debug,
 };
 use crate::{
     rules::libyaml::{
         tag::Tag,
         cstr::CStr,
-        cstr
+        cstr,
     }
 };
 use unsafe_libyaml as sys;

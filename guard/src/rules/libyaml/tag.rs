@@ -1,7 +1,7 @@
 use crate::rules::libyaml::cstr;
 use std::{
     fmt::{self, Debug},
-    ops::Deref
+    ops::Deref,
 };
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
@@ -34,7 +34,7 @@ impl Tag {
             .chars()
             .enumerate()
             .filter(|(i, _)| i >= &offset)
-            .fold(String::new(), |mut suffix, (_ , c)| {
+            .fold(String::new(), |mut suffix, (_, c)| {
                 suffix.push(c);
                 suffix
             })

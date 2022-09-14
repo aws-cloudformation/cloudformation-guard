@@ -13,6 +13,7 @@ pub(crate) struct CStr<'a> {
 }
 
 unsafe impl<'a> Send for CStr<'a> {}
+
 unsafe impl<'a> Sync for CStr<'a> {}
 
 impl<'a> CStr<'a> {

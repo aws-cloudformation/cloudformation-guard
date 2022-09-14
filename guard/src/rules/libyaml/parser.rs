@@ -1,6 +1,6 @@
 use crate::rules::libyaml::{
     error::{Error, Mark, Result},
-    util::Owned
+    util::Owned,
 };
 
 use std::{
@@ -59,8 +59,6 @@ impl<'input> Parser<'input> {
         }
     }
 }
-
-
 
 
 impl<'input> Drop for ParserPinned<'input> {
