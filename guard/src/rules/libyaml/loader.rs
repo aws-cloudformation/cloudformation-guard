@@ -1,12 +1,15 @@
 use std::borrow::Cow;
-use crate::rules::{
-    path_value::Location,
-    values::MarkedValue,
-    libyaml::{
-        event::{Event, Scalar, SequenceStart, ScalarStyle},
-        parser::Parser,
-        error::Error,
-    },
+use crate::{
+    rules::{
+        self,
+        path_value::Location,
+        values::MarkedValue,
+        libyaml::{
+            event::{Event, Scalar, SequenceStart, ScalarStyle},
+            parser::Parser,
+        },
+        errors::{Error, ErrorKind}
+    }
 };
 
 #[derive(Debug, Default)]
@@ -20,7 +23,7 @@ pub struct Loader {
 impl Loader {
     pub fn new() -> Loader { Loader::default() }
 
-    pub(crate) fn load(&mut self, content: String) -> Result<MarkedValue, Error> {
+    pub(crate) fn load(&mut self, content: String) -> rules::Result<MarkedValue> {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
 
         loop {
@@ -42,7 +45,7 @@ impl Loader {
                         _ => todo!()
                     };
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(Error(ErrorKind::ParseError(format!("{}", e)))),
             };
         }
     }

@@ -1,11 +1,15 @@
-use crate::rules::{
-    libyaml::{
-        error::{Error, Result},
-        util::Owned,
-        event::{convert_event, Event},
-        util::system_mark_to_location,
-    },
-    path_value::Location,
+use crate::{
+    rules::{
+        libyaml::{
+            util::Owned,
+            event::{convert_event, Event},
+            util::system_mark_to_location,
+        },
+        ErrorKind,
+        Result,
+        path_value::Location,
+        errors::Error
+    }
 };
 
 use std::{
@@ -23,7 +27,7 @@ pub(crate) struct Parser<'input> {
 struct ParserPinned<'input> {
     sys: sys::yaml_parser_t,
     input: Cow<'input, [u8]>,
-}
+    }
 
 
 impl<'input> Parser<'input> {
@@ -32,7 +36,7 @@ impl<'input> Parser<'input> {
         let pin = unsafe {
             let parser = addr_of_mut!((*owned.ptr).sys);
             if sys::yaml_parser_initialize(parser).fail {
-                panic!("malloc error: {}", Error::parse_error(parser));
+                panic!("malloc error: {}", Error(ErrorKind::ParseError("error parsing file".to_string())));
             }
             sys::yaml_parser_set_encoding(parser, sys::YAML_UTF8_ENCODING);
             sys::yaml_parser_set_input_string(parser, input.as_ptr(), input.len() as u64);
@@ -47,11 +51,11 @@ impl<'input> Parser<'input> {
         unsafe {
             let parser = addr_of_mut!((*self.pin.ptr).sys);
             if (*parser).error != sys::YAML_NO_ERROR {
-                return Err(Error::parse_error(parser));
+                return Err(Error(ErrorKind::ParseError("error parsing file".to_string())));
             }
             let event = event.as_mut_ptr();
             if sys::yaml_parser_parse(parser, event).fail {
-                return Err(Error::parse_error(parser));
+                return Err(Error(ErrorKind::ParseError("error parsing file".to_string())));
             }
             let ret = convert_event(&*event, &(*self.pin.ptr).input);
             let location = system_mark_to_location((*event).start_mark);

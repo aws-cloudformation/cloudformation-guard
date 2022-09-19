@@ -17,12 +17,6 @@ unsafe impl<'a> Send for CStr<'a> {}
 unsafe impl<'a> Sync for CStr<'a> {}
 
 impl<'a> CStr<'a> {
-    pub fn from_bytes_with_nul(bytes: &'static [u8]) -> Self {
-        assert_eq!(bytes.last(), Some(&b'\0'));
-        let ptr = NonNull::from(bytes).cast();
-        unsafe { Self::from_ptr(ptr) }
-    }
-
     pub unsafe fn from_ptr(ptr: NonNull<i8>) -> Self {
         CStr {
             ptr: ptr.cast(),
