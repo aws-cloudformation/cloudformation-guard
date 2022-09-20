@@ -10,7 +10,7 @@ class PipelineStack(Stack):
         pipeline = CodePipeline(self, "Pipeline",
                                 pipeline_name="CfnGuardPipeline",
                                 synth=ShellStep("Synth",
-                                                input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard?", "docker",
+                                                input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard", "docker",
                                                                                  authentication=SecretValue.secrets_manager(
                                                                                      secret_id='github-token',
                                                                                      json_field='gh_api_token'
