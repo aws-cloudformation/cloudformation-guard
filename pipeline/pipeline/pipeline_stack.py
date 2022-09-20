@@ -1,6 +1,6 @@
 from aws_cdk.pipelines import CodePipeline, CodePipelineSource, ShellStep
 from constructs import Construct
-from aws_cdk import Stack
+from aws_cdk import Stack, SecretValue
 
 class PipelineStack(Stack):
 
@@ -10,7 +10,11 @@ class PipelineStack(Stack):
         pipeline = CodePipeline(self, "Pipeline",
                                 pipeline_name="CfnGuardPipeline",
                                 synth=ShellStep("Synth",
-                                                input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard?", "docker"),
+                                                input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard?", "docker",
+                                                                                 authentication=SecretValue.secrets_manager(
+                                                                                     'github-token'
+                                                                                 ),
+                                                                                 ),
                                                 commands=["npm install -g aws-cdk",
                                                           "python -m pip install -r requirements.txt",
                                                           "cdk synth"]
