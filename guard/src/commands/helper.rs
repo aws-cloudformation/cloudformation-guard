@@ -22,7 +22,7 @@ pub fn validate_and_return_json(
     let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
        Ok(value) => PathAwareValue::try_from(value),
        Err(e) => {
-           let value = serde_yaml::from_str::<serde_json::Value>(&data)?;
+           let value = serde_yaml::from_str::<serde_yaml::Value>(&data)?;
            PathAwareValue::try_from(value)
        }
     };

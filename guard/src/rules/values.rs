@@ -10,6 +10,7 @@ use crate::rules::parser::Span;
 use serde::{Serialize, Deserialize};
 use std::fmt;
 use std::fmt::Display;
+use serde_yaml::Number;
 use yaml_rust::parser::{MarkedEventReceiver, Parser};
 use yaml_rust::{Event, Yaml};
 use yaml_rust::scanner::{Marker, TScalarStyle, TokenType};
@@ -253,6 +254,59 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
+impl <'a> TryFrom<&'a serde_yaml::Value> for Value {
+    type Error = Error;
+
+    fn try_from(value: &'a serde_yaml::Value) -> Result<Self, Self::Error> {
+        match value {
+            serde_yaml::Value::String(s) => Ok(Value::String(s.to_owned())),
+            serde_yaml::Value::Number(num) => {
+                if num.is_i64() {
+                    Ok(Value::Int(num.as_i64().unwrap()))
+                } else if num.is_u64() {
+                    //
+                    // Yes we are losing precision here. TODO fix this
+                    //
+                    Ok(Value::Int(num.as_u64().unwrap() as i64))
+                } else {
+                    Ok(Value::Float(num.as_f64().unwrap()))
+                }
+            },
+            serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
+            serde_yaml::Value::Sequence(sequence) => {
+                Ok(
+                    Value::List(
+                        sequence.iter()
+                            .fold(vec![], |mut res, val| {
+                                res.push(Value::try_from(val).unwrap());
+                                res
+                            })
+                    )
+                )
+            },
+            serde_yaml::Value::Mapping(mapping) => {
+                Ok(
+                    Value::Map(
+                        mapping.iter()
+                            .fold(
+                                IndexMap::with_capacity(mapping.len()),
+                                |mut  res, (key, val)| {
+                                    res.insert(key.as_str().unwrap().to_owned(), Value::try_from(val).unwrap());
+                                    res
+                                }
+                            )
+                    ))
+            },
+            serde_yaml::Value::Tagged(tag) => {
+                Ok(
+                    Value::try_from(tag.value.clone())?
+                )
+            },
+            serde_yaml::Value::Null => Ok(Value::Null)
+        }
+    }
+}
+
 impl <'a> TryFrom<&'a serde_json::Value> for Value {
     type Error = Error;
 
@@ -302,6 +356,14 @@ impl TryFrom<serde_json::Value> for Value {
     }
 }
 
+impl TryFrom<serde_yaml::Value> for Value {
+    type Error = Error;
+
+    fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
+        Value::try_from(&value)
+    }
+}
+
 impl <'a> TryFrom<&'a str> for Value {
     type Error = Error;
 
@@ -330,21 +392,21 @@ pub(crate) enum MarkedValue {
 impl MarkedValue {
     pub(crate) fn location(&self) -> &Location {
         match self {
-           Self::Null(loc)	|
-           Self::BadValue(_, loc)	|
-           Self::String(_, loc)	|
-           Self::Regex(_, loc)	|
-           Self::Bool(_, loc)	|
-           Self::Int(_, loc)	|
-           Self::Float(_, loc)	|
-           Self::Char(_, loc)	|
-           Self::List(_, loc)	|
-           Self::Map(_, loc)     |
-           Self::RangeInt(_, loc)	|
-           Self::RangeFloat(_, loc)	|
-           Self::RangeChar(_, loc) => {
-               loc
-           }
+            Self::Null(loc)	|
+            Self::BadValue(_, loc)	|
+            Self::String(_, loc)	|
+            Self::Regex(_, loc)	|
+            Self::Bool(_, loc)	|
+            Self::Int(_, loc)	|
+            Self::Float(_, loc)	|
+            Self::Char(_, loc)	|
+            Self::List(_, loc)	|
+            Self::Map(_, loc)     |
+            Self::RangeInt(_, loc)	|
+            Self::RangeFloat(_, loc)	|
+            Self::RangeChar(_, loc) => {
+                loc
+            }
         }
     }
 }
@@ -381,9 +443,9 @@ impl MarkedEventReceiver for StructureReader {
 
             Event::MappingStart(..) => {
                 self.stack.push(
-                        MarkedValue::Map(
-                            indexmap::IndexMap::new(),
-                            Location::new(line, col))
+                    MarkedValue::Map(
+                        indexmap::IndexMap::new(),
+                        Location::new(line, col))
                 );
                 self.last_container_index.push(self.stack.len()-1);
             },

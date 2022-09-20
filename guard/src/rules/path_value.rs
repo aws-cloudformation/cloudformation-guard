@@ -101,14 +101,14 @@ impl TryFrom<&[&str]> for Path {
 
     fn try_from(value: &[&str]) -> Result<Self, Self::Error> {
         Ok(Path(value.iter().map(|s| (*s).to_string())
-            .fold(String::from(""), |mut acc, part| {
-                if acc.is_empty() {
-                    acc.push_str(part.as_str());
-                } else {
-                    acc.push('/'); acc.push_str(part.as_str());
-                }
-                acc
-            }), Location::default()))
+                    .fold(String::from(""), |mut acc, part| {
+                        if acc.is_empty() {
+                            acc.push_str(part.as_str());
+                        } else {
+                            acc.push('/'); acc.push_str(part.as_str());
+                        }
+                        acc
+                    }), Location::default()))
     }
 }
 
@@ -361,12 +361,12 @@ impl PartialEq for PathAwareValue {
             },
 
             (rest, rest2) => match compare_values(rest, rest2) {
-                    Ok(ordering) => match ordering {
-                        Ordering::Equal => true,
-                        _ => false
-                    },
-                    Err(_) => false
-                }
+                Ok(ordering) => match ordering {
+                    Ordering::Equal => true,
+                    _ => false
+                },
+                Err(_) => false
+            }
         }
     }
 }
@@ -402,10 +402,30 @@ impl TryFrom<(&serde_json::Value, Path)> for PathAwareValue {
     }
 }
 
+impl TryFrom<(&serde_yaml::Value, Path)> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(incoming: (&serde_yaml::Value, Path)) -> Result<Self, Self::Error> {
+        let root = incoming.0;
+        let path = incoming.1;
+        let value = Value::try_from(root)?;
+        PathAwareValue::try_from((&value, path))
+    }
+}
+
+
 impl TryFrom<Value> for PathAwareValue {
     type Error = Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        PathAwareValue::try_from((&value, Path::root()))
+    }
+}
+
+impl TryFrom<serde_yaml::Value> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
         PathAwareValue::try_from((&value, Path::root()))
     }
 }
@@ -587,9 +607,9 @@ impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
 
             PathAwareValue::RangeInt((_, range_)) => {
                 let range_encoding = format!("{}{},{}{}",
-                           if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
-                           range_.lower, range_.upper,
-                           if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                                             if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
+                                             range_.lower, range_.upper,
+                                             if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
                 );
                 Ok((top, serde_json::Value::String(range_encoding)))
             },
@@ -669,15 +689,15 @@ impl QueryResolver for PathAwareValue {
                                         }
                                     }
                                     else {
-                                       return Err(Error::new(
-                                           ErrorKind::NotComparable(
-                                               format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
-                                                   SliceDisplay(query),
-                                                   each_key.type_info(),
-                                                   each_key.self_value()
-                                               )
-                                           )
-                                       ))
+                                        return Err(Error::new(
+                                            ErrorKind::NotComparable(
+                                                format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
+                                                        SliceDisplay(query),
+                                                        each_key.type_info(),
+                                                        each_key.self_value()
+                                                )
+                                            )
+                                        ))
                                     }
                                 }
                                 Ok(acc)
@@ -900,12 +920,12 @@ impl PathAwareValue {
     pub(crate) fn merge(mut self, other: PathAwareValue) -> crate::rules::Result<PathAwareValue> {
         match (&mut self, other) {
             (PathAwareValue::List((_path, vec)),
-             PathAwareValue::List((_p2, other_vec))) => {
+                PathAwareValue::List((_p2, other_vec))) => {
                 vec.extend(other_vec)
             },
 
             (PathAwareValue::Map((_, map)),
-             PathAwareValue::Map((path, other_map))) => {
+                PathAwareValue::Map((path, other_map))) => {
                 for (key, value) in other_map.values {
                     if map.values.contains_key(&key) {
                         return Err(Error::new(ErrorKind::MultipleValues(
@@ -1044,7 +1064,7 @@ impl PathAwareValue {
             Err(Error::new(
                 ErrorKind::RetrievalError(
                     format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
-                           parent.self_path(), index, list, SliceDisplay(query))
+                            parent.self_path(), index, list, SliceDisplay(query))
                 )))
         }
 

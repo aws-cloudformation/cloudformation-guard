@@ -23,7 +23,7 @@ fn test_json_parse() -> crate::rules::Result<()> {
          Type: AWS::S3::Bucket
     "#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
 
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
@@ -61,7 +61,7 @@ fn test_regex_replace() -> crate::rules::Result<()> {
          Type: AWS::S3::Bucket
     "#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
 
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
@@ -98,7 +98,7 @@ fn test_substring() -> crate::rules::Result<()> {
          Type: AWS::S3::Bucket
     "#;
     let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_json::Value>(value_str)?
+        serde_yaml::from_str::<serde_yaml::Value>(value_str)?
     )?;
 
     let mut eval = BasicQueryTesting {root: &value, recorder: None};
