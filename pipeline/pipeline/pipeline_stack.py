@@ -13,7 +13,7 @@ class PipelineStack(Stack):
                                                 input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard", "docker",
                                                                                  authentication=SecretValue.secrets_manager(
                                                                                      secret_id='github-token',
-                                                                                     json_field='gh_api_token'
+                                                                                     json_field='creds'
                                                                                  ),
                                                                                  ),
                                                 commands=["npm install -g aws-cdk",
