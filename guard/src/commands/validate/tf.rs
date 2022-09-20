@@ -157,7 +157,7 @@ fn single_line(writer: &mut dyn Write,
         let (resource_type, resource_name) = (addr.slice(0..dot_sep), addr.slice(dot_sep+1..));
         let resource_aggr = by_resources.entry(resource_name).or_insert(
             LocalResourceAggr {
-                name: resource_name,
+                name: String::from(resource_name),
                 resource_type,
                 cdk_path: None,
                 clauses: HashSet::new(),
@@ -300,4 +300,3 @@ fn single_line(writer: &mut dyn Write,
     }
     Ok(())
 }
-
