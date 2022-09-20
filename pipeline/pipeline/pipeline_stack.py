@@ -12,7 +12,8 @@ class PipelineStack(Stack):
                                 synth=ShellStep("Synth",
                                                 input=CodePipelineSource.git_hub("akshayrane/cloudformation-guard?", "docker",
                                                                                  authentication=SecretValue.secrets_manager(
-                                                                                     'github-token'
+                                                                                     secret_id='github-token',
+                                                                                     json_field='gh_api_token'
                                                                                  ),
                                                                                  ),
                                                 commands=["npm install -g aws-cdk",
