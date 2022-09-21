@@ -42,6 +42,7 @@ impl Loader {
                         Event::SequenceStart(sequence_start) => self.handle_sequence_start(sequence_start, location),
                         Event::SequenceEnd => self.handle_sequence_end(),
                         Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
+                        Event::Alias(_) => return Err(Error(ErrorKind::ParseError(String::from("Guard does not currently support aliases")))),
                         _ => todo!()
                     };
                 }
