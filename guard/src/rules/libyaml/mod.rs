@@ -4,4 +4,3 @@ mod parser;
 mod tag;
 mod event;
 pub mod loader;
-pub mod event;
