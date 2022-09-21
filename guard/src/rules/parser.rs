@@ -105,7 +105,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
-    delimited(char('#'), take_till(|c| c == '\n'), char('\n'))(input)
+    delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
 }
 //
 // This function extracts either white-space-CRLF or a comment
