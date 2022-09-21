@@ -4,9 +4,8 @@ use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use std::collections::HashMap;
 use grep_searcher::{SinkMatch, SearcherBuilder, LineStep};
 use grep_matcher::Match;
-use yaml_rust::parser::{MarkedEventReceiver, Parser};
-use yaml_rust::Event;
-use yaml_rust::scanner::Marker;
+use crate::rules::libyaml::loader::Loader;
+
 
 //
 // All unary function simple tests
@@ -324,7 +323,7 @@ fn query_empty_and_non_empty() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value, recorder: None,
     };
 
@@ -388,7 +387,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value,
         recorder: None
     };
@@ -403,7 +402,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     let rhs_query = AccessQuery::try_from("Parameters.allowed_images")?.query;
     let rhs = eval.query(&rhs_query)?;
     let result = each_lhs_compare(
-        crate::rules::path_value::compare_eq,
+        compare_eq,
         lhs,
         &rhs
     )?;
@@ -473,7 +472,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                ImageId: ami-123456789012
         "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value,
         recorder: None,
     };
@@ -489,7 +488,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
     let rhs = eval.query(&rhs_query)?;
     assert_eq!(rhs.len(), 2);
     let result = each_lhs_compare(
-        crate::rules::path_value::compare_eq,
+        compare_eq,
         lhs,
         &rhs
     )?;
@@ -548,7 +547,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     Resource: '*'
         "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value,
         recorder: None
     };
@@ -567,7 +566,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
         match each_lhs {
             QueryResult::Resolved(lhs) => {
                 for cmp_result in each_lhs_compare(
-                    not_compare(crate::rules::path_value::compare_eq, true),
+                    not_compare(compare_eq, true),
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
@@ -612,7 +611,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                     Resource: '*'
         "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value, recorder: None
     };
 
@@ -630,7 +629,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
         match each_lhs {
             QueryResult::Resolved(lhs) => {
                 for cmp_result in each_lhs_compare(
-                    crate::rules::path_value::compare_eq,
+                    compare_eq,
                     lhs,
                     &rhs_query_result)? {
                     match cmp_result {
@@ -740,7 +739,7 @@ fn binary_comparisons_lt_le() -> Result<()> {
           string: Hi
     "#)?
     )?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value, recorder: None
     };
 
@@ -1218,7 +1217,7 @@ fn query_cross_joins() -> Result<()> {
        }
     }
     "#)?;
-    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
     let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::SKIP);
 
@@ -3669,7 +3668,7 @@ fn test_searcher() -> Result<()> {
     use grep_regex::RegexMatcher;
     use grep_searcher::LineIter;
     struct MySink{};
-    let matcher = grep_regex::RegexMatcher::new("\\s+(s3):$|\\s+(s3Policy):$").unwrap();
+    let matcher = RegexMatcher::new("\\s+(s3):$|\\s+(s3Policy):$").unwrap();
     SearcherBuilder::new().line_number(true).build().search_slice(
         &matcher, resources.as_bytes(), grep_searcher::sinks::UTF8(|lnum, line| {
             let mut captures = matcher.new_captures()?;
@@ -3696,23 +3695,8 @@ fn yaml_loader() -> Result<()> {
       - { Domain: !Ref RootDomainName }]
     "###;
 
-    struct MarkedRecv{};
-    impl MarkedEventReceiver for MarkedRecv {
-        fn on_event(&mut self, ev: Event, mark: Marker) {
-            println!(
-                "Event = {:?}, Location = {:?}",
-                ev,
-                mark
-            );
-        }
-    }
-
-    let mut receiver = MarkedRecv{};
-    let mut parser = Parser::new(docs.chars());
-    parser.load(
-        &mut receiver,
-        true
-    );
+    let mut loader = Loader::new();
+    loader.load(String::from(docs));
 
     Ok(())
 }

@@ -498,7 +498,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
 
     fn try_from(incoming: (MarkedValue, Path)) -> Result<Self, Self::Error> {
         let root = incoming.0;
-        let mut path = incoming.1;
+        let path = incoming.1;
 
         match root {
             MarkedValue::String(s, loc) => Ok(PathAwareValue::String((path.with_location(loc), s))),
@@ -511,7 +511,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             MarkedValue::RangeFloat(r, loc) => Ok(PathAwareValue::RangeFloat((path.with_location(loc), r))),
             MarkedValue::Bool(b, loc) => Ok(PathAwareValue::Bool((path.with_location(loc), b))),
             MarkedValue::Null(loc) => Ok(PathAwareValue::Null(path.with_location(loc))),
-            MarkedValue::List(v, loc) => {
+            MarkedValue::List(v, _ ) => {
                 let mut result: Vec<PathAwareValue> = Vec::with_capacity(v.len());
                 let mut idx = 0;
                 for each in v {
@@ -552,7 +552,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
 impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
     type Error = Error;
 
-    fn try_into(self) -> std::result::Result<(String, serde_json::Value), Self::Error> {
+    fn try_into(self) -> Result<(String, serde_json::Value), Self::Error> {
         let top = self.self_path().0.clone();
         match self {
             PathAwareValue::Null(_) => Ok((top, serde_json::Value::Null)),
@@ -776,7 +776,7 @@ impl QueryResolver for PathAwareValue {
 
             QueryPart::MapKeyFilter(_name, filter) => {
                 match self {
-                    PathAwareValue::Map((path, map)) => {
+                    PathAwareValue::Map((_, map)) => {
                         let mut selected = Vec::with_capacity(map.values.len());
                         match &filter.compare_with {
                             LetValue::AccessClause(query) => {
@@ -1005,7 +1005,7 @@ impl PathAwareValue {
         self.self_value().0
     }
 
-    pub(crate) fn selt_path_mut(&mut self) -> &mut Path {
+    pub(crate) fn self_path_mut(&mut self) -> &mut Path {
         match self {
             PathAwareValue::Null( path)              |
             PathAwareValue::String(( path, _))       |

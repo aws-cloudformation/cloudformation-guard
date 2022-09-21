@@ -8,6 +8,7 @@ pub(crate) mod eval_context;
 pub(crate) mod eval;
 pub(crate) mod display;
 pub(crate) mod functions;
+mod libyaml;
 
 use errors::Error;
 
@@ -16,9 +17,9 @@ use colored::*;
 use crate::rules::path_value::PathAwareValue;
 use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
-use serde::{Serialize};
+use serde::Serialize;
 use crate::rules::values::CmpOperator;
-use crate::rules::exprs::{QueryPart, ParameterizedRule};
+use crate::rules::exprs::{ParameterizedRule, QueryPart};
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
