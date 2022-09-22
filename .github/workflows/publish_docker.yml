@@ -5,12 +5,16 @@ on:
     branches: [ docker ]
 
 jobs:
+
   build:
     name: Build Image
     runs-on: ubuntu-latest
+
     steps:
+
     - name: Check out code
       uses: actions/checkout@v3
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
@@ -33,10 +37,6 @@ jobs:
         git_branch=${GITHUB_REF#refs/heads/}
         commit_hash=${git_branch}.${git_hash}
         
-        public_registry_prefix=$ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY
-        public_image_latest_tag=$public_registry_prefix:latest
-        public_image_commit_tag=$public_registry_prefix:$commit_hash
-        
         private_registry_prefix=$ECR_REGISTRY/$ECR_REPOSITORY
         private_image_latest_tag=$private_registry_prefix:latest
         private_image_commit_tag=$private_registry_prefix:$commit_hash
@@ -44,14 +44,37 @@ jobs:
         docker build -t $private_image_commit_tag .
         docker push $private_image_commit_tag
         
-        docker tag $private_image_commit_tag $public_image_commit_tag
-        docker push $public_image_commit_tag
-        
         if [ ${git_branch} == 'docker' ]
         then
           docker tag $private_image_commit_tag $private_image_latest_tag
           docker push $private_image_latest_tag
+        fi
+
+    - name: Login to Amazon ECR Public
+      id: login-ecr-public
+      uses: aws-actions/amazon-ecr-login@v1
+      with:
+        registry-type: public
+
+    - name: Build, tag, and push docker image to Amazon ECR Public
+      env:
+        REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+        REGISTRY_ALIAS: b7s9m2k8
+        REPOSITORY: aws-cloudformation/cfn-guard
+      run: |
+        git_hash=$(git rev-parse --short "$GITHUB_SHA")
+        git_branch=${GITHUB_REF#refs/heads/}
+        commit_hash=${git_branch}.${git_hash}
         
+        public_registry_prefix=$ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY
+        public_image_latest_tag=$public_registry_prefix:latest
+        public_image_commit_tag=$public_registry_prefix:$commit_hash
+        
+        docker build -t $public_image_commit_tag .
+        docker push $public_image_commit_tag
+        
+        if [ ${git_branch} == 'docker' ]
+        then
           docker tag $private_image_commit_tag $public_image_latest_tag
           docker push $public_image_latest_tag
         fi
