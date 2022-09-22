@@ -31,14 +31,27 @@ jobs:
       run: |
         git_hash=$(git rev-parse --short "$GITHUB_SHA")
         git_branch=${GITHUB_REF#refs/heads/}
-        image_tag=${git_branch}.${git_hash}
-        public_image_tag=${ECR_PUBLIC_REGISTRY}/${REGISTRY_ALIAS}/${ECR_REPOSITORY}
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag
+        commit_hash=${git_branch}.${git_hash}
+        
+        public_registry_prefix=$ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY
+        public_image_latest_tag=$public_registry_prefix:latest
+        public_image_commit_tag=$public_registry_prefix:$commit_hash
+        
+        private_registry_prefix=$ECR_REGISTRY/$ECR_REPOSITORY
+        private_image_latest_tag=$private_registry_prefix:latest
+        private_image_commit_tag=$private_registry_prefix:$commit_hash
+        
+        docker build -t $private_image_commit_tag .
+        docker push $private_image_commit_tag
+        
+        docker tag $private_image_commit_tag $public_image_commit_tag
+        docker push $public_image_commit_tag
+        
         if [ ${git_branch} == 'docker' ]
         then
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag $public_image_tag
-          docker push $public_image_tag
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag $private_image_commit_tag $private_image_latest_tag
+          docker push $private_image_latest_tag
+        
+          docker tag $private_image_commit_tag $public_image_latest_tag
+          docker push $public_image_latest_tag
         fi
