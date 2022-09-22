@@ -31,5 +31,9 @@ jobs:
         git_branch=${GITHUB_REF#refs/heads/}
         image_tag=${git_branch}.${git_hash}
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag .
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag
+        if [ ${git_branch} == 'docker' ]
+        then
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        fi
