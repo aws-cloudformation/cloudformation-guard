@@ -28,26 +28,23 @@ jobs:
 
     - name: Build, tag, and push image to Amazon ECR
       env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_PUBLIC_REGISTRY: public.ecr.aws
-        ECR_REPOSITORY: aws-cloudformation/cfn-guard
-        REGISTRY_ALIAS: b7s9m2k8
+        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        REPOSITORY: aws-cloudformation/cfn-guard
       run: |
         git_hash=$(git rev-parse --short "$GITHUB_SHA")
         git_branch=${GITHUB_REF#refs/heads/}
         commit_hash=${git_branch}.${git_hash}
         
-        private_registry_prefix=$ECR_REGISTRY/$ECR_REPOSITORY
-        private_image_latest_tag=$private_registry_prefix:latest
-        private_image_commit_tag=$private_registry_prefix:$commit_hash
+        prefix=$REGISTRY/$REPOSITORY
+        latest_image_tag=$prefix:latest
+        commit_hash_image_tag=$prefix:$commit_hash
         
-        docker build -t $private_image_commit_tag .
-        docker push $private_image_commit_tag
+        docker build -t $latest_image_tag -t $commit_hash_image_tag .
+        docker push $commit_hash_image_tag
         
         if [ ${git_branch} == 'docker' ]
         then
-          docker tag $private_image_commit_tag $private_image_latest_tag
-          docker push $private_image_latest_tag
+          docker push $latest_image_tag
         fi
 
     - name: Login to Amazon ECR Public
@@ -66,15 +63,14 @@ jobs:
         git_branch=${GITHUB_REF#refs/heads/}
         commit_hash=${git_branch}.${git_hash}
         
-        public_registry_prefix=$ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY
-        public_image_latest_tag=$public_registry_prefix:latest
-        public_image_commit_tag=$public_registry_prefix:$commit_hash
+        prefix=$REGISTRY/$REGISTRY_ALIAS/$REPOSITORY
+        latest_image_tag=$prefix:latest
+        commit_hash_image_tag=$prefix:$commit_hash
         
-        docker build -t $public_image_commit_tag .
-        docker push $public_image_commit_tag
+        docker build -t $latest_image_tag -t $commit_hash_image_tag .
+        docker push $commit_hash_image_tag
         
         if [ ${git_branch} == 'docker' ]
         then
-          docker tag $private_image_commit_tag $public_image_latest_tag
-          docker push $public_image_latest_tag
+          docker push $latest_image_tag
         fi
