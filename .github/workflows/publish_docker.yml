@@ -9,19 +9,6 @@ jobs:
     name: Build Image
     runs-on: ubuntu-latest
     steps:
-    - name: Dump GitHub context
-      id: github_context_step
-      run: echo '${{ toJSON(github) }}'
-    - name: Dump job context
-      run: echo '${{ toJSON(job) }}'
-    - name: Dump steps context
-      run: echo '${{ toJSON(steps) }}'
-    - name: Dump runner context
-      run: echo '${{ toJSON(runner) }}'
-    - name: Dump strategy context
-      run: echo '${{ toJSON(strategy) }}'
-    - name: Dump matrix context
-      run: echo '${{ toJSON(matrix) }}'
     - name: Check out code
       uses: actions/checkout@v3
     - name: Configure AWS credentials
@@ -39,9 +26,10 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: aws-cloudformation/cfn-guard
-        IMAGE_TAG: ${{ github.head_ref }}.${{ github.sha }}
       run: |
-        cd
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG 
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        git_hash=$(git rev-parse --short "$GITHUB_SHA")
+        git_branch=${GITHUB_REF#refs/heads/}
+        image_tag=${git_branch}.${git_hash}
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag 
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$image_tag
