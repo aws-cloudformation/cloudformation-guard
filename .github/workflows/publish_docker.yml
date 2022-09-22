@@ -23,7 +23,7 @@ jobs:
     - name: Dump matrix context
       run: echo '${{ toJSON(matrix) }}'
     - name: Check out code
-      uses: actions/checkout@${{ github.head_ref }}
+      uses: actions/checkout@v3
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
