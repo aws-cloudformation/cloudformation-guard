@@ -17,7 +17,6 @@ use std::collections::{HashMap, BTreeMap};
 use crate::rules::path_value::PathAwareValue;
 use crate::commands::tracker::{StackTracker};
 use serde::{Serialize, Deserialize};
-use itertools::Itertools;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::Status::SKIP;
 use walkdir::DirEntry;
@@ -97,23 +96,21 @@ or failure testing.
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
-            for each_entry in walk.follow_links(true).sort_by_file_name() {
-                if let Ok(file) = each_entry {
-                    if file.path().is_file() {
-                        let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
-                        if name.ends_with(".guard") ||
-                            name.ends_with(".ruleset") {
-                            let prefix = name.strip_suffix(".guard").or_else(|| name.strip_suffix(".ruleset"))
-                                .unwrap().to_string();
-                            ordered_guard_files.entry(
-                                file.path().parent()
-                                    .map_or("".to_string(), |p| format!("{}", p.display()))).or_insert(vec![])
-                                .push(GuardFile { prefix, file, test_files: vec![] });
-                            continue
-                        }
-                        else {
-                            non_guard.push(file);
-                        }
+            for file in walk.follow_links(true).sort_by_file_name().into_iter().flatten() {
+                if file.path().is_file() {
+                    let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
+                    if name.ends_with(".guard") ||
+                        name.ends_with(".ruleset") {
+                        let prefix = name.strip_suffix(".guard").or_else(|| name.strip_suffix(".ruleset"))
+                            .unwrap().to_string();
+                        ordered_guard_files.entry(
+                            file.path().parent()
+                                .map_or("".to_string(), |p| format!("{}", p.display()))).or_insert(vec![])
+                            .push(GuardFile { prefix, file, test_files: vec![] });
+                        continue
+                    }
+                    else {
+                        non_guard.push(file);
                     }
                 }
             }
@@ -125,19 +122,20 @@ or failure testing.
                     name.ends_with(".jsn") {
                     let parent = file.path().parent();
                     if parent.map_or(false, |p| p.ends_with("tests")) {
-                        parent.unwrap().parent()
-                            .map(|grand|{
+                        if let Some(candidates) = parent
+                            .unwrap()
+                            .parent()
+                            .and_then(|grand|{
                                 let grand = format!("{}", grand.display());
                                 ordered_guard_files.get_mut(&grand)
-                            }).flatten()
-                            .map(|candidates| {
-                                for guard_file in candidates {
-                                    if name.starts_with(&guard_file.prefix) {
-                                        guard_file.test_files.push(file);
-                                        break;
-                                    }
+                            }) {
+                            for guard_file in candidates {
+                                if name.starts_with(&guard_file.prefix) {
+                                    guard_file.test_files.push(file);
+                                    break;
                                 }
-                            });
+                            }
+                        }
                     }
                 }
             }
@@ -173,7 +171,7 @@ or failure testing.
 
             validate_path_buf(file)?;
             validate_path_buf(data)?;
-            let data_test_files = get_files_with_filter(&data, cmp, |entry| {
+            let data_test_files = get_files_with_filter(data, cmp, |entry| {
                 entry.file_name().to_str()
                     .map(|name|
                         name.ends_with(".json") ||
@@ -252,16 +250,15 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
             Ok(specs) => {
                 for each in specs {
                     println!("Test Case #{}", test_counter);
-                    if !each.name.is_none() {
+                    if each.name.is_some() {
                         println!("Name: {}", each.name.unwrap());
                     }
 
                     let by_result = if new_engine {
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
-                        let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                        //let mut tracer = RecordTracker::new(&mut root_scope);
-                        eval_rules_file(&rules, &mut root_scope)?;
+                        let mut root_scope = crate::rules::eval_context::root_scope(rules, &root)?;
+                        eval_rules_file(rules, &mut root_scope)?;
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules = top.children.iter().fold(
@@ -310,15 +307,15 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
 
                             match matched {
                                 Some(status) => {
-                                    by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
-                                        .insert(String::from(format!("{}: Expected = {}",
-                                                                     rule_name, status)));
+                                    by_result.entry(String::from("PASS")).or_insert_with(indexmap::IndexSet::new)
+                                        .insert(format!("{}: Expected = {}",
+                                                                     rule_name, status));
                                 },
 
                                 None => {
-                                    by_result.entry(String::from("FAIL")).or_insert(indexmap::IndexSet::new())
-                                        .insert(String::from(format!("{}: Expected = {}, Evaluated = {:?}",
-                                                                     rule_name, expected, statues)));
+                                    by_result.entry(String::from("FAIL")).or_insert_with(indexmap::IndexSet::new)
+                                        .insert(format!("{}: Expected = {}, Evaluated = {:?}",
+                                                                     rule_name, expected, statues));
                                     exit_code = 7;
                                 }
                             }
@@ -346,14 +343,14 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                         Ok(status) => {
                                             let got = each.status.unwrap();
                                             if status != got {
-                                                by_result.entry(String::from("FAILED")).or_insert(indexmap::IndexSet::new())
-                                                    .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                 each.context, status, got)));
+                                                by_result.entry(String::from("FAILED")).or_insert_with(indexmap::IndexSet::new)
+                                                    .insert(format!("{}: Expected = {}, Evaluated = {}",
+                                                                                 each.context, status, got));
                                                 exit_code = 7;
                                             } else {
-                                                by_result.entry(String::from("PASS")).or_insert(indexmap::IndexSet::new())
-                                                    .insert(String::from(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                 each.context, status, got)));
+                                                by_result.entry(String::from("PASS")).or_insert_with(indexmap::IndexSet::new)
+                                                    .insert(format!("{}: Expected = {}, Evaluated = {}",
+                                                                                 each.context, status, got));
                                             }
                                             if verbose {
                                                 validate::print_context(each, 1);
@@ -378,8 +375,9 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
 }
 
 pub (crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
+    use itertools::Itertools;
+    let mut results = by_result.keys().cloned().collect_vec();
 
-    let mut results = by_result.keys().map(|elem| elem.clone()).collect_vec();
     results.sort(); // Deterministic order of results
 
     for result in &results {
