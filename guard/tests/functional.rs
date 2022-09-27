@@ -5,6 +5,7 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::format;
     use cfn_guard;
     use crate::utils;
     use cfn_guard::commands::{VALIDATE, DATA, RULES, INPUT_PARAMETERS};
@@ -488,4 +489,22 @@ mod tests {
         assert_eq!(-1, utils::cfn_guard_test_command(args));
     }
 
+    #[test]
+    fn test_single_data_file_single_rule_file_when_either_data_or_rule_file_dne() {
+        for arg in vec![
+            (
+                utils::get_full_path_for_resource_file("fake_file.yaml"),
+                utils::get_full_path_for_resource_file("resources/db_param_port_rule.guard"),
+            ),
+            (
+                utils::get_full_path_for_resource_file("resources/db_resource.yaml"),
+                utils::get_full_path_for_resource_file("fake_file.guard"),
+            )
+        ] {
+            let data_option = &format!("-{}", DATA.1);
+            let rules_option = &format!("-{}", RULES.1);
+            let args = vec![VALIDATE, data_option, &arg.0, rules_option, &arg.1];
+            assert_eq!(-1, utils::cfn_guard_test_command(args))
+        }
+    }
 }

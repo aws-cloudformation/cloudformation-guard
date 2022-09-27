@@ -6,7 +6,7 @@ use clap::{App, Arg, ArgMatches, ArgGroup};
 
 
 use crate::command::Command;
-use crate::commands::{ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE};
+use crate::commands::{ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, validate, VERBOSE};
 use crate::commands::files::{alpabetical, last_modified, regular_ordering, iterate_over, get_files_with_filter, read_file_content};
 use crate::rules::{Evaluate, Result, Status, RecordType, NamedStatus};
 use crate::rules::errors::{Error, ErrorKind};
@@ -21,6 +21,7 @@ use itertools::Itertools;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::Status::SKIP;
 use walkdir::DirEntry;
+use validate::validate_path_buf;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}
@@ -43,7 +44,11 @@ impl Command for Test {
 unit tests specified in YAML format to determine each individual rule's success
 or failure testing.
 "#)
-            .arg(Arg::with_name(RULES_FILE.0).long(RULES_FILE.0).short(RULES_FILE.1).takes_value(true).help("Provide a rules file"))
+            .arg(Arg::with_name(RULES_FILE.0)
+                .long(RULES_FILE.0)
+                .short(RULES_FILE.1)
+                .takes_value(true)
+                .help("Provide a rules file"))
             .arg(Arg::with_name(TEST_DATA.0)
                 .long(TEST_DATA.0)
                 .short(TEST_DATA.1)
@@ -84,10 +89,11 @@ or failure testing.
         if app.is_present(DIRECTORY_ONLY) {
             struct GuardFile {
                 prefix: String,
-                file: walkdir::DirEntry,
-                test_files: Vec<walkdir::DirEntry>
+                file: DirEntry,
+                test_files: Vec<DirEntry>
             }
             let dir = app.value_of(DIRECTORY.0).unwrap();
+            validate_path_buf(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
@@ -164,6 +170,9 @@ or failure testing.
         else {
             let file = app.value_of(RULES_FILE.0).unwrap();
             let data = app.value_of(TEST_DATA.0).unwrap();
+
+            validate_path_buf(file)?;
+            validate_path_buf(data)?;
             let data_test_files = get_files_with_filter(&data, cmp, |entry| {
                 entry.file_name().to_str()
                     .map(|name|
@@ -177,6 +186,7 @@ or failure testing.
             })?;
 
             let path = PathBuf::try_from(file)?;
+
             let rule_file = File::open(path.clone())?;
             if !rule_file.metadata()?.is_file() {
                 return Err(Error::new(ErrorKind::IoError(
@@ -256,7 +266,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
 
                         let by_rules = top.children.iter().fold(
                             HashMap::new(), |mut acc, rule| {
-                            if let Some(RecordType::RuleCheck(NamedStatus{ status: got_status, name, ..})) = rule.container {
+                            if let Some(RecordType::RuleCheck(NamedStatus{ name, ..})) = rule.container {
                                 acc.entry(name).or_insert(vec![]).push(&rule.container)
                             }
                             acc
@@ -277,7 +287,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                 for each in rule.iter() {
                                     if let Some(RecordType::RuleCheck(NamedStatus { status: got_status, .. })) = each {
                                         match expected {
-                                            Status::SKIP => {
+                                            SKIP => {
                                                 if *got_status == SKIP {
                                                     all_skipped += 1;
                                                 }
@@ -315,7 +325,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         }
 
                         if verbose {
-                            super::validate::print_verbose_tree(&top);
+                            validate::print_verbose_tree(&top);
                         }
                         by_result
                     }
@@ -346,7 +356,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                                                                  each.context, status, got)));
                                             }
                                             if verbose {
-                                                super::validate::print_context(each, 1);
+                                                validate::print_context(each, 1);
                                             }
                                         }
                                     }

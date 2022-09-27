@@ -175,6 +175,7 @@ or rules files.
         let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
+                    validate_path_buf(&file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
                     for each_entry in walkdir::WalkDir::new(base.clone()) {
                         if let Ok(file) = each_entry {
@@ -232,6 +233,7 @@ or rules files.
             Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
                 for file_or_dir in list_of_file_or_dir {
+                    validate_path_buf(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
                     for each_entry in walkdir::WalkDir::new(base.clone()) {
                         if let Ok(file) = each_entry {
@@ -318,10 +320,11 @@ or rules files.
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
-            let base = PathBuf::from_str(file_or_dir)?;
-            if base.is_file() {
-                rules.push(base.clone())
-            } else {
+                validate_path_buf(file_or_dir)?;
+                let base = PathBuf::from_str(file_or_dir)?;
+                if base.is_file() {
+                    rules.push(base.clone())
+                } else {
                     for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
                         if let Ok(entry) = each {
                             if entry.path().is_file() &&
@@ -434,6 +437,17 @@ or rules files.
         }
         Ok(exit_code)
     }
+}
+
+pub(crate) fn validate_path_buf(base: &str) -> Result<()> {
+    let file_or_dir = Path::new(base);
+    if !file_or_dir.is_file() && !file_or_dir.is_dir() {
+        return Err(Error::new(ErrorKind::FileNotFoundError(
+            base.to_string()
+        )))
+    }
+
+    Ok(())
 }
 
 pub fn validate_and_return_json(

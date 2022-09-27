@@ -81,6 +81,10 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
         ErrorKind::MissingValue(err) => {
             format!("There was no variable or value object to resolve. Error = {}", err)
         }
+
+        ErrorKind::FileNotFoundError(path) => {
+            format!("The path {} does not exist", path)
+        },
     }
 }
 
@@ -111,8 +115,9 @@ pub enum ErrorKind {
     IncompatibleRetrievalError(String),
     IncompatibleError(String),
     NotComparable(String),
-    ConversionError(std::convert::Infallible),
-    Errors(Vec<ErrorKind>)
+    ConversionError(Infallible),
+    Errors(Vec<ErrorKind>),
+    FileNotFoundError(String)
 }
 
 impl From<std::fmt::Error> for Error {
