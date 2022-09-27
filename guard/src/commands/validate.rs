@@ -175,34 +175,32 @@ or rules files.
         let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
-                    validate_path_buf(&file_or_dir)?;
+                    validate_path_buf(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for each_entry in walkdir::WalkDir::new(base.clone()) {
-                        if let Ok(file) = each_entry {
-                            if file.path().is_file() {
-                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
-                                {
-                                    let mut content = String::new();
-                                    let mut reader = BufReader::new(File::open(file.path())?);
-                                    reader.read_to_string(&mut content)?;
-                                    let path = file.path();
-                                    let relative = match path.strip_prefix(base.as_path()) {
-                                        Ok(p) => if p != empty_path {
-                                            format!("{}", p.display())
-                                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                                        Err(_) => format!("{}", path.display()),
-                                    };
-                                    let path_value = match get_path_aware_value_from_data(&content) {
-                                        Ok(T) => T,
-                                        Err(E) => return Err(E)
-                                    };
-                                    streams.push(DataFile {
-                                        name: relative,
-                                        path_value,
-                                        content
-                                    });
-                                }
+                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                        if file.path().is_file() {
+                            let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
+                            {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path = file.path();
+                                let relative = match path.strip_prefix(base.as_path()) {
+                                    Ok(p) => if p != empty_path {
+                                        format!("{}", p.display())
+                                    } else { path.file_name().unwrap().to_str().unwrap().to_string() },
+                                    Err(_) => format!("{}", path.display()),
+                                };
+                                let path_value = match get_path_aware_value_from_data(&content) {
+                                    Ok(t) => t,
+                                    Err(e) => return Err(e)
+                                };
+                                streams.push(DataFile {
+                                    name: relative,
+                                    path_value,
+                                    content
+                                });
                             }
                         }
                     }
@@ -215,8 +213,8 @@ or rules files.
                     let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
                     let path_value = match get_path_aware_value_from_data(&content) {
-                        Ok(T) => T,
-                        Err(E) => return Err(E)
+                        Ok(t) => t,
+                        Err(e) => return Err(e)
                     };
                     streams.push(DataFile {
                         name: "STDIN".to_string(),
@@ -235,26 +233,24 @@ or rules files.
                 for file_or_dir in list_of_file_or_dir {
                     validate_path_buf(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for each_entry in walkdir::WalkDir::new(base.clone()) {
-                        if let Ok(file) = each_entry {
-                            if file.path().is_file() {
-                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
-                                {
-                                    let mut content = String::new();
-                                    let mut reader = BufReader::new(File::open(file.path())?);
-                                    reader.read_to_string(&mut content)?;
-                                    let path_value = match get_path_aware_value_from_data(&content) {
-                                        Ok(T) => T,
-                                        Err(E) => return Err(E)
-                                    };
-                                    primary_path_value = match primary_path_value {
-                                        Some(mut current) => {
-                                            Some(current.merge(path_value)?)
-                                        },
-                                        None => Some(path_value)
-                                    };
-                                }
+                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                        if file.path().is_file() {
+                            let name = file.file_name().to_str().map_or("".to_string(), String::from);
+                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
+                            {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path_value = match get_path_aware_value_from_data(&content) {
+                                    Ok(t) => t,
+                                    Err(e) => return Err(e)
+                                };
+                                primary_path_value = match primary_path_value {
+                                    Some(current) => {
+                                        Some(current.merge(path_value)?)
+                                    },
+                                    None => Some(path_value)
+                                };
                             }
                         }
                     }
@@ -264,11 +260,7 @@ or rules files.
             None => None
         };
 
-        let verbose = if app.is_present(VERBOSE.0) {
-            true
-        } else {
-            false
-        };
+        let verbose = app.is_present(VERBOSE.0);
 
         let data_type = match app.value_of(TYPE.0) {
             Some(t) =>
@@ -325,25 +317,24 @@ or rules files.
                 if base.is_file() {
                     rules.push(base.clone())
                 } else {
-                    for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
-                        if let Ok(entry) = each {
-                            if entry.path().is_file() &&
-                                entry.path().file_name().map(|s| s.to_str()).flatten()
-                                    .map_or(false, |s|
-                                        has_a_supported_extension(&s.to_string(),
-                                                                  &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                    )
-                            {
-                                rules.push(entry.path().to_path_buf());
-                            }
+                    for entry in walkdir::WalkDir::new(base.clone()).sort_by(cmp).into_iter().flatten() {
+                        if entry.path().is_file() &&
+                            entry.path().file_name().and_then(|s| s.to_str())
+                                .map_or(false, |s|
+                                    has_a_supported_extension(s,
+                                                              &RULE_FILE_SUPPORTED_EXTENSIONS)
+                                )
+                        {
+                            rules.push(entry.path().to_path_buf());
                         }
+
                     }
                 }
             }
             for each_file_content in iterate_over(&rules, |content, file|
                 Ok((content, match file.strip_prefix(&file) {
                     Ok(path) => if path == empty_path {
-                        format!("{}", file.file_name().unwrap().to_str().unwrap())
+                        file.file_name().unwrap().to_str().unwrap().to_string()
                     } else { format!("{}", path.display()) },
                     Err(_) => format!("{}", file.display()),
                 }))) {
@@ -372,7 +363,7 @@ or rules files.
                                     print_json,
                                     show_clause_failures,
                                     new_version_eval_engine,
-                                    summary_type.clone())? {
+                                    summary_type)? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
                                         exit_code = 5;
@@ -386,14 +377,14 @@ or rules files.
         } else {
             let mut context = String::new();
             let mut reader = BufReader::new(std::io::stdin());
-            reader.read_to_string(&mut context);
+            reader.read_to_string(&mut context)?;
             let payload: Payload = deserialize_payload(&context)?;
             let mut data_collection: Vec<DataFile> = Vec::new();
             for (i, data) in payload.list_of_data.iter().enumerate() {
-                let mut content = data.to_string();
+                let content = data.to_string();
                 let path_value = match get_path_aware_value_from_data(&content) {
-                    Ok(T) => T,
-                    Err(E) => return Err(E)
+                    Ok(t) => t,
+                    Err(e) => return Err(e)
                 };
                 data_collection.push(DataFile {
                     name: format!("DATA_STDIN[{}]", i + 1),
@@ -425,7 +416,7 @@ or rules files.
                             print_json,
                             show_clause_failures,
                             new_version_eval_engine,
-                            summary_type.clone())? {
+                            summary_type)? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
                                 exit_code = 5;
@@ -454,37 +445,36 @@ pub fn validate_and_return_json(
     data: &str,
     rules: &str,
 ) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
+    let input_data = match serde_json::from_str::<serde_json::Value>(data) {
        Ok(value) => PathAwareValue::try_from(value),
        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
 
-    let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
+    let span = crate::rules::parser::Span::new_extra(rules, "lambda");
 
     match crate::rules::parser::rules_file(span) {
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                    //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
-                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
-                    let mut tracker = root_scope.reset_recorder();
+                    let mut root_scope = root_scope(&rules, &root)?;
+                    let _status = eval_rules_file(&rules, &mut root_scope)?;
+                    let tracker = root_scope.reset_recorder();
                     let event = tracker.final_event.unwrap();
                     let file_report = simplifed_json_from_root(&event)?;
                     Ok(serde_json::to_string_pretty(&file_report)?)
 
                 }
-                Err(e) => return Err(e),
+                Err(e) => Err(e),
             }
         }
-        Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) =>  Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
@@ -597,7 +587,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
             Some(to) => {
                 println!(" with {:?} failed", to);
             },
-            None => { print!("\n") }
+            None => { println!() }
         }
         match &matched.msg {
             Some(m) => {
@@ -606,13 +596,13 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
                     println!("{}", each);
                 }
             },
-            None => { print!("\n"); }
+            None => { println!(); }
         }
         if first { first = false; }
     }
 }
 
-impl<'r, 'loc> ConsoleReporter<'r> {
+impl<'r> ConsoleReporter<'r> {
     pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<&'r dyn Reporter>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
         ConsoleReporter {
             root_context: root,
@@ -629,29 +619,19 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         if self.verbose {
-            Ok(format!("{}", serde_json::to_string_pretty(&top.children).unwrap()))
+            Ok(serde_json::to_string_pretty(&top.children).unwrap())
         }
         else {
             let mut output = Vec::new();
-            let longest = top.children.iter()
-                .max_by(|f, s| {
-                    (*f).context.len().cmp(&(*s).context.len())
-                })
-                .map(|elem| elem.context.len())
-                .unwrap_or(20);
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                top.children.iter().partition(|ctx|
-                    match (*ctx).status {
-                        Some(Status::FAIL) => true,
-                        _ => false
-                    });
+            let longest = get_longest(top);
+            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) = partition_failed_and_rest(top);
 
             let traversal = Traversal::from(root);
 
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
-                    top.status.clone(),
+                    top.status,
                     &failed,
                     &rest,
                     longest,
@@ -668,35 +648,26 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         }
     }
 
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> crate::rules::Result<()> {
+
+    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
+        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             println!("{}", serialized_user);
         } else {
-            let longest = top.children.iter()
-                .max_by(|f, s| {
-                    (*f).context.len().cmp(&(*s).context.len())
-                })
-                .map(|elem| elem.context.len())
-                .unwrap_or(20);
+            let longest = get_longest(top);
 
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                top.children.iter().partition(|ctx|
-                    match (*ctx).status {
-                        Some(Status::FAIL) => true,
-                        _ => false
-                    });
+            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) = partition_failed_and_rest(top);
 
             let traversal = Traversal::from(root);
 
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
-                    top.status.clone(),
+                    top.status,
                     &failed,
                     &rest,
                     longest,
@@ -755,7 +726,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 
 }
 
-fn evaluate_against_data_input<'r>(data_type: Type,
+fn evaluate_against_data_input<'r>(_data_type: Type,
                                    output: OutputFormatType,
                                    extra_data: Option<PathAwareValue>,
                                    data_files: &'r Vec<DataFile>,
@@ -767,14 +738,14 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                                    new_engine_version: bool,
                                    summary_table: BitFlags<SummaryType>) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
+    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
-        Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
+        Box::new(summary_table::SummaryTable::new(summary_table, cfn.as_ref()))
             as Box<dyn Reporter>
     };
     for file in data_files {
@@ -812,9 +783,9 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
             let reporter = ConsoleReporter::new(stacker, &renderers, rules_file_name, &file.name, verbose, print_json, show_clause_failures);
-            let appender = MetadataAppender { delegate: &reporter, root_context: &each };
-            let status = rules.evaluate(&each, &appender)?;
-            reporter.report(&each, output)?;
+            let appender = MetadataAppender { delegate: &reporter, root_context: each };
+            let status = rules.evaluate(each, &appender)?;
+            reporter.report(each, output)?;
             if status == Status::FAIL {
                 overall = Status::FAIL
             }
@@ -825,9 +796,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
     if content.trim().is_empty() {
-        return Err(Error::new(ErrorKind::ParseError(
-            format!("blank data"))
-        ))
+        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
     } else {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
@@ -842,8 +811,24 @@ fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
     }
 }
 
-fn has_a_supported_extension(name: &String, extensions: &[&str]) -> bool {
-    extensions.into_iter().any(|extension| name.ends_with(extension))
+fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
+    extensions.iter().any(|extension| name.ends_with(extension))
+}
+
+fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
+    top.children
+        .iter()
+        .partition(|ctx|
+            matches!((*ctx).status, Some(Status::FAIL)))
+}
+
+fn get_longest(top: &StatusContext) -> usize {
+    top.children.iter()
+        .max_by(|f, s| {
+            (*f).context.len().cmp(&(*s).context.len())
+        })
+        .map(|elem| elem.context.len())
+        .unwrap_or(20)
 }
 
 #[cfg(test)]
