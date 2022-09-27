@@ -2,9 +2,6 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::fmt::Formatter;
 
-use nom;
-use serde_json;
-
 #[derive(Debug)]
 pub struct Error(pub ErrorKind);
 
@@ -57,7 +54,7 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
             format!("Types or variable assignments have incompatible types to retrieve {}", err)
         },
 
-        ErrorKind::IncompatibleError(err) => {
+        IncompatibleError(err) => {
             format!("Types or variable assignments are incompatible {}", err)
         },
 
@@ -66,11 +63,11 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
         },
 
         ErrorKind::ConversionError(_ignore) => {
-            format!("Could not convert in JSON value object")
+            "Could not convert in JSON value object".to_string()
         },
 
         ErrorKind::Errors(all) => {
-            let vec = all.iter().map(|e| error_kind_msg(e) ).collect::<Vec<String>>();
+            let vec = all.iter().map(error_kind_msg ).collect::<Vec<String>>();
             format!("{:?}", &vec)
         },
 
@@ -151,7 +148,7 @@ impl From<regex::Error> for Error {
     }
 }
 
-impl From<std::convert::Infallible> for Error {
+impl From<Infallible> for Error {
     fn from(err: Infallible) -> Self {
         Error(ErrorKind::ConversionError(err))
     }
@@ -163,7 +160,7 @@ use crate::rules::errors::ErrorKind::IncompatibleError;
 impl <'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     fn from(err: nom::Err<(Span<'a>, nom::error::ErrorKind)>) -> Self {
         let msg = match err {
-            nom::Err::Incomplete(_) => format!("More bytes required for parsing"),
+            nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
             nom::Err::Failure((s, _k)) | nom::Err::Error((s, _k)) => {
                 let span = s as Span;
                 format!("Error parsing file {} at line {} at column {}, remaining {}",
@@ -178,7 +175,7 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     fn from(err: nom::Err<ParserError<'a>>) -> Self {
         let msg = match err {
             nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {}", e),
-            nom::Err::Incomplete(_) => format!("More bytes required for parsing"),
+            nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
         };
         Error(ErrorKind::ParseError(msg))
     }
