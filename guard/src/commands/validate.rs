@@ -476,10 +476,12 @@ or rules files.
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).try_exists() {
-        Ok(exists) => if !exists {
-            return Err(Error::new(ErrorKind::FileNotFoundError(base.to_string())))
-        },
-        Err(e) => return Err(Error::new(ErrorKind::IoError(e)))
+        Ok(exists) => {
+            if !exists {
+                return Err(Error::new(ErrorKind::FileNotFoundError(base.to_string())));
+            }
+        }
+        Err(e) => return Err(Error::new(ErrorKind::IoError(e))),
     }
 
     Ok(())
