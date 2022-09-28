@@ -7,7 +7,7 @@ use clap::{App, Arg, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
 
-use validate::validate_path_buf;
+use validate::validate_path;
 
 use crate::command::Command;
 use crate::commands::files::{
@@ -96,7 +96,7 @@ or failure testing.
                 test_files: Vec<DirEntry>,
             }
             let dir = app.value_of(DIRECTORY.0).unwrap();
-            validate_path_buf(dir)?;
+            validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
@@ -204,8 +204,8 @@ or failure testing.
             let file = app.value_of(RULES_FILE.0).unwrap();
             let data = app.value_of(TEST_DATA.0).unwrap();
 
-            validate_path_buf(file)?;
-            validate_path_buf(data)?;
+            validate_path(file)?;
+            validate_path(data)?;
             let data_test_files = get_files_with_filter(data, cmp, |entry| {
                 entry
                     .file_name()
@@ -269,6 +269,7 @@ struct TestSpec {
     expectations: TestExpectations,
 }
 
+#[allow(clippy::never_loop)]
 fn test_with_data(
     test_data_files: &[PathBuf],
     rules: &RulesFile<'_>,
@@ -330,11 +331,12 @@ fn test_with_data(
                             let mut statues: Vec<Status> = Vec::with_capacity(rule.len());
                             let matched = 'matched: loop {
                                 let mut all_skipped = 0;
-                                for each in rule.iter() {
-                                    if let Some(RecordType::RuleCheck(NamedStatus {
+
+                                for each in rule.iter().copied().flatten() {
+                                    if let RecordType::RuleCheck(NamedStatus {
                                         status: got_status,
                                         ..
-                                    })) = each
+                                    }) = each
                                     {
                                         match expected {
                                             SKIP => {

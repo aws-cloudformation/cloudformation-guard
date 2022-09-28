@@ -55,6 +55,7 @@ pub(crate) enum Type {
     Generic,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
@@ -62,6 +63,7 @@ pub(crate) enum OutputFormatType {
     YAML,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) trait Reporter: Debug {
     fn report(
         &self,
@@ -182,7 +184,7 @@ or rules files.
         let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
-                    validate_path_buf(file_or_dir)?;
+                    validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
                     for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
                         if file.path().is_file() {
@@ -245,7 +247,7 @@ or rules files.
             Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
                 for file_or_dir in list_of_file_or_dir {
-                    validate_path_buf(file_or_dir)?;
+                    validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
                     for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
                         if file.path().is_file() {
@@ -327,7 +329,7 @@ or rules files.
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
-                validate_path_buf(file_or_dir)?;
+                validate_path(file_or_dir)?;
                 let base = PathBuf::from_str(file_or_dir)?;
                 if base.is_file() {
                     rules.push(base.clone())
@@ -472,10 +474,12 @@ or rules files.
     }
 }
 
-pub(crate) fn validate_path_buf(base: &str) -> Result<()> {
-    let file_or_dir = Path::new(base);
-    if !file_or_dir.is_file() && !file_or_dir.is_dir() {
-        return Err(Error::new(ErrorKind::FileNotFoundError(base.to_string())));
+pub(crate) fn validate_path(base: &str) -> Result<()> {
+    match Path::new(base).try_exists() {
+        Ok(exists) => if !exists {
+            return Err(Error::new(ErrorKind::FileNotFoundError(base.to_string())))
+        },
+        Err(e) => return Err(Error::new(ErrorKind::IoError(e)))
     }
 
     Ok(())
