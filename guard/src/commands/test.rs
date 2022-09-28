@@ -1,33 +1,38 @@
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::path::PathBuf;
 
-use clap::{App, Arg, ArgMatches, ArgGroup};
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use serde::{Deserialize, Serialize};
+use walkdir::DirEntry;
 
+use validate::validate_path_buf;
 
 use crate::command::Command;
-use crate::commands::{ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, validate, VERBOSE};
-use crate::commands::files::{alpabetical, last_modified, regular_ordering, iterate_over, get_files_with_filter, read_file_content};
-use crate::rules::{Evaluate, Result, Status, RecordType, NamedStatus};
+use crate::commands::files::{
+    alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
+    regular_ordering,
+};
+use crate::commands::tracker::StackTracker;
+use crate::commands::{
+    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
+    RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
+};
 use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-
-use std::collections::{HashMap, BTreeMap};
 use crate::rules::path_value::PathAwareValue;
-use crate::commands::tracker::{StackTracker};
-use serde::{Serialize, Deserialize};
-use crate::rules::eval::eval_rules_file;
 use crate::rules::Status::SKIP;
-use walkdir::DirEntry;
-use validate::validate_path_buf;
+use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}
 
 impl Test {
     pub(crate) fn new() -> Self {
-        Test{}
+        Test {}
     }
 }
 
@@ -35,7 +40,6 @@ impl Command for Test {
     fn name(&self) -> &'static str {
         TEST
     }
-
 
     fn command(&self) -> App<'static, 'static> {
         App::new(TEST)
@@ -89,46 +93,64 @@ or failure testing.
             struct GuardFile {
                 prefix: String,
                 file: DirEntry,
-                test_files: Vec<DirEntry>
+                test_files: Vec<DirEntry>,
             }
             let dir = app.value_of(DIRECTORY.0).unwrap();
             validate_path_buf(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
             let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
-            for file in walk.follow_links(true).sort_by_file_name().into_iter().flatten() {
+            for file in walk
+                .follow_links(true)
+                .sort_by_file_name()
+                .into_iter()
+                .flatten()
+            {
                 if file.path().is_file() {
-                    let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
-                    if name.ends_with(".guard") ||
-                        name.ends_with(".ruleset") {
-                        let prefix = name.strip_suffix(".guard").or_else(|| name.strip_suffix(".ruleset"))
-                            .unwrap().to_string();
-                        ordered_guard_files.entry(
-                            file.path().parent()
-                                .map_or("".to_string(), |p| format!("{}", p.display()))).or_insert(vec![])
-                            .push(GuardFile { prefix, file, test_files: vec![] });
-                        continue
-                    }
-                    else {
+                    let name = file
+                        .file_name()
+                        .to_str()
+                        .map_or("".to_string(), |s| s.to_string());
+                    if name.ends_with(".guard") || name.ends_with(".ruleset") {
+                        let prefix = name
+                            .strip_suffix(".guard")
+                            .or_else(|| name.strip_suffix(".ruleset"))
+                            .unwrap()
+                            .to_string();
+                        ordered_guard_files
+                            .entry(
+                                file.path()
+                                    .parent()
+                                    .map_or("".to_string(), |p| format!("{}", p.display())),
+                            )
+                            .or_insert(vec![])
+                            .push(GuardFile {
+                                prefix,
+                                file,
+                                test_files: vec![],
+                            });
+                        continue;
+                    } else {
                         non_guard.push(file);
                     }
                 }
             }
             for file in non_guard {
-                let name = file.file_name().to_str().map_or("".to_string(), |s| s.to_string());
-                if name.ends_with(".yaml")          ||
-                    name.ends_with(".yml")           ||
-                    name.ends_with(".json")          ||
-                    name.ends_with(".jsn") {
+                let name = file
+                    .file_name()
+                    .to_str()
+                    .map_or("".to_string(), |s| s.to_string());
+                if name.ends_with(".yaml")
+                    || name.ends_with(".yml")
+                    || name.ends_with(".json")
+                    || name.ends_with(".jsn")
+                {
                     let parent = file.path().parent();
                     if parent.map_or(false, |p| p.ends_with("tests")) {
-                        if let Some(candidates) = parent
-                            .unwrap()
-                            .parent()
-                            .and_then(|grand|{
-                                let grand = format!("{}", grand.display());
-                                ordered_guard_files.get_mut(&grand)
-                            }) {
+                        if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
+                            let grand = format!("{}", grand.display());
+                            ordered_guard_files.get_mut(&grand)
+                        }) {
                             for guard_file in candidates {
                                 if name.starts_with(&guard_file.prefix) {
                                     guard_file.test_files.push(file);
@@ -143,53 +165,69 @@ or failure testing.
             for (_dir, guard_files) in ordered_guard_files {
                 for each_rule_file in guard_files {
                     if each_rule_file.test_files.is_empty() {
-                        println!("Guard File {} did not have any tests associated, skipping.", each_rule_file.file.path().display());
+                        println!(
+                            "Guard File {} did not have any tests associated, skipping.",
+                            each_rule_file.file.path().display()
+                        );
                         println!("---");
                         continue;
                     }
-                    println!("Testing Guard File {}", each_rule_file.file.path().display());
+                    println!(
+                        "Testing Guard File {}",
+                        each_rule_file.file.path().display()
+                    );
                     let rule_file = File::open(each_rule_file.file.path())?;
                     let content = read_file_content(rule_file)?;
-                    let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+                    let span =
+                        crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => println!("Parse Error on ruleset file {}", e),
                         Ok(rules) => {
-                            let data_test_files = each_rule_file.test_files.iter()
-                                .map(|de| de.path().to_path_buf()).collect::<Vec<PathBuf>>();
-                            let test_exit_code = test_with_data(&data_test_files, &rules, verbose, new_engine)?;
-                            exit_code = if exit_code == 0 { test_exit_code } else { exit_code }
+                            let data_test_files = each_rule_file
+                                .test_files
+                                .iter()
+                                .map(|de| de.path().to_path_buf())
+                                .collect::<Vec<PathBuf>>();
+                            let test_exit_code =
+                                test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                            exit_code = if exit_code == 0 {
+                                test_exit_code
+                            } else {
+                                exit_code
+                            }
                         }
                     }
                     println!("---");
                 }
             }
-
-        }
-        else {
+        } else {
             let file = app.value_of(RULES_FILE.0).unwrap();
             let data = app.value_of(TEST_DATA.0).unwrap();
 
             validate_path_buf(file)?;
             validate_path_buf(data)?;
             let data_test_files = get_files_with_filter(data, cmp, |entry| {
-                entry.file_name().to_str()
-                    .map(|name|
-                        name.ends_with(".json") ||
-                            name.ends_with(".yaml") ||
-                            name.ends_with(".JSON") ||
-                            name.ends_with(".YAML") ||
-                            name.ends_with(".yml")  ||
-                            name.ends_with(".jsn")
-                    ).unwrap_or(false)
+                entry
+                    .file_name()
+                    .to_str()
+                    .map(|name| {
+                        name.ends_with(".json")
+                            || name.ends_with(".yaml")
+                            || name.ends_with(".JSON")
+                            || name.ends_with(".YAML")
+                            || name.ends_with(".yml")
+                            || name.ends_with(".jsn")
+                    })
+                    .unwrap_or(false)
             })?;
 
             let path = PathBuf::try_from(file)?;
 
             let rule_file = File::open(path.clone())?;
             if !rule_file.metadata()?.is_file() {
-                return Err(Error::new(ErrorKind::IoError(
-                    std::io::Error::from(std::io::ErrorKind::InvalidInput)
-                )))
+                return Err(Error::new(ErrorKind::IoError(std::io::Error::from(
+                    std::io::ErrorKind::InvalidInput,
+                ))));
             }
 
             let ruleset = vec![path];
@@ -203,7 +241,8 @@ or failure testing.
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => println!("Parse Error on ruleset file {}", e),
                             Ok(rules) => {
-                                let curr_exit_code = test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                                let curr_exit_code =
+                                    test_with_data(&data_test_files, &rules, verbose, new_engine)?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -220,7 +259,7 @@ or failure testing.
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TestExpectations {
-    rules: HashMap<String, String>
+    rules: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -230,19 +269,25 @@ struct TestSpec {
     expectations: TestExpectations,
 }
 
-fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: bool, new_engine: bool) -> Result<i32> {
+fn test_with_data(
+    test_data_files: &[PathBuf],
+    rules: &RulesFile<'_>,
+    verbose: bool,
+    new_engine: bool,
+) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
     for specs in iterate_over(test_data_files, |data, path| {
         match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
-            Ok(spec) => {
-                Ok(spec)
-            },
+            Ok(spec) => Ok(spec),
             Err(_) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
                 Ok(specs) => Ok(specs),
-                Err(e) => Err(Error::new (ErrorKind::ParseError(
-                    format!("Unable to process data in file {}, Error {},", path.display(), e))))
-            }
+                Err(e) => Err(Error::new(ErrorKind::ParseError(format!(
+                    "Unable to process data in file {}, Error {},",
+                    path.display(),
+                    e
+                )))),
+            },
         }
     }) {
         match specs {
@@ -261,9 +306,10 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         eval_rules_file(rules, &mut root_scope)?;
                         let top = root_scope.reset_recorder().extract();
 
-                        let by_rules = top.children.iter().fold(
-                            HashMap::new(), |mut acc, rule| {
-                            if let Some(RecordType::RuleCheck(NamedStatus{ name, ..})) = rule.container {
+                        let by_rules = top.children.iter().fold(HashMap::new(), |mut acc, rule| {
+                            if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
+                                rule.container
+                            {
                                 acc.entry(name).or_insert(vec![]).push(&rule.container)
                             }
                             acc
@@ -273,7 +319,10 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                             let expected = match each.expectations.rules.get(rule_name) {
                                 Some(exp) => Status::try_from(exp.as_str())?,
                                 None => {
-                                    println!("  No Test expectation was set for Rule {}", rule_name);
+                                    println!(
+                                        "  No Test expectation was set for Rule {}",
+                                        rule_name
+                                    );
                                     continue;
                                 }
                             };
@@ -282,17 +331,21 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                             let matched = 'matched: loop {
                                 let mut all_skipped = 0;
                                 for each in rule.iter() {
-                                    if let Some(RecordType::RuleCheck(NamedStatus { status: got_status, .. })) = each {
+                                    if let Some(RecordType::RuleCheck(NamedStatus {
+                                        status: got_status,
+                                        ..
+                                    })) = each
+                                    {
                                         match expected {
                                             SKIP => {
                                                 if *got_status == SKIP {
                                                     all_skipped += 1;
                                                 }
-                                            },
+                                            }
 
                                             rest => {
                                                 if *got_status == rest {
-                                                    break 'matched Some(expected)
+                                                    break 'matched Some(expected);
                                                 }
                                             }
                                         }
@@ -300,22 +353,27 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                                     }
                                 }
                                 if expected == SKIP && all_skipped == rule.len() {
-                                    break 'matched Some(expected)
+                                    break 'matched Some(expected);
                                 }
-                                break 'matched None
+                                break 'matched None;
                             };
 
                             match matched {
                                 Some(status) => {
-                                    by_result.entry(String::from("PASS")).or_insert_with(indexmap::IndexSet::new)
-                                        .insert(format!("{}: Expected = {}",
-                                                                     rule_name, status));
-                                },
+                                    by_result
+                                        .entry(String::from("PASS"))
+                                        .or_insert_with(indexmap::IndexSet::new)
+                                        .insert(format!("{}: Expected = {}", rule_name, status));
+                                }
 
                                 None => {
-                                    by_result.entry(String::from("FAIL")).or_insert_with(indexmap::IndexSet::new)
-                                        .insert(format!("{}: Expected = {}, Evaluated = {:?}",
-                                                                     rule_name, expected, statues));
+                                    by_result
+                                        .entry(String::from("FAIL"))
+                                        .or_insert_with(indexmap::IndexSet::new)
+                                        .insert(format!(
+                                            "{}: Expected = {}, Evaluated = {:?}",
+                                            rule_name, expected, statues
+                                        ));
                                     exit_code = 7;
                                 }
                             }
@@ -325,8 +383,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                             validate::print_verbose_tree(&top);
                         }
                         by_result
-                    }
-                    else {
+                    } else {
                         let root = PathAwareValue::try_from(each.input)?;
                         let context = RootScope::new(rules, &root);
                         let stacker = StackTracker::new(&context);
@@ -337,29 +394,38 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
                         let mut by_result = HashMap::new();
                         for each in &stack[0].children {
                             match expectations.get(&each.context) {
-                                Some(value) => {
-                                    match Status::try_from(value.as_str()) {
-                                        Err(e) => println!("Incorrect STATUS provided {}", e),
-                                        Ok(status) => {
-                                            let got = each.status.unwrap();
-                                            if status != got {
-                                                by_result.entry(String::from("FAILED")).or_insert_with(indexmap::IndexSet::new)
-                                                    .insert(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                 each.context, status, got));
-                                                exit_code = 7;
-                                            } else {
-                                                by_result.entry(String::from("PASS")).or_insert_with(indexmap::IndexSet::new)
-                                                    .insert(format!("{}: Expected = {}, Evaluated = {}",
-                                                                                 each.context, status, got));
-                                            }
-                                            if verbose {
-                                                validate::print_context(each, 1);
-                                            }
+                                Some(value) => match Status::try_from(value.as_str()) {
+                                    Err(e) => println!("Incorrect STATUS provided {}", e),
+                                    Ok(status) => {
+                                        let got = each.status.unwrap();
+                                        if status != got {
+                                            by_result
+                                                .entry(String::from("FAILED"))
+                                                .or_insert_with(indexmap::IndexSet::new)
+                                                .insert(format!(
+                                                    "{}: Expected = {}, Evaluated = {}",
+                                                    each.context, status, got
+                                                ));
+                                            exit_code = 7;
+                                        } else {
+                                            by_result
+                                                .entry(String::from("PASS"))
+                                                .or_insert_with(indexmap::IndexSet::new)
+                                                .insert(format!(
+                                                    "{}: Expected = {}, Evaluated = {}",
+                                                    each.context, status, got
+                                                ));
+                                        }
+                                        if verbose {
+                                            validate::print_context(each, 1);
                                         }
                                     }
                                 },
                                 None => {
-                                    println!("  No Test expectation was set for Rule {}", each.context)
+                                    println!(
+                                        "  No Test expectation was set for Rule {}",
+                                        each.context
+                                    )
                                 }
                             }
                         }
@@ -374,7 +440,7 @@ fn test_with_data(test_data_files: &[PathBuf], rules: &RulesFile<'_>, verbose: b
     Ok(exit_code)
 }
 
-pub (crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
+pub(crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
     use itertools::Itertools;
     let mut results = by_result.keys().cloned().collect_vec();
 
