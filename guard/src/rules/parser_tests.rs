@@ -57,23 +57,23 @@ fn test_parse_string() {
 fn test_embedded_string_parsing() {
     let s = "\"\\\"Hi There\\\"\"";
     let string = parse_string(from_str2(s));
-    assert_eq!(string.is_ok(), true);
+    assert!(string.is_ok());
     assert_eq!(string.unwrap().1, Value::String("\"Hi There\"".to_string()));
 
     let s = "\"{\\\"hi\\\": \\\"there\\\"}\"";
     let string = parse_string(from_str2(s));
-    assert_eq!(string.is_ok(), true);
+    assert!(string.is_ok());
     let json = r#"{"hi": "there"}"#.to_string();
     if let Value::String(val) = string.unwrap().1 {
         assert_eq!(val, json);
         let json = serde_json::from_str::<serde_json::Value>(&val);
-        assert_eq!(json.is_ok(), true);
+        assert!(json.is_ok());
     }
 
     let s = "\"Hi \\\"embedded\\\" there\"";
     let string = parse_string(from_str2(s));
-    assert_eq!(string.is_ok(), true);
-    assert_eq!(string.unwrap().1, Value::String(String::from("Hi \"embedded\" there".to_owned())));
+    assert!(string.is_ok());
+    assert_eq!(string.unwrap().1, Value::String("Hi \"embedded\" there".to_owned()));
 }
 
 #[test]
@@ -104,18 +104,18 @@ fn test_parse_bool() {
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     assert_eq!(
         parse_bool(from_str2(s)),
-        Ok((cmp.clone(), Value::Bool(true)))
+        Ok((cmp, Value::Bool(true)))
     );
     let s = "true";
     assert_eq!(
         parse_bool(from_str2(s)),
-        Ok((cmp.clone(), Value::Bool(true)))
+        Ok((cmp, Value::Bool(true)))
     );
     let s = "False";
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     assert_eq!(
         parse_bool(from_str2(s)),
-        Ok((cmp.clone(), Value::Bool(false)))
+        Ok((cmp, Value::Bool(false)))
     );
     let s = "false";
     assert_eq!(
@@ -127,7 +127,7 @@ fn test_parse_bool() {
     assert_eq!(
         parse_bool(from_str2(s)),
         Err(nom::Err::Error(
-            ParserError { span: cmp, kind: nom::error::ErrorKind::Tag, context: "".to_string() }))
+            ParserError { span: cmp, kind: ErrorKind::Tag, context: "".to_string() }))
     );
     let s = "true1234";
     let cmp = unsafe { Span::new_from_raw_offset(4, 1, "1234", "") };
@@ -153,7 +153,7 @@ fn test_parse_float() {
     assert_eq!(
         parse_float(from_str2(s)),
         Err(nom::Err::Error(
-            ParserError { span: cmp, kind: nom::error::ErrorKind::Digit, context: "".to_string() }))
+            ParserError { span: cmp, kind: ErrorKind::Digit, context: "".to_string() }))
     );
 }
 
@@ -270,7 +270,7 @@ fn test_broken_lists() {
     assert_eq!(
         parse_list(from_str2(s)),
         Err(nom::Err::Error(
-            ParserError { span: cmp, kind: nom::error::ErrorKind::Char, context: "".to_string() }))
+            ParserError { span: cmp, kind: ErrorKind::Char, context: "".to_string() }))
     );
     let s = "[]]";
     let cmp = unsafe { Span::new_from_raw_offset(2, 1, "]", "") };
@@ -346,7 +346,7 @@ fn test_map_success() {
     ]);
     assert_eq!(
         parse_map(from_str2(s)),
-        Ok((cmp.clone(), Value::Map(map.clone())))
+        Ok((cmp, Value::Map(map.clone())))
     );
     assert_eq!(parse_value(from_str2(s)), Ok((cmp, Value::Map(map))));
 
@@ -368,10 +368,10 @@ fn test_map_success() {
 }
         "#;
     let map = parse_map(from_str2(s));
-    assert_eq!(map.is_ok(), true);
+    assert!(map.is_ok());
     let map = if let Ok((_ign, Value::Map(om))) = map { om } else { unreachable!() };
     assert_eq!(map.len(), 14);
-    assert_eq!(map.contains_key("aurora"), true);
+    assert!(map.contains_key("aurora"));
     assert_eq!(map.get("aurora").unwrap(),
                &Value::List(
                    vec!["audit", "error", "general", "slowquery"].iter().map(|s|
@@ -381,7 +381,7 @@ fn test_map_success() {
 
     let s = r#"{"IntegrationHttpMethod":"POST","Type":"AWS_PROXY","Uri":"arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaWAFBadBotParserFunction.Arn}/invocations"}"#;
     let map = parse_map(from_str2(s));
-    assert_eq!(map.is_ok(), true);
+    assert!(map.is_ok());
     let map = if let Ok((_ign, Value::Map(om))) = map { om } else { unreachable!() };
     assert_eq!(map.len(), 3);
     assert_eq!(map.get("IntegrationHttpMethod").unwrap(), &Value::String("POST".to_string()));
@@ -429,9 +429,9 @@ fn test_range_type_success() {
         Value::RangeInt(val) => val,
         _ => unreachable!(),
     };
-    assert_eq!(10.is_within(&r), false);
-    assert_eq!(15.is_within(&r), true);
-    assert_eq!(20.is_within(&r), false);
+    assert!(!10.is_within(&r));
+    assert!(15.is_within(&r));
+    assert!(!20.is_within(&r));
 
     let s = "r[10, 20)";
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
@@ -451,9 +451,9 @@ fn test_range_type_success() {
         Value::RangeInt(val) => val,
         _ => unreachable!(),
     };
-    assert_eq!(10.is_within(&r), true);
-    assert_eq!(15.is_within(&r), true);
-    assert_eq!(20.is_within(&r), false);
+    assert!(10.is_within(&r));
+    assert!(15.is_within(&r));
+    assert!(!20.is_within(&r));
     let s = "r[10, 20]";
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     let v = parse_range(from_str2(s));
@@ -472,9 +472,9 @@ fn test_range_type_success() {
         Value::RangeInt(val) => val,
         _ => unreachable!(),
     };
-    assert_eq!(10.is_within(&r), true);
-    assert_eq!(15.is_within(&r), true);
-    assert_eq!(20.is_within(&r), true);
+    assert!(10.is_within(&r));
+    assert!(15.is_within(&r));
+    assert!(20.is_within(&r));
     let s = "r(10.2, 50.5)";
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     assert_eq!(
@@ -497,7 +497,7 @@ fn test_range_type_failures() {
     assert_eq!(
         parse_range(from_str2(s)),
         Err(nom::Err::Error(
-            ParserError { span: cmp, kind: nom::error::ErrorKind::Char, context: "".to_string() }))
+            ParserError { span: cmp, kind: ErrorKind::Char, context: "".to_string() }))
     );
 }
 
@@ -580,14 +580,14 @@ fn test_white_space_with_comments() {
             Err(nom::Err::Error(
                 ParserError {
                     span: from_str2(""),
-                    kind: nom::error::ErrorKind::Char,
+                    kind: ErrorKind::Char,
                     context: "".to_string(),
                 })), // white_space_or_comment
             Ok((from_str2(""), ())), // zero_or_more
             Err(nom::Err::Error(
                 ParserError {
                     span: from_str2(""),
-                    kind: nom::error::ErrorKind::Char,
+                    kind: ErrorKind::Char,
                     context: "".to_string(),
                 })), // white_space_or_comment
         ],
@@ -611,14 +611,14 @@ fn test_white_space_with_comments() {
             Err(nom::Err::Error(
                 ParserError {
                     span: from_str2(examples[3]),
-                    kind: nom::error::ErrorKind::Char,
+                    kind: ErrorKind::Char,
                     context: "".to_string(),
                 })), // white_space_or_comment
             Ok((from_str2(examples[3]), ())), // zero_or_more
             Err(nom::Err::Error(
                 ParserError {
                     span: from_str2(examples[3]),
-                    kind: nom::error::ErrorKind::Char,
+                    kind: ErrorKind::Char,
                     context: "".to_string(),
                 })), // white_space_or_comment
         ],
@@ -650,7 +650,7 @@ fn test_var_name() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2(""),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: ErrorKind::Alpha,
                 context: "".to_string(),
             })),
         Ok((
@@ -678,7 +678,7 @@ fn test_var_name() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2("_v"),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: ErrorKind::Alpha,
                 context: "".to_string(),
             })), // white_space_or_comment
         Ok((
@@ -728,7 +728,7 @@ fn test_var_name() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2("10"),
-                kind: nom::error::ErrorKind::Alpha,
+                kind: ErrorKind::Alpha,
                 context: "".to_string(),
             })),
     ];
@@ -757,14 +757,14 @@ fn test_var_name_access() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2(""),
-                kind: nom::error::ErrorKind::Char,
+                kind: ErrorKind::Char,
                 context: "".to_string(),
             })), // white_space_or_comment
 
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2("var"),
-                kind: nom::error::ErrorKind::Char,
+                kind: ErrorKind::Char,
                 context: "".to_string(),
             })),
         Ok((
@@ -788,7 +788,7 @@ fn test_var_name_access() {
                         "",
                     )
                 },
-                kind: nom::error::ErrorKind::Alpha,
+                kind: ErrorKind::Alpha,
                 context: "".to_string(),
             })),
         Ok((
@@ -805,7 +805,7 @@ fn test_var_name_access() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2(" %var"),
-                kind: nom::error::ErrorKind::Char,
+                kind: ErrorKind::Char,
                 context: "".to_string(),
             })),
         Ok((
@@ -884,7 +884,7 @@ fn test_dotted_access() {
         Err(nom::Err::Error(
             ParserError {
                 span: from_str2(""),
-                kind: nom::error::ErrorKind::Many1,
+                kind: ErrorKind::Many1,
                 context: "".to_string(),
             }
         )),
@@ -900,7 +900,7 @@ fn test_dotted_access() {
                         "",
                     )
                 },
-                kind: nom::error::ErrorKind::Many1, // last one char('*')
+                kind: ErrorKind::Many1, // last one char('*')
                 context: "".to_string(),
             }
         )),
@@ -1097,22 +1097,22 @@ fn test_access() {
     let expectations = [
         Err(nom::Err::Error(ParserError { // 0
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Char, // change as we use parse_string
+            kind: ErrorKind::Char, // change as we use parse_string
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 1
             span: from_str2("."),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 2
             span: from_str2(".engine"),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
         Err(nom::Err::Error(ParserError { // 3
             span: from_str2(" engine"),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
         Ok(( // 4
@@ -1368,7 +1368,7 @@ fn test_access() {
                                 ], match_all: true },
                                 comparator: (CmpOperator::Eq, false),
                                 custom_message: None,
-                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(Value::String(String::from("cfn"))).unwrap()).unwrap())),
+                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String(String::from("cfn"))).unwrap())),
                                 location: FileLocation {
                                     line: 1,
                                     column: "engine[".len() as u32 + 1,
@@ -1386,7 +1386,7 @@ fn test_access() {
         // " %engine", // 18 err
         Err(nom::Err::Error(ParserError { // 19
             span: from_str2(" %engine"),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
     ];
@@ -1428,14 +1428,14 @@ fn test_other_operations() {
         Err(nom::Err::Error(ParserError {
             span: from_str2(""),
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag,
+            kind: ErrorKind::Tag,
         })),
 
         // " exists", // 1 err
         Err(nom::Err::Error(ParserError {
             span: from_str2(" exists"),
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag,
+            kind: ErrorKind::Tag,
         })),
 
         // "exists", // 2 ok
@@ -1500,7 +1500,7 @@ fn test_other_operations() {
                 // so it discards opt and then tries, in, exists or empty
                 // all of them fail with tag
                 //
-                kind: nom::error::ErrorKind::Tag,
+                kind: ErrorKind::Tag,
                 context: "".to_string(),
             }
         )),
@@ -1568,7 +1568,7 @@ fn test_other_operations() {
                         "",
                     )
                 },
-                kind: nom::error::ErrorKind::Tag,
+                kind: ErrorKind::Tag,
                 context: "".to_string(),
             }
         )),
@@ -1625,7 +1625,7 @@ fn test_keys_keyword() {
         // "", // 0 err
         Err(nom::Err::Error(ParserError {
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
 
@@ -1639,7 +1639,7 @@ fn test_keys_keyword() {
                     "",
                 )
             },
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
 
@@ -1743,14 +1743,14 @@ fn test_keys_keyword() {
         // " KEYS IN", // 11 err
         Err(nom::Err::Error(ParserError {
             span: from_str2("KEYS IN"),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
 
         // "KEYS ", // 12 err
         Err(nom::Err::Error(ParserError {
             span: from_str2("KEYS "),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
             context: "".to_string(),
         })),
     ];
@@ -1782,14 +1782,14 @@ fn test_value_cmp() {
         Err(nom::Err::Error(ParserError {
             span: from_str2(examples[0]),
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag,
+            kind: ErrorKind::Tag,
         })),
 
         // " >", // err 1,
         Err(nom::Err::Error(ParserError {
             span: from_str2(examples[1]),
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag,
+            kind: ErrorKind::Tag,
         })),
 
 
@@ -1918,17 +1918,15 @@ fn test_clause_success() {
         (" ", "#this comment\n")
     ];
 
-    let rhs_dotted: Vec<&str> = rhs.split(".").collect();
+    let rhs_dotted: Vec<&str> = rhs.split('.').collect();
     let rhs_dotted = to_string_vec(&rhs_dotted);
     let rhs_access = Some(LetValue::AccessClause(AccessQuery{ query: rhs_dotted, match_all: true }));
 
     for each_lhs in lhs.iter() {
-        let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+        let dotted = (*each_lhs).split('.').collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
         let dotted = AccessQuery { query: dotted, match_all: true };
-        let _lhs_access =
-
-            testing_access_with_cmp(&separators, &comparators,
+        testing_access_with_cmp(&separators, &comparators,
                                     *each_lhs, rhs,
                                     || dotted.clone(),
                                     || rhs_access.clone());
@@ -1942,7 +1940,7 @@ fn test_clause_success() {
     ];
 
     for each_lhs in lhs.iter() {
-        let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+        let dotted = (*each_lhs).split('.').collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
         let dotted = AccessQuery { query: dotted, match_all: true };
 
@@ -1953,7 +1951,7 @@ fn test_clause_success() {
     }
 
     for each_lhs in lhs.iter() {
-        let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+        let dotted = (*each_lhs).split('.').collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
         let dotted = AccessQuery { query: dotted, match_all: true };
 
@@ -1974,7 +1972,7 @@ fn test_clause_success() {
     ];
 
     for each_lhs in lhs.iter() {
-        let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+        let dotted = (*each_lhs).split('.').collect::<Vec<&str>>();
         let dotted = to_string_vec(&dotted);
         let dotted = AccessQuery { query: dotted, match_all: true };
 
@@ -2001,7 +1999,7 @@ fn test_clause_success() {
 
     for each_rhs in &rhs {
         for each_lhs in lhs.iter() {
-            let dotted = (*each_lhs).split(".").collect::<Vec<&str>>();
+            let dotted = (*each_lhs).split('.').collect::<Vec<&str>>();
             let dotted = to_string_vec(&dotted);
             let dotted = AccessQuery { query: dotted, match_all: true };
 
@@ -2030,7 +2028,7 @@ fn testing_access_with_cmp<'loc, A, C>(separators: &[(&str, &str)],
             println!("Testing Access pattern = {}", access_pattern);
             let span = from_str2(&access_pattern);
             let result = clause(span);
-            if result.is_err() {
+            if let Err(..) = result {
                 let parser_error = &result.unwrap_err();
                 let parser_error = match parser_error {
                     nom::Err::Error(p) | nom::Err::Failure(p) => format!("ParserError = {} fragment = {}", p, *p.span.fragment()),
@@ -2039,7 +2037,7 @@ fn testing_access_with_cmp<'loc, A, C>(separators: &[(&str, &str)],
                 println!("{}", parser_error);
                 assert_eq!(false, true);
             } else {
-                assert_eq!(result.is_ok(), true);
+                assert!(result.is_ok());
                 let result_clause = match result.unwrap().1 {
                     GuardClause::Clause(clause) => clause,
                     _ => unreachable!()
@@ -2088,7 +2086,7 @@ fn test_predicate_clause_success() {
             "",
             ""
         )},
-            AccessQuery{ query: to_query_part(examples[1].split(".").collect()), match_all: true }
+            AccessQuery{ query: to_query_part(examples[1].split('.').collect()), match_all: true }
         )),
 
         // "resources.*[ type == /AWS::RDS/ ]", // 2 Ok
@@ -2106,7 +2104,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap()).unwrap()).unwrap())),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
@@ -2141,7 +2139,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap()).unwrap()).unwrap())),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("AWS::RDS".to_string())).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
                                     custom_message: None,
@@ -2175,7 +2173,7 @@ fn test_predicate_clause_success() {
                         GuardClause::Clause(
                             GuardAccessClause {
                                 access_clause: AccessClause {
-                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(PathAwareValue::try_from(Value::String("RETAIN".to_string())).unwrap()).unwrap())),
+                                    compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::String("RETAIN".to_string())).unwrap())),
                                     comparator: (CmpOperator::Eq, false),
                                     query: AccessQuery{ query: vec![QueryPart::Key(String::from("deletion_policy"))], match_all: true },
                                     custom_message: None,
@@ -2204,7 +2202,7 @@ fn test_predicate_clause_success() {
                 )
             },
             context: "There were no clauses present #1@13".to_string(),
-            kind: nom::error::ErrorKind::Many1, // for negative number in parse_int_value
+            kind: ErrorKind::Many1, // for negative number in parse_int_value
         })),
 
         // "resources.*[type == /AWS::RDS/", // 5 err
@@ -2218,7 +2216,7 @@ fn test_predicate_clause_success() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Char,
+            kind: ErrorKind::Char,
         }))
     ];
 
@@ -2251,36 +2249,12 @@ fn test_clause_failures() {
         ("!=", (CmpOperator::Eq, true)),
     ];
 
-//    for each in lhs.iter() {
-//        for (op, _) in comparators.iter() {
-//            let access_pattern = format!("{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
-//                                         lhs = *each, rhs = rhs, op = *op, lhs_sep = lhs_separator, rhs_sep = rhs_separator);
-//            let offset = (*each).len();
-//            let fragment = format!("{op}{sep}{rhs}",
-//                                   rhs = rhs, op = *op, sep = rhs_separator);
-//            let error = Err(nom::Err::Error(ParserError {
-//                span: unsafe {
-//                    Span::new_from_raw_offset(
-//                        offset,
-//                        1,
-//                        &fragment,
-//                        "",
-//                    )
-//                },
-//                kind: nom::error::ErrorKind::Char,
-//                context: "expecting one or more WS or comment blocks".to_string(),
-//            }));
-//            println!("Testing : {}", access_pattern);
-//            assert_eq!(clause(super::from_str2(&access_pattern)), error);
-//        }
-//    }
-
     //
     // Testing for missing access part
     //
     assert_eq!(Err(nom::Err::Error(ParserError {
         span: from_str2(""),
-        kind: nom::error::ErrorKind::Char,
+        kind: ErrorKind::Char,
         context: "".to_string(),
     })), clause(from_str2("")));
 
@@ -2293,7 +2267,7 @@ fn test_clause_failures() {
                 1, 1, "> 10", ""
             )
         },
-        kind: nom::error::ErrorKind::Char,
+        kind: ErrorKind::Char,
         context: "".to_string(),
     })), clause(from_str2(" > 10")));
 
@@ -2314,7 +2288,7 @@ fn test_clause_failures() {
                         "",
                     )
                 },
-                kind: nom::error::ErrorKind::Char, // this comes off access
+                kind: ErrorKind::Char, // this comes off access
                 context: r#"expecting either a property access "engine.core" or value like "string" or ["this", "that"]"#.to_string(),
             }));
             assert_eq!(clause(from_str2(&access_pattern)), error);
@@ -2339,7 +2313,7 @@ fn test_rule_clauses() {
         // "",                             // 0 err
         Err(nom::Err::Error(ParserError {
             span: from_str2(""),
-            kind: nom::error::ErrorKind::Alpha,
+            kind: ErrorKind::Alpha,
             context: "".to_string(),
         })),
 
@@ -2411,7 +2385,7 @@ fn test_rule_clauses() {
                         ""
                     )
                 },
-                kind: nom::error::ErrorKind::Tag,
+                kind: ErrorKind::Tag,
                 context: "".to_string(),
             }
         )),
@@ -2427,7 +2401,7 @@ fn test_rule_clauses() {
                         ""
                     )
                 },
-                kind: nom::error::ErrorKind::Tag,
+                kind: ErrorKind::Tag,
                 context: "".to_string(),
             }
         )),
@@ -2507,7 +2481,7 @@ fn test_clauses() {
                 )
             },
             context: "There were no clauses present #1@1".to_string(),
-            kind: nom::error::ErrorKind::Many1, // for negative number in parse_int_value
+            kind: ErrorKind::Many1, // for negative number in parse_int_value
         })),
 
         // "secure\n", // Ok 1
@@ -2584,7 +2558,7 @@ fn test_clauses() {
                                     line: 2,
                                 },
                                 compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
-                                query: AccessQuery{ query: "configurations.containers.*.image".split(".")
+                                query: AccessQuery{ query: "configurations.containers.*.image".split('.')
                                     .map(|s| if s == "*" { QueryPart::AllValues(None) } else { QueryPart::Key(s.to_string()) }).collect(), match_all: true },
                                 custom_message: None,
                                 comparator: (CmpOperator::Eq, false),
@@ -2634,7 +2608,7 @@ fn test_clauses() {
                             access_clause: AccessClause {
                                 location: FileLocation { file_name: "", column: 16, line: 4 },
                                 compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::Regex("httpd:2.4".to_string())).unwrap())),
-                                query: AccessQuery{ query: "configurations.containers[*].image".split(".").map( |part|
+                                query: AccessQuery{ query: "configurations.containers[*].image".split('.').map( |part|
                                     if part.contains('[') {
                                         vec![QueryPart::Key("containers".to_string()), QueryPart::AllIndices(None)]
                                     } else {
@@ -2663,7 +2637,7 @@ fn test_clauses() {
                     "",
                 )
             },
-            kind: nom::error::ErrorKind::Tag,
+            kind: ErrorKind::Tag,
             context: "".to_string(),
         })),
     ];
@@ -2740,7 +2714,7 @@ fn test_assignments() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Char, // from comment
+            kind: ErrorKind::Char, // from comment
         })),
 
         // "let x",                // 1 Failure
@@ -2754,7 +2728,7 @@ fn test_assignments() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Tag, // from "="
+            kind: ErrorKind::Tag, // from "="
         })),
 
         // "let x = 10",           // 2 Ok
@@ -2867,7 +2841,7 @@ fn test_assignments() {
                 )
             },
             context: "".to_string(),
-            kind: nom::error::ErrorKind::Char, // from access with usage of parse_string
+            kind: ErrorKind::Char, // from access with usage of parse_string
         })),
 
         // "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
@@ -2978,7 +2952,7 @@ fn test_type_name() {
                         ""
                     )
                 },
-                kind: nom::error::ErrorKind::Alpha, context: "".to_string()
+                kind: ErrorKind::Alpha, context: "".to_string()
             }
         ))
     ];
@@ -4218,10 +4192,10 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     //
     let parameters = "()";
     let result = parameter_names(from_str2(parameters));
-    assert_eq!(result.is_err(), true);
+    assert!(result.is_err());
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError {
         context: "".to_string(),
-        kind: nom::error::ErrorKind::Alpha, // for var_name
+        kind: ErrorKind::Alpha, // for var_name
         span: unsafe {
             Span::new_from_raw_offset(
                 1,
@@ -4234,9 +4208,9 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
 
     let parameters = "statements";
     let result = parameter_names(from_str2(parameters));
-    assert_eq!(result.is_err(), true);
+    assert!(result.is_err());
     assert_eq!(result.err(), Some(nom::Err::Error(ParserError {
-        kind: nom::error::ErrorKind::Char, // no '('
+        kind: ErrorKind::Char, // no '('
         context: "".to_string(),
         span: unsafe {
             Span::new_from_raw_offset(
@@ -4250,9 +4224,9 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
 
     let parameters = "(statements";
     let result = parameter_names(from_str2(parameters));
-    assert_eq!(result.is_err(), true);
+    assert!(result.is_err());
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
-        kind: nom::error::ErrorKind::Char, // no ')'
+        kind: ErrorKind::Char, // no ')'
         context: "".to_string(),
         span: unsafe {
             Span::new_from_raw_offset(
@@ -4266,9 +4240,9 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
 
     let parameters = "(statements,)"; // missing second parameter
     let result = parameter_names(from_str2(parameters));
-    assert_eq!(result.is_err(), true);
+    assert!(result.is_err());
     assert_eq!(result.err(), Some(nom::Err::Failure(ParserError { // expect failure to not close
-        kind: nom::error::ErrorKind::Alpha, // due to var_name
+        kind: ErrorKind::Alpha, // due to var_name
         context: "".to_string(),
         span: unsafe {
             Span::new_from_raw_offset(
@@ -4540,7 +4514,7 @@ fn test_block_in_block_properties()-> Result<(), Error> {
         GuardClause::BlockClause(block) => {
             match &block.block.conjunctions[0][0] {
                 GuardClause::BlockClause(blk) => {
-                    assert_eq!(blk.block.assignments.is_empty(), true);
+                    assert!(blk.block.assignments.is_empty());
                     let conjuntions = &blk.block.conjunctions;
                     assert_eq!(conjuntions.len(), 2);
                 },
@@ -4556,17 +4530,11 @@ fn test_block_in_block_properties()-> Result<(), Error> {
 fn test_incorrect_block_in_block_properties()-> Result<(), Error> {
     // Empty does not contain properties
     let block_str = r###"Properties {}"###;
-    match GuardClause::try_from(block_str) {
-        Ok(_) => unreachable!(),
-        Err(_) => {}
-    }
+    if GuardClause::try_from(block_str).is_ok() { unreachable!() }
 
     // Incomplete block
     let block_str = r###"Properties { Statements[*]"###;
-    match GuardClause::try_from(block_str) {
-        Ok(_) => unreachable!(),
-        Err(_) => {}
-    }
+    if GuardClause::try_from(block_str).is_ok() { unreachable!() }
 
 
     Ok(())
@@ -4608,7 +4576,7 @@ fn when_inside_when_parse_test() -> Result<(), Error> {
         }
     }
     "###;
-    let (_span, clause) = rule_block_clause(from_str2(when_inside_when))?;
+    let (_span, _clause) = rule_block_clause(from_str2(when_inside_when))?;
     Ok(())
 }
 
@@ -4621,7 +4589,7 @@ fn is_list_check_parser_bug() -> Result<(), Error> {
 
 #[test]
 fn does_this_work() -> Result<(), Error> {
-    let query = AccessQuery::try_from(r#"Resources[ keys == /s3/ ][ Type == "AWS::S3::BucketPolicy" ]"#)?.query;
+    let _query = AccessQuery::try_from(r#"Resources[ keys == /s3/ ][ Type == "AWS::S3::BucketPolicy" ]"#)?.query;
     Ok(())
 }
 
@@ -4873,13 +4841,13 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
 fn paramterized_clause_errors() -> Result<(), Error> {
     let just_name_rule_clause = "not named_rule";
     let result = ParameterizedNamedRuleClause::try_from(just_name_rule_clause);
-    assert_eq!(result.is_err(), true);
+    assert!(result.is_err());
 
     let result = GuardClause::try_from(just_name_rule_clause);
-    assert_eq!(result.is_err(), true); // this does not match rule_clause
+    assert!(result.is_err()); // this does not match rule_clause
 
     let result = RuleClause::try_from(just_name_rule_clause);
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
     match result.unwrap() {
         RuleClause::Clause(GuardClause::NamedRule(gnr)) => {
             assert_eq!(gnr.dependent_rule.as_str(), "named_rule");
@@ -4905,7 +4873,7 @@ fn parameterized_clause_in_when_condition() -> Result<(), Error> {
 
     let rule = Rule::try_from(rule_when_clause)?;
     assert_eq!(rule.rule_name.as_str(), "call_parameterized");
-    assert_eq!(rule.conditions.is_some(), true);
+    assert!(rule.conditions.is_some());
     let conditions = rule.conditions.as_ref().unwrap();
     assert_eq!(conditions.len(), 1);
     let contained = &conditions[0][0];
@@ -4927,41 +4895,35 @@ fn parameterized_clause_in_when_condition() -> Result<(), Error> {
 
     assert_eq!(rule.block.conjunctions.len(), 1);
     match &rule.block.conjunctions[0][0] {
-        RuleClause::Clause(block) => {
-            match block {
-                GuardClause::BlockClause(block) => {
-                    assert_eq!(block.block.conjunctions.len(), 2);
-                    for each in &block.block.conjunctions {
-                        match &each[0] {
-                            GuardClause::ParameterizedNamedRule(prc) => {
-                                assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_iam_statements");
-                                assert_eq!(matches!(&prc.parameters[0], LetValue::AccessClause(_)), true);
-                                assert_eq!(matches!(&prc.parameters[1], LetValue::Value(_)), true);
-                            },
+        RuleClause::Clause(GuardClause::BlockClause(block)) => {
+            assert_eq!(block.block.conjunctions.len(), 2);
+            for each in &block.block.conjunctions {
+                match &each[0] {
+                    GuardClause::ParameterizedNamedRule(prc) => {
+                        assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_iam_statements");
+                        assert!(matches!(&prc.parameters[0], LetValue::AccessClause(_)));
+                        assert!(matches!(&prc.parameters[1], LetValue::Value(_)));
+                    },
 
-                            GuardClause::WhenBlock(conds, _) => {
-                                assert_eq!(conds.len(), 2);
-                                match &conds[0][0] {
-                                    WhenGuardClause::ParameterizedNamedRule(prc) => {
-                                        assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_required_tags_present");
-                                        assert_eq!(matches!(&prc.parameters[0], LetValue::AccessClause(_)), true);
-                                    },
-                                    _ => unreachable!()
-                                }
+                    GuardClause::WhenBlock(conds, _) => {
+                        assert_eq!(conds.len(), 2);
+                        match &conds[0][0] {
+                            WhenGuardClause::ParameterizedNamedRule(prc) => {
+                                assert_eq!(prc.named_rule.dependent_rule.as_str(), "check_required_tags_present");
+                                assert!(matches!(&prc.parameters[0], LetValue::AccessClause(_)));
                             },
-
                             _ => unreachable!()
                         }
-                    }
-                },
-                _ => unreachable!()
+                    },
+
+                    _ => unreachable!()
+                }
             }
         },
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 
     Ok(())
-
 }
 
 #[test]
@@ -4975,8 +4937,8 @@ fn test_variable_capture_syntax() -> Result<(), Error> {
     let access = AccessQuery::try_from(map_index_with_filter)?.query;
     assert_eq!(access.len(), 4);
     let filters = &access[1];
-    assert_eq!(matches!(filters, QueryPart::Filter(_, _)), true);
-    let (name, filter) = match filters {
+    assert!(matches!(filters, QueryPart::Filter(_, _)));
+    let (name, _filter) = match filters {
         QueryPart::Filter(name, filters) => (name, filters),
         _ => unreachable!()
     };
@@ -4991,9 +4953,9 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     assert_eq!(function.name, "count");
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
-    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    assert!(matches!(parameter, LetValue::AccessClause(_)));
     if let LetValue::AccessClause(query) = parameter {
-        assert_eq!(query.match_all, true);
+        assert!(query.match_all);
         assert_eq!(query.query.len(), 2);
         let expected = vec![
             QueryPart::Key("Resources".to_string()),
@@ -5007,9 +4969,9 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     assert_eq!(function.name, "json_parse");
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
-    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    assert!(matches!(parameter, LetValue::AccessClause(_)));
     if let LetValue::AccessClause(query) = parameter {
-        assert_eq!(query.match_all, true);
+        assert!(query.match_all);
         assert_eq!(query.query.len(), 4);
     }
 
@@ -5018,9 +4980,9 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     assert_eq!(function.name, "json_parse");
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
-    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    assert!(matches!(parameter, LetValue::AccessClause(_)));
     if let LetValue::AccessClause(query) = parameter {
-        assert_eq!(query.match_all, true);
+        assert!(query.match_all);
         assert_eq!(query.query.len(), 4);
     }
 
@@ -5029,20 +4991,20 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     assert_eq!(function.name, "substring");
     assert_eq!(function.parameters.len(), 3);
     let parameter = &function.parameters[0];
-    assert_eq!(matches!(parameter, LetValue::AccessClause(_)), true);
+    assert!(matches!(parameter, LetValue::AccessClause(_)));
     if let LetValue::AccessClause(query) = parameter {
-        assert_eq!(query.match_all, true);
+        assert!(query.match_all);
         assert_eq!(query.query.len(), 3);
     }
 
     let parameter = &function.parameters[1];
-    assert_eq!(matches!(parameter, LetValue::Value(_)), true);
+    assert!(matches!(parameter, LetValue::Value(_)));
     if let LetValue::Value(PathAwareValue::Int((_, v))) = parameter {
         assert_eq!(*v, 0);
     }
 
     let parameter = &function.parameters[2];
-    assert_eq!(matches!(parameter, LetValue::Value(_)), true);
+    assert!(matches!(parameter, LetValue::Value(_)));
     if let LetValue::Value(PathAwareValue::Int((_, v))) = parameter {
         assert_eq!(*v, 6);
     }
