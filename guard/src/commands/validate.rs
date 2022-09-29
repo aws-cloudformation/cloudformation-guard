@@ -796,6 +796,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_against_data_input<'r>(
     _data_type: Type,
     output: OutputFormatType,
