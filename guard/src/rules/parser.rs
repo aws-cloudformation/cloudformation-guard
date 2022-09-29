@@ -244,15 +244,25 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
     loop {
         let (remainder, content) = parser(span)?;
         let fragment = *content.fragment();
+
         //
         // if the last one has an escape, then we need to continue
         //
-        if fragment.len() > 0 && fragment.ends_with("\\") {
-            regex.push_str(&fragment[0..fragment.len()-1]);
+        if !fragment.is_empty() && fragment.ends_with('\\') {
+            regex.push_str(&fragment[0..fragment.len()-1])  ;
             regex.push('/');
+
+            if remainder.is_empty() {
+                return Err(nom::Err::Error(ParserError {
+                    context: "Could not parse regular expression".to_string(),
+                    kind: ErrorKind::RegexpMatch,
+                    span: input
+                }))
+            }
             span = remainder.take_split(1).0;
             continue;
         }
+
         regex.push_str(fragment);
         return Ok((remainder, Value::Regex(regex)));
     }

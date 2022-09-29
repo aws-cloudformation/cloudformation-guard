@@ -5049,3 +5049,24 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
 
     Ok(())
 }
+
+#[test]
+fn test_parse_regex_inner_when_regex_is_not_valid() {
+    let invalid = r"\";
+    let invalid_cmp = unsafe {Span::new_from_raw_offset(invalid.len(), 1, invalid, "")};
+    let expected_invalid = Err(nom::Err::Error(ParserError {
+        context: "Could not parse regular expression".to_string(),
+        kind: ErrorKind::RegexpMatch,
+        span: invalid_cmp,
+    }));
+
+    assert_eq!(expected_invalid, parse_regex_inner(invalid_cmp));
+}
+
+#[test]
+fn test_parse_regex_inner_when_regex_is_valid() {
+    let valid = r#"\w+/"#;
+    let valid_cmp = unsafe {Span::new_from_raw_offset(valid.len(), 5, valid, "")};
+
+    assert!(parse_regex_inner(valid_cmp).is_ok())
+}
