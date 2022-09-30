@@ -32,6 +32,8 @@ pub enum CmpOperator {
     IsList,
     IsMap,
     IsBool,
+    IsInt,
+    IsFloat,
 }
 
 impl CmpOperator {
@@ -42,6 +44,8 @@ impl CmpOperator {
             CmpOperator::IsString   |
             CmpOperator::IsBool     |
             CmpOperator::IsList     |
+            CmpOperator::IsInt      |
+            CmpOperator::IsFloat    |
             CmpOperator::IsMap          => true,
             _                           => false
         }
@@ -63,6 +67,8 @@ impl Display for CmpOperator {
             CmpOperator::Empty => f.write_str("EMPTY")?,
             CmpOperator::IsString => f.write_str("IS STRING")?,
             CmpOperator::IsBool => f.write_str("IS BOOL")?,
+            CmpOperator::IsInt => f.write_str("IS INT")?,
+            CmpOperator::IsFloat => f.write_str("IS FLOAT")?,
             CmpOperator::IsList => f.write_str("IS LIST")?,
             CmpOperator::IsMap => f.write_str("IS MAP")?,
         }

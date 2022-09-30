@@ -1778,6 +1778,74 @@ fn is_bool() -> Result<()> {
 }
 
 #[test]
+fn is_int() -> Result<()> {
+    let rule_str = r###"
+    rule check_is_int{
+        foo is_int
+    }
+    "###;
+
+    let resources_str = r###"
+    {
+        foo: 1
+    }
+    "###;
+
+    let value = PathAwareValue::try_from(resources_str)?;
+    let rules_file = RulesFile::try_from(rule_str)?;
+    println!("{:?}", rules_file);
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
+    assert_eq!(status, Status::PASS);
+
+    let resources_str = r###"
+    {
+        foo: "1"
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+#[test]
+fn is_float() -> Result<()> {
+    let rule_str = r###"
+    rule check_is_float {
+        foo is_float
+    }
+    "###;
+
+    let resources_str = r###"
+    {
+        foo: 1.5
+    }
+    "###;
+
+    let value = PathAwareValue::try_from(resources_str)?;
+    let rules_file = RulesFile::try_from(rule_str)?;
+    println!("{:?}", rules_file);
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
+    assert_eq!(status, Status::PASS);
+
+    let resources_str = r###"
+    {
+        foo: "1.5"
+    }
+    "###;
+    let value = PathAwareValue::try_from(resources_str)?;
+    let mut eval = root_scope(&rules_file, &value)?;
+    let status = eval_rules_file(&rules_file, &mut eval)?;
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+#[test]
 fn double_projection_tests() -> Result<()> {
     let rule_str = r###"
     rule check_ecs_against_local_or_metadata {

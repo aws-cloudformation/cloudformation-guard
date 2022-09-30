@@ -12,7 +12,7 @@ You must specify a `query` and an `operator` in the clause section:
 
 * `operator` can use *unary* or *binary* operators. Both of these operators will be discussed in-depth later in this document:
 
-  * *Unary Operators:* `exists`, `empty`, `is_string`, `is_list`, `is_struct`, `is_bool`, `not(!)`
+  * *Unary Operators:* `exists`, `empty`, `is_string`, `is_list`, `is_struct`, `is_bool`, `is_int`, `is_float`, `not(!)`
   * *Binary Operators:* `==`, `!=`, `>`, `>=`, `<`, `<=`, `IN`
 
 The `query|value literal` section of the clause is optional:
@@ -104,7 +104,7 @@ The above clause will `PASS` for the example template as `BucketEncryption` is d
 
 > **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true. 
 
-#### `is_string`, `is_list`, `is_bool` and `is_struct` operators
+#### `is_string`, `is_list`, `is_bool`, `is_int`, `is_float` and `is_struct` operators
 
 `is_string` - Checks if each occurrence of the query is of `string` type.
 
@@ -118,6 +118,20 @@ Resources.S3Bucket.Properties.BucketName is_string
 ```
 # Checks if ObjectLockEnabled is defined as a bool
 Resources.S3Bucket.Properties.ObjectLockEnabled is_bool
+```
+
+`is_int` - Checks if each occurrence of the query is of `int` type.
+
+```
+# Checks if Port is defined as an int
+Resources.ELBListener.Properties.Port is_bool
+```
+
+`is_float` - Checks if each occurrence of the query is of `float` type.
+
+```
+# Checks if CompletionWindowMinutes is defined as a float
+Resources.BackupPlan.Properties.BackupPlan.BackupPlanRule { CompletionWindowMinutes is_float  }
 ```
 
 `is_list` - Checks if each occurrence of the query is of `list` type.

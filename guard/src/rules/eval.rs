@@ -324,6 +324,24 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                     eval_context,
                     context,
                     custom_message),
+            (CmpOperator::IsInt, is_not_int) =>
+                box_create_func!(
+                    is_int_operation,
+                    is_not_int,
+                    inverse,
+                    cmp,
+                    eval_context,
+                    context,
+                    custom_message),
+            (CmpOperator::IsFloat, is_not_float) =>
+                box_create_func!(
+                    is_float_operation,
+                    is_not_float,
+                    inverse,
+                    cmp,
+                    eval_context,
+                    context,
+                    custom_message),
             //
             // TODO: add parser updates to check for int, float, char and range types
             //

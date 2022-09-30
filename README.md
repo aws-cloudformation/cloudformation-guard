@@ -56,7 +56,7 @@ Type == /AWS::S3::Bucket/
 > Guard supports all primitives `string, integer (64), float (64), bool, char, regex` and specialized range expression like `r(10, 200)`, for specifying ranges of values. It supports general key value pair maps (a.k.a associative arrays/struct) like `{ "my-map": { "nested-maps": [ { "key": 10, "value": 20 } ] } },` and arrays of primitives or key-value pair maps like `[10, 20, 30] or [{ Key: "MyApp", Value: "PROD}, ..]`.
 
 **5) What binary and unary comparison operators can I use?**
-> *Unary Operators:* `exists, empty, is_string, is_list, is_struct, is_bool, not(!)`
+> *Unary Operators:* `exists, empty, is_string, is_list, is_struct, is_bool, is_int, is_float, not(!)`
 > *Binary Operators:* `==, !=, >, >=, <, <=, IN `
 >
 > Most operators are self-explanatory. A few important points: 
