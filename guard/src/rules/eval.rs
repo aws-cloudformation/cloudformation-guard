@@ -315,8 +315,17 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                     eval_context,
                     context,
                     custom_message),
+            (CmpOperator::IsBool, is_not_bool) =>
+                box_create_func!(
+                    is_bool_operation,
+                    is_not_bool,
+                    inverse,
+                    cmp,
+                    eval_context,
+                    context,
+                    custom_message),
             //
-            // TODO: add parser updates to check for int, bool, float, char and range types
+            // TODO: add parser updates to check for int, float, char and range types
             //
 
             _ => unreachable!()

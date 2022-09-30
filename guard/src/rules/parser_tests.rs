@@ -4625,6 +4625,20 @@ fn does_this_work() -> Result<(), Error> {
     Ok(())
 }
 
+#[rstest::rstest]
+#[case("is_string", CmpOperator::IsString)]
+#[case("IS_STRING", CmpOperator::IsString)]
+#[case("is_list", CmpOperator::IsList)]
+#[case("IS_LIST", CmpOperator::IsList)]
+#[case("is_bool", CmpOperator::IsBool)]
+#[case("IS_BOOL", CmpOperator::IsBool)]
+fn unary_parse(#[case] s: &str, #[case] expected : CmpOperator) -> Result<(), Error> {
+    let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1.0;
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.is_unary(), true);
+    Ok(())
+}
+
 #[test]
 fn parameterized_rule_block() -> Result<(), Error> {
     let parameterized_rule = r###"
