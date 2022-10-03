@@ -4,6 +4,12 @@
 #
 let excluded_resources = [
     /AWS::AmazonBroker/,
+    /AWS::KMS::Alias/,
+    /AWS::SageMaker::NotebookInstanceLifecycleConfig/,
+    /AWS::Lambda::Permission/,
+    /AWS::Athena::NamedQuery/,
+    /AWS::Athena::PreparedStatement/,
+    /AWS::S3::BucketPolicy/,
     /AWS::App*/
 ]
 
