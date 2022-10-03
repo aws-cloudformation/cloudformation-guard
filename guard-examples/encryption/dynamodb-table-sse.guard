@@ -1,11 +1,4 @@
 #
-# Common rule, all resources must have Tags present on them
-#
-rule assert_all_resources_have_non_empty_tags {
-    Resources.*.Properties.Tags !empty
-}
-
-#
 # Select all DDB resources from the incoming template (payload)
 #
 let ddb = Resources.*[ Type == 'AWS::DynamoDB::Table'  ]
