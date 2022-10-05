@@ -2,7 +2,7 @@
 name = "cfn-guard-lambda"
 version = "2.1.0"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
-    "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
+    "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
 description = "Lambda version of cfn-guard. Checks JSON- or YAML- formatted structured data for policy compliance using a simple, policy-as-code, declarative syntax"
 license = "Apache-2.0"
 edition = "2018"
