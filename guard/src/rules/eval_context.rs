@@ -1460,13 +1460,18 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                                 message,
                                 custom_message
                             }}) => {
+
+                        use CmpOperator::*;
                         let cmp_msg = match cmp {
-                            CmpOperator::Exists => if *not { "existed" } else { "did not exist" },
-                            CmpOperator::Empty => if *not { "was empty"} else { "was not empty" },
-                            CmpOperator::IsList => if *not { "was a list " } else { "was not list" },
-                            CmpOperator::IsMap => if *not { "was a struct" } else { "was not struct" },
-                            CmpOperator::IsString => if *not { "was a string " } else { "was not string" },
-                            _ => unreachable!()
+                            Exists => if *not { "existed" } else { "did not exist" },
+                            Empty => if *not { "was empty"} else { "was not empty" },
+                            IsList => if *not { "was a list " } else { "was not list" },
+                            IsMap => if *not { "was a struct" } else { "was not struct" },
+                            IsString => if *not { "was a string " } else { "was not string" },
+                            IsInt => if *not { "was int" } else { "was not int" },
+                            IsBool => if *not { "was bool" } else { "was not bool" },
+                            IsFloat => if *not { "was float" } else { "was not float" },
+                            Eq | In | Gt | Lt | Le | Ge => unreachable!()
                         };
 
                         let custom_message = custom_message.as_ref()
