@@ -475,16 +475,10 @@ or rules files.
 }
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
-    match Path::new(base).try_exists() {
-        Ok(exists) => {
-            if !exists {
-                return Err(Error::new(ErrorKind::FileNotFoundError(base.to_string())));
-            }
-        }
-        Err(e) => return Err(Error::new(ErrorKind::IoError(e))),
+    match Path::new(base).exists() {
+        true => Ok(()),
+        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
     }
-
-    Ok(())
 }
 
 pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
