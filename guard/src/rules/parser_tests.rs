@@ -4518,3 +4518,13 @@ fn test_parse_regex_inner_when_regex_is_valid() {
 
     assert!(parse_regex_inner(valid_cmp).is_ok())
 }
+
+#[test]
+fn test_parse_value_when_strings_are_randomly_generated() {
+    let values = vec!["weifhasidhhfasidf77627&^&*^**", "IiI+L1w="];
+
+    for value in values {
+        let cmp = unsafe {Span::new_from_raw_offset(value.len(), 5, value, "")};
+        assert!(parse_value(cmp).is_err())
+    }
+}
