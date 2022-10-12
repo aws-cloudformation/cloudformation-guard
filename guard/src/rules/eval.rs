@@ -334,15 +334,6 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                     eval_context,
                     context,
                     custom_message),
-            (CmpOperator::IsFloat, is_not_float) =>
-                box_create_func!(
-                    is_float_operation,
-                    is_not_float,
-                    inverse,
-                    cmp,
-                    eval_context,
-                    context,
-                    custom_message),
             (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
         };
     let mut status = Vec::with_capacity(lhs.len());

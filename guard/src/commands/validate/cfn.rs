@@ -197,7 +197,11 @@ fn single_line(writer: &mut dyn Write,
                 Some(cap) => {
                     cap.get(1).unwrap().as_str()
                 },
-                _ => unreachable!()
+                _ => {
+                    println!("key: {}", key);
+                    unreachable!()
+                }
+
             };
 
             match handle_resource_aggr(data, root, resource_name.to_string(), &mut by_resources, value) {

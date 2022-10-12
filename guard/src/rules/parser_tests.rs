@@ -126,14 +126,18 @@ fn test_parse_bool() {
     assert_eq!(parse_bool(from_str2(s)), Ok((cmp, Value::Bool(true))));
 }
 
+#[rstest::rstest]
+#[case("12.0", Value::Float(12.0))]
+#[case("12e+2", Value::Float(1200.0))]
+#[case("1.0", Value::Float(1.0))]
+#[case("1.5", Value::Float(1.5))]
+fn test_parse_float(#[case] s : &str, #[case] expected : Value) {
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(parse_float(from_str2(s)), Ok((cmp, expected)));
+}
+
 #[test]
-fn test_parse_float() {
-    let s = "12.0";
-    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-    assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(12.0))));
-    let s = "12e+2";
-    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-    assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(12e+2))));
+fn test_parse_float_error() {
     let s = "error";
     let cmp = unsafe { Span::new_from_raw_offset(0, 1, "error", "") };
     assert_eq!(
@@ -4068,8 +4072,6 @@ fn does_this_work() -> Result<(), Error> {
 #[case("IS_BOOL", CmpOperator::IsBool)]
 #[case("is_int", CmpOperator::IsInt)]
 #[case("IS_INT", CmpOperator::IsInt)]
-#[case("is_float", CmpOperator::IsFloat)]
-#[case("IS_FLOAT", CmpOperator::IsFloat)]
 fn unary_parse(#[case] s: &str, #[case] expected : CmpOperator) -> Result<(), Error> {
     let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1.0;
     assert_eq!(expected, parsed);

@@ -877,6 +877,7 @@ fn evaluate_against_data_input<'r>(
 }
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
+    println!("getting from stdin: {}", content);
     if content.trim().is_empty() {
         Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
     } else {
