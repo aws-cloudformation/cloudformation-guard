@@ -266,6 +266,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
         return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
     }
 
+    use CmpOperator::*;
     let mut operation: Box<dyn FnMut(&QueryResult<'l>) -> Result<bool>> =
         match cmp {
             (CmpOperator::Exists, not_exists) =>
@@ -315,11 +316,25 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(lhs_query: &'l [QueryPart<'loc>],
                     eval_context,
                     context,
                     custom_message),
-            //
-            // TODO: add parser updates to check for int, bool, float, char and range types
-            //
-
-            _ => unreachable!()
+            (CmpOperator::IsBool, is_not_bool) =>
+                box_create_func!(
+                    is_bool_operation,
+                    is_not_bool,
+                    inverse,
+                    cmp,
+                    eval_context,
+                    context,
+                    custom_message),
+            (CmpOperator::IsInt, is_not_int) =>
+                box_create_func!(
+                    is_int_operation,
+                    is_not_int,
+                    inverse,
+                    cmp,
+                    eval_context,
+                    context,
+                    custom_message),
+            (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
         };
     let mut status = Vec::with_capacity(lhs.len());
     for each in lhs {

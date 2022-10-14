@@ -31,6 +31,8 @@ pub enum CmpOperator {
     IsString,
     IsList,
     IsMap,
+    IsBool,
+    IsInt,
 }
 
 impl CmpOperator {
@@ -39,7 +41,9 @@ impl CmpOperator {
             CmpOperator::Exists     |
             CmpOperator::Empty      |
             CmpOperator::IsString   |
+            CmpOperator::IsBool     |
             CmpOperator::IsList     |
+            CmpOperator::IsInt      |
             CmpOperator::IsMap          => true,
             _                           => false
         }
@@ -60,6 +64,8 @@ impl Display for CmpOperator {
             CmpOperator::Exists => f.write_str("EXISTS")?,
             CmpOperator::Empty => f.write_str("EMPTY")?,
             CmpOperator::IsString => f.write_str("IS STRING")?,
+            CmpOperator::IsBool => f.write_str("IS BOOL")?,
+            CmpOperator::IsInt => f.write_str("IS INT")?,
             CmpOperator::IsList => f.write_str("IS LIST")?,
             CmpOperator::IsMap => f.write_str("IS MAP")?,
         }

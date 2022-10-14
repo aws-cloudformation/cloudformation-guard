@@ -126,14 +126,18 @@ fn test_parse_bool() {
     assert_eq!(parse_bool(from_str2(s)), Ok((cmp, Value::Bool(true))));
 }
 
+#[rstest::rstest]
+#[case("12.0", Value::Float(12.0))]
+#[case("12e+2", Value::Float(1200.0))]
+#[case("1.0", Value::Float(1.0))]
+#[case("1.5", Value::Float(1.5))]
+fn test_parse_float(#[case] s : &str, #[case] expected : Value) {
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(parse_float(from_str2(s)), Ok((cmp, expected)));
+}
+
 #[test]
-fn test_parse_float() {
-    let s = "12.0";
-    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-    assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(12.0))));
-    let s = "12e+2";
-    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
-    assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(12e+2))));
+fn test_parse_float_error() {
     let s = "error";
     let cmp = unsafe { Span::new_from_raw_offset(0, 1, "error", "") };
     assert_eq!(
@@ -2236,194 +2240,178 @@ fn test_clauses() {
     }
 }
 
-#[test]
-fn test_assignments() {
-    let examples = [
-        "letx",                   // 0 Error
-        "let x",                  // 1 Failure
-        "let x = 10",             // 2 Ok
-        "let x = [10, 20]",       // 3 Ok
-        "let x = engine",         // 4 Ok
-        "let engines = %engines", // 5 Ok
-        r#"let ENGINE_LOGS = {
-    'postgres':      ["postgresql", "upgrade"],
-    'mariadb':       ["audit", "error", "general", "slowquery"],
-    'mysql':         ["audit", "error", "general", "slowquery"],
-    'oracle-ee':     ["trace", "audit", "alert", "listener"],
-    'oracle-se':     ["trace", "audit", "alert", "listener"],
-    'oracle-se1':    ["trace", "audit", "alert", "listener"],
-    'oracle-se2':    ["trace", "audit", "alert", "listener"],
-    'sqlserver-ee':  ["error", "agent"],
-    'sqlserver-ex':  ["error"],
-    'sqlserver-se':  ["error", "agent"],
-    'sqlserver-web': ["error", "agent"],
-    'aurora':        ["audit", "error", "general", "slowquery"],
-    'aurora-mysql':  ["audit", "error", "general", "slowquery"],
-    'aurora-postgresql': ["postgresql", "upgrade"]
-}"#, // 6 Ok
-        "let x =",                // 7 Failure
-        "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
-    ];
-
-    let engines: serde_json::Value = serde_json::from_str(
-        r#"{
-                "postgres":      ["postgresql", "upgrade"],
-                "mariadb":       ["audit", "error", "general", "slowquery"],
-                "mysql":         ["audit", "error", "general", "slowquery"],
-                "oracle-ee":     ["trace", "audit", "alert", "listener"],
-                "oracle-se":     ["trace", "audit", "alert", "listener"],
-                "oracle-se1":    ["trace", "audit", "alert", "listener"],
-                "oracle-se2":    ["trace", "audit", "alert", "listener"],
-                "sqlserver-ee":  ["error", "agent"],
-                "sqlserver-ex":  ["error"],
-                "sqlserver-se":  ["error", "agent"],
-                "sqlserver-web": ["error", "agent"],
-                "aurora":        ["audit", "error", "general", "slowquery"],
-                "aurora-mysql":  ["audit", "error", "general", "slowquery"],
-                "aurora-postgresql": ["postgresql", "upgrade"]
-            }"#,
-    )
-    .unwrap();
-
-    let engines: Value = engines.try_into().unwrap();
-
-    let expectations = [
-        // "letx",                 // 0 Error
-        Err(nom::Err::Error(ParserError {
-            span: unsafe { Span::new_from_raw_offset("let".len(), 1, "x", "") },
-            context: "".to_string(),
-            kind: ErrorKind::Char, // from comment
-        })),
-        // "let x",                // 1 Failure
-        Err(nom::Err::Failure(ParserError {
-            span: unsafe { Span::new_from_raw_offset("let x".len(), 1, "", "") },
-            context: "".to_string(),
-            kind: ErrorKind::Tag, // from "="
-        })),
-        // "let x = 10",           // 2 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset("let x = 10".len(), 1, "", "") },
+#[rstest::rstest]
+#[case("letx", Err(nom::Err::Error(ParserError {
+    span: unsafe {
+        Span::new_from_raw_offset(
+            "let".len(),
+            1,
+            "x",
+            ""
+            )
+    },
+    context: "".to_string(),
+    kind: nom::error::ErrorKind::Char, // from comment
+})))]
+#[case("let x", Err(nom::Err::Failure(ParserError {
+    span: unsafe {
+        Span::new_from_raw_offset(
+            "let x".len(),
+            1,
+            "",
+            ""
+            )
+    },
+    context: "".to_string(),
+    kind: nom::error::ErrorKind::Tag, // from "="
+})))]
+#[case("let x = 10",
+       Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    "let x = 10".len(),
+                    1,
+                    "",
+                    ""
+                    )
+            },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::Value(PathAwareValue::try_from(Value::Int(10)).unwrap()),
+                value: LetValue::Value(PathAwareValue::try_from(Value::Int(10)).unwrap())
+            }
+            )))]
+#[case("let x = [10, 20]", Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    "let x = [10, 20]".len(),
+                    1,
+                    "",
+                    ""
+                    )
             },
-        )),
-        // "let x = [10, 20]",     // 3 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset(examples[3].len(), 1, "", "") },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::Value(
-                    PathAwareValue::try_from(Value::List(vec![Value::Int(10), Value::Int(20)]))
-                        .unwrap(),
-                ),
+                value: LetValue::Value(PathAwareValue::try_from(Value::List(vec![
+                                                                            Value::Int(10), Value::Int(20)
+                ])).unwrap())
+            }
+            )))]
+#[case("let x = engine", Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    "let x = engine".len(),
+                    1,
+                    "",
+                    ""
+                    )
             },
-        )),
-        // "let x = engine",       // 4 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset(examples[4].len(), 1, "", "") },
             LetExpr {
                 var: String::from("x"),
-                value: LetValue::AccessClause(AccessQuery {
-                    query: vec![QueryPart::Key(String::from("engine"))],
-                    match_all: true,
-                }),
+                value: LetValue::AccessClause(AccessQuery{ query: vec![
+                    QueryPart::Key(String::from("engine"))], match_all: true })
+            }
+            )))]
+#[case("let engines = %engines", Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    "let engines = %engines".len(),
+                    1,
+                    "",
+                    ""
+                    )
             },
-        )),
-        // "let engines = %engines", // 5 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset(examples[5].len(), 1, "", "") },
             LetExpr {
                 var: String::from("engines"),
-                value: LetValue::AccessClause(AccessQuery {
-                    query: vec![QueryPart::Key(String::from("%engines"))],
-                    match_all: true,
-                }),
+                value: LetValue::AccessClause(AccessQuery{ query: vec![
+                    QueryPart::Key(String::from("%engines"))], match_all: true })
+            }
+            )))]
+#[case("let x =", Err(nom::Err::Failure(ParserError {
+    span: unsafe {
+        Span::new_from_raw_offset(
+            "let x =".len(),
+            1,
+            "",
+            ""
+            )
+    },
+    context: "".to_string(),
+    kind: nom::error::ErrorKind::Char, // from access with usage of parse_string
+})))]
+#[case("let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", Ok((
+            unsafe {
+                Span::new_from_raw_offset(
+                    "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]".len(),
+                    1,
+                    "",
+                    ""
+                    )
             },
-        )),
-        // r#"let ENGINE_LOGS = {
-        //     'postgres':      ["postgresql", "upgrade"],
-        //     'mariadb':       ["audit", "error", "general", "slowquery"],
-        //     'mysql':         ["audit", "error", "general", "slowquery"],
-        //     'oracle-ee':     ["trace", "audit", "alert", "listener"],
-        //     'oracle-se':     ["trace", "audit", "alert", "listener"],
-        //     'oracle-se1':    ["trace", "audit", "alert", "listener"],
-        //     'oracle-se2':    ["trace", "audit", "alert", "listener"],
-        //     'sqlserver-ee':  ["error", "agent"],
-        //     'sqlserver-ex':  ["error"],
-        //     'sqlserver-se':  ["error", "agent"],
-        //     'sqlserver-web': ["error", "agent"],
-        //     'aurora':        ["audit", "error", "general", "slowquery"],
-        //     'aurora-mysql':  ["audit", "error", "general", "slowquery"],
-        //     'aurora-postgresql': ["postgresql", "upgrade"]
-        // }"#,                             // 6 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset(examples[6].len(), 16, "", "") },
-            LetExpr {
-                var: String::from("ENGINE_LOGS"),
-                value: LetValue::Value(PathAwareValue::try_from(engines).unwrap()),
-            },
-        )),
-        // "let x =",           // 7 Failure
-        Err(nom::Err::Failure(ParserError {
-            span: unsafe { Span::new_from_raw_offset(examples[7].len(), 1, "", "") },
-            context: "".to_string(),
-            kind: ErrorKind::Char, // from access with usage of parse_string
-        })),
-        // "let aurora_dbs = resources.*[ type IN [/AWS::RDS::DBCluster/, /AWS::RDS::GlobalCluster/]]", // 8 Ok
-        Ok((
-            unsafe { Span::new_from_raw_offset(examples[8].len(), 1, "", "") },
             LetExpr {
                 var: String::from("aurora_dbs"),
                 value: LetValue::AccessClause(AccessQuery {
                     query: vec![
                         QueryPart::Key(String::from("resources")),
                         QueryPart::AllValues(None),
-                        QueryPart::Filter(
-                            None,
-                            Conjunctions::from([Disjunctions::from([GuardClause::Clause(
-                                GuardAccessClause {
-                                    access_clause: AccessClause {
-                                        compare_with: Some(LetValue::Value(
-                                            PathAwareValue::try_from(Value::List(vec![
-                                                Value::Regex(String::from("AWS::RDS::DBCluster")),
-                                                Value::Regex(String::from(
-                                                    "AWS::RDS::GlobalCluster",
-                                                )),
-                                            ]))
-                                            .unwrap(),
-                                        )),
-                                        query: AccessQuery {
-                                            query: vec![QueryPart::Key(String::from("type"))],
-                                            match_all: true,
-                                        },
-                                        custom_message: None,
-                                        comparator: (CmpOperator::In, false),
-                                        location: FileLocation {
-                                            line: 1,
-                                            column: "let aurora_dbs = resources.*[ ".len() as u32
-                                                + 1,
-                                            file_name: "",
-                                        },
-                                    },
-                                    negation: false,
-                                },
-                            )])]),
-                        ),
-                    ],
-                    match_all: true,
-                }),
-            },
-        )),
-    ];
+                        QueryPart::Filter(None, Conjunctions::from(
+                                [
+                                Disjunctions::from(
+                                    [
+                                    GuardClause::Clause(
+                                        GuardAccessClause {
+                                            access_clause: AccessClause {
+                                                compare_with: Some(LetValue::Value(PathAwareValue::try_from(Value::List(
+                                                                              vec![Value::Regex(String::from("AWS::RDS::DBCluster")),
+                                                                              Value::Regex(String::from("AWS::RDS::GlobalCluster"))])).unwrap())),
+                                                                              query: AccessQuery{ query: vec![QueryPart::Key(String::from("type"))], match_all: true },
+                                                                              custom_message: None,
+                                                                              comparator: (CmpOperator::In, false),
+                                                                              location: FileLocation {
+                                                                                  line: 1,
+                                                                                  column: "let aurora_dbs = resources.*[ ".len() as u32 + 1,
+                                                                                  file_name: ""
+                                                                              }
+                                            },
+                                            negation: false
+                                        }
+                                        ),
+                                    ]),
+                                    ],
+                                    ))
+                                        ], match_all: true }
+                )
+            }
 
-    for (idx, each) in examples.iter().enumerate() {
-        println!("Test #{}: {}", idx, *each);
-        let span = Span::new_extra(*each, "");
+)))]
+#[case(r##"let ENGINE_LOGS = {
+    'mariadb':       ["audit", "error", "general", "slowquery"],
+    'aurora-postgresql': ["postgresql", "upgrade"]
+}"##, Ok((
+        unsafe {
+            Span::new_from_raw_offset(
+r##"let ENGINE_LOGS = {
+    'mariadb':       ["audit", "error", "general", "slowquery"],
+    'aurora-postgresql': ["postgresql", "upgrade"]
+}"##.len(),
+                4,
+                "",
+                ""
+                )
+        },
+        LetExpr {
+            var: String::from("ENGINE_LOGS"),
+            value: LetValue::Value(PathAwareValue::try_from(r##"
+        {
+            'mariadb':       ["audit", "error", "general", "slowquery"],
+            'aurora-postgresql': ["postgresql", "upgrade"]
+        }
+                "##).unwrap())
+        }
+        )))]
+fn test_assignments(#[case] each : &str, #[case] expected : IResult<Span, LetExpr>) {
+        let span = Span::new_extra(each, "");
         let result = assignment(span);
-        println!("Test #{} Result: {:?}", idx, result);
-        assert_eq!(&result, &expectations[idx]);
-    }
+        assert_eq!(result, expected);
 }
 
 #[test]
@@ -4072,6 +4060,22 @@ fn does_this_work() -> Result<(), Error> {
     let _query =
         AccessQuery::try_from(r#"Resources[ keys == /s3/ ][ Type == "AWS::S3::BucketPolicy" ]"#)?
             .query;
+    Ok(())
+}
+
+#[rstest::rstest]
+#[case("is_string", CmpOperator::IsString)]
+#[case("IS_STRING", CmpOperator::IsString)]
+#[case("is_list", CmpOperator::IsList)]
+#[case("IS_LIST", CmpOperator::IsList)]
+#[case("is_bool", CmpOperator::IsBool)]
+#[case("IS_BOOL", CmpOperator::IsBool)]
+#[case("is_int", CmpOperator::IsInt)]
+#[case("IS_INT", CmpOperator::IsInt)]
+fn unary_parse(#[case] s: &str, #[case] expected : CmpOperator) -> Result<(), Error> {
+    let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1.0;
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.is_unary(), true);
     Ok(())
 }
 

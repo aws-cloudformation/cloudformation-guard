@@ -618,11 +618,25 @@ fn is_string(input: Span) -> IResult<Span, CmpOperator> {
     )(input)
 }
 
-fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
-    alt((is_string, is_list, is_struct))(input)
+fn is_bool(input: Span) -> IResult<Span, CmpOperator> {
+    value( CmpOperator::IsBool, alt((
+        tag("IS_BOOL"),
+        tag("is_bool"),
+        )))(input)
 }
 
-fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
+fn is_int(input: Span) -> IResult<Span, CmpOperator> {
+    value( CmpOperator::IsInt, alt((
+        tag("IS_INT"),
+        tag("is_int"),
+        )))(input)
+}
+
+fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
+    alt(( is_string, is_list, is_struct, is_bool, is_int))(input)
+}
+
+pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     //
     // This is really crappy as the earlier version used << for custom message
     // delimiter. '<' can be interpreted as Lt comparator.
@@ -674,14 +688,7 @@ fn custom_message(input: Span) -> IResult<Span, &str> {
 }
 
 pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
-    !matches!(
-        op,
-        CmpOperator::Empty
-            | CmpOperator::Exists
-            | CmpOperator::IsString
-            | CmpOperator::IsMap
-            | CmpOperator::IsList
-    )
+    !op.is_unary()
 }
 
 fn variable_capture_in_map_or_index(input: Span) -> IResult<Span, String> {
