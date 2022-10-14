@@ -181,7 +181,10 @@ or failure testing.
                     let span =
                         crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
                     match crate::rules::parser::rules_file(span) {
-                        Err(e) => println!("Parse Error on ruleset file {}", e),
+                        Err(e) => {
+                            eprintln!("Parse Error on ruleset file {}", e);
+                            exit_code = 1;
+                        },
                         Ok(rules) => {
                             let data_test_files = each_rule_file
                                 .test_files
@@ -235,11 +238,17 @@ or failure testing.
                 Ok((content, file.to_str().unwrap_or("").to_string()))
             }) {
                 match rules {
-                    Err(e) => println!("Unable to read rule file content {}", e),
+                    Err(e) => {
+                        eprintln!("Unable to read rule file content {}", e);
+                        exit_code = 1;
+                    },
                     Ok((context, path)) => {
                         let span = crate::rules::parser::Span::new_extra(&context, &path);
                         match crate::rules::parser::rules_file(span) {
-                            Err(e) => println!("Parse Error on ruleset file {}", e),
+                            Err(e) => {
+                                eprintln!("Parse Error on ruleset file {}", e);
+                                exit_code = 1;
+                            },
                             Ok(rules) => {
                                 let curr_exit_code =
                                     test_with_data(&data_test_files, &rules, verbose, new_engine)?;
@@ -292,7 +301,10 @@ fn test_with_data(
         }
     }) {
         match specs {
-            Err(e) => println!("Error processing {}", e),
+            Err(e) => {
+                eprintln!("Error processing {}", e);
+                exit_code = 1;
+            },
             Ok(specs) => {
                 for each in specs {
                     println!("Test Case #{}", test_counter);
@@ -397,7 +409,10 @@ fn test_with_data(
                         for each in &stack[0].children {
                             match expectations.get(&each.context) {
                                 Some(value) => match Status::try_from(value.as_str()) {
-                                    Err(e) => println!("Incorrect STATUS provided {}", e),
+                                    Err(e) => {
+                                        eprintln!("Incorrect STATUS provided {}", e);
+                                        exit_code = 1;
+                                    },
                                     Ok(status) => {
                                         let got = each.status.unwrap();
                                         if status != got {
