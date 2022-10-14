@@ -12,6 +12,7 @@ typedef struct {
 } validate_input_t;
 
 char* cfn_guard_run_checks(validate_input_t template, validate_input_t rules, _Bool verbose, extern_err_t * err);
+char* cfn_guard_version(extern_err_t * err);
 void cfn_guard_free_string(char *);
 
 #endif
