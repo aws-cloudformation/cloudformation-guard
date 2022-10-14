@@ -25,6 +25,8 @@ jobs:
       run: |
         mkdir cfn-guard-v2-${{ matrix.os }}
         cp ./target/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
+        cp ./target/release/*.so ./cfn-guard-v2-${{ matrix.os }}/
+        cp ./target/release/*.dylib ./cfn-guard-v2-${{ matrix.os }}/
         cp README.md ./cfn-guard-v2-${{ matrix.os }}/
         tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
     - name: Upload Release Asset

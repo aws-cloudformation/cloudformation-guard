@@ -1,7 +1,7 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use cfn_guard;
+use cfn_guard::{run_checks, ValidateInput};
 use lambda_runtime::{handler_fn, Context, Error};
 use log::{self, LevelFilter, info};
 use serde_derive::{Deserialize, Serialize};
@@ -40,7 +40,13 @@ pub async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput,
     info!("Rules are: [{:?}]", &e.rules);
     let mut results_vec = Vec::new();
     for rule in e.rules.iter() {
-        let result = match cfn_guard::run_checks(&e.data, &rule, e.verbose) {
+        let result = match run_checks(ValidateInput {
+            content: &e.data,
+            file_name: "lambda-payload",
+        }, ValidateInput {
+            content: &rule,
+            file_name: "lambda-rule",
+        }, e.verbose) {
             Ok(t) => t,
             Err(e) => (e.to_string()),
         };

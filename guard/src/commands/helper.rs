@@ -14,29 +14,32 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::root_scope;
 use crate::rules::path_value::traversal::Traversal;
 
+pub struct ValidateInput<'a> {
+    pub content: &'a str,
+    pub file_name: &'a str,
+}
+
 pub fn validate_and_return_json(
-    data: &str,
-    rules: &str,
+    data: ValidateInput,
+    rules: ValidateInput,
     verbose: bool
 ) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
+    let input_data = match serde_json::from_str::<serde_json::Value>(&data.content) {
        Ok(value) => PathAwareValue::try_from(value),
        Err(e) => {
-           let value = serde_yaml::from_str::<serde_yaml::Value>(&data)?;
+           let value = serde_yaml::from_str::<serde_yaml::Value>(&data.content)?;
            PathAwareValue::try_from(value)
        }
     };
 
-    let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
+    let span = crate::rules::parser::Span::new_extra(&rules.content, rules.file_name);
 
+    let rules_file_name = rules.file_name;
     match crate::rules::parser::rules_file(span) {
 
         Ok(rules) => {
             match input_data {
                 Ok(root) => {
-                    let data_file_name: &str = "lambda-payload";
-                    let rules_file_name: &str = "lambda-run";
-
                     let mut write_output = BufWriter::new(Vec::new());
 
                     let traversal = Traversal::from(&root);
@@ -55,8 +58,8 @@ pub fn validate_and_return_json(
                         status,
                         &root_record,
                         rules_file_name,
-                        data_file_name,
-                        data,
+                        data.file_name,
+                        data.content,
                         &traversal,
                         OutputFormatType::JSON
                     )?;
