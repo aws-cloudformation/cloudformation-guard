@@ -164,7 +164,7 @@ impl Display for Value {
                 } else {
                     write!(f, "(")?;
                 }
-                write!(f, "{},{}", range.lower, range.upper);
+                write!(f, "{},{}", range.lower, range.upper)?;
 
                 if (range.inclusive & UPPER_INCLUSIVE) == UPPER_INCLUSIVE {
                     write!(f, "]")

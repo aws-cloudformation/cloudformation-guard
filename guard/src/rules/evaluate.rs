@@ -667,7 +667,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Block<'loc, T> {
     fn evaluate<'s>(&self,
                     context: &'s PathAwareValue,
                     var_resolver: &'s dyn EvaluationContext) -> Result<Status> {
-        let block = BlockScope::new(&self, context, var_resolver);
+        let block = BlockScope::new(&self, context, var_resolver)?;
         self.conjunctions.evaluate(context, &block)
     }
 }
@@ -941,17 +941,17 @@ pub(crate) struct RootScope<'s, 'loc> {
 
 impl<'s, 'loc> RootScope<'s, 'loc> {
     pub(crate) fn new(rules: &'s RulesFile<'loc>,
-                      value: &'s PathAwareValue) -> Self {
+                      value: &'s PathAwareValue) -> Result<Self> {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&rules.assignments,
                           &mut literals,
-                          &mut pending);
+                          &mut pending)?;
         let mut lookup_cache = HashMap::with_capacity(rules.guard_rules.len());
         for rule in &rules.guard_rules {
             lookup_cache.insert(rule.rule_name.as_str(), rule);
         }
-        RootScope {
+        Ok(RootScope {
             rules,
             input_context: value,
             pending_queries: pending,
@@ -959,7 +959,7 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
             variables: std::cell::RefCell::new(HashMap::new()),
             rule_by_name: lookup_cache,
             rule_statues: std::cell::RefCell::new(HashMap::with_capacity(rules.guard_rules.len())),
-        }
+        })
     }
 }
 
@@ -1037,20 +1037,20 @@ pub(crate) struct BlockScope<'s, T> {
 }
 
 impl<'s, T> BlockScope<'s, T> {
-    pub(crate) fn new(block_type: &'s Block<'s, T>, context: &'s PathAwareValue, parent: &'s dyn EvaluationContext) -> Self {
+    pub(crate) fn new(block_type: &'s Block<'s, T>, context: &'s PathAwareValue, parent: &'s dyn EvaluationContext) -> Result<Self> {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&block_type.assignments,
                           &mut literals,
-                          &mut pending);
-        BlockScope {
+                          &mut pending)?;
+        Ok(BlockScope {
             block_type,
             input_context: context,
             literals,
             parent,
             variables: std::cell::RefCell::new(HashMap::new()),
             pending_queries: pending,
-        }
+        })
     }
 }
 

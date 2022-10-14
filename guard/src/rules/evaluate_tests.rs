@@ -204,7 +204,7 @@ rule iam_basic_checks when iam_resources_exists {
     let root = Value::try_from(value)?;
     let root = PathAwareValue::try_from(root)?;
     let rules_file = RulesFile::try_from(file)?;
-    let root_context = RootScope::new(&rules_file, &root);
+    let root_context = RootScope::new(&rules_file, &root)?;
     let reporter = Reporter(&root_context);
     let status = rules_file.evaluate(&root, &reporter)?;
     assert_eq!(Status::PASS, status);
@@ -424,7 +424,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     let value = PathAwareValue::try_from(resources)?;
 
     // let dummy = DummyEval{};
-    let root_context = RootScope::new(&rules_file, &value);
+    let root_context = RootScope::new(&rules_file, &value)?;
     let reporter = Reporter(&root_context);
     let status = rules_file.evaluate(&value, &reporter)?;
     println!("{}", status);
@@ -541,7 +541,7 @@ rule deny_egress when %sgs NOT EMPTY {
     };
 
     for (index, each) in samples.iter().enumerate() {
-        let root_context = RootScope::new(&rules_file, each);
+        let root_context = RootScope::new(&rules_file, each)?;
         let reporter = Reporter(&root_context);
         let status = rules_file.evaluate(each, &reporter)?;
         println!("{}", format!("Status {} = {}", index, status));
@@ -1035,7 +1035,7 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
     "###;
 
     let rules = RulesFile::try_from(rules_file)?;
-    let root_scope = RootScope::new(&rules, &value);
+    let root_scope = RootScope::new(&rules, &value)?;
     let reporter = Reporter(&root_scope);
     let status = rules.evaluate(&value, &reporter)?;
     println!("Status = {}", status);
@@ -1058,7 +1058,7 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
             }
         "#, Path::try_from("/Resources/four")?)
     )?;
-    let root_scope = RootScope::new(&rules, &fail_value);
+    let root_scope = RootScope::new(&rules, &fail_value)?;
     let reporter = Reporter(&root_scope);
     let status = rules.evaluate(&fail_value, &reporter)?;
     println!("Status = {}", status);
@@ -1328,7 +1328,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
     some %api_gws.Properties.Policy.Statement[*].Condition[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
 }"#;
     let rule = RulesFile::try_from(rule_str)?;
-    let root = RootScope::new(&rule, &value);
+    let root = RootScope::new(&rule, &value)?;
     let status = rule.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1349,7 +1349,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
     "#;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rule, &value);
+    let root = RootScope::new(&rule, &value)?;
     let status = rule.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
 
@@ -1482,7 +1482,7 @@ Resources:
     "###;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
-    let root = RootScope::new(&rules, &value);
+    let root = RootScope::new(&rules, &value)?;
     let status = rules.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
     Ok(())
@@ -1720,7 +1720,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1751,7 +1751,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
 
@@ -1780,7 +1780,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -1853,7 +1853,7 @@ fn rule_clause_when_check() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let root = RootScope::new(&rules, &resources);
+    let root = RootScope::new(&rules, &resources)?;
     let mut expectations = HashMap::with_capacity(3);
     expectations.insert("skipped".to_string(), Status::SKIP);
     expectations.insert("dependent_on_skipped".to_string(), Status::SKIP);
@@ -1879,7 +1879,7 @@ fn rule_clause_when_check() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let root = RootScope::new(&rules, &resources);
+    let root = RootScope::new(&rules, &resources)?;
     let mut expectations = HashMap::with_capacity(3);
     expectations.insert("skipped".to_string(), Status::PASS);
     expectations.insert("dependent_on_skipped".to_string(), Status::PASS);
@@ -2188,7 +2188,7 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
 
     let rules = RulesFile::try_from(rule)?;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
-    let root = RootScope::new(&rules, &values);
+    let root = RootScope::new(&rules, &values)?;
     let reporter = Reporter{ root: &root };
     let status = rules.evaluate(&values, &reporter)?;
     assert_eq!(status, Status::FAIL);
@@ -2256,7 +2256,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
-    let context = RootScope::new(&rule_eval, &value);
+    let context = RootScope::new(&rule_eval, &value)?;
     let status = rule_eval.evaluate(&value, &context)?;
     assert_eq!(status, Status::PASS);
 

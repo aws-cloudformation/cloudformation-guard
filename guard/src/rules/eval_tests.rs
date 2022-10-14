@@ -3760,11 +3760,11 @@ fn yaml_loader() -> Result<()> {
 #          second: true
     Name: !Sub
       - www.${Domain}
-      - { Domain: !Ref RootDomainName }]
+      - { Domain: !Ref RootDomainName }
     "###;
 
     let mut loader = Loader::new();
-    loader.load(String::from(docs));
+    loader.load(String::from(docs))?;
 
     Ok(())
 }
