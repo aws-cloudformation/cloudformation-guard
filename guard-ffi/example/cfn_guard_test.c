@@ -9,7 +9,7 @@ int main() {
   data.file_name = "data.json";
   rules.content = "rule check_foo { foo.bar == true }";
   rules.file_name = "check.rule";
-  char* result = cfn_guard_run_checks(data, rules, 0, &err);
+  char* result = cfn_guard_run_checks(&data, &rules, 0, &err);
   if (err.code == 0) {
     printf(result);
     cfn_guard_free_string(result);
