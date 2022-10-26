@@ -113,7 +113,7 @@ impl GenericReporter for StructuredSummary {
         match &self.hierarchy_type {
             StructureType::JSON => writeln!(writer, "{}", serde_json::to_string(&value)?),
             StructureType::YAML => writeln!(writer, "{}", serde_yaml::to_string(&value)?),
-        };
+        }?;
         Ok(())
     }
 }
@@ -287,7 +287,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                 provided,
                 expected: Some(serde_json::Value::Array(to)),
                 message: String::from(incomp.message.as_ref().map_or("", |s| s.as_str())),
-                    ..Default::default()
+                ..Default::default()
             }
         },
 
@@ -296,7 +296,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 }
 
 pub(crate) fn extract_event_records<'value>(root_record: EventRecord<'value>)
-    -> (Vec<EventRecord<'value>>, Vec<EventRecord<'value>>, Vec<EventRecord<'value>>)
+                                            -> (Vec<EventRecord<'value>>, Vec<EventRecord<'value>>, Vec<EventRecord<'value>>)
 {
     let mut failed = Vec::with_capacity(root_record.children.len());
     let mut skipped = Vec::with_capacity(root_record.children.len());
@@ -515,40 +515,44 @@ pub(super) fn print_name_info<R, U, B>(
                     Some(cmp) => (cmp.operator, cmp.not_operator_exists),
                     None => {
                         writeln!(writer, "Parameterized Rule {rules}/{rule_name} failed for {data}. Reason {msg}",
-                            rules=rules_file_name,
-                            data=data_file_name,
-                            rule_name=each.rule,
-                            msg=each.message.replace('\n', "; ")
-                        );
+                                 rules=rules_file_name,
+                                 data=data_file_name,
+                                 rule_name=each.rule,
+                                 msg=each.message.replace('\n', "; ")
+                        )?;
                         continue;
                     }
                 };
                 if cmp.is_unary() {
+                    use CmpOperator::*;
                     writeln!(writer, "{}",
-                         unary_message(
-                             rules_file_name,
-                             data_file_name,
-                             match cmp {
-                                 CmpOperator::Exists => if !not { "did not exist" } else { "existed" },
-                                 CmpOperator::Empty => if !not { "was not empty"} else { "was empty" },
-                                 CmpOperator::IsList => if !not { "was not a list " } else { "was list" },
-                                 CmpOperator::IsMap => if !not { "was not a struct" } else { "was struct" },
-                                 CmpOperator::IsString => if !not { "was not a string " } else { "was string" },
-                                 _ => unreachable!()
-                             },
-                             each)?,
+                             unary_message(
+                                 rules_file_name,
+                                 data_file_name,
+                                 match cmp {
+                                     Exists => if !not { "did not exist" } else { "existed" },
+                                     Empty => if !not { "was not empty"} else { "was empty" },
+                                     IsList => if !not { "was not a list " } else { "was list" },
+                                     IsMap => if !not { "was not a struct" } else { "was struct" },
+                                     IsString => if !not { "was not a string " } else { "was string" },
+                                     IsBool => if !not { "was not a bool" } else { "was bool" },
+                                     IsInt => if !not { "was not an int" } else { "was int" },
+                                     IsFloat => if !not { "was not a float" } else { "was float" },
+                                     Eq | In | Gt | Lt | Le | Ge => unreachable!()
+                                 },
+                                 each)?,
                     )?;
 
                 }
                 else {
                     // EQUALS failed at property path Properties.Encrypted because provided value [false] did not match with expected value [true].
                     writeln!(writer, "{}",
-                        binary_message(
-                            rules_file_name,
-                            data_file_name,
-                            if not { "did" } else { "did not" },
-                            each
-                        )?,
+                             binary_message(
+                                 rules_file_name,
+                                 data_file_name,
+                                 if not { "did" } else { "did not" },
+                                 each
+                             )?,
                     )?;
                 }
             }
@@ -583,7 +587,7 @@ pub(super) fn report_structured<'value>(root: &EventRecord<'value>,
 
 #[derive(Clone, Debug)]
 pub(super) struct LocalResourceAggr<'record, 'value: 'record> {
-    pub(super) name: &'value str,
+    pub(super) name: String,
     pub(super) resource_type: &'value str,
     pub(super) cdk_path: Option<&'value str>,
     pub(super) clauses: HashSet<IdentityHash<'record, ClauseReport<'value>>>,
@@ -713,16 +717,16 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
 
 pub(super) type BinaryComparisonErrorFn =
 dyn Fn
-    (&mut dyn Write,
-     &ClauseReport<'_>,
-     &BinaryComparison<'_>,
-     String) -> crate::rules::Result<()>;
+(&mut dyn Write,
+    &ClauseReport<'_>,
+    &BinaryComparison<'_>,
+    String) -> crate::rules::Result<()>;
 
 pub(super) type UnaryComparisonErrorFn = dyn Fn
-    (&mut dyn Write,
-     &ClauseReport<'_>,
-     &UnaryComparison<'_>,
-     String) -> crate::rules::Result<()>;
+(&mut dyn Write,
+    &ClauseReport<'_>,
+    &UnaryComparison<'_>,
+    String) -> crate::rules::Result<()>;
 
 
 fn emit_messages(
@@ -1151,5 +1155,3 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
 
     Ok(())
 }
-
-

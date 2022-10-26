@@ -1,73 +1,81 @@
+use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
-use std::cmp;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use clap::{App, Arg, ArgMatches, ArgGroup};
+use clap::{App, Arg, ArgGroup, ArgMatches};
 use colored::*;
+use enumflags2::BitFlags;
+use serde::Deserialize;
+
+use Type::CFNTemplate;
 
 use crate::command::Command;
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::commands::validate::summary_table::SummaryType;
+use crate::commands::validate::tf::TfAware;
+use crate::commands::{
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+};
 use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::eval::eval_rules_file;
+use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
+use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
-use crate::commands::validate::summary_table::SummaryType;
-use enumflags2::BitFlags;
-use serde::Deserialize;
-use std::path::{PathBuf, Path};
-use std::str::FromStr;
-use Type::CFNTemplate;
-use crate::commands::{ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE};
-use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
-use crate::rules::eval::eval_rules_file;
-use crate::rules::path_value::traversal::Traversal;
-use crate::commands::validate::tf::TfAware;
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 
-pub(crate) mod generic_summary;
-mod common;
-mod summary_table;
-mod cfn_reporter;
 mod cfn;
+mod cfn_reporter;
+mod common;
 mod console_reporter;
+pub(crate) mod generic_summary;
+mod summary_table;
 mod tf;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
     content: String,
     path_value: PathAwareValue,
-    name: String
+    name: String,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum Type {
     CFNTemplate,
-    Generic
+    Generic,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
     JSON,
-    YAML
+    YAML,
 }
 
-pub(crate) trait Reporter : Debug {
-    fn report(&self,
-              writer: &mut dyn Write,
-              status: Option<Status>,
-              failed_rules: &[&StatusContext],
-              passed_or_skipped: &[&StatusContext],
-              longest_rule_name: usize,
-              rules_file: &str,
-              data_file: &str,
-              data: &Traversal<'_>,
-              output_type: OutputFormatType
+#[allow(clippy::too_many_arguments)]
+pub(crate) trait Reporter: Debug {
+    fn report(
+        &self,
+        writer: &mut dyn Write,
+        status: Option<Status>,
+        failed_rules: &[&StatusContext],
+        passed_or_skipped: &[&StatusContext],
+        longest_rule_name: usize,
+        rules_file: &str,
+        data_file: &str,
+        data: &Traversal<'_>,
+        output_type: OutputFormatType,
     ) -> Result<()>;
 
     fn report_eval<'value>(
@@ -79,8 +87,10 @@ pub(crate) trait Reporter : Debug {
         _data_file: &str,
         _data_file_bytes: &str,
         _data: &Traversal<'value>,
-        _output_type: OutputFormatType
-    ) -> Result<()> { Ok(()) }
+        _output_type: OutputFormatType,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -96,7 +106,7 @@ pub(crate) struct Payload {
 
 impl Validate {
     pub fn new() -> Self {
-        Validate{}
+        Validate {}
     }
 }
 
@@ -104,7 +114,6 @@ impl Command for Validate {
     fn name(&self) -> &'static str {
         VALIDATE
     }
-
 
     fn command(&self) -> App<'static, 'static> {
         App::new(VALIDATE)
@@ -175,56 +184,62 @@ or rules files.
         let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
+                    validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for each_entry in walkdir::WalkDir::new(base.clone()) {
-                        if let Ok(file) = each_entry {
-                            if file.path().is_file() {
-                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
-                                {
-                                    let mut content = String::new();
-                                    let mut reader = BufReader::new(File::open(file.path())?);
-                                    reader.read_to_string(&mut content)?;
-                                    let path = file.path();
-                                    let relative = match path.strip_prefix(base.as_path()) {
-                                        Ok(p) => if p != empty_path {
+                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                        if file.path().is_file() {
+                            let name = file
+                                .file_name()
+                                .to_str()
+                                .map_or("".to_string(), String::from);
+                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path = file.path();
+                                let relative = match path.strip_prefix(base.as_path()) {
+                                    Ok(p) => {
+                                        if p != empty_path {
                                             format!("{}", p.display())
-                                        } else { format!("{}", path.file_name().unwrap().to_str().unwrap()) },
-                                        Err(_) => format!("{}", path.display()),
-                                    };
-                                    let path_value = match get_path_aware_value_from_data(&content) {
-                                        Ok(T) => T,
-                                        Err(E) => return Err(E)
-                                    };
-                                    streams.push(DataFile {
-                                        name: relative,
-                                        path_value,
-                                        content
-                                    });
-                                }
+                                        } else {
+                                            path.file_name().unwrap().to_str().unwrap().to_string()
+                                        }
+                                    }
+                                    Err(_) => format!("{}", path.display()),
+                                };
+                                let path_value = match get_path_aware_value_from_data(&content) {
+                                    Ok(t) => t,
+                                    Err(e) => return Err(e),
+                                };
+                                streams.push(DataFile {
+                                    name: relative,
+                                    path_value,
+                                    content,
+                                });
                             }
                         }
                     }
                 }
                 streams
-            },
+            }
             None => {
                 if app.is_present(RULES.0) {
                     let mut content = String::new();
                     let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
                     let path_value = match get_path_aware_value_from_data(&content) {
-                        Ok(T) => T,
-                        Err(E) => return Err(E)
+                        Ok(t) => t,
+                        Err(e) => return Err(e),
                     };
                     streams.push(DataFile {
                         name: "STDIN".to_string(),
                         path_value,
-                        content
+                        content,
                     });
                     streams
-                }
-                else { vec![] } // expect Payload, since rules aren't specified
+                } else {
+                    vec![]
+                } // expect Payload, since rules aren't specified
             }
         };
 
@@ -232,82 +247,78 @@ or rules files.
             Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
                 for file_or_dir in list_of_file_or_dir {
+                    validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for each_entry in walkdir::WalkDir::new(base.clone()) {
-                        if let Ok(file) = each_entry {
-                            if file.path().is_file() {
-                                let name = file.file_name().to_str().map_or("".to_string(), String::from);
-                                if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS)
-                                {
-                                    let mut content = String::new();
-                                    let mut reader = BufReader::new(File::open(file.path())?);
-                                    reader.read_to_string(&mut content)?;
-                                    let path_value = match get_path_aware_value_from_data(&content) {
-                                        Ok(T) => T,
-                                        Err(E) => return Err(E)
-                                    };
-                                    primary_path_value = match primary_path_value {
-                                        Some(mut current) => {
-                                            Some(current.merge(path_value)?)
-                                        },
-                                        None => Some(path_value)
-                                    };
-                                }
+                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                        if file.path().is_file() {
+                            let name = file
+                                .file_name()
+                                .to_str()
+                                .map_or("".to_string(), String::from);
+                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
+                                let mut content = String::new();
+                                let mut reader = BufReader::new(File::open(file.path())?);
+                                reader.read_to_string(&mut content)?;
+                                let path_value = match get_path_aware_value_from_data(&content) {
+                                    Ok(t) => t,
+                                    Err(e) => return Err(e),
+                                };
+                                primary_path_value = match primary_path_value {
+                                    Some(current) => Some(current.merge(path_value)?),
+                                    None => Some(path_value),
+                                };
                             }
                         }
                     }
                 }
                 primary_path_value
             }
-            None => None
+            None => None,
         };
 
-        let verbose = if app.is_present(VERBOSE.0) {
-            true
-        } else {
-            false
-        };
+        let verbose = app.is_present(VERBOSE.0);
 
         let data_type = match app.value_of(TYPE.0) {
-            Some(t) =>
+            Some(t) => {
                 if t == "CFNTemplate" {
                     CFNTemplate
-                }
-                else {
+                } else {
                     Type::Generic
-                },
-            None => Type::Generic
+                }
+            }
+            None => Type::Generic,
         };
 
         let output_type = match app.value_of(OUTPUT_FORMAT.0) {
-            Some(o) =>
+            Some(o) => {
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
-                }
-                else if o == "json" {
+                } else if o == "json" {
                     OutputFormatType::JSON
-                }
-                else {
+                } else {
                     OutputFormatType::YAML
                 }
-            None => OutputFormatType::SingleLineSummary
+            }
+            None => OutputFormatType::SingleLineSummary,
         };
 
-        let summary_type: BitFlags<SummaryType> = app.values_of(SHOW_SUMMARY.0).map_or(
-            SummaryType::FAIL.into(),
-            |v| {
-                v.fold(BitFlags::empty(), |mut st, elem| {
-                    match elem {
-                        "pass" => st.insert(SummaryType::PASS),
-                        "fail" => st.insert(SummaryType::FAIL),
-                        "skip" => st.insert(SummaryType::SKIP),
-                        "none" => return BitFlags::empty(),
-                        "all"  => st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP),
-                        _ => unreachable!()
-                    };
-                    st
-                })
-            });
+        let summary_type: BitFlags<SummaryType> =
+            app.values_of(SHOW_SUMMARY.0)
+                .map_or(SummaryType::FAIL.into(), |v| {
+                    v.fold(BitFlags::empty(), |mut st, elem| {
+                        match elem {
+                            "pass" => st.insert(SummaryType::PASS),
+                            "fail" => st.insert(SummaryType::FAIL),
+                            "skip" => st.insert(SummaryType::SKIP),
+                            "none" => return BitFlags::empty(),
+                            "all" => {
+                                st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
+                            }
+                            _ => unreachable!(),
+                        };
+                        st
+                    })
+                });
 
         let print_json = app.is_present(PRINT_JSON.0);
         let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
@@ -318,44 +329,61 @@ or rules files.
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
-            let base = PathBuf::from_str(file_or_dir)?;
-            if base.is_file() {
-                rules.push(base.clone())
-            } else {
-                    for each in walkdir::WalkDir::new(base.clone()).sort_by(cmp) {
-                        if let Ok(entry) = each {
-                            if entry.path().is_file() &&
-                                entry.path().file_name().map(|s| s.to_str()).flatten()
-                                    .map_or(false, |s|
-                                        has_a_supported_extension(&s.to_string(),
-                                                                  &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                    )
-                            {
-                                rules.push(entry.path().to_path_buf());
-                            }
+                validate_path(file_or_dir)?;
+                let base = PathBuf::from_str(file_or_dir)?;
+                if base.is_file() {
+                    rules.push(base.clone())
+                } else {
+                    for entry in walkdir::WalkDir::new(base.clone())
+                        .sort_by(cmp)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if entry.path().is_file()
+                            && entry
+                                .path()
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .map_or(false, |s| {
+                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
+                                })
+                        {
+                            rules.push(entry.path().to_path_buf());
                         }
                     }
                 }
             }
-            for each_file_content in iterate_over(&rules, |content, file|
-                Ok((content, match file.strip_prefix(&file) {
-                    Ok(path) => if path == empty_path {
-                        format!("{}", file.file_name().unwrap().to_str().unwrap())
-                    } else { format!("{}", path.display()) },
-                    Err(_) => format!("{}", file.display()),
-                }))) {
+            for each_file_content in iterate_over(&rules, |content, file| {
+                Ok((
+                    content,
+                    match file.strip_prefix(&file) {
+                        Ok(path) => {
+                            if path == empty_path {
+                                file.file_name().unwrap().to_str().unwrap().to_string()
+                            } else {
+                                format!("{}", path.display())
+                            }
+                        }
+                        Err(_) => format!("{}", file.display()),
+                    },
+                ))
+            }) {
                 match each_file_content {
                     Err(e) => println!("Unable read content from file {}", e),
                     Ok((file_content, rule_file_name)) => {
-                        let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
+                        let span =
+                            crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                println!("Parsing error handling rule file = {}, Error = {}",
-                                         rule_file_name.underline(), e);
+                                println!(
+                                    "Parsing error handling rule file = {}, Error = {}",
+                                    rule_file_name.underline(),
+                                    e
+                                );
                                 println!("---");
                                 exit_code = 5;
                                 continue;
-                            },
+                            }
 
                             Ok(rules) => {
                                 match evaluate_against_data_input(
@@ -369,7 +397,8 @@ or rules files.
                                     print_json,
                                     show_clause_failures,
                                     new_version_eval_engine,
-                                    summary_type.clone())? {
+                                    summary_type,
+                                )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
                                         exit_code = 5;
@@ -383,32 +412,40 @@ or rules files.
         } else {
             let mut context = String::new();
             let mut reader = BufReader::new(std::io::stdin());
-            reader.read_to_string(&mut context);
+            reader.read_to_string(&mut context)?;
             let payload: Payload = deserialize_payload(&context)?;
             let mut data_collection: Vec<DataFile> = Vec::new();
             for (i, data) in payload.list_of_data.iter().enumerate() {
-                let mut content = data.to_string();
+                let content = data.to_string();
                 let path_value = match get_path_aware_value_from_data(&content) {
-                    Ok(T) => T,
-                    Err(E) => return Err(E)
+                    Ok(t) => t,
+                    Err(e) => return Err(e),
                 };
                 data_collection.push(DataFile {
                     name: format!("DATA_STDIN[{}]", i + 1),
                     path_value,
-                    content
+                    content,
                 });
             }
-            let rules_collection: Vec<(String, String)> = payload.list_of_rules.iter().enumerate().map(|(i, rules)|(rules.to_string(), format!("RULES_STDIN[{}]", i + 1))).collect();
+            let rules_collection: Vec<(String, String)> = payload
+                .list_of_rules
+                .iter()
+                .enumerate()
+                .map(|(i, rules)| (rules.to_string(), format!("RULES_STDIN[{}]", i + 1)))
+                .collect();
 
             for (each_rules, location) in rules_collection {
-               match parse_rules(&each_rules, &location) {
+                match parse_rules(&each_rules, &location) {
                     Err(e) => {
-                        println!("Parsing error handling rules = {}, Error = {}",
-                                 location.underline(), e);
+                        println!(
+                            "Parsing error handling rules = {}, Error = {}",
+                            location.underline(),
+                            e
+                        );
                         println!("---");
                         exit_code = 5;
                         continue;
-                    },
+                    }
 
                     Ok(rules) => {
                         match evaluate_against_data_input(
@@ -422,7 +459,8 @@ or rules files.
                             print_json,
                             show_clause_failures,
                             new_version_eval_engine,
-                            summary_type.clone())? {
+                            summary_type,
+                        )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
                                 exit_code = 5;
@@ -436,41 +474,41 @@ or rules files.
     }
 }
 
-pub fn validate_and_return_json(
-    data: &str,
-    rules: &str,
-) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data) {
-       Ok(value) => PathAwareValue::try_from(value),
-       Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+pub(crate) fn validate_path(base: &str) -> Result<()> {
+    match Path::new(base).exists() {
+        true => Ok(()),
+        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
+    }
+}
+
+pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
+    let input_data = match serde_json::from_str::<serde_json::Value>(data) {
+        Ok(value) => PathAwareValue::try_from(value),
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
 
-    let span = crate::rules::parser::Span::new_extra(&rules, "lambda");
+    let span = crate::rules::parser::Span::new_extra(rules, "lambda");
 
     match crate::rules::parser::rules_file(span) {
-        Ok(rules) => {
-            match input_data {
-                Ok(root) => {
-                    let mut root_scope = crate::rules::eval_context::root_scope(&rules, &root)?;
-                    //let mut tracker = crate::rules::eval_context::RecordTracker::new(&mut root_scope);
-                    let _status = crate::rules::eval::eval_rules_file(&rules, &mut root_scope)?;
-                    let mut tracker = root_scope.reset_recorder();
-                    let event = tracker.final_event.unwrap();
-                    let file_report = simplifed_json_from_root(&event)?;
-                    Ok(serde_json::to_string_pretty(&file_report)?)
-
-                }
-                Err(e) => return Err(e),
+        Ok(rules) => match input_data {
+            Ok(root) => {
+                let mut root_scope = root_scope(&rules, &root)?;
+                let _status = eval_rules_file(&rules, &mut root_scope)?;
+                let tracker = root_scope.reset_recorder();
+                let event = tracker.final_event.unwrap();
+                let file_report = simplifed_json_from_root(&event)?;
+                Ok(serde_json::to_string_pretty(&file_report)?)
             }
-        }
-        Err(e) =>  return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+            Err(e) => Err(e),
+        },
+        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
@@ -499,14 +537,9 @@ fn indent_spaces(indent: usize) {
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool)
-{
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool) {
     let prefix_current = if last { "`- " } else { "|- " };
-    println!(
-        "{}{}{}",
-        prefix,
-        prefix_current,
-        current);
+    println!("{}{}{}", prefix, prefix_current, current);
 
     let prefix_child = if last { "   " } else { "|  " };
     let prefix = prefix + prefix_child;
@@ -523,7 +556,13 @@ pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
 }
 
 pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
-    let header = format!("{}({}, {})", cxt.eval_type, cxt.context, common::colored_string(cxt.status)).underline();
+    let header = format!(
+        "{}({}, {})",
+        cxt.eval_type,
+        cxt.context,
+        common::colored_string(cxt.status)
+    )
+    .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -533,7 +572,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("From: {:?}", v);
-        },
+        }
         None => {}
     }
     match &cxt.to {
@@ -541,7 +580,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("To: {:?}", v);
-        },
+        }
         None => {}
     }
     match &cxt.msg {
@@ -549,57 +588,80 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
             indent_spaces(depth);
             print!("|  ");
             println!("Message: {}", message);
-
-        },
+        }
         None => {}
     }
 
     for child in &cxt.children {
-        print_context(child, depth+1)
+        print_context(child, depth + 1)
     }
 }
 
 fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
-    print!("{file}/{rule:<0$}", longest+4, file=rules_file_name, rule=rule.context);
+    print!(
+        "{file}/{rule:<0$}",
+        longest + 4,
+        file = rules_file_name,
+        rule = rule.context
+    );
     let longest = rules_file_name.len() + longest;
     let mut first = true;
     for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
         let matched = *matched;
-        let header = format!("{}({})", common::colored_string(matched.status), matched.context).underline();
+        let header = format!(
+            "{}({})",
+            common::colored_string(matched.status),
+            matched.context
+        )
+        .underline();
         if !first {
-            print!("{space:>longest$}", space=" ", longest=longest+4)
+            print!("{space:>longest$}", space = " ", longest = longest + 4)
         }
-        let clause = format!("Clause #{}", index+1).bold();
-        println!("{header:<20}{content}", header=clause, content=header);
+        let clause = format!("Clause #{}", index + 1).bold();
+        println!("{header:<20}{content}", header = clause, content = header);
         match &matched.from {
             Some(from) => {
-                print!("{space:>longest$}", space=" ", longest=longest+4);
+                print!("{space:>longest$}", space = " ", longest = longest + 4);
                 let content = format!("Comparing {:?}", from);
-                print!("{header:<20}{content}", header=" ", content=content);
-            },
+                print!("{header:<20}{content}", header = " ", content = content);
+            }
             None => {}
         }
         match &matched.to {
             Some(to) => {
                 println!(" with {:?} failed", to);
-            },
-            None => { print!("\n") }
+            }
+            None => {
+                println!()
+            }
         }
         match &matched.msg {
             Some(m) => {
                 for each in m.split('\n') {
-                    print!("{space:>longest$}", space=" ", longest=longest+4+20);
+                    print!("{space:>longest$}", space = " ", longest = longest + 4 + 20);
                     println!("{}", each);
                 }
-            },
-            None => { print!("\n"); }
+            }
+            None => {
+                println!();
+            }
         }
-        if first { first = false; }
+        if first {
+            first = false;
+        }
     }
 }
 
-impl<'r, 'loc> ConsoleReporter<'r> {
-    pub(crate) fn new(root: StackTracker<'r>, renderers: &'r Vec<&'r dyn Reporter>, rules_file_name: &'r str, data_file_name: &'r str, verbose: bool, print_json: bool, show_clause_failures: bool) -> Self {
+impl<'r> ConsoleReporter<'r> {
+    pub(crate) fn new(
+        root: StackTracker<'r>,
+        renderers: &'r Vec<&'r dyn Reporter>,
+        rules_file_name: &'r str,
+        data_file_name: &'r str,
+        verbose: bool,
+        print_json: bool,
+        show_clause_failures: bool,
+    ) -> Self {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -611,85 +673,72 @@ impl<'r, 'loc> ConsoleReporter<'r> {
         }
     }
 
-    pub fn get_result_json(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<String> {
+    pub fn get_result_json(
+        self,
+        root: &PathAwareValue,
+        output_format_type: OutputFormatType,
+    ) -> Result<String> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         if self.verbose {
-            Ok(format!("{}", serde_json::to_string_pretty(&top.children).unwrap()))
-        }
-        else {
+            Ok(serde_json::to_string_pretty(&top.children).unwrap())
+        } else {
             let mut output = Vec::new();
-            let longest = top.children.iter()
-                .max_by(|f, s| {
-                    (*f).context.len().cmp(&(*s).context.len())
-                })
-                .map(|elem| elem.context.len())
-                .unwrap_or(20);
+            let longest = get_longest(top);
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                top.children.iter().partition(|ctx|
-                    match (*ctx).status {
-                        Some(Status::FAIL) => true,
-                        _ => false
-                    });
+                partition_failed_and_rest(top);
 
             let traversal = Traversal::from(root);
 
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
-                    top.status.clone(),
+                    top.status,
                     &failed,
                     &rest,
                     longest,
                     self.rules_file_name,
                     self.data_file_name,
                     &traversal,
-                    output_format_type)?;
+                    output_format_type,
+                )?;
             }
 
             match String::from_utf8(output) {
                 Ok(s) => Ok(s),
-                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string())))
+                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
             }
         }
     }
 
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> crate::rules::Result<()> {
+    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
+        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             println!("{}", serialized_user);
         } else {
-            let longest = top.children.iter()
-                .max_by(|f, s| {
-                    (*f).context.len().cmp(&(*s).context.len())
-                })
-                .map(|elem| elem.context.len())
-                .unwrap_or(20);
+            let longest = get_longest(top);
 
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                top.children.iter().partition(|ctx|
-                    match (*ctx).status {
-                        Some(Status::FAIL) => true,
-                        _ => false
-                    });
+                partition_failed_and_rest(top);
 
             let traversal = Traversal::from(root);
 
             for each_reporter in self.reporters {
                 each_reporter.report(
                     &mut output,
-                    top.status.clone(),
+                    top.status,
                     &failed,
                     &rest,
                     longest,
                     self.rules_file_name,
                     self.data_file_name,
                     &traversal,
-                    output_format_type)?;
+                    output_format_type,
+                )?;
             }
 
             if self.show_clause_failures {
@@ -722,52 +771,59 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
         self.root_context.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self,
-                      eval_type: EvaluationType,
-                      context: &str,
-                      msg: String,
-                      from: Option<PathAwareValue>,
-                      to: Option<PathAwareValue>,
-                      status: Option<Status>,
-                      cmp: Option<(CmpOperator, bool)>) {
-        self.root_context.end_evaluation(eval_type, context, msg, from, to, status, cmp);
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
+        self.root_context
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
-    fn start_evaluation(&self,
-                        eval_type: EvaluationType,
-                        context: &str) {
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
         self.root_context.start_evaluation(eval_type, context);
     }
-
 }
 
-fn evaluate_against_data_input<'r>(data_type: Type,
-                                   output: OutputFormatType,
-                                   extra_data: Option<PathAwareValue>,
-                                   data_files: &'r Vec<DataFile>,
-                                   rules: &RulesFile<'_>,
-                                   rules_file_name: &'r str,
-                                   verbose: bool,
-                                   print_json: bool,
-                                   show_clause_failures: bool,
-                                   new_engine_version: bool,
-                                   summary_table: BitFlags<SummaryType>) -> Result<Status> {
+#[allow(clippy::too_many_arguments)]
+fn evaluate_against_data_input<'r>(
+    _data_type: Type,
+    output: OutputFormatType,
+    extra_data: Option<PathAwareValue>,
+    data_files: &'r Vec<DataFile>,
+    rules: &RulesFile<'_>,
+    rules_file_name: &'r str,
+    verbose: bool,
+    print_json: bool,
+    show_clause_failures: bool,
+    new_engine_version: bool,
+    summary_table: BitFlags<SummaryType>,
+) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn std::io::Write>;
-    let generic: Box<dyn Reporter> = Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
+    let generic: Box<dyn Reporter> =
+        Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
-    let cfn: Box<dyn Reporter> = Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+    let cfn: Box<dyn Reporter> =
+        Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
-        Box::new(summary_table::SummaryTable::new(summary_table.clone(), cfn.as_ref()))
-            as Box<dyn Reporter>
+        Box::new(summary_table::SummaryTable::new(
+            summary_table,
+            cfn.as_ref(),
+        )) as Box<dyn Reporter>
     };
     for file in data_files {
         if new_engine_version {
             let each = match &extra_data {
                 Some(data) => data.clone().merge(file.path_value.clone())?,
-                None => file.path_value.clone()
+                None => file.path_value.clone(),
             };
             let traversal = Traversal::from(&each);
             let mut root_scope = root_scope(rules, &each)?;
@@ -781,7 +837,7 @@ fn evaluate_against_data_input<'r>(data_type: Type,
                 &file.name,
                 &file.content,
                 &traversal,
-                output
+                output,
             )?;
             if verbose {
                 print_verbose_tree(&root_record);
@@ -794,13 +850,24 @@ fn evaluate_against_data_input<'r>(data_type: Type,
             }
         } else {
             let each = &file.path_value;
-            let root_context = RootScope::new(rules, each);
+            let root_context = RootScope::new(rules, each)?;
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
-            let reporter = ConsoleReporter::new(stacker, &renderers, rules_file_name, &file.name, verbose, print_json, show_clause_failures);
-            let appender = MetadataAppender { delegate: &reporter, root_context: &each };
-            let status = rules.evaluate(&each, &appender)?;
-            reporter.report(&each, output)?;
+            let reporter = ConsoleReporter::new(
+                stacker,
+                &renderers,
+                rules_file_name,
+                &file.name,
+                verbose,
+                print_json,
+                show_clause_failures,
+            );
+            let appender = MetadataAppender {
+                delegate: &reporter,
+                root_context: each,
+            };
+            let status = rules.evaluate(each, &appender)?;
+            reporter.report(each, output)?;
             if status == Status::FAIL {
                 overall = Status::FAIL
             }
@@ -810,26 +877,40 @@ fn evaluate_against_data_input<'r>(data_type: Type,
 }
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
+    println!("getting from stdin: {}", content);
     if content.trim().is_empty() {
-        return Err(Error::new(ErrorKind::ParseError(
-            format!("blank data"))
-        ))
+        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
     } else {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
             Err(_) => {
                 let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::new(ErrorKind::ParseError(
-                    format!("data beginning with \n{}\n ...", &content[..str_len]))
-                ))
+                return Err(Error::new(ErrorKind::ParseError(format!(
+                    "data beginning with \n{}\n ...",
+                    &content[..str_len]
+                ))));
             }
         };
         Ok(path_value)
     }
 }
 
-fn has_a_supported_extension(name: &String, extensions: &[&str]) -> bool {
-    extensions.into_iter().any(|extension| name.ends_with(extension))
+fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
+    extensions.iter().any(|extension| name.ends_with(extension))
+}
+
+fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
+    top.children
+        .iter()
+        .partition(|ctx| matches!((*ctx).status, Some(Status::FAIL)))
+}
+
+fn get_longest(top: &StatusContext) -> usize {
+    top.children
+        .iter()
+        .max_by(|f, s| (*f).context.len().cmp(&(*s).context.len()))
+        .map(|elem| elem.context.len())
+        .unwrap_or(20)
 }
 
 #[cfg(test)]

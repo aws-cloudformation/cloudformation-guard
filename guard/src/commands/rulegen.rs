@@ -42,7 +42,7 @@ impl Command for Rulegen {
         };
 
         let result = parse_template_and_call_gen(&template_contents);
-        print_rules(result, out);
+        print_rules(result, out)?;
 
         Ok(0 as i32)
     }
@@ -168,7 +168,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 //          %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
 //          %aws_ec2_volume_resources.Properties.Encrypted == false
 //     }
-fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut writer : Box<dyn std::io::Write>) {
+fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut writer : Box<dyn std::io::Write>) -> Result<()> {
     let mut str = Builder::default();
 
     for (resource, properties) in &rule_map {
@@ -198,13 +198,13 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
             //
             // TODO fix with Error return
             //
-            write!(writer,"{}", generated_rules);
+            write!(writer,"{}", generated_rules)?;
         },
         Err(e) => {
             println!("Parsing error with generated rules file, Error = {}", e);
         },
-
     }
+    Ok(())
 }
 
 #[cfg(test)]

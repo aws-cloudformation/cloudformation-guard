@@ -2,5 +2,6 @@
 
 members = [
     "guard",
-    "guard-lambda"
+    "guard-lambda",
+    "guard-ffi"
 ]

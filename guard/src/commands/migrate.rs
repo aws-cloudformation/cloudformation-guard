@@ -90,20 +90,20 @@ pub(crate) fn migrated_rules_by_type(rules: &[RuleLineType],
     let mut migrated = String::new();
     for rule in rules {
         if let RuleLineType::Assignment(assignment) = rule {
-            writeln!(&mut migrated, "{}", assignment);
+            writeln!(&mut migrated, "{}", assignment)?;
         }
     }
 
     let mut types = by_type.keys().map(|elem| elem.clone()).collect_vec();
     types.sort();
     for each_type in &types {
-        writeln!(&mut migrated, "let {} = Resources.*[ Type == \"{}\" ]", each_type, each_type.type_name);
-        writeln!(&mut migrated, "rule {name}_checks WHEN %{name} NOT EMPTY {{", name=each_type);
-        writeln!(&mut migrated, "    %{} {{", each_type);
+        writeln!(&mut migrated, "let {} = Resources.*[ Type == \"{}\" ]", each_type, each_type.type_name)?;
+        writeln!(&mut migrated, "rule {name}_checks WHEN %{name} NOT EMPTY {{", name=each_type)?;
+        writeln!(&mut migrated, "    %{} {{", each_type)?;
         for each_clause in by_type.get(each_type).unwrap() {
-            writeln!(&mut migrated, "        {}", *each_clause);
+            writeln!(&mut migrated, "        {}", *each_clause)?;
         }
-        writeln!(&mut migrated, "    }}\n}}\n");
+        writeln!(&mut migrated, "    }}\n}}\n")?;
     }
     Ok(migrated)
 }

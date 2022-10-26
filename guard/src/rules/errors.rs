@@ -2,8 +2,8 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::fmt::Formatter;
 
-use nom;
-use serde_json;
+use crate::rules::errors::ErrorKind::IncompatibleError;
+use crate::rules::parser::{ParserError, Span};
 
 #[derive(Debug)]
 pub struct Error(pub ErrorKind);
@@ -18,68 +18,87 @@ fn error_kind_msg(kind: &ErrorKind) -> String {
     match kind {
         ErrorKind::JsonError(err) => {
             format!("Error parsing incoming JSON context {}", err)
-        },
+        }
 
         ErrorKind::YamlError(err) => {
             format!("Error parsing incoming YAML context {}", err)
-        },
+        }
 
         ErrorKind::FormatError(fmt) => {
             format!("Formatting error when writing {}", fmt)
-        },
-
+        }
 
         ErrorKind::IoError(io) => {
             format!("I/O error when reading {}", io)
-        },
+        }
 
         ErrorKind::ParseError(err) => {
             format!("Parser Error when parsing {}", err)
-        },
+        }
 
         ErrorKind::RegexError(err) => {
             format!("Regex expression parse error for rules file {}", err)
-        },
+        }
 
         ErrorKind::MissingProperty(err) => {
             format!("Could not evaluate clause for a rule with missing property for incoming context {}", err)
-        },
+        }
 
         ErrorKind::MissingVariable(err) => {
-            format!("Variable assignment could not be resolved in rule file or incoming context {}", err)
-        },
+            format!(
+                "Variable assignment could not be resolved in rule file or incoming context {}",
+                err
+            )
+        }
 
         ErrorKind::MultipleValues(err) => {
-            format!("Conflicting rule or variable assignments inside the same scope {}", err)
-        },
+            format!(
+                "Conflicting rule or variable assignments inside the same scope {}",
+                err
+            )
+        }
 
         ErrorKind::IncompatibleRetrievalError(err) => {
-            format!("Types or variable assignments have incompatible types to retrieve {}", err)
-        },
+            format!(
+                "Types or variable assignments have incompatible types to retrieve {}",
+                err
+            )
+        }
 
-        ErrorKind::IncompatibleError(err) => {
+        IncompatibleError(err) => {
             format!("Types or variable assignments are incompatible {}", err)
-        },
+        }
 
         ErrorKind::NotComparable(err) => {
-            format!("Comparing incoming context with literals or dynamic results wasn't possible {}", err)
-        },
+            format!(
+                "Comparing incoming context with literals or dynamic results wasn't possible {}",
+                err
+            )
+        }
 
-        ErrorKind::ConversionError(_ignore) => {
-            format!("Could not convert in JSON value object")
-        },
+        ErrorKind::ConversionError(_ignore) => "Could not convert in JSON value object".to_string(),
 
         ErrorKind::Errors(all) => {
-            let vec = all.iter().map(|e| error_kind_msg(e) ).collect::<Vec<String>>();
+            let vec = all.iter().map(error_kind_msg).collect::<Vec<String>>();
             format!("{:?}", &vec)
-        },
+        }
 
         ErrorKind::RetrievalError(err) => {
-            format!("Could not retrieve data from incoming context. Error = {}", err)
-        },
+            format!(
+                "Could not retrieve data from incoming context. Error = {}",
+                err
+            )
+        }
 
         ErrorKind::MissingValue(err) => {
-            format!("There was no variable or value object to resolve. Error = {}", err)
+            format!(
+                "There was no variable or value object to resolve. Error = {}",
+                err
+            )
+        }
+
+        ErrorKind::FileNotFoundError(path) => {
+            format!("The path {} does not exist", path)
         }
     }
 }
@@ -92,7 +111,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         error_kind_fmt(&self.0, f)
     }
-
 }
 
 #[derive(Debug)]
@@ -111,8 +129,9 @@ pub enum ErrorKind {
     IncompatibleRetrievalError(String),
     IncompatibleError(String),
     NotComparable(String),
-    ConversionError(std::convert::Infallible),
-    Errors(Vec<ErrorKind>)
+    ConversionError(Infallible),
+    Errors(Vec<ErrorKind>),
+    FileNotFoundError(String),
 }
 
 impl From<std::fmt::Error> for Error {
@@ -133,7 +152,6 @@ impl From<serde_yaml::Error> for Error {
     }
 }
 
-
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {
         Error::new(ErrorKind::IoError(err))
@@ -146,23 +164,25 @@ impl From<regex::Error> for Error {
     }
 }
 
-impl From<std::convert::Infallible> for Error {
+impl From<Infallible> for Error {
     fn from(err: Infallible) -> Self {
         Error(ErrorKind::ConversionError(err))
     }
 }
 
-use crate::rules::parser::{Span, ParserError};
-use crate::rules::errors::ErrorKind::IncompatibleError;
-
-impl <'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
+impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     fn from(err: nom::Err<(Span<'a>, nom::error::ErrorKind)>) -> Self {
         let msg = match err {
-            nom::Err::Incomplete(_) => format!("More bytes required for parsing"),
+            nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
             nom::Err::Failure((s, _k)) | nom::Err::Error((s, _k)) => {
                 let span = s as Span;
-                format!("Error parsing file {} at line {} at column {}, remaining {}",
-                        span.extra, span.location_line(), span.get_utf8_column(), *span.fragment())
+                format!(
+                    "Error parsing file {} at line {} at column {}, remaining {}",
+                    span.extra,
+                    span.location_line(),
+                    span.get_utf8_column(),
+                    *span.fragment()
+                )
             }
         };
         Error(ErrorKind::ParseError(msg))
@@ -173,18 +193,19 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     fn from(err: nom::Err<ParserError<'a>>) -> Self {
         let msg = match err {
             nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {}", e),
-            nom::Err::Incomplete(_) => format!("More bytes required for parsing"),
+            nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
         };
         Error(ErrorKind::ParseError(msg))
     }
 }
 
 impl serde::ser::Error for Error {
-    fn custom<T>(msg: T) -> Self where T: Display {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
         Error::new(IncompatibleError(msg.to_string()))
     }
 }
 
 impl serde::ser::StdError for Error {}
-
-
