@@ -516,7 +516,7 @@ to the industry best practices around usages across AWS resources, we have recen
 ### Prerequisites
 
 1. Install docker. Follow [this guide](https://docs.docker.com/engine/install/).
-1. Have a directory ready on the host you are downloading the docker image to that contains data templates and Guard rules you are planning to use, we maymount this directory and use the files as input to `cfn-guard`. We'll refer this directory to be called `guard-files` in the rest of this guide
+1. Have a directory ready on the host you are downloading the docker image to that contains data templates and Guard rules you are planning to use, we may mount this directory and use the files as input to `cfn-guard`. We'll refer this directory to be called `guard-files` in the rest of this guide
 
 ### Usage Guide
 
