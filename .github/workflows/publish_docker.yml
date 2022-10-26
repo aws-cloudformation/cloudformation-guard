@@ -25,31 +25,6 @@ jobs:
         role-to-assume: ${{ secrets.BETA_PUBLISHER_ROLE_NAME }}
         role-session-name: PublishToElasticContainerRegistry
 
-#    - name: Login to Amazon ECR
-#      id: login-ecr
-#      uses: aws-actions/amazon-ecr-login@v1
-
-#    - name: Build, tag, and push image to Amazon ECR
-#      env:
-#        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-#        REPOSITORY: aws-cloudformation/cfn-guard
-#      run: |
-#        git_hash=$(git rev-parse --short "$GITHUB_SHA")
-#        git_branch=${GITHUB_REF#refs/heads/}
-#        commit_hash=${git_branch}.${git_hash}
-#
-#        prefix=$REGISTRY/$REPOSITORY
-#        latest_image_tag=$prefix:latest
-#        commit_hash_image_tag=$prefix:$commit_hash
-#
-#        docker build -t $latest_image_tag -t $commit_hash_image_tag .
-#        docker push $commit_hash_image_tag
-#
-#        if [ ${git_branch} == 'docker' ]
-#        then
-#          docker push $latest_image_tag
-#        fi
-
     - name: Login to Amazon ECR Public
       id: login-ecr-public
       uses: aws-actions/amazon-ecr-login@v1
