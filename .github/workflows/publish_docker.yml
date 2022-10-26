@@ -1,8 +1,8 @@
-name: Deploy to ECR
+name: Deploy to ECR Public Gallery
 
 on:
   push:
-    branches: [ docker ]
+    branches: [ main ]
 
 jobs:
 
@@ -22,7 +22,7 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-region: ${{ secrets.AWS_REGION }}
-        role-to-assume: ${{ secrets.BETA_PUBLISHER_ROLE_NAME }}
+        role-to-assume: ${{ secrets.PUBLISHER_ROLE_NAME }}
         role-session-name: PublishToElasticContainerRegistry
 
     - name: Login to Amazon ECR Public
@@ -34,8 +34,8 @@ jobs:
     - name: Build, tag, and push docker image to Amazon ECR Public
       env:
         REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
-        REGISTRY_ALIAS: ${{ secrets.BETA_REGISTRY_ALIAS }}
-        REPOSITORY: cloudformation-guard-beta
+        REGISTRY_ALIAS: ${{ secrets.REGISTRY_ALIAS }}
+        REPOSITORY: cloudformation-guard
       run: |
         git_hash=$(git rev-parse --short "$GITHUB_SHA")
         git_branch=${GITHUB_REF#refs/heads/}
@@ -48,7 +48,7 @@ jobs:
         docker build -t $latest_image_tag -t $commit_hash_image_tag .
         docker push $commit_hash_image_tag
         
-        if [ ${git_branch} == 'docker' ]
+        if [ ${git_branch} == 'main' ]
         then
           docker push $latest_image_tag
         fi
