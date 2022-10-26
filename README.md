@@ -535,7 +535,7 @@ We should see the evaluation result emitted out on the console.
 
 ### Tagging convention
 
-* We use the tag `latest` for all the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
+* We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
 * We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
 ## License
 
