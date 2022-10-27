@@ -36,7 +36,7 @@ impl Command for Migrate {
     }
 
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(MIGRATE)
             .about(r#"Migrates 1.0 rules to 2.0 compatible rules.
 "#)
@@ -44,7 +44,7 @@ impl Command for Migrate {
             .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write migrated rules to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches) -> Result<i32> {
         let file_input = app.value_of(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();

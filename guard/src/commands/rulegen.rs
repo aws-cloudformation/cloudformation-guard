@@ -24,7 +24,7 @@ impl Command for Rulegen {
     fn name(&self) -> &'static str { RULEGEN }
 
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(RULEGEN)
             .about(r#"Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
 "#)
@@ -32,7 +32,7 @@ impl Command for Rulegen {
             .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches) -> Result<i32> {
         let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 

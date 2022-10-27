@@ -14,25 +14,25 @@ use serde::Deserialize;
 use Type::CFNTemplate;
 
 use crate::command::Command;
+use crate::commands::{
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS,
+    RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+};
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
-};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
+use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
+use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 
 mod cfn;
 mod cfn_reporter;
@@ -115,7 +115,7 @@ impl Command for Validate {
         VALIDATE
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure.
 You can point rules flag to a rules directory and point data flag to a data directory.
@@ -172,7 +172,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {

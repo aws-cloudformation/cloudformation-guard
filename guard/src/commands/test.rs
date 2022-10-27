@@ -10,22 +10,22 @@ use walkdir::DirEntry;
 use validate::validate_path;
 
 use crate::command::Command;
+use crate::commands::{
+    ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES_AND_TEST_FILE,
+    RULES_FILE, TEST, TEST_DATA, validate, VERBOSE,
+};
 use crate::commands::files::{
     alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
 use crate::commands::tracker::StackTracker;
-use crate::commands::{
-    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
-    RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
-};
+use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
-use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Test {}
@@ -41,7 +41,7 @@ impl Command for Test {
         TEST
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(TEST)
             .about(r#"Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
@@ -77,7 +77,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical
