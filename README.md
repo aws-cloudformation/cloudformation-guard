@@ -485,6 +485,58 @@ cfn-guard test -r api_gateway_private_access.guard -t api_gateway_private_access
 
 Read [Guard: Unit Testing](docs/UNIT_TESTING.md) for more information on unit testing. To know about other commands read the [Readme in the guard directory](guard/README.md).
 
+## Rule authoring references
+
+As a starting point for writing Guard rules for yourself or your organisation we recommend following [this official guide](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html)
+
+### Quick links:
+
+[Writing AWS CloudFormation Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html)
+1. [Clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses)
+2. [Using queries in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-queries)
+3. [Using operators in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-operators)
+4. [Using custom messages in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-custom-messages)
+5. [Combining clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#combining-clauses)
+6. [Using blocks with Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#blocks)
+7. [Defining queries and filtering](https://docs.aws.amazon.com/cfn-guard/latest/ug/query-and-filtering.html)
+8. [Assigning and referencing variables in AWS CloudFormation Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/variables.html)
+9. [Composing named-rule blocks in AWS CloudFormation Guard](https://docs.aws.amazon.com/cfn-guard/latest/ug/named-rule-block-composition.html)
+10. [Writing clauses to perform context-aware evaluations](https://docs.aws.amazon.com/cfn-guard/latest/ug/context-aware-evaluations.html)
+
+
+## AWS Rule Registry
+
+As a reference for Guard rules and rule-sets that contain (on a best-effort basis) the compliance policies that adhere 
+to the industry best practices around usages across AWS resources, we have recently launched 
+[AWS Guard Rules Registry](https://github.com/aws-cloudformation/aws-guard-rules-registry).
+
+
+## Guard Docker Image launched on [ECR public gallery](https://gallery.ecr.aws/aws-cloudformation/cloudformation-guard)
+
+### Prerequisites
+
+1. Install docker. Follow [this guide](https://docs.docker.com/engine/install/).
+1. Have a directory ready on the host you are downloading the docker image to that contains data templates and Guard rules you are planning to use, we may mount this directory and use the files as input to `cfn-guard`. We'll refer this directory to be called `guard-files` in the rest of this guide
+
+### Usage Guide
+
+To use the binary, we should pull the latest docker image, we may do so using the following command:
+```bash
+docker pull public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
+```
+Now go ahead and run the docker image, using the files from directory we have our templates and rules file in, using:
+```bash
+docker run \
+  --mount src=/path/to/guard-files,target=/container/guard-files,type=bind \
+  -it public.ecr.aws/aws-cloudformation/cloudformation-guard:latest \
+  ./cfn-guard validate -d /container/guard-files/template.yml -r /container/guard-files/rule.guard
+```
+We should see the evaluation result emitted out on the console.
+
+### Tagging convention
+
+* We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
+* We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
 ## License
 
 This project is licensed under the Apache-2.0 License.
