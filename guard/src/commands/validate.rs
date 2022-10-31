@@ -382,12 +382,12 @@ or rules files.
                     {
                         if entry.path().is_file()
                             && entry
-                                .path()
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .map_or(false, |s| {
-                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                })
+                            .path()
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .map_or(false, |s| {
+                                has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
+                            })
                         {
                             rules.push(entry.path().to_path_buf());
                         }
@@ -603,7 +603,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         cxt.context,
         common::colored_string(cxt.status)
     )
-    .underline();
+        .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -654,7 +654,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
             common::colored_string(matched.status),
             matched.context
         )
-        .underline();
+            .underline();
         if !first {
             print!("{space:>longest$}", space = " ", longest = longest + 4)
         }

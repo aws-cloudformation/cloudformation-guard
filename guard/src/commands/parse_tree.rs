@@ -4,14 +4,14 @@ use clap::{Arg, ArgMatches};
 
 use crate::command::Command;
 use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
-use crate::rules:: Result;
+use crate::rules::Result;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ParseTree {}
 
 impl ParseTree {
     pub(crate) fn new() -> Self {
-        ParseTree{}
+        ParseTree {}
     }
 }
 
@@ -54,13 +54,12 @@ impl Command for ParseTree {
             Err(e) => {
                 println!("Parsing error handling rule, Error = {}", e);
                 return Err(e);
-            },
+            }
 
             Ok(rules) => {
                 if yaml {
                     serde_yaml::to_writer(out, &rules)?;
-                }
-                else {
+                } else {
                     serde_json::to_writer(out, &rules)?;
                 }
             }

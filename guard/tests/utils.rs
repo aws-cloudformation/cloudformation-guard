@@ -51,7 +51,7 @@ pub fn cfn_guard_test_command(args: Vec<&str>) -> i32 {
         |mut map, entry| {
             map.insert(entry.0, entry.1.as_ref());
             map
-        }
+        },
     );
 
     for each in &commands {
@@ -67,13 +67,13 @@ pub fn cfn_guard_test_command(args: Vec<&str>) -> i32 {
                     Err(e) => {
                         println!("Error occurred {}", e);
                         -1
-                    },
+                    }
                     Ok(code) => code
                 }
             } else {
                 -2
             }
-        },
+        }
         None => -3
     }
 }

@@ -50,13 +50,13 @@ impl Command for Rulegen {
     }
 }
 
-pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, HashMap<String, HashSet<String>>>{
+pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, HashMap<String, HashSet<String>>> {
     let cfn_template: HashMap<String, Value> = match serde_yaml::from_str(template_contents) {
         Ok(s) => s,
         Err(e) => {
             println!("Parsing error handling template file, Error = {}", e);
             process::exit(1);
-        },
+        }
     };
 
     let cfn_resources_clone = match cfn_template.get("Resources") {
@@ -130,7 +130,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 
             // Preserve double quotes for strings.
             if prop_val.is_string() {
-                let test_str = format!("{}{}{}", "\"" , no_newline_stripped_val, "\"");
+                let test_str = format!("{}{}{}", "\"", no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
             let resource_name = (&cfn_resource["Type"].as_str().unwrap()).to_string();
@@ -170,7 +170,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 //          %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
 //          %aws_ec2_volume_resources.Properties.Encrypted == false
 //     }
-fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut writer : Box<dyn std::io::Write>) -> Result<()> {
+fn print_rules(rule_map: HashMap<String, HashMap<String, HashSet<String>>>, mut writer: Box<dyn std::io::Write>) -> Result<()> {
     let mut str = Builder::default();
 
     for (resource, properties) in &rule_map {
@@ -200,11 +200,11 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
             //
             // TODO fix with Error return
             //
-            write!(writer,"{}", generated_rules)?;
-        },
+            write!(writer, "{}", generated_rules)?;
+        }
         Err(e) => {
             println!("Parsing error with generated rules file, Error = {}", e);
-        },
+        }
     }
     Ok(())
 }

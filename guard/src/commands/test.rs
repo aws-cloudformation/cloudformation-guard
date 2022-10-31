@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{btree_map::BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::path::PathBuf;
@@ -181,7 +181,7 @@ or failure testing.
                         Err(e) => {
                             eprintln!("Parse Error on ruleset file {}", e);
                             exit_code = 1;
-                        },
+                        }
                         Ok(rules) => {
                             let data_test_files = each_rule_file
                                 .test_files
@@ -238,14 +238,14 @@ or failure testing.
                     Err(e) => {
                         eprintln!("Unable to read rule file content {}", e);
                         exit_code = 1;
-                    },
+                    }
                     Ok((context, path)) => {
                         let span = crate::rules::parser::Span::new_extra(&context, &path);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
                                 eprintln!("Parse Error on ruleset file {}", e);
                                 exit_code = 1;
-                            },
+                            }
                             Ok(rules) => {
                                 let curr_exit_code =
                                     test_with_data(&data_test_files, &rules, verbose, new_engine)?;
@@ -301,7 +301,7 @@ fn test_with_data(
             Err(e) => {
                 eprintln!("Error processing {}", e);
                 exit_code = 1;
-            },
+            }
             Ok(specs) => {
                 for each in specs {
                     println!("Test Case #{}", test_counter);
@@ -318,7 +318,7 @@ fn test_with_data(
 
                         let by_rules = top.children.iter().fold(HashMap::new(), |mut acc, rule| {
                             if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
-                                rule.container
+                            rule.container
                             {
                                 acc.entry(name).or_insert(vec![]).push(&rule.container)
                             }
@@ -343,9 +343,9 @@ fn test_with_data(
 
                                 for each in rule.iter().copied().flatten() {
                                     if let RecordType::RuleCheck(NamedStatus {
-                                        status: got_status,
-                                        ..
-                                    }) = each
+                                                                     status: got_status,
+                                                                     ..
+                                                                 }) = each
                                     {
                                         match expected {
                                             SKIP => {
@@ -409,7 +409,7 @@ fn test_with_data(
                                     Err(e) => {
                                         eprintln!("Incorrect STATUS provided {}", e);
                                         exit_code = 1;
-                                    },
+                                    }
                                     Ok(status) => {
                                         let got = each.status.unwrap();
                                         if status != got {
