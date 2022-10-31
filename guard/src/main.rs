@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::process::exit;
 
-use clap::{App, AppFlags, ArgGroup, ArgMatches};
+use clap::{ArgGroup, ArgMatches};
 use clap::error::ContextKind::Usage;
 use nom::combinator::map;
 
@@ -17,7 +17,7 @@ mod rules;
 mod utils;
 
 fn main() -> Result<(), Error> {
-    let mut app = App::new(APP_NAME).version(APP_VERSION).about(
+    let mut app = clap::Command::new(APP_NAME).version(APP_VERSION).about(
         r#"
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).

@@ -1,19 +1,19 @@
-use clap::{App, Arg, ArgMatches};
-
-
-use crate::command::Command;
-use crate::commands::files::read_file_content;
-use crate::rules::Result;
-use crate::migrate::parser::{parse_rules_file, RuleLineType, Rule, TypeName, Clause};
-use std::fs::File;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
+use std::fs::File;
 use std::io::Write as IoWrite;
-use std::collections::{HashSet, HashMap};
-use crate::rules::errors::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::str::FromStr;
+
+use clap::{Arg, ArgMatches};
 use itertools::Itertools;
+
+use crate::command::Command;
 use crate::commands::{MIGRATE, OUTPUT, RULES};
+use crate::commands::files::read_file_content;
+use crate::migrate::parser::{Clause, parse_rules_file, Rule, RuleLineType, TypeName};
+use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::Result;
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
@@ -36,24 +36,25 @@ impl Command for Migrate {
     }
 
 
-    fn command(&self) -> App<'static> {
-        App::new(MIGRATE)
+    fn command(&self) -> clap::Command {
+        clap::Command::new(MIGRATE)
             .about(r#"Migrates 1.0 rules to 2.0 compatible rules.
 "#)
-            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true).help("Provide a rules file").required(true))
-            .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write migrated rules to output file").required(false))
+            .arg(Arg::new(RULES.0).long(RULES.0).short(RULES.1).help("Provide a rules file").required(true))
+            .arg(Arg::new(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).help("Write migrated rules to output file").required(false))
     }
 
     fn execute(&self, app: &ArgMatches) -> Result<i32> {
-        let file_input = app.value_of(RULES.0).unwrap();
+        let file_input = app.get_one::<&str>(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();
         let file = File::open(file_input)?;
 
-        let mut out= match app.value_of(OUTPUT.0) {
+        let mut out = match app.get_one::<String>(OUTPUT.0) {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };
+
         match read_file_content(file) {
             Err(e) => {
                 println!("Unable read content from file {}", e);
@@ -71,7 +72,7 @@ impl Command for Migrate {
                         match crate::rules::parser::rules_file(span) {
                             Ok(_rules) => {
                                 write!(out,"{}", migrated_rules)?;
-                                Ok(0 as i32)
+                                Ok(0_i32)
                             },
                             Err(e) => {
                                 println!("Could not parse migrated ruleset for file: '{}': {}", &file_name, e);
@@ -94,7 +95,7 @@ pub(crate) fn migrated_rules_by_type(rules: &[RuleLineType],
         }
     }
 
-    let mut types = by_type.keys().map(|elem| elem.clone()).collect_vec();
+    let mut types = by_type.keys().cloned().collect_vec();
     types.sort();
     for each_type in &types {
         writeln!(&mut migrated, "let {} = Resources.*[ Type == \"{}\" ]", each_type, each_type.type_name)?;
@@ -115,11 +116,11 @@ pub(crate) fn aggregate_by_type(rules: &Vec<RuleLineType>) -> HashMap<TypeName, 
             for each in &clause.rules {
                 match each {
                     Rule::Basic(br) => {
-                        by_type.entry(br.type_name.clone()).or_insert(indexmap::IndexSet::new())
+                        by_type.entry(br.type_name.clone()).or_insert_with(indexmap::IndexSet::new)
                             .insert(clause);
                     },
                     Rule::Conditional(br) => {
-                        by_type.entry(br.type_name.clone()).or_insert(indexmap::IndexSet::new())
+                        by_type.entry(br.type_name.clone()).or_insert_with(indexmap::IndexSet::new)
                             .insert(clause);
                     }
                 }

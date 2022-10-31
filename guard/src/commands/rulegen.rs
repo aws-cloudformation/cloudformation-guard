@@ -1,22 +1,24 @@
+use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
 use std::fs;
-use std::fs::{File};
+use std::fs::File;
 use std::process;
 
-use std::collections::{HashMap, HashSet};
-use clap::{App, Arg, ArgMatches};
-use crate::command::Command;
-use crate::rules::Result;
-use serde_json::Value;
+use clap::{Arg, ArgMatches};
 use itertools::Itertools;
+use serde_json::Value;
 use string_builder::Builder;
+
+use crate::command::Command;
 use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
+use crate::rules::Result;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Rulegen {}
 
 impl Rulegen {
     pub(crate) fn new() -> Self {
-        Rulegen{}
+        Rulegen {}
     }
 }
 
@@ -24,19 +26,19 @@ impl Command for Rulegen {
     fn name(&self) -> &'static str { RULEGEN }
 
 
-    fn command(&self) -> App<'static> {
-        App::new(RULEGEN)
+    fn command(&self) -> clap::Command {
+        clap::Command::new(RULEGEN)
             .about(r#"Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
 "#)
-            .arg(Arg::with_name(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
+            .arg(Arg::new(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
+            .arg(Arg::new(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).help("Write to output file").required(false))
     }
 
     fn execute(&self, app: &ArgMatches) -> Result<i32> {
-        let file = app.value_of(TEMPLATE.0).unwrap();
+        let file = app.get_one::<String>(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 
-        let out = match app.value_of(OUTPUT.0) {
+        let out = match app.get_one::<String>(OUTPUT.0) {
             Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
             None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
         };
@@ -44,7 +46,7 @@ impl Command for Rulegen {
         let result = parse_template_and_call_gen(&template_contents);
         print_rules(result, out)?;
 
-        Ok(0 as i32)
+        Ok(0_i32)
     }
 }
 
@@ -124,29 +126,29 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
                 None => prop_val.to_string(),
             };
 
-            let mut no_newline_stripped_val = stripped_val.trim().replace("\n", "");
+            let mut no_newline_stripped_val = stripped_val.trim().replace('\n', "");
 
             // Preserve double quotes for strings.
             if prop_val.is_string() {
                 let test_str = format!("{}{}{}", "\"" , no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
-            let resource_name = format!("{}", &cfn_resource["Type"].as_str().unwrap());
+            let resource_name = (&cfn_resource["Type"].as_str().unwrap()).to_string();
 
-            if !rule_map.contains_key(&resource_name) {
+            if let Entry::Vacant(e) = rule_map.entry(resource_name.clone()) {
                 let value_set: HashSet<String> =
                     vec![no_newline_stripped_val].into_iter().collect();
 
                 let mut property_map = HashMap::new();
                 property_map.insert(prop_name, value_set);
-                rule_map.insert(resource_name, property_map);
+                e.insert(property_map);
             } else {
                 let property_map = rule_map.get_mut(&resource_name).unwrap();
 
-                if !property_map.contains_key(&prop_name) {
+                if let Entry::Vacant(e) = property_map.entry(prop_name.clone()) {
                     let value_set: HashSet<String> =
                         vec![no_newline_stripped_val].into_iter().collect();
-                    property_map.insert(prop_name, value_set);
+                    e.insert(value_set);
                 } else {
                     let value_set = property_map.get_mut(&prop_name).unwrap();
                     value_set.insert(no_newline_stripped_val);
@@ -155,7 +157,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
         }
     }
 
-    return rule_map;
+    rule_map
 }
 
 // Prints the generated rules data structure to stdout. If there are properties mapping to
