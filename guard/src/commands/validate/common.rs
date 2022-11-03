@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::convert::TryInto;
-use regex::Regex;
+use fancy_regex::Regex;
 use lazy_static::*;
 use crate::rules::eval_context::{EventRecord, FileReport, simplifed_json_from_root, ClauseReport, ValueComparisons, BinaryComparison, UnaryComparison, ValueUnResolved, GuardClauseReport, UnaryCheck, BinaryCheck, InComparison};
 use crate::commands::validate::OutputFormatType;
@@ -411,7 +411,7 @@ pub(super) fn extract_name_info<'a>(rule_name: &'a str,
         // No from is how we indicate retrieval errors.
         //
         let (path, error) = each_failing_clause.msg.as_ref().map_or(("".to_string(), "".to_string()), |msg| {
-            match PATH_FROM_MSG.captures(msg) {
+            match PATH_FROM_MSG.captures(msg).unwrap() {
                 Some(cap) => (cap["path"].to_string(), msg.clone()),
                 None => ("".to_string(), msg.clone())
             }

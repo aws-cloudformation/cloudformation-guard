@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::io::Write;
 
 use lazy_static::*;
-use regex::Regex;
+use fancy_regex::Regex;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
@@ -69,7 +69,7 @@ impl Reporter for CfnReporter {
                             }
                             let mut resource_info = super::common::extract_name_info(
                                 &each_failed_rule.context, each_failing_clause)?;
-                            let (resource_name, property_path) = match CFN_RESOURCES.captures(&resource_info.path) {
+                            let (resource_name, property_path) = match CFN_RESOURCES.captures(&resource_info.path).unwrap() {
                                 Some(caps) => {
                                     (caps["name"].to_string(), caps["rest"].replace("/", "."))
                                 },

@@ -97,7 +97,7 @@ struct ResourceView<'report, 'value: 'report> {
 }
 
 lazy_static! {
-    static ref RESOURCE_CHANGE_EXTRACTION: regex::Regex = regex::Regex::new("/resource_changes/(?P<index_or_name>[^/]+)/change/after/(?P<property_name>.*)?")
+    static ref RESOURCE_CHANGE_EXTRACTION: fancy_regex::Regex = fancy_regex::Regex::new("/resource_changes/(?P<index_or_name>[^/]+)/change/after/(?P<property_name>.*)?")
         .ok().unwrap();
 }
 
@@ -137,7 +137,7 @@ fn single_line(writer: &mut dyn Write,
 
     let mut by_resources = HashMap::new();
     for (key, value) in path_tree.range("/resource_changes/"..) {
-        let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key) {
+        let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key).unwrap() {
             Some(cap) => cap.name("index_or_name").unwrap().as_str(),
             None => unreachable!()
         };
@@ -288,12 +288,7 @@ fn single_line(writer: &mut dyn Write,
                     prefix.clone(),
                     &mut err_writer
                 )?;
-//                pprint_clauses(
-//                    writer,
-//                    each_rule,
-//                    &resource,
-//                    prefix.clone()
-//                )?;
+
             }
         }
         writeln!(writer, "}}")?;

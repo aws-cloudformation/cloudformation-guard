@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 
 use colored::*;
 use crate::{
@@ -193,7 +193,7 @@ fn single_line(writer: &mut dyn Write,
                 };
             }
         } else {
-            let resource_name = match CFN_RESOURCES.captures(*key) {
+            let resource_name = match CFN_RESOURCES.captures(*key).unwrap() {
                 Some(cap) => {
                     cap.get(1).unwrap().as_str()
                 },
@@ -441,7 +441,7 @@ fn get_resource_name(key: &&str, count: usize, matches: usize) -> String {
     placeholder = str::replacen(&placeholder, c, "/", 2); // count = 2 -> because always need to replace the Slashes for /Resources/
 
     // placeholder = "/Resources/foo\fbar/baz"
-    match CFN_RESOURCES.captures(&placeholder) {
+    match CFN_RESOURCES.captures(&placeholder).unwrap() {
         Some(cap) => {
             // resource_name = "foo/bar"
             str::replace(cap.get(1).unwrap().as_str(), c, "/")

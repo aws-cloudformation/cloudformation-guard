@@ -1,7 +1,7 @@
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::errors::{Error, ErrorKind};
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 use std::collections::BTreeMap;
 
 lazy_static! {
@@ -110,7 +110,7 @@ impl<'value> Traversal<'value> {
             return Ok(TraversalResult::Key(node.value.self_path().relative()))
         }
 
-        if let Some(captures) = RELATIVE_PATH.captures(pointer) {
+        if let Some(captures) = RELATIVE_PATH.captures(pointer).unwrap() {
             //
             // Safe to unwrap as we capture ints in regex
             //
