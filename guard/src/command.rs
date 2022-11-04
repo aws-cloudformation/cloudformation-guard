@@ -1,9 +1,9 @@
-use clap::ArgMatches;
+use clap::{App, ArgMatches};
 
 use crate::rules::errors::Error;
 
 pub trait Command {
     fn name(&self) -> &'static str;
-    fn command(&self) -> clap::Command;
+    fn command(&self) -> App<'static, 'static>;
     fn execute(&self, args: &ArgMatches) -> Result<i32, Error>;
 }
