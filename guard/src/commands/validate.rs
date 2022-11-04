@@ -6,7 +6,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
+use clap::{App, Arg, ArgGroup, ArgMatches};
 use colored::*;
 use enumflags2::BitFlags;
 use serde::Deserialize;
@@ -14,25 +14,25 @@ use serde::Deserialize;
 use Type::CFNTemplate;
 
 use crate::command::Command;
-use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS,
-    RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
-};
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::commands::{
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
+use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::PathAwareValue;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 
 mod cfn;
 mod cfn_reporter;
@@ -41,7 +41,6 @@ mod console_reporter;
 pub(crate) mod generic_summary;
 mod summary_table;
 mod tf;
-
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
@@ -116,8 +115,8 @@ impl Command for Validate {
         VALIDATE
     }
 
-    fn command(&self) -> clap::Command {
-        clap::Command::new(VALIDATE)
+    fn command(&self) -> App<'static, 'static> {
+        App::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure.
 You can point rules flag to a rules directory and point data flag to a data directory.
 When pointed to a directory it will read all rules in the directory file and evaluate
@@ -126,95 +125,55 @@ single file and it would work as well.
 Note - When pointing the command to a directory, the directory may not contain a mix of
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
-"#).arg(Arg::new(RULES.0)
-            .long(RULES.0)
-            .short(RULES.1)
-            .action(ArgAction::Append)
-            .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
+"#)
+            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true)
+                .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-            .conflicts_with("payload"))
-            .arg(Arg::new(DATA.0)
-                .long(DATA.0)
-                .short(DATA.1)
-                .action(ArgAction::Append)
+                .multiple(true).conflicts_with("payload"))
+            .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .conflicts_with("payload"))
-            .arg(Arg::new(INPUT_PARAMETERS.0)
-                .long(INPUT_PARAMETERS.0)
-                .short(INPUT_PARAMETERS.1)
-                .action(ArgAction::Append)
-                .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                .multiple(true).conflicts_with("payload"))
+            .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
+                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
-                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template"))
-            .arg(Arg::new(TYPE.0)
-                .long(TYPE.0)
-                .short(TYPE.1)
-                .value_parser(["CFNTemplate"])
+                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
+                     .multiple(true))
+            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::new(OUTPUT_FORMAT.0)
-                .long(OUTPUT_FORMAT.0)
-                .short(OUTPUT_FORMAT.1)
-                .value_parser(["json", "yaml", "single-line-summary"])
+            .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
+                .possible_values(&["json","yaml","single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::new(PREVIOUS_ENGINE.0)
-                .long(PREVIOUS_ENGINE.0)
-                .short(PREVIOUS_ENGINE.1)
-                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating")
-                .action(ArgAction::Append))
-            .arg(Arg::new(SHOW_SUMMARY.0)
-                .long(SHOW_SUMMARY.0)
-                .short(SHOW_SUMMARY.1)
-                .value_parser(["none", "all", "pass", "fail", "skip"])
+            .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
+                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
+            .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
+                .possible_values(&["none", "all", "pass", "fail", "skip"])
                 .default_value("fail")
-                .action(ArgAction::Append)
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::new(SHOW_CLAUSE_FAILURES.0)
-                .long(SHOW_CLAUSE_FAILURES.0)
-                .short(SHOW_CLAUSE_FAILURES.1)
-                .required(false)
-                .num_args(0)
+            .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
                 .help("Show clause failure along with summary"))
-            .arg(Arg::new(ALPHABETICAL.0)
-                .long(ALPHABETICAL.0)
-                .short(ALPHABETICAL.1)
-                .num_args(0)
-                .required(false)
-                .help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::new(LAST_MODIFIED.0)
-                .long(LAST_MODIFIED.0)
-                .short(LAST_MODIFIED.1)
-                .num_args(0)
-                .required(false)
-                .conflicts_with(ALPHABETICAL.0)
+            .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).required(false).help("Validate files in a directory ordered alphabetically"))
+            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with(ALPHABETICAL.0)
                 .help("Validate files in a directory ordered by last modified times"))
-            .arg(Arg::new(VERBOSE.0)
-                .long(VERBOSE.0)
-                .short(VERBOSE.1)
-                .num_args(0)
-                .required(false)
+            .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
                 .help("Verbose logging"))
-            .arg(Arg::new(PRINT_JSON.0)
-                .long(PRINT_JSON.0)
-                .short(PRINT_JSON.1)
-                .num_args(0)
-                .required(false)
+            .arg(Arg::with_name(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).required(false)
                 .help("Print output in json format"))
-            .arg(Arg::new(PAYLOAD.0)
-                .long(PAYLOAD.0)
-                .short(PAYLOAD.1)
+            .arg(Arg::with_name(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1)
                 .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
-            .group(ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))
+            .group(ArgGroup::with_name(REQUIRED_FLAGS)
+                .args(&[RULES.0, PAYLOAD.0])
+                .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches) -> Result<i32> {
-        let cmp = if app.contains_id(LAST_MODIFIED.0) {
+    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+        let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
             alpabetical
@@ -222,7 +181,7 @@ or rules files.
 
         let empty_path = Path::new("");
         let mut streams: Vec<DataFile> = Vec::new();
-        let data_files: Vec<DataFile> = match app.get_many::<String>(DATA.0) {
+        let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
@@ -264,7 +223,7 @@ or rules files.
                 streams
             }
             None => {
-                if app.contains_id(RULES.0) {
+                if app.is_present(RULES.0) {
                     let mut content = String::new();
                     let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
@@ -284,7 +243,7 @@ or rules files.
             }
         };
 
-        let extra_data = match app.get_many::<String>(INPUT_PARAMETERS.0) {
+        let extra_data = match app.values_of(INPUT_PARAMETERS.0) {
             Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
                 for file_or_dir in list_of_file_or_dir {
@@ -317,11 +276,11 @@ or rules files.
             None => None,
         };
 
-        let verbose = app.contains_id(VERBOSE.0);
+        let verbose = app.is_present(VERBOSE.0);
 
-        let data_type = match app.get_one::<&str>(TYPE.0) {
+        let data_type = match app.value_of(TYPE.0) {
             Some(t) => {
-                if *t == "CFNTemplate" {
+                if t == "CFNTemplate" {
                     CFNTemplate
                 } else {
                     Type::Generic
@@ -330,11 +289,11 @@ or rules files.
             None => Type::Generic,
         };
 
-        let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
+        let output_type = match app.value_of(OUTPUT_FORMAT.0) {
             Some(o) => {
-                if *o == "single-line-summary" {
+                if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
-                } else if *o == "json" {
+                } else if o == "json" {
                     OutputFormatType::JSON
                 } else {
                     OutputFormatType::YAML
@@ -344,10 +303,10 @@ or rules files.
         };
 
         let summary_type: BitFlags<SummaryType> =
-            app.get_many::<String>(SHOW_SUMMARY.0)
+            app.values_of(SHOW_SUMMARY.0)
                 .map_or(SummaryType::FAIL.into(), |v| {
                     v.fold(BitFlags::empty(), |mut st, elem| {
-                        match elem.as_str() {
+                        match elem {
                             "pass" => st.insert(SummaryType::PASS),
                             "fail" => st.insert(SummaryType::FAIL),
                             "skip" => st.insert(SummaryType::SKIP),
@@ -361,13 +320,13 @@ or rules files.
                     })
                 });
 
-        let print_json = app.contains_id(PRINT_JSON.0);
-        let show_clause_failures = app.contains_id(SHOW_CLAUSE_FAILURES.0);
-        let new_version_eval_engine = !app.contains_id(PREVIOUS_ENGINE.0);
+        let print_json = app.is_present(PRINT_JSON.0);
+        let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
+        let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
-        if app.contains_id(RULES.0) {
-            let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();
+        if app.is_present(RULES.0) {
+            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
                 validate_path(file_or_dir)?;
@@ -382,12 +341,12 @@ or rules files.
                     {
                         if entry.path().is_file()
                             && entry
-                            .path()
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .map_or(false, |s| {
-                                has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                            })
+                                .path()
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .map_or(false, |s| {
+                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
+                                })
                         {
                             rules.push(entry.path().to_path_buf());
                         }
@@ -603,7 +562,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         cxt.context,
         common::colored_string(cxt.status)
     )
-        .underline();
+    .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -654,7 +613,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
             common::colored_string(matched.status),
             matched.context
         )
-            .underline();
+        .underline();
         if !first {
             print!("{space:>longest$}", space = " ", longest = longest + 4)
         }
