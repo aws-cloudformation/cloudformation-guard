@@ -1,9 +1,9 @@
 [package]
 name = "cfn-guard"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2018"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
-    "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Tyler Southwick", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
+    "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Tyler Southwick", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
 description = "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies."
 license = "Apache-2.0"
 repository = "https://github.com/aws-cloudformation/cloudformation-guard"
