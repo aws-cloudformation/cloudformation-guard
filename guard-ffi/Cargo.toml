@@ -14,6 +14,6 @@ keywords = ["policy-as-code", "guard", "cfn-guard", "security", "compliance"]
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
-cfn-guard = { version = "2.0.4", path = "../guard" }
+cfn-guard = { version = "2.1.1", path = "../guard" }
 ffi-support = "0.4.4"
 
