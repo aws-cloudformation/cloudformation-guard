@@ -1,0 +1,92 @@
+[
+  {
+    "name": "Empty, SKIP",
+    "input": {},
+    "expectations": {
+      "rules": {
+        "S3_BUCKET_LOGGING_ENABLED": "SKIP"
+      }
+    }
+  },
+  {
+    "name": "No resources, SKIP",
+    "input": {
+      "Resources": {}
+    },
+    "expectations": {
+      "rules": {
+        "S3_BUCKET_LOGGING_ENABLED": "SKIP"
+      }
+    }
+  },
+  {
+    "name": "S3 Bucket with Logging Configuration present in resource, PASS",
+    "input": {
+      "Resources": {
+        "ExampleS3": {
+          "Type": "AWS::S3::Bucket",
+          "Properties": {
+            "BucketName": "my-bucket",
+            "VersioningConfiguration": {
+              "Status": "Enabled"
+            },
+            "LoggingConfiguration": {
+              "DestinationBucketName": {
+                "Ref": "LoggingBucket"
+              },
+              "LogFilePrefix": "testing-logs"
+            }
+          }
+        }
+      }
+    },
+    "expectations": {
+      "rules": {
+        "S3_BUCKET_LOGGING_ENABLED": "PASS"
+      }
+    }
+  },
+  {
+    "name": "S3 Bucket with Logging Configuration missing, FAIL",
+    "input": {
+      "Resources": {
+        "ExampleS3": {
+          "Type": "AWS::S3::Bucket",
+          "Properties": {
+            "BucketName": "my-bucket"
+          }
+        }
+      }
+    },
+    "expectations": {
+      "rules": {
+        "S3_BUCKET_LOGGING_ENABLED": "FAIL"
+      }
+    }
+  },
+  {
+    "name": "S3 Bucket with Logging Configuration missing with suppression, SKIP",
+    "input": {
+      "Resources": {
+        "ExampleS3": {
+          "Type": "AWS::S3::Bucket",
+          "Metadata": {
+            "guard": {
+              "SuppressedRules": [
+                "S3_BUCKET_LOGGING_ENABLED"
+              ]
+            }
+          },
+          "Properties": {
+            "BucketName": "my-bucket"
+          }
+        }
+      }
+    },
+    "expectations": {
+      "rules": {
+        "S3_BUCKET_LOGGING_ENABLED": "SKIP"
+      }
+    }
+  }
+]

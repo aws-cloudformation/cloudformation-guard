@@ -1,7 +1,7 @@
 pub(crate) mod files;
 pub mod validate;
 pub(crate) mod rulegen;
-pub(crate) mod test;
+pub mod test;
 pub(crate) mod helper;
 pub(crate) mod parse_tree;
 pub(crate) mod migrate;
@@ -20,7 +20,7 @@ pub const APP_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 pub(crate)  const MIGRATE: &str = "migrate";
 pub(crate)  const PARSE_TREE: &str = "parse-tree";
 pub(crate) const RULEGEN: &str = "rulegen";
-pub(crate)  const TEST: &str = "test";
+pub  const TEST: &str = "test";
 pub const VALIDATE: &str = "validate";
 // Arguments for validate
 pub(crate) const ALPHABETICAL: (&str, &str) = ("alphabetical", "a");
@@ -43,7 +43,7 @@ pub(crate) const OUTPUT: (&str, &str) = ("output", "o");
 pub(crate) const PRINT_YAML: (&str, &str) = ("print-yaml", "y");
 // Arguments for test
 pub(crate) const RULES_FILE: (&str, &str) = ("rules-file", "r");
-pub(crate) const TEST_DATA: (&str, &str) = ("test-data", "t");
+pub const TEST_DATA: (&str, &str) = ("test-data", "t");
 pub(crate) const DIRECTORY: (&str, &str) = ("dir", "d");
 // Arguments for rulegen
 pub(crate) const TEMPLATE: (&str, &str) = ("template", "t");

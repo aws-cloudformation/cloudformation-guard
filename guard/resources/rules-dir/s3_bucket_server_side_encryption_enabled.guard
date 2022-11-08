@@ -1,4 +1,7 @@
-let s3_buckets_server_side_encryption = Resources.*[ Type == 'AWS::S3::Bucket' ]
+let s3_buckets_server_side_encryption = Resources.*[ Type == 'AWS::S3::Bucket'
+  Metadata.guard.SuppressedRules not exists or
+  Metadata.guard.SuppressedRules.* != "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+]
 
 rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED when %s3_buckets_server_side_encryption !empty {
   %s3_buckets_server_side_encryption.Properties.BucketEncryption exists

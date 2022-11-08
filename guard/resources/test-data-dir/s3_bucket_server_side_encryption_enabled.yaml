@@ -1,0 +1,73 @@
+###
+# S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED tests
+###
+---
+- name: Empty, SKIP
+  input: {}
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: SKIP
+
+- name: No resources, SKIP
+  input:
+    Resources: {}
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: SKIP
+
+- name: S3 Bucket Encryption set to SSE AES 256, PASS
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: PASS
+
+- name: S3 Bucket Encryption set to SSE AWS KMS key, PASS
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: "aws:kms"
+                  KMSMasterKeyID: "ARN:AWS:12345678912"
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: PASS
+
+- name: S3 Bucket Encryption not set, FAIL
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: FAIL
+
+- name: S3 Bucket Encryption not set but rule is suppressed, SKIP
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Metadata:
+          guard:
+            SuppressedRules:
+              - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+        Properties:
+          BucketName: my-bucket
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: SKIP

@@ -1,0 +1,41 @@
+#
+#####################################
+##           Gherkin               ##
+#####################################
+# Rule Identifier:
+#    S3_BUCKET_LOGGING_ENABLED
+#
+# Description:
+#   Checks whether logging is enabled for your S3 buckets.
+#
+# Reports on:
+#    AWS::S3::Bucket
+#
+# Evaluates:
+#    AWS CloudFormation
+#
+# Rule Parameters:
+#    NA
+#
+# Scenarios:
+# a) SKIP: when there are no S3 resource present
+# b) PASS: when all S3 resources Logging Configuration exists
+# c) FAIL: when all S3 resources have Logging Configuration is not set
+# d) SKIP: when metadata includes the suppression for rule S3_BUCKET_LOGGING_ENABLED
+
+#
+# Select all S3 resources from incoming template (payload)
+#
+
+let s3_buckets_bucket_logging_enabled = Resources.*[ Type == 'AWS::S3::Bucket'
+  Metadata.guard.SuppressedRules not exists or
+  Metadata.guard.SuppressedRules.* != "S3_BUCKET_LOGGING_ENABLED"
+]
+
+rule S3_BUCKET_LOGGING_ENABLED when %s3_buckets_bucket_logging_enabled  !empty {
+  %s3_buckets_bucket_logging_enabled.Properties.LoggingConfiguration exists
+  <<
+    Violation: S3 Bucket Logging needs to be configured to enable logging.
+    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
+  >>
+}
