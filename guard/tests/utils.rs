@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use clap::App;
 use cfn_guard::command::Command;
 use cfn_guard::commands::{DATA, RULES};
+use cfn_guard::commands::test::Test;
 
 pub fn get_data_option() -> String {
     format!("-{}", DATA.1)
@@ -34,17 +35,16 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
-pub fn cfn_guard_test_command(args: Vec<&str>) -> i32 {
+pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
     let TEST_APP_NAME = "cfn-guard-test";
     let mut app =
         App::new(TEST_APP_NAME);
     let mut command_options = Vec::new();
     command_options.push(TEST_APP_NAME);
-    command_options.append( args.clone().as_mut());
+    command_options.append(args.clone().as_mut());
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(Box::new(Validate::new()));
-    // crate::commands::
+    commands.push(Box::new(command));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(
@@ -61,27 +61,25 @@ pub fn cfn_guard_test_command(args: Vec<&str>) -> i32 {
 
     let app = app.get_matches_from(command_options);
 
-    match app.subcommand() {
+     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
                 match (*command).execute(value) {
                     Err(e) => {
                         println!("Error occurred {}", e);
-                        return -1;
+                        -1
                     },
                     Ok(code) => {
-                        return code;
+                        code
                     }
                 }
-            }
-            else {
-                return -2;
+            } else {
+                -2
             }
         },
 
         (_, None) => {
-            return -3;
+            -3
         }
     }
-
 }

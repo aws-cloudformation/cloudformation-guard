@@ -28,10 +28,10 @@ use crate::rules::Status::SKIP;
 use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Test {}
+pub struct Test {}
 
 impl Test {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Test {}
     }
 }
@@ -273,8 +273,8 @@ struct TestExpectations {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TestSpec {
-    name: Option<serde_json::Value>,
-    input: serde_json::Value,
+    name: Option<String>,
+    input: serde_yaml::Value,
     expectations: TestExpectations,
 }
 

@@ -1,7 +1,7 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-mod utils;
+pub(crate) mod utils;
 
 #[cfg(test)]
 mod tests {
@@ -9,6 +9,7 @@ mod tests {
 
     use cfn_guard;
     use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE};
+    use cfn_guard::commands::validate::Validate;
 
     use crate::utils;
 
@@ -173,7 +174,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(0, utils::cfn_guard_test_command(args));
+        assert_eq!(0, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -187,7 +188,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -199,7 +200,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -211,7 +212,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -221,7 +222,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -246,7 +247,7 @@ mod tests {
             &rules_option,
             &rules_arg,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -271,7 +272,7 @@ mod tests {
             &rules_option,
             &rules_arg2,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -294,7 +295,7 @@ mod tests {
             &rules_option,
             &rules_arg,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -317,7 +318,7 @@ mod tests {
             &rules_option,
             &rules_arg2,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -338,7 +339,7 @@ mod tests {
             &rules_option,
             &rules_arg2,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -359,7 +360,7 @@ mod tests {
             &rules_option,
             &rules_arg,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -385,7 +386,7 @@ mod tests {
             &rules_option,
             &rules_arg2,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -407,7 +408,7 @@ mod tests {
             &input_parameters_option,
             &input_parameters_arg,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -434,7 +435,7 @@ mod tests {
             &input_parameters_option,
             &input_parameters_arg2,
         ];
-        assert_eq!(0, utils::cfn_guard_test_command(args));
+        assert_eq!(0, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -456,7 +457,7 @@ mod tests {
             &input_parameters_option,
             &input_parameters_arg,
         ];
-        assert_eq!(0, utils::cfn_guard_test_command(args));
+        assert_eq!(0, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -469,7 +470,7 @@ mod tests {
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -482,7 +483,7 @@ mod tests {
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -505,7 +506,7 @@ mod tests {
             &input_parameters_arg,
         ];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -518,7 +519,7 @@ mod tests {
         let data_option = format!("-{}", DATA.1);
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -542,7 +543,7 @@ mod tests {
             &rules_option,
             &rules_arg2,
         ];
-        assert_eq!(5, utils::cfn_guard_test_command(args));
+        assert_eq!(5, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -555,7 +556,7 @@ mod tests {
         let rules_option = format!("-{}", RULES.1);
         let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -579,7 +580,7 @@ mod tests {
             &rules_arg,
         ];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -602,7 +603,7 @@ mod tests {
             &input_parameters_arg,
         ];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -629,7 +630,7 @@ mod tests {
             &input_parameters_arg2,
         ];
         // -1 status code equates to Error being thrown
-        assert_eq!(-1, utils::cfn_guard_test_command(args));
+        assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args));
     }
 
     #[test]
@@ -647,7 +648,58 @@ mod tests {
             let data_option = &format!("-{}", DATA.1);
             let rules_option = &format!("-{}", RULES.1);
             let args = vec![VALIDATE, data_option, &arg.0, rules_option, &arg.1];
-            assert_eq!(-1, utils::cfn_guard_test_command(args))
+            assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args))
         }
+    }
+}
+
+
+#[cfg(test)]
+mod test_test_command {
+    use rstest::rstest;
+    use cfn_guard::commands::{RULES, TEST, TEST_DATA};
+    use cfn_guard::commands::test::Test;
+    use cfn_guard::Error;
+
+    #[rstest::rstest]
+    #[case("json")]
+    #[case("yaml")]
+    fn test_test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
+        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!("resources/test-data-dir/s3_bucket_logging_enabled_tests.{}", file_type));
+        let rule_arg = crate::utils::get_full_path_for_resource_file("resources/rules-dir/s3_bucket_logging_enabled.guard");
+        let data_option = format!("-{}", TEST_DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+
+        let args = vec![
+            TEST,
+            &data_option,
+            &test_data_arg,
+            &rules_option,
+            &rule_arg,
+        ];
+
+        assert_eq!(0, crate::utils::cfn_guard_test_command(Test::new(), args));
+        Ok(())
+    }
+
+    #[rstest::rstest]
+    #[case("json")]
+    #[case("yaml")]
+    fn test_test_data_file(#[case] file_type: &str) -> Result<(), Error> {
+        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!("resources/test-data-dir/s3_bucket_server_side_encryption_enabled.{}", file_type));
+        let rule_arg = crate::utils::get_full_path_for_resource_file("resources/rules-dir/s3_bucket_server_side_encryption_enabled.guard");
+        let data_option = format!("-{}", TEST_DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+
+        let args = vec![
+            TEST,
+            &data_option,
+            &test_data_arg,
+            &rules_option,
+            &rule_arg,
+        ];
+
+        assert_eq!(0, crate::utils::cfn_guard_test_command(Test::new(), args));
+        Ok(())
     }
 }

@@ -27,7 +27,7 @@ pub(crate) struct Parser<'input> {
 struct ParserPinned<'input> {
     sys: sys::yaml_parser_t,
     input: Cow<'input, [u8]>,
-    }
+}
 
 
 impl<'input> Parser<'input> {
