@@ -12,7 +12,7 @@ Guard 2.0 release is a complete re-write of the earlier 1.0 version to make the 
 2. **Detective Governance and Compliance:** validate conformity of Configuration Management Database (CMDB) resources such as AWS Config-based configuration items (CIs). For example, developers can use Guard policies against AWS Config CIs to continuously monitor state of deployed AWS and non-AWS resources, detect violations from policies, and trigger remediation.
 3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 2.0, you can prevent such changes in your CI/CD pipelines. 
 
-> **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.0 because Guard 2.0 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.1.1 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. To migrate from Guard 1.0 to Guard 2.0, 1) use migrate command to transition your existing 1.0 rules to 2.0 rules and 2) read all new Guard 2.0 features.
+> **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.0 because Guard 2.0 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.1.2 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. To migrate from Guard 1.0 to Guard 2.0, 1) use migrate command to transition your existing 1.0 rules to 2.0 rules and 2) read all new Guard 2.0 features.
 > 
 > You can find code related to Guard 2.0 on the main branch of the repo and code related to Guard 1.0 on [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
 
@@ -216,7 +216,7 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 2.1.1
+cfn-guard 2.1.2
 
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
   policy-as-code as rules to validate against any structed hierarchical data (like JSON/YAML).
