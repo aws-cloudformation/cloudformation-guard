@@ -35,16 +35,16 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
-pub fn cfn_guard_test_command(args: Vec<&str>, command: Box<dyn Command>) -> i32 {
+pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
     let TEST_APP_NAME = "cfn-guard-test";
     let mut app =
         App::new(TEST_APP_NAME);
     let mut command_options = Vec::new();
     command_options.push(TEST_APP_NAME);
-    command_options.append( args.clone().as_mut());
+    command_options.append(args.clone().as_mut());
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(command);
+    commands.push(Box::new(command));
 
     let mappings = commands.iter()
         .map(|s| (s.name(), s)).fold(
