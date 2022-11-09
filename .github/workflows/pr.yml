@@ -52,15 +52,17 @@ jobs:
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          LAMBDA_FUNCTION_NAME: CfnGuardLambda
+          LAMBDA_FUNCTION_NAME: GhCfnGuardLambda
         run: |
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
           rustup target add x86_64-unknown-linux-musl
           cd guard-lambda
           cargo build --release --target x86_64-unknown-linux-musl --verbose
           cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap
-          
-          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME || true
+        
+          aws iam create-role \
+            --role-name $ROLE_NAME \
+            --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
           
           aws lambda create-function \
             --function-name $LAMBDA_FUNCTION_NAME \
@@ -80,6 +82,7 @@ jobs:
           echo '{"message":[{"data_from":"lambda-payload","rules_from":"lambda-rule","not_compliant":{},"not_applicable":[],"compliant":["EC2_ENCRYPTION_BY_DEFAULT"]}]}' > expected-output.json
           
           aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+          aws iam delete-role --role-name $ROLE_NAME
           
           difference=`diff expected-output.json output.json -w | wc -c`
           
