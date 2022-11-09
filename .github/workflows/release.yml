@@ -1,7 +1,9 @@
 name: Rust
 on:
   release:
-    types: [ published, pull_request ]
+    types: [ published ]
+  pull_request:
+    branches: [ main ]
 env:
   CARGO_TERM_COLOR: always
 
