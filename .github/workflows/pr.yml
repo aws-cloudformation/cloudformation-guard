@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ lambda_tests ]
+#  pull_request:
+#    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,3 +29,60 @@ jobs:
     - uses: actions/checkout@v2
     - name: Shellcheck
       run: shellcheck install-guard.sh
+
+  test-lambda:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
+          role-session-name: LambdaTestGitHubAction
+
+      - name: Build, tag, and push docker image to Amazon ECR Public
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          LAMBDA_FUNCTION_NAME: CfnGuardLambda
+        run: |
+          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          rustup target add x86_64-unknown-linux-musl
+          cd guard-lambda
+          cargo build --release --target x86_64-unknown-linux-musl --verbose
+          cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap
+          
+          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME || true
+          
+          aws lambda create-function \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --handler guard.handler \
+            --zip-file fileb://./lambda.zip \
+            --runtime provided \
+            --role "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}" \
+            --environment Variables={RUST_BACKTRACE=1} \
+            --tracing-config Mode=Active \
+            --region $AWS_REGION
+          
+          aws lambda invoke \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --payload '{"data":"{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2c\"}}}}","rules":["let ec2_volumes = Resources.*[ Type == /EC2::Volume/ ]\nrule EC2_ENCRYPTION_BY_DEFAULT when %ec2_volumes !empty {\n    %ec2_volumes.Properties.Encrypted == true \n      <<\n            Violation: All EBS Volumes should be encryped \n            Fix: Set Encrypted property to true\n       >>\n}"],"verbose":false}' \
+            output.json
+          
+          echo '{"message":[{"data_from":"lambda-payload","rules_from":"lambda-rule","not_compliant":{},"not_applicable":[],"compliant":["EC2_ENCRYPTION_BY_DEFAULT"]}]}' > expected-output.json
+          
+          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+          
+          difference=`diff expected-output.json output.json -w | wc -c`
+          
+          if [ "$difference" != 0 ]
+          then
+            echo "Lambda output does not match the expected one"
+            exit 1
+          fi
+          
