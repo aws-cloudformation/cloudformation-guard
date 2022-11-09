@@ -17,11 +17,11 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build
       run: cargo build --verbose --release
-    - name: Get release
-      id: get_release
-      uses: bruceadams/get-release@v1.2.2
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
+#    - name: Get release
+#      id: get_release
+#      uses: bruceadams/get-release@v1.2.2
+#      env:
+#        GITHUB_TOKEN: ${{ github.token }}
     - name: Package release
       id: package
       run: |
