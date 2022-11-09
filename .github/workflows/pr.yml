@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  LAMBDA_FUNCTION_NAME: GhCfnGuardLambda
 
 jobs:
   build:
@@ -48,11 +51,7 @@ jobs:
           role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
           role-session-name: LambdaTestGitHubAction
 
-      - name: Deploy and test cfn-guard-lambda
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          LAMBDA_FUNCTION_NAME: GhCfnGuardLambda
+      - name: Deploy cfn-guard-lambda
         run: |
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
           rustup target add x86_64-unknown-linux-musl
@@ -64,6 +63,9 @@ jobs:
             --role-name $ROLE_NAME \
             --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
           
+          aws iam attach-role-policy --role-name $ROLE_NAME \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          
           aws lambda create-function \
             --function-name $LAMBDA_FUNCTION_NAME \
             --handler guard.handler \
@@ -73,6 +75,9 @@ jobs:
             --environment Variables={RUST_BACKTRACE=1} \
             --tracing-config Mode=Active \
             --region $AWS_REGION
+
+      - name: Invoke Lambda and test output
+        run: |    
           
           aws lambda invoke \
             --function-name $LAMBDA_FUNCTION_NAME \
@@ -81,9 +86,6 @@ jobs:
           
           echo '{"message":[{"data_from":"lambda-payload","rules_from":"lambda-rule","not_compliant":{},"not_applicable":[],"compliant":["EC2_ENCRYPTION_BY_DEFAULT"]}]}' > expected-output.json
           
-          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
-          aws iam delete-role --role-name $ROLE_NAME
-          
           difference=`diff expected-output.json output.json -w | wc -c`
           
           if [ "$difference" != 0 ]
@@ -91,4 +93,10 @@ jobs:
             echo "Lambda output does not match the expected one"
             exit 1
           fi
+
+      - name: Clean up resources
+        run: |
+          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+          aws iam delete-role --role-name $ROLE_NAME
           
