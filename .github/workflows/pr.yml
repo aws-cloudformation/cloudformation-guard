@@ -66,6 +66,8 @@ jobs:
           aws iam attach-role-policy --role-name $ROLE_NAME \
             --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           
+          sleep 10
+          
           aws lambda create-function \
             --function-name $LAMBDA_FUNCTION_NAME \
             --handler guard.handler \
@@ -75,6 +77,7 @@ jobs:
             --environment Variables={RUST_BACKTRACE=1} \
             --tracing-config Mode=Active \
             --region $AWS_REGION
+        
 
       - name: Invoke Lambda and test output
         run: |    
