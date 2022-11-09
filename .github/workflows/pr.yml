@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Build
       run: cargo build --release --verbose
     - name: Run tests
@@ -45,7 +45,7 @@ jobs:
           role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
           role-session-name: LambdaTestGitHubAction
 
-      - name: Build, tag, and push docker image to Amazon ECR Public
+      - name: Deploy and test cfn-guard-lambda
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
