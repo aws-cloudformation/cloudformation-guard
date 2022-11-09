@@ -11,7 +11,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macos-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
@@ -28,8 +28,7 @@ jobs:
         mkdir cfn-guard-v2-${{ matrix.os }}
         ls ./target/release/
         cp ./target/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
-        cp ./target/release/*.so ./cfn-guard-v2-${{ matrix.os }}/
-        cp ./target/release/*.dylib ./cfn-guard-v2-${{ matrix.os }}/
+        cp ./target/release/*.{so,dylib} ./cfn-guard-v2-${{ matrix.os }}/
         cp README.md ./cfn-guard-v2-${{ matrix.os }}/
         tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
     - name: Upload Release Asset
