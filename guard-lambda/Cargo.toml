@@ -1,6 +1,6 @@
 [package]
 name = "cfn-guard-lambda"
-version = "2.1.2"
+version = "2.1.3"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
     "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
 description = "Lambda version of cfn-guard. Checks JSON- or YAML- formatted structured data for policy compliance using a simple, policy-as-code, declarative syntax"
@@ -17,4 +17,4 @@ serde_derive = "1.0.92"
 simple_logger = "4.0.0"
 log = "0.4.6"
 tokio = "1.8.4"
-cfn-guard = { version = "2.1.2", path = "../guard" }
+cfn-guard = { version = "2.1.3", path = "../guard" }
