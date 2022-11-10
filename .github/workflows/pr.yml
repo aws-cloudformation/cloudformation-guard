@@ -45,7 +45,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ secrets.LAMBDA_CREATION_AWS_REGION }}
           role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
           role-session-name: LambdaTestGitHubAction
 
@@ -55,8 +55,15 @@ jobs:
         run: |
           LAMBDA_FUNCTION_PREFIX=GhCfnGrd
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          git_branch=${GITHUB_REF#refs/heads/}
-          commit_hash=${git_branch}_${git_hash}
+          
+          if [[ $GITHUB_REF == *"/heads/"* ]]; then
+            git_branch_or_pr=${GITHUB_REF#refs/heads/}
+          else
+            git_branch_or_pr="PR$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')"
+          fi
+        
+          commit_hash=${git_branch_or_pr}_${git_hash}
+          
           LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
           
@@ -66,8 +73,8 @@ jobs:
 
       - name: Deploy cfn-guard-lambda
         env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.LAMBDA_CREATION_AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ secrets.LAMBDA_CREATION_AWS_REGION }}
           LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
           ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
         run: |
