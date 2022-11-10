@@ -107,13 +107,12 @@ jobs:
             exit 1
           fi
 
-      - name: Clean up resources
-        if: success() || failure()
-        run: |
-          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
-          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
-          aws iam detach-role-policy \
-            --role-name $ROLE_NAME \
-            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-          aws iam delete-role --role-name $ROLE_NAME
-          
+#      - name: Clean up resources
+#        if: success() || failure()
+#        run: |
+#          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+#          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+#          aws iam detach-role-policy \
+#            --role-name $ROLE_NAME \
+#            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+#          aws iam delete-role --role-name $ROLE_NAME
