@@ -8,9 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  LAMBDA_FUNCTION_NAME: GhCfnGuardLambda
 
 jobs:
   build:
@@ -52,8 +49,18 @@ jobs:
           role-session-name: LambdaTestGitHubAction
 
       - name: Deploy cfn-guard-lambda
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
         run: |
+          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          git_branch=${GITHUB_REF#refs/heads/}
+          commit_hash=${git_branch}_${git_hash}
+          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          
           rustup target add x86_64-unknown-linux-musl
           cd guard-lambda
           cargo build --release --target x86_64-unknown-linux-musl --verbose
@@ -80,7 +87,12 @@ jobs:
         
 
       - name: Invoke Lambda and test output
-        run: |    
+        run: |
+          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          git_branch=${GITHUB_REF#refs/heads/}
+          commit_hash=${git_branch}_${git_hash}
+          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
           
           aws lambda invoke \
             --function-name $LAMBDA_FUNCTION_NAME \
@@ -107,12 +119,18 @@ jobs:
             exit 1
           fi
 
-#      - name: Clean up resources
-#        if: success() || failure()
-#        run: |
-#          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
-#          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
-#          aws iam detach-role-policy \
-#            --role-name $ROLE_NAME \
-#            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-#          aws iam delete-role --role-name $ROLE_NAME
+      - name: Clean up resources
+        if: success() || failure()
+        run: |
+          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          git_branch=${GITHUB_REF#refs/heads/}
+          commit_hash=${git_branch}_${git_hash}
+          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
+          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          
+          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+          aws iam detach-role-policy \
+            --role-name $ROLE_NAME \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          aws iam delete-role --role-name $ROLE_NAME
