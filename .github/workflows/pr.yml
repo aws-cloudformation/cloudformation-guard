@@ -49,12 +49,12 @@ jobs:
           role-session-name: LambdaTestGitHubAction
 
       - name: Deploy cfn-guard-lambda
+        id: deploy-lambda
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-
         run: |
-          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
+          LAMBDA_FUNCTION_PREFIX=GhCfnGrd
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
           git_branch=${GITHUB_REF#refs/heads/}
           commit_hash=${git_branch}_${git_hash}
@@ -84,15 +84,14 @@ jobs:
             --environment Variables={RUST_BACKTRACE=1} \
             --tracing-config Mode=Active \
             --region $AWS_REGION
+          
+          echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
+          echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
         
 
       - name: Invoke Lambda and test output
         run: |
-          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
-          git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          git_branch=${GITHUB_REF#refs/heads/}
-          commit_hash=${git_branch}_${git_hash}
-          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
+          LAMBDA_FUNCTION_NAME=${{ steps.deploy-lambda.outputs.LAMBDA_FUNCTION_NAME }}
           
           aws lambda invoke \
             --function-name $LAMBDA_FUNCTION_NAME \
@@ -122,12 +121,8 @@ jobs:
       - name: Clean up resources
         if: success() || failure()
         run: |
-          LAMBDA_FUNCTION_PREFIX=GhGrdLmb
-          git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          git_branch=${GITHUB_REF#refs/heads/}
-          commit_hash=${git_branch}_${git_hash}
-          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
-          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          LAMBDA_FUNCTION_NAME=${{ steps.deploy-lambda.outputs.LAMBDA_FUNCTION_NAME }}
+          ROLE_NAME=${{ steps.deploy-lambda.outputs.ROLE_NAME }}
           
           aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
           aws iam detach-role-policy \
