@@ -21,7 +21,7 @@ jobs:
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
-        aws-region: ${{ secrets.PUBLISHER_AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
         role-to-assume: ${{ secrets.PUBLISHER_ROLE_NAME }}
         role-session-name: PublishToElasticContainerRegistry
 
