@@ -41,6 +41,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v3
 
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -48,11 +49,9 @@ jobs:
           role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
           role-session-name: LambdaTestGitHubAction
 
-      - name: Deploy cfn-guard-lambda
-        id: deploy-lambda
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Generate identifiers
+        id: generate-identifiers
         run: |
           LAMBDA_FUNCTION_PREFIX=GhCfnGrd
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
@@ -61,6 +60,17 @@ jobs:
           LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
           
+          echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
+          echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
+
+
+      - name: Deploy cfn-guard-lambda
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
+          ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
+        run: |
           rustup target add x86_64-unknown-linux-musl
           cd guard-lambda
           cargo build --release --target x86_64-unknown-linux-musl --verbose
@@ -84,15 +94,12 @@ jobs:
             --environment Variables={RUST_BACKTRACE=1} \
             --tracing-config Mode=Active \
             --region $AWS_REGION
-          
-          echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
-          echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
-        
+
 
       - name: Invoke Lambda and test output
+        env:
+          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
         run: |
-          LAMBDA_FUNCTION_NAME=${{ steps.deploy-lambda.outputs.LAMBDA_FUNCTION_NAME }}
-          
           aws lambda invoke \
             --function-name $LAMBDA_FUNCTION_NAME \
             --payload '{"data":"{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2c\"}}}}","rules":["let ec2_volumes = Resources.*[ Type == /EC2::Volume/ ]\nrule EC2_ENCRYPTION_BY_DEFAULT when %ec2_volumes !empty {\n    %ec2_volumes.Properties.Encrypted == true \n      <<\n            Violation: All EBS Volumes should be encryped \n            Fix: Set Encrypted property to true\n       >>\n}"],"verbose":false}' \
@@ -118,12 +125,13 @@ jobs:
             exit 1
           fi
 
+
       - name: Clean up resources
         if: success() || failure()
+        env:
+          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
+          ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
         run: |
-          LAMBDA_FUNCTION_NAME=${{ steps.deploy-lambda.outputs.LAMBDA_FUNCTION_NAME }}
-          ROLE_NAME=${{ steps.deploy-lambda.outputs.ROLE_NAME }}
-          
           aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
           aws iam detach-role-policy \
             --role-name $ROLE_NAME \
