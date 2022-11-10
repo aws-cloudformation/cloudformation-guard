@@ -41,8 +41,12 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 8. Create [an execution role for Lambda function]((https://docs.aws.amazon.com/lambda/latest/dg/lambda-intro-execution-role.html)). Refer the linked documentation for updated instructions. Alternatively, use the following command:
    ```bash
    aws iam create-role \
-   --role-name $ROLE_NAME \
-   --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
+      --role-name $ROLE_NAME \
+      --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
+   
+   aws iam attach-role-policy \
+      --role-name $ROLE_NAME \
+      --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
    ```
 9. Run the following command to submit `cfn-guard` as an AWS Lambda function to your account:
    ```bash
@@ -72,21 +76,29 @@ To invoke the submitted `cfn-guard` as an AWS Lambda function run:
 
 ```bash
 aws lambda invoke \
---function-name $LAMBDA_NAME \
+--function-name $LAMBDA_FUNCTION_NAME \
 --cli-binary-format raw-in-base64-out \
 --payload "{"data": "<input data>", "rules" : ["<input rules 1>", "<input rules 2>", ...], "verbose": <true|false>}" \
 output.json
 ```
 
+**Note:** `--cli-binary-format` option is only required to override the default configuration setting to perform the parsing of 
+JSON input. If the command doesn't work with this option, try running it without this configuration override. Your current 
+AWS CLI version may have this configuration set to the required value.
+
 ### Example
 
 ```bash
 aws lambda invoke \
---function-name $LAMBDA_NAME \
+--function-name $LAMBDA_FUNCTION_NAME \
 --cli-binary-format raw-in-base64-out \
 --payload '{"data":"{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2c\"}}}}","rules":["let ec2_volumes = Resources.*[ Type == /EC2::Volume/ ]\nrule EC2_ENCRYPTION_BY_DEFAULT when %ec2_volumes !empty {\n    %ec2_volumes.Properties.Encrypted == true \n      <<\n            Violation: All EBS Volumes should be encryped \n            Fix: Set Encrypted property to true\n       >>\n}"],"verbose":false}' \
 output.json
 ```
+
+**Note:** `--cli-binary-format` option is only required to override the default configuration setting to perform the parsing of
+JSON input. If the command doesn't work with this option, try running it without this configuration override. Your current
+AWS CLI version may have this configuration set to the required value.
 
 ## FAQs
 
