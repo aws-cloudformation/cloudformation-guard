@@ -95,6 +95,15 @@ jobs:
           if [ "$difference" != 0 ]
           then
             echo "Lambda output does not match the expected one"
+            echo "--------------------------------"
+            echo "Actual output:"
+            cat output.json
+            echo "--------------------------------"
+            echo "Expected output:"
+            cat expected-output.json
+            echo "--------------------------------"
+            echo "diff:"
+            echo "$difference"
             exit 1
           fi
 
