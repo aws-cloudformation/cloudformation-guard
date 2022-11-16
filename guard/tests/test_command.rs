@@ -157,7 +157,6 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .verbose(true)
             .run(&mut writer);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
@@ -182,7 +181,6 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .verbose(true)
             .run(&mut writer);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
@@ -229,5 +227,27 @@ mod test_command_tests {
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
         assert_eq!(expected_err_msg, writer.err_to_stripped().unwrap());
+    }
+
+    #[test]
+    fn test_data_file_verbose() -> Result<(), Error> {
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some(&format!(
+                "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
+            )))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .verbose(true)
+            .run(&mut writer);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/test_data_file_verbose.out",
+            writer
+        );
+
+        Ok(())
     }
 }

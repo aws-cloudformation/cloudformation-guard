@@ -538,25 +538,26 @@ fn indent_spaces(indent: usize) {
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
 #[allow(clippy::uninlined_format_args)]
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool) {
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer: &mut Writer) {
     let prefix_current = if last { "`- " } else { "|- " };
-    println!("{}{}{}", prefix, prefix_current, current);
+    writeln!(writer, "{}{}{}", prefix, prefix_current, current)
+        .expect("Unable to write to the output");
 
     let prefix_child = if last { "   " } else { "|  " };
     let prefix = prefix + prefix_child;
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child);
+            pprint_tree(child, prefix.clone(), i == last_child, &mut writer);
         }
     }
 }
 
-pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
-    pprint_tree(root, "".to_string(), true);
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, mut writer: &mut Writer) {
+    pprint_tree(root, "".to_string(), true, &mut writer);
 }
 
-pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
+pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut Writer) {
     let header = format!(
         "{}({}, {})",
         cxt.eval_type,
@@ -567,45 +568,52 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
-    println!("{header}");
+    writeln!(writer, "{header}").expect("Unable to write to the output");
     match &cxt.from {
         Some(v) => {
             indent_spaces(depth);
-            print!("|  ");
-            println!("From: {v:?}");
+            writeln!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.to {
         Some(v) => {
             indent_spaces(depth);
-            print!("|  ");
-            println!("To: {v:?}");
+            writeln!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.msg {
         Some(message) => {
             indent_spaces(depth);
-            print!("|  ");
-            println!("Message: {message}");
+            writeln!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "Message: {message}").expect("Unable to write to the output");
         }
         None => {}
     }
 
     for child in &cxt.children {
-        print_context(child, depth + 1)
+        print_context(child, depth + 1, &mut writer)
     }
 }
 
 #[allow(clippy::uninlined_format_args)]
-fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
-    print!(
+fn print_failing_clause(
+    rules_file_name: &str,
+    rule: &StatusContext,
+    longest: usize,
+    mut writer: &mut Writer,
+) {
+    write!(
+        writer,
         "{file}/{rule:<0$}",
         longest + 4,
         file = rules_file_name,
         rule = rule.context
-    );
+    )
+    .expect("Unable to write to the output");
     let longest = rules_file_name.len() + longest;
     let mut first = true;
     for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
@@ -617,35 +625,65 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
         )
         .underline();
         if !first {
-            print!("{space:>longest$}", space = " ", longest = longest + 4)
+            write!(
+                writer,
+                "{space:>longest$}",
+                space = " ",
+                longest = longest + 4
+            )
+            .expect("Unable to write to the output");
         }
         let clause = format!("Clause #{}", index + 1).bold();
-        println!("{header:<20}{content}", header = clause, content = header);
+        writeln!(
+            writer,
+            "{header:<20}{content}",
+            header = clause,
+            content = header
+        )
+        .expect("Unable to write to the output");
         match &matched.from {
             Some(from) => {
-                print!("{space:>longest$}", space = " ", longest = longest + 4);
+                write!(
+                    writer,
+                    "{space:>longest$}",
+                    space = " ",
+                    longest = longest + 4
+                )
+                .expect("Unable to write to the output");
                 let content = format!("Comparing {:?}", from);
-                print!("{header:<20}{content}", header = " ", content = content);
+                write!(
+                    writer,
+                    "{header:<20}{content}",
+                    header = " ",
+                    content = content
+                )
+                .expect("Unable to write to the output");
             }
             None => {}
         }
         match &matched.to {
             Some(to) => {
-                println!(" with {:?} failed", to);
+                writeln!(writer, " with {:?} failed", to).expect("Unable to write to the output");
             }
             None => {
-                println!()
+                writeln!(writer).expect("Unable to write to the output");
             }
         }
         match &matched.msg {
             Some(m) => {
                 for each in m.split('\n') {
-                    print!("{space:>longest$}", space = " ", longest = longest + 4 + 20);
-                    println!("{}", each);
+                    write!(
+                        writer,
+                        "{space:>longest$}",
+                        space = " ",
+                        longest = longest + 4 + 20
+                    )
+                    .expect("Unable to write to the output");
+                    writeln!(writer, "{}", each).expect("Unable to write to the output");
                 }
             }
             None => {
-                println!();
+                writeln!(writer).expect("Unable to write to the output");
             }
         }
         if first {
@@ -723,7 +761,7 @@ impl<'r> ConsoleReporter<'r> {
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
-            println!("{serialized_user}");
+            writeln!(self.writer, "{serialized_user}").expect("Unable to write to the output");
         } else {
             let longest = get_longest(top);
 
@@ -747,16 +785,17 @@ impl<'r> ConsoleReporter<'r> {
             }
 
             if self.show_clause_failures {
-                println!("{}", "Clause Failure Summary".bold());
+                writeln!(self.writer, "{}", "Clause Failure Summary".bold())
+                    .expect("Unable to write to the output");
                 for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest);
+                    print_failing_clause(self.rules_file_name, each, longest, &mut self.writer);
                 }
             }
 
             if self.verbose {
-                println!("Evaluation Tree");
+                writeln!(self.writer, "Evaluation Tree").expect("Unable to write to the output");
                 for each in &top.children {
-                    print_context(each, 1);
+                    print_context(each, 1, &mut self.writer);
                 }
             }
         }
@@ -849,11 +888,16 @@ fn evaluate_against_data_input<'r>(
             )?;
 
             if verbose {
-                print_verbose_tree(&root_record);
+                print_verbose_tree(&root_record, &mut write_output);
             }
 
             if print_json {
-                println!("{}", serde_json::to_string_pretty(&root_record)?)
+                writeln!(
+                    write_output,
+                    "{}",
+                    serde_json::to_string_pretty(&root_record)?
+                )
+                .expect("Unable to write to the output");
             }
 
             if status == Status::FAIL {

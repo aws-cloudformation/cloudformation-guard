@@ -409,7 +409,7 @@ fn test_with_data(
                         }
 
                         if verbose {
-                            validate::print_verbose_tree(&top);
+                            validate::print_verbose_tree(&top, writer);
                         }
                         by_result
                     } else {
@@ -449,7 +449,7 @@ fn test_with_data(
                                                 ));
                                         }
                                         if verbose {
-                                            validate::print_context(each, 1);
+                                            validate::print_context(each, 1, writer);
                                         }
                                     }
                                 },

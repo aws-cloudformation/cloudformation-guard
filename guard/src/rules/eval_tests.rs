@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::io::{stderr, stdout};
 
+use crate::utils::writer::Writer;
 use grep_searcher::SearcherBuilder;
 use indoc::{formatdoc, indoc};
 use rstest::rstest;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
+use crate::utils::writer::WriteBuffer::{Stderr, Stdout};
 
 use super::*;
 
@@ -3861,7 +3864,8 @@ fn parameterized_evaluations() -> Result<()> {
     let mut eval = root_scope(&rules_files, &template)?;
     let status = eval_rules_file(&rules_files, &mut eval)?;
     let top = eval.reset_recorder().extract();
-    crate::commands::validate::print_verbose_tree(&top);
+    let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+    crate::commands::validate::print_verbose_tree(&top, &mut writer);
     assert_eq!(status, Status::FAIL);
 
     let aws_config_value = r###"
@@ -3881,7 +3885,7 @@ fn parameterized_evaluations() -> Result<()> {
     let mut eval = root_scope(&rules_files, &config_value)?;
     let status = eval_rules_file(&rules_files, &mut eval)?;
     let top = eval.reset_recorder().extract();
-    crate::commands::validate::print_verbose_tree(&top);
+    crate::commands::validate::print_verbose_tree(&top, &mut writer);
     assert_eq!(status, Status::PASS);
 
     Ok(())
