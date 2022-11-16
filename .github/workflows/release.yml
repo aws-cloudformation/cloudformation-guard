@@ -22,13 +22,22 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
     - name: Package release
       id: package
-      run: |
-        mkdir cfn-guard-v2-${{ matrix.os }}
-        cp ./target/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
-        test -e ./target/release/*.so && cp ./target/release/*.so ./cfn-guard-v2-${{ matrix.os }}/
-        test -e ./target/release/*.dylib && cp ./target/release/*.dylib ./cfn-guard-v2-${{ matrix.os }}/
-        cp README.md ./cfn-guard-v2-${{ matrix.os }}/
-        tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
+      uses: knicknic/os-specific-run@v1.0.3
+      with:
+        macos: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir cfn-guard-v2-${{ matrix.os }}
+          cp ./target/x86_64-apple-darwin/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
+          cp README.md ./cfn-guard-v2-${{ matrix.os }}/
+          tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
+        linux: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --target x86_64-unknown-linux-musl
+          mkdir cfn-guard-v2-${{ matrix.os }}
+          cp ./target/x86_64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v2-${{ matrix.os }}/
+          cp README.md ./cfn-guard-v2-${{ matrix.os }}/
+          tar czvf ./cfn-guard-v2-${{ matrix.os }}.tar.gz ./cfn-guard-v2-${{ matrix.os }}
     - name: Upload Release Asset
       id: upload-release-asset 
       uses: actions/upload-release-asset@v1
