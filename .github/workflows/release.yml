@@ -20,9 +20,10 @@ jobs:
       uses: bruceadams/get-release@v1.3.2
       env:
         GITHUB_TOKEN: ${{ github.token }}
-        TARGETS: '{ "ubuntu-latest": "x86_64-unknown-linux-musl", "macos-latest": "x86_64-apple-darwin" }'
     - name: Package release
       id: package
+      env:
+        TARGETS: '{ "ubuntu-latest": "x86_64-unknown-linux-musl", "macos-latest": "x86_64-apple-darwin" }'
       run: |
         TARGET=${{ fromJson( ${TARGETS} )[ ${{ matrix.os }} ] }}
         echo "Building for target ${TARGET}..."
