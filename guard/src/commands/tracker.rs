@@ -1,7 +1,7 @@
-use crate::rules::{EvaluationContext, Result, Status, EvaluationType, path_value::PathAwareValue};
-use nom::lib::std::fmt::Formatter;
-use serde::{Serialize};
 use crate::rules::values::CmpOperator;
+use crate::rules::{path_value::PathAwareValue, EvaluationContext, EvaluationType, Result, Status};
+use nom::lib::std::fmt::Formatter;
+use serde::Serialize;
 
 #[derive(Serialize, Debug)]
 pub(crate) struct StatusContext {
@@ -25,7 +25,7 @@ impl StatusContext {
             from: None,
             to: None,
             comparator: None,
-            children: vec![]
+            children: vec![],
         }
     }
 }
@@ -63,15 +63,16 @@ impl<'r> EvaluationContext for StackTracker<'r> {
         self.root_context.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self,
-                      eval_type: EvaluationType,
-                      context: &str,
-                      msg: String,
-                      from: Option<PathAwareValue>,
-                      to: Option<PathAwareValue>,
-                      status: Option<Status>,
-                      cmp: Option<(CmpOperator, bool)>) {
-
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
         if self.stack.borrow().len() == 1 {
             match self.stack.borrow_mut().get_mut(0) {
                 Some(top) => {
@@ -80,8 +81,8 @@ impl<'r> EvaluationContext for StackTracker<'r> {
                     top.to = to.clone();
                     top.msg = Some(msg.clone());
                     top.comparator = cmp.clone();
-                },
-                None => unreachable!()
+                }
+                None => unreachable!(),
             }
             return;
         }
@@ -96,25 +97,21 @@ impl<'r> EvaluationContext for StackTracker<'r> {
                 stack.comparator = cmp.clone();
 
                 match self.stack.borrow_mut().last_mut() {
-                    Some(cxt) =>  {
-                        cxt.children.push(stack)
-                    }
-                    None => unreachable!()
+                    Some(cxt) => cxt.children.push(stack),
+                    None => unreachable!(),
                 }
-            },
+            }
             None => {}
         }
-        self.root_context.end_evaluation(eval_type, context, msg, from, to, status, cmp);
+        self.root_context
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
-    fn start_evaluation(&self,
-                        eval_type: EvaluationType,
-                        context: &str) {
-        let _indent= self.stack.borrow().len();
-        self.stack.borrow_mut().push(
-            StatusContext::new(eval_type, context));
+    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        let _indent = self.stack.borrow().len();
+        self.stack
+            .borrow_mut()
+            .push(StatusContext::new(eval_type, context));
         self.root_context.start_evaluation(eval_type, context);
     }
-
 }
-

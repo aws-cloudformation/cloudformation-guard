@@ -3,8 +3,8 @@ use std::convert::TryFrom;
 
 #[test]
 fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
-    let value = PathAwareValue::try_from(
-        crate::rules::values::read_from(r#"
+    let value = PathAwareValue::try_from(crate::rules::values::read_from(
+        r#"
         Resources:
           Helper:
             Type: AWS::S3::Bucket
@@ -36,26 +36,26 @@ fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
                   IncludedObjectVersions: Current
                   Prefix: InventoryConfigurationPrefix
                   ScheduleFrequency: Weekly
-        "#)?
-    )?;
+        "#,
+    )?)?;
 
     let traversal = Traversal::from(&value);
     let root = traversal.root().unwrap();
     let result = traversal.at("/", root)?;
-    assert_eq!(matches!(result , TraversalResult::Value(_)), true);
+    assert_eq!(matches!(result, TraversalResult::Value(_)), true);
     if let TraversalResult::Value(curr) = result {
         assert_eq!(std::ptr::eq(&value, curr.value), true);
     }
     let result = match result {
         TraversalResult::Value(val) => val,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
 
     let result = traversal.at("/Resources/s3/Properties/AnalyticsConfiguration", result)?;
     assert_eq!(matches!(result, TraversalResult::Value(_)), true);
     let result = match result {
         TraversalResult::Value(val) => val,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
     assert_eq!(matches!(result.value, PathAwareValue::List(_)), true);
 
@@ -66,14 +66,14 @@ fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
     assert_eq!(matches!(upward, TraversalResult::Value(_)), true);
     let upward = match upward {
         TraversalResult::Value(up) => up,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
     match upward.value {
         PathAwareValue::String((path, value)) => {
             assert_eq!(path.0, "/Resources/s3/Properties/Name");
             assert_eq!(value, "MyBucket");
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
     Ok(())

@@ -1,15 +1,5 @@
-use std::{
-    ptr::NonNull,
-    borrow::Cow,
-    slice,
-    fmt,
-    fmt::Debug,
-};
-use crate::rules::libyaml::{
-    tag::Tag,
-    cstr::CStr,
-    cstr,
-};
+use crate::rules::libyaml::{cstr, cstr::CStr, tag::Tag};
+use std::{borrow::Cow, fmt, fmt::Debug, ptr::NonNull, slice};
 use unsafe_libyaml as sys;
 
 #[derive(Debug)]
