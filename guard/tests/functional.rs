@@ -8,8 +8,8 @@ mod tests {
     use std::fmt::format;
 
     use cfn_guard;
-    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE};
     use cfn_guard::commands::validate::Validate;
+    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE};
 
     use crate::utils;
 
@@ -147,13 +147,18 @@ mod tests {
                 }"#;
         let verbose = true;
         use cfn_guard::*;
-        let serialized = run_checks(ValidateInput {
-            content: &data,
-            file_name: "functional_test.json",
-        }, ValidateInput {
-            content: &rule,
-            file_name: "functional_test.rule",
-        }, verbose).unwrap();
+        let serialized = run_checks(
+            ValidateInput {
+                content: &data,
+                file_name: "functional_test.json",
+            },
+            ValidateInput {
+                content: &rule,
+                file_name: "functional_test.rule",
+            },
+            verbose,
+        )
+        .unwrap();
         let result = serde_json::from_str::<serde_json::Value>(&serialized)
             .ok()
             .unwrap();
@@ -653,30 +658,28 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod test_test_command {
-    use rstest::rstest;
-    use cfn_guard::commands::{RULES, TEST, TEST_DATA};
     use cfn_guard::commands::test::Test;
+    use cfn_guard::commands::{RULES, TEST, TEST_DATA};
     use cfn_guard::Error;
+    use rstest::rstest;
 
     #[rstest::rstest]
     #[case("json")]
     #[case("yaml")]
     fn test_test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
-        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!("resources/test-data-dir/s3_bucket_logging_enabled_tests.{}", file_type));
-        let rule_arg = crate::utils::get_full_path_for_resource_file("resources/rules-dir/s3_bucket_logging_enabled.guard");
+        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!(
+            "resources/test-data-dir/s3_bucket_logging_enabled_tests.{}",
+            file_type
+        ));
+        let rule_arg = crate::utils::get_full_path_for_resource_file(
+            "resources/rules-dir/s3_bucket_logging_enabled.guard",
+        );
         let data_option = format!("-{}", TEST_DATA.1);
         let rules_option = format!("-{}", RULES.1);
 
-        let args = vec![
-            TEST,
-            &data_option,
-            &test_data_arg,
-            &rules_option,
-            &rule_arg,
-        ];
+        let args = vec![TEST, &data_option, &test_data_arg, &rules_option, &rule_arg];
 
         assert_eq!(0, crate::utils::cfn_guard_test_command(Test::new(), args));
         Ok(())
@@ -686,18 +689,17 @@ mod test_test_command {
     #[case("json")]
     #[case("yaml")]
     fn test_test_data_file(#[case] file_type: &str) -> Result<(), Error> {
-        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!("resources/test-data-dir/s3_bucket_server_side_encryption_enabled.{}", file_type));
-        let rule_arg = crate::utils::get_full_path_for_resource_file("resources/rules-dir/s3_bucket_server_side_encryption_enabled.guard");
+        let test_data_arg = crate::utils::get_full_path_for_resource_file(&format!(
+            "resources/test-data-dir/s3_bucket_server_side_encryption_enabled.{}",
+            file_type
+        ));
+        let rule_arg = crate::utils::get_full_path_for_resource_file(
+            "resources/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        );
         let data_option = format!("-{}", TEST_DATA.1);
         let rules_option = format!("-{}", RULES.1);
 
-        let args = vec![
-            TEST,
-            &data_option,
-            &test_data_arg,
-            &rules_option,
-            &rule_arg,
-        ];
+        let args = vec![TEST, &data_option, &test_data_arg, &rules_option, &rule_arg];
 
         assert_eq!(0, crate::utils::cfn_guard_test_command(Test::new(), args));
         Ok(())

@@ -131,7 +131,7 @@ fn test_parse_bool() {
 #[case("12e+2", Value::Float(1200.0))]
 #[case("1.0", Value::Float(1.0))]
 #[case("1.5", Value::Float(1.5))]
-fn test_parse_float(#[case] s : &str, #[case] expected : Value) {
+fn test_parse_float(#[case] s: &str, #[case] expected: Value) {
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     assert_eq!(parse_float(from_str2(s)), Ok((cmp, expected)));
 }
@@ -1196,19 +1196,19 @@ fn test_access() {
 #[test]
 fn test_other_operations() {
     let examples = [
-        "",        // 0 err
-        " exists", // 1 err
-        "exists",  // 2 ok
-        "not exists", // 3 ok
-        "!exists", // 4 ok
-        "!EXISTS", // 5 ok
-        "notexists", // 6 err
-        "in",      // 7, ok
-        "not in",  // 8 ok
-        "!in",     // 9 ok,
-        "EMPTY",   // 10 ok,
-        "! EMPTY", // 11 err
-        "NOT EMPTY", // 12 ok
+        "",                  // 0 err
+        " exists",           // 1 err
+        "exists",            // 2 ok
+        "not exists",        // 3 ok
+        "!exists",           // 4 ok
+        "!EXISTS",           // 5 ok
+        "notexists",         // 6 err
+        "in",                // 7, ok
+        "not in",            // 8 ok
+        "!in",               // 9 ok,
+        "EMPTY",             // 10 ok,
+        "! EMPTY",           // 11 err
+        "NOT EMPTY",         // 12 ok
         "IN [\"t\", \"n\"]", // 13 ok
     ];
 
@@ -1423,14 +1423,14 @@ fn test_keys_keyword() {
 #[test]
 fn test_value_cmp() {
     let examples = [
-        "",   // err 0
-        " >", // err 1,
-        ">",  // ok, 2
-        ">=", // ok, 3
-        "<",  // ok, 4
-        "<= ", // ok, 5
-        ">=\n", // ok, 6
-        "IN\n", // ok 7
+        "",      // err 0
+        " >",    // err 1,
+        ">",     // ok, 2
+        ">=",    // ok, 3
+        "<",     // ok, 4
+        "<= ",   // ok, 5
+        ">=\n",  // ok, 6
+        "IN\n",  // ok 7
         "!IN\n", // ok 8
     ];
 
@@ -2408,10 +2408,10 @@ r##"let ENGINE_LOGS = {
                 "##).unwrap())
         }
         )))]
-fn test_assignments(#[case] each : &str, #[case] expected : IResult<Span, LetExpr>) {
-        let span = Span::new_extra(each, "");
-        let result = assignment(span);
-        assert_eq!(result, expected);
+fn test_assignments(#[case] each: &str, #[case] expected: IResult<Span, LetExpr>) {
+    let span = Span::new_extra(each, "");
+    let result = assignment(span);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -4072,8 +4072,8 @@ fn does_this_work() -> Result<(), Error> {
 #[case("IS_BOOL", CmpOperator::IsBool)]
 #[case("is_int", CmpOperator::IsInt)]
 #[case("IS_INT", CmpOperator::IsInt)]
-fn unary_parse(#[case] s: &str, #[case] expected : CmpOperator) -> Result<(), Error> {
-    let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1.0;
+fn unary_parse(#[case] s: &str, #[case] expected: CmpOperator) -> Result<(), Error> {
+    let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1 .0;
     assert_eq!(expected, parsed);
     assert_eq!(expected.is_unary(), true);
     Ok(())
@@ -4528,7 +4528,7 @@ fn test_parse_value_when_strings_are_randomly_generated() {
     let values = vec!["weifhasidhhfasidf77627&^&*^**", "IiI+L1w="];
 
     for value in values {
-        let cmp = unsafe {Span::new_from_raw_offset(value.len(), 5, value, "")};
+        let cmp = unsafe { Span::new_from_raw_offset(value.len(), 5, value, "") };
         assert!(parse_value(cmp).is_err())
     }
 }

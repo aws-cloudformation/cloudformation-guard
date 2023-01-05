@@ -2,8 +2,7 @@ use std::{
     fmt::{self, Debug, Display, Write as _},
     marker::PhantomData,
     ptr::NonNull,
-    slice,
-    str,
+    slice, str,
 };
 
 #[derive(Copy, Clone)]
