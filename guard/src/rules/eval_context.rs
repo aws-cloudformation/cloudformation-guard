@@ -591,9 +591,11 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             _ => to_unresolved_result(
                 current,
                 format!(
-                    "Attempting to retrieve from index {} but type is not an array at path {}",
+                    "Attempting to retrieve from index {} but type is not an array at path {}, \
+                    type {}",
                     index,
-                    current.self_path()
+                    current.self_path(),
+                    current.type_info()
                 ),
                 &query[query_index..],
             ),

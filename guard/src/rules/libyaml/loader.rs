@@ -213,13 +213,26 @@ impl Loader {
         fn_ref: &str,
     ) -> Option<MarkedValue> {
         match fn_ref {
-            "Ref" | "Base64" | "Sub" | "GetAZs" | "ImportValue" | "GetAtt" | "Condition"
-            | "RefAll" => {
+            "Ref" | "Base64" | "Sub" | "GetAZs" | "ImportValue" | "Condition" | "RefAll" => {
                 let mut map = indexmap::IndexMap::new();
                 let fn_ref = Self::short_form_to_long(fn_ref);
                 map.insert(
                     (fn_ref.to_string(), loc.clone()),
                     MarkedValue::String(val, loc.clone()),
+                );
+                Some(MarkedValue::Map(map, loc))
+            }
+
+            "GetAtt" => {
+                let mut map = indexmap::IndexMap::new();
+                let fn_ref = Self::short_form_to_long(fn_ref);
+                let array: Vec<MarkedValue> = val
+                    .split(".")
+                    .map(|s| MarkedValue::String(s.to_string(), loc.clone()))
+                    .collect();
+                map.insert(
+                    (fn_ref.to_string(), loc.clone()),
+                    MarkedValue::List(array, loc.clone()),
                 );
                 Some(MarkedValue::Map(map, loc))
             }

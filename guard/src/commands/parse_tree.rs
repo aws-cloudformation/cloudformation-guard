@@ -81,7 +81,7 @@ impl Command for ParseTree {
                 if yaml {
                     serde_yaml::to_writer(out, &rules)?;
                 } else {
-                    serde_json::to_writer(out, &rules)?;
+                    serde_json::to_writer_pretty(out, &rules)?;
                 }
             }
         }
