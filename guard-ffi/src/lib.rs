@@ -1,12 +1,12 @@
-use std::os::raw::c_char;
-use ffi_support::ExternError;
 use cfn_guard::run_checks;
+use ffi_support::ExternError;
+use std::os::raw::c_char;
 
-mod types;
 mod errors;
+mod types;
 
-use types::FfiValidateInput;
 use errors::FfiError;
+use types::FfiValidateInput;
 
 /**
  * C prototype for this function:
@@ -30,15 +30,18 @@ use errors::FfiError;
  * `cfn_guard_free_string` to return the memory allocated by rust.
  */
 #[no_mangle]
-pub extern "C" fn cfn_guard_run_checks<'a>(data: FfiValidateInput<'a>, rules: FfiValidateInput<'a>, verbose: c_char, err : &mut ExternError) -> *mut c_char {
+pub extern "C" fn cfn_guard_run_checks<'a>(
+    data: FfiValidateInput<'a>,
+    rules: FfiValidateInput<'a>,
+    verbose: c_char,
+    err: &mut ExternError,
+) -> *mut c_char {
     ffi_support::call_with_result(err, || {
         match run_checks(data.into(), rules.into(), verbose == 1) {
             Err(e) => Err(FfiError(e)),
-            Ok(r) => Ok(r)
+            Ok(r) => Ok(r),
         }
     })
 }
 
 ffi_support::define_string_destructor!(cfn_guard_free_string);
-
-

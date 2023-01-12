@@ -1,21 +1,21 @@
 use std::{
-    hash::{Hash, Hasher},
     convert::TryFrom,
     fmt,
     fmt::Display,
+    hash::{Hash, Hasher},
 };
 
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
 use crate::rules::{
-    parser::Span,
     errors::{Error, ErrorKind},
     libyaml::loader::Loader,
+    parser::Span,
     path_value::Location,
 };
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash, Copy)]
 pub enum CmpOperator {
@@ -38,18 +38,20 @@ pub enum CmpOperator {
 impl CmpOperator {
     pub(crate) fn is_unary(&self) -> bool {
         match self {
-            CmpOperator::Exists     |
-            CmpOperator::Empty      |
-            CmpOperator::IsString   |
-            CmpOperator::IsBool     |
-            CmpOperator::IsList     |
-            CmpOperator::IsInt      |
-            CmpOperator::IsMap          => true,
-            _                           => false
+            CmpOperator::Exists
+            | CmpOperator::Empty
+            | CmpOperator::IsString
+            | CmpOperator::IsBool
+            | CmpOperator::IsList
+            | CmpOperator::IsInt
+            | CmpOperator::IsMap => true,
+            _ => false,
         }
     }
 
-    pub(crate) fn is_binary(&self) -> bool { !self.is_unary() }
+    pub(crate) fn is_binary(&self) -> bool {
+        !self.is_unary()
+    }
 }
 
 impl Display for CmpOperator {
@@ -57,8 +59,8 @@ impl Display for CmpOperator {
         match self {
             CmpOperator::Eq => f.write_str("EQUALS")?,
             CmpOperator::In => f.write_str("IN")?,
-            CmpOperator::Gt=> f.write_str("GREATER THAN")?,
-            CmpOperator::Lt=> f.write_str("LESS THAN")?,
+            CmpOperator::Gt => f.write_str("GREATER THAN")?,
+            CmpOperator::Lt => f.write_str("LESS THAN")?,
             CmpOperator::Ge => f.write_str("GREATER THAN EQUALS")?,
             CmpOperator::Le => f.write_str("LESS THAN EQUALS")?,
             CmpOperator::Exists => f.write_str("EXISTS")?,
@@ -92,46 +94,57 @@ pub enum Value {
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Value::String(s)        |
-            Value::Regex(s)        => { s.hash(state); },
+            Value::String(s) | Value::Regex(s) => {
+                s.hash(state);
+            }
 
-            Value::Char(c)          => { c.hash(state); },
-            Value::Int(i)            => { i.hash(state); },
-            Value::Null                     => { "NULL".hash(state); },
-            Value::Float(f)          => { (*f as u64).hash(state); }
+            Value::Char(c) => {
+                c.hash(state);
+            }
+            Value::Int(i) => {
+                i.hash(state);
+            }
+            Value::Null => {
+                "NULL".hash(state);
+            }
+            Value::Float(f) => {
+                (*f as u64).hash(state);
+            }
 
             Value::RangeChar(r) => {
                 r.lower.hash(state);
                 r.upper.hash(state);
                 r.inclusive.hash(state);
-            },
+            }
 
             Value::RangeInt(r) => {
                 r.lower.hash(state);
                 r.upper.hash(state);
                 r.inclusive.hash(state);
-            },
+            }
 
             Value::RangeFloat(r) => {
                 (r.lower as u64).hash(state);
                 (r.upper as u64).hash(state);
                 r.inclusive.hash(state);
-            },
+            }
 
-            Value::Bool(b) => { b.hash(state); },
+            Value::Bool(b) => {
+                b.hash(state);
+            }
 
             Value::List(l) => {
                 for each in l {
                     each.hash(state);
                 }
-            },
+            }
 
             Value::Map(map) => {
                 for (key, value) in map.iter() {
                     key.hash(state);
                     value.hash(state);
                 }
-            },
+            }
         }
     }
 }
@@ -142,22 +155,23 @@ impl Display for Value {
             Value::String(s) => write!(f, "\"{}\"", s),
             Value::Regex(s) => write!(f, "/{}/", s),
             Value::Int(int) => write!(f, "{}", int),
-            Value::Float(float) =>  write!(f, "{}", float),
+            Value::Float(float) => write!(f, "{}", float),
             Value::Bool(bool) => write!(f, "{}", bool),
             Value::List(list) => {
-
-                let result: Vec<String> = list.into_iter().map(|item| format!("{}", item)).collect();
+                let result: Vec<String> =
+                    list.into_iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", result.join(", "))
-            },
+            }
             Value::Map(map) => {
-                let key_values: Vec<String> = map.into_iter().map(|(key, value)| {
-                    format!("\"{}\": {}", key, value)
-                }).collect();
+                let key_values: Vec<String> = map
+                    .into_iter()
+                    .map(|(key, value)| format!("\"{}\": {}", key, value))
+                    .collect();
                 write!(f, "{{{}}}", key_values.join(", "))
-            },
+            }
             Value::Null => {
                 write!(f, "null")
-            },
+            }
             Value::RangeChar(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
                     write!(f, "[")?;
@@ -171,7 +185,7 @@ impl Display for Value {
                 } else {
                     write!(f, ")")
                 }
-            },
+            }
             Value::RangeFloat(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
                     write!(f, "[")?;
@@ -185,7 +199,7 @@ impl Display for Value {
                 } else {
                     write!(f, ")")
                 }
-            },
+            }
             Value::RangeInt(range) => {
                 if (range.inclusive & LOWER_INCLUSIVE) == LOWER_INCLUSIVE {
                     write!(f, "[")?;
@@ -199,7 +213,7 @@ impl Display for Value {
                 } else {
                     write!(f, ")")
                 }
-            },
+            }
             Value::Char(c) => {
                 write!(f, "\"{}\"", c)
             }
@@ -261,7 +275,7 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
-impl <'a> TryFrom<&'a serde_yaml::Value> for Value {
+impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
     type Error = Error;
 
     fn try_from(value: &'a serde_yaml::Value) -> Result<Self, Self::Error> {
@@ -278,43 +292,31 @@ impl <'a> TryFrom<&'a serde_yaml::Value> for Value {
                 } else {
                     Ok(Value::Float(num.as_f64().unwrap()))
                 }
-            },
+            }
             serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
             serde_yaml::Value::Sequence(sequence) => {
-                Ok(
-                    Value::List(
-                        sequence.iter()
-                            .fold(vec![], |mut res, val| {
-                                res.push(Value::try_from(val).unwrap());
-                                res
-                            })
-                    )
-                )
-            },
-            serde_yaml::Value::Mapping(mapping) => {
-                Ok(
-                    Value::Map(
-                        mapping.iter()
-                            .fold(
-                                IndexMap::with_capacity(mapping.len()),
-                                |mut  res, (key, val)| {
-                                    res.insert(key.as_str().unwrap().to_owned(), Value::try_from(val).unwrap());
-                                    res
-                                }
-                            )
-                    ))
-            },
-            serde_yaml::Value::Tagged(tag) => {
-                Ok(
-                    Value::try_from(tag.value.clone())?
-                )
-            },
-            serde_yaml::Value::Null => Ok(Value::Null)
+                Ok(Value::List(sequence.iter().fold(vec![], |mut res, val| {
+                    res.push(Value::try_from(val).unwrap());
+                    res
+                })))
+            }
+            serde_yaml::Value::Mapping(mapping) => Ok(Value::Map(mapping.iter().fold(
+                IndexMap::with_capacity(mapping.len()),
+                |mut res, (key, val)| {
+                    res.insert(
+                        key.as_str().unwrap().to_owned(),
+                        Value::try_from(val).unwrap(),
+                    );
+                    res
+                },
+            ))),
+            serde_yaml::Value::Tagged(tag) => Ok(Value::try_from(tag.value.clone())?),
+            serde_yaml::Value::Null => Ok(Value::Null),
         }
     }
 }
 
-impl <'a> TryFrom<&'a serde_json::Value> for Value {
+impl<'a> TryFrom<&'a serde_json::Value> for Value {
     type Error = Error;
 
     fn try_from(value: &'a serde_json::Value) -> Result<Self, Self::Error> {
@@ -323,17 +325,15 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
             serde_json::Value::Number(num) => {
                 if num.is_i64() {
                     Ok(Value::Int(num.as_i64().unwrap()))
-                }
-                else if num.is_u64() {
+                } else if num.is_u64() {
                     //
                     // Yes we are losing precision here. TODO fix this
                     //
                     Ok(Value::Int(num.as_u64().unwrap() as i64))
-                }
-                else {
+                } else {
                     Ok(Value::Float(num.as_f64().unwrap()))
                 }
-            },
+            }
             serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
             serde_json::Value::Null => Ok(Value::Null),
             serde_json::Value::Array(v) => {
@@ -342,15 +342,14 @@ impl <'a> TryFrom<&'a serde_json::Value> for Value {
                     result.push(Value::try_from(each)?)
                 }
                 Ok(Value::List(result))
-            },
+            }
             serde_json::Value::Object(map) => {
                 let mut result = IndexMap::with_capacity(map.len());
                 for (key, value) in map.iter() {
-                    result.insert(key.to_owned(),Value::try_from(value)?);
+                    result.insert(key.to_owned(), Value::try_from(value)?);
                 }
                 Ok(Value::Map(result))
             }
-
         }
     }
 }
@@ -371,7 +370,7 @@ impl TryFrom<serde_yaml::Value> for Value {
     }
 }
 
-impl <'a> TryFrom<&'a str> for Value {
+impl<'a> TryFrom<&'a str> for Value {
     type Error = Error;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
@@ -390,30 +389,31 @@ pub(crate) enum MarkedValue {
     Float(f64, Location),
     Char(char, Location),
     List(Vec<MarkedValue>, Location),
-    Map(indexmap::IndexMap<(String, Location), MarkedValue>, Location),
+    Map(
+        indexmap::IndexMap<(String, Location), MarkedValue>,
+        Location,
+    ),
     RangeInt(RangeType<i64>, Location),
     RangeFloat(RangeType<f64>, Location),
-    RangeChar(RangeType<char>, Location)
+    RangeChar(RangeType<char>, Location),
 }
 
 impl MarkedValue {
     pub(crate) fn location(&self) -> &Location {
         match self {
-            Self::Null(loc)	|
-            Self::BadValue(_, loc)	|
-            Self::String(_, loc)	|
-            Self::Regex(_, loc)	|
-            Self::Bool(_, loc)	|
-            Self::Int(_, loc)	|
-            Self::Float(_, loc)	|
-            Self::Char(_, loc)	|
-            Self::List(_, loc)	|
-            Self::Map(_, loc)     |
-            Self::RangeInt(_, loc)	|
-            Self::RangeFloat(_, loc)	|
-            Self::RangeChar(_, loc) => {
-                loc
-            }
+            Self::Null(loc)
+            | Self::BadValue(_, loc)
+            | Self::String(_, loc)
+            | Self::Regex(_, loc)
+            | Self::Bool(_, loc)
+            | Self::Int(_, loc)
+            | Self::Float(_, loc)
+            | Self::Char(_, loc)
+            | Self::List(_, loc)
+            | Self::Map(_, loc)
+            | Self::RangeInt(_, loc)
+            | Self::RangeFloat(_, loc)
+            | Self::RangeChar(_, loc) => loc,
         }
     }
 }
@@ -422,20 +422,16 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::new(ErrorKind::ParseError(
-            format!("{}", e)
-        )))
+        Err(e) => Err(Error::new(ErrorKind::ParseError(format!("{}", e)))),
     }
 }
 
 pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
-    where
-        I: IntoIterator<Item = (&'a str, Value)>,
+where
+    I: IntoIterator<Item = (&'a str, Value)>,
 {
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
 }
-
-
 
 #[cfg(test)]
 #[path = "values_tests.rs"]

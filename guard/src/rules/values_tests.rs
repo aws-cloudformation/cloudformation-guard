@@ -1,14 +1,16 @@
-use std::convert::{TryInto, TryFrom};
+use std::convert::{TryFrom, TryInto};
 
 use super::*;
-use std::fs::read_to_string;
-use crate::rules::exprs::{GuardClause, AccessQuery};
+use crate::rules::exprs::{AccessQuery, GuardClause};
+use crate::rules::exprs::{Rule, TypeBlock};
 use std::collections::HashMap;
-use crate::rules::exprs::{TypeBlock, Rule};
+use std::fs::read_to_string;
 
-use crate::rules::{ Result, EvaluationContext, EvaluationType, Evaluate, Status, Error, errors::ErrorKind };
-use crate::rules::path_value::{PathAwareValue, QueryResolver};
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
+use crate::rules::path_value::{PathAwareValue, QueryResolver};
+use crate::rules::{
+    errors::ErrorKind, Error, Evaluate, EvaluationContext, EvaluationType, Result, Status,
+};
 
 #[test]
 fn test_convert_from_to_value() -> Result<()> {
@@ -33,24 +35,31 @@ fn test_convert_from_to_value() -> Result<()> {
     // serde_json uses a BTree for the value which preserves alphabetical
     // order for the keys
     //
-    assert_eq!(value, Value::Map(
-        make_linked_hashmap(vec![
-            ("first", Value::Map(make_linked_hashmap(vec![
-                ("block", Value::List(vec![
-                    Value::Map(make_linked_hashmap(vec![
-                        ("hi", Value::String("there".to_string())),
-                        ("number", Value::Int(10)),
-                    ])),
-                    Value::Map(make_linked_hashmap(vec![
-                        ("hi", Value::String("hello".to_string())),
-                        ("number", Value::Int(20)),
-                    ]))
-                ])),
-                ("simple", Value::String("desserts".to_string())),
-            ]))),
+    assert_eq!(
+        value,
+        Value::Map(make_linked_hashmap(vec![
+            (
+                "first",
+                Value::Map(make_linked_hashmap(vec![
+                    (
+                        "block",
+                        Value::List(vec![
+                            Value::Map(make_linked_hashmap(vec![
+                                ("hi", Value::String("there".to_string())),
+                                ("number", Value::Int(10)),
+                            ])),
+                            Value::Map(make_linked_hashmap(vec![
+                                ("hi", Value::String("hello".to_string())),
+                                ("number", Value::Int(20)),
+                            ]))
+                        ])
+                    ),
+                    ("simple", Value::String("desserts".to_string())),
+                ]))
+            ),
             ("second", Value::Int(50))
-        ])
-    ));
+        ]))
+    );
     Ok(())
 }
 
@@ -91,24 +100,31 @@ fn test_convert_into_json() -> Result<()> {
 
     let json: serde_json::Value = serde_json::from_str(value_str)?;
     let type_value = Value::try_from(value)?;
-    assert_eq!(type_value, Value::Map(
-        make_linked_hashmap(vec![
-            ("first", Value::Map(make_linked_hashmap(vec![
-                ("block", Value::List(vec![
-                    Value::Map(make_linked_hashmap(vec![
-                        ("hi", Value::String("there".to_string())),
-                        ("number", Value::Int(10)),
-                    ])),
-                    Value::Map(make_linked_hashmap(vec![
-                        ("hi", Value::String("hello".to_string())),
-                        ("number", Value::Int(20)),
-                    ]))
-                ])),
-                ("simple", Value::String("desserts".to_string())),
-            ]))),
+    assert_eq!(
+        type_value,
+        Value::Map(make_linked_hashmap(vec![
+            (
+                "first",
+                Value::Map(make_linked_hashmap(vec![
+                    (
+                        "block",
+                        Value::List(vec![
+                            Value::Map(make_linked_hashmap(vec![
+                                ("hi", Value::String("there".to_string())),
+                                ("number", Value::Int(10)),
+                            ])),
+                            Value::Map(make_linked_hashmap(vec![
+                                ("hi", Value::String("hello".to_string())),
+                                ("number", Value::Int(20)),
+                            ]))
+                        ])
+                    ),
+                    ("simple", Value::String("desserts".to_string())),
+                ]))
+            ),
             ("second", Value::Int(50))
-        ])
-    ));
+        ]))
+    );
 
     let converted: Value = (&json).try_into()?;
     assert_eq!(converted, type_value);
@@ -120,30 +136,40 @@ fn test_query_on_value() -> Result<()> {
     let content = read_to_string("assets/cfn-template.json")?;
     let value = PathAwareValue::try_from(content.as_str())?;
 
-    struct DummyResolver<'a>{
-        cache: HashMap<&'a str, Vec<&'a PathAwareValue>>
+    struct DummyResolver<'a> {
+        cache: HashMap<&'a str, Vec<&'a PathAwareValue>>,
     };
     impl<'a> EvaluationContext for DummyResolver<'a> {
         fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
             if let Some(v) = self.cache.get(variable) {
-                return Ok(v.clone())
+                return Ok(v.clone());
             }
-            Err(Error::new(ErrorKind::MissingVariable(
-                format!("Not found {}", variable))))
+            Err(Error::new(ErrorKind::MissingVariable(format!(
+                "Not found {}",
+                variable
+            ))))
         }
 
         fn rule_status(&self, _rule_name: &str) -> Result<Status> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+        fn end_evaluation(
+            &self,
+            _eval_type: EvaluationType,
+            _context: &str,
+            _msg: String,
+            _from: Option<PathAwareValue>,
+            _to: Option<PathAwareValue>,
+            _status: Option<Status>,
+            _cmp: Option<(CmpOperator, bool)>,
+        ) {
         }
 
-        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
-        }
+        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
     }
-    let dummy = DummyResolver{
-        cache: HashMap::new()
+    let dummy = DummyResolver {
+        cache: HashMap::new(),
     };
 
     //
@@ -172,20 +198,23 @@ fn test_query_on_value() -> Result<()> {
     //
     // Select all policies that has Effect "allow"
     //
-    let query  = AccessQuery::try_from("Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]")?;
+    let query = AccessQuery::try_from(
+        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]",
+    )?;
     let selected = iam_role.select(query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 2);
 
     //
     // This is the case with IAM roles where Action can be either a single value or array
     //
-//    let clause = GuardClause::try_from(
-//        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ].Action != \"*\"")?;
-//    let status = clause.evaluate(iam_role, &dummy)?;
-//    assert_eq!(status, Status::FAIL);
+    //    let clause = GuardClause::try_from(
+    //        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ].Action != \"*\"")?;
+    //    let status = clause.evaluate(iam_role, &dummy)?;
+    //    assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(
-        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ].Action.* != \"*\"")?;
+        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ].Action.* != \"*\"",
+    )?;
     let status = clause.evaluate(iam_role, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
@@ -215,7 +244,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
     let content = read_to_string("assets/cfn-template.json")?;
     let value = PathAwareValue::try_from(content.as_str())?;
 
-    struct DummyResolver{};
+    struct DummyResolver {};
     impl EvaluationContext for DummyResolver {
         fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
@@ -225,13 +254,21 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+        fn end_evaluation(
+            &self,
+            _eval_type: EvaluationType,
+            _context: &str,
+            _msg: String,
+            _from: Option<PathAwareValue>,
+            _to: Option<PathAwareValue>,
+            _status: Option<Status>,
+            _cmp: Option<(CmpOperator, bool)>,
+        ) {
         }
 
-        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
-        }
+        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
     }
-    let dummy = DummyResolver{};
+    let dummy = DummyResolver {};
 
     let block = r###"
     rule check_subnets when Resources.*[ Type == "AWS::EC2::VPC" ] !EMPTY {
@@ -320,7 +357,6 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
     println!("Status = {:?}", status);
     assert_eq!(status, Status::PASS);
 
-
     Ok(())
 }
 
@@ -398,7 +434,10 @@ Resources:
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
     let traversal = Traversal::from(&path_value);
     let root = traversal.root().unwrap();
-    let test_join = traversal.at("/Resources/s3/Properties/TestJoinWithRef/Fn::Join/1/0", root)?;
+    let test_join = traversal.at(
+        "/Resources/s3/Properties/TestJoinWithRef/Fn::Join/1/0",
+        root,
+    )?;
     assert_eq!(matches!(test_join, TraversalResult::Value(_)), true);
     let condition = traversal.at("/MyNotCondition/Fn::Not/0/Fn::Equals/0/Ref", root)?;
     assert_eq!(matches!(condition, TraversalResult::Value(_)), true);
@@ -408,38 +447,45 @@ Resources:
             match val.value() {
                 PathAwareValue::String((_, v)) => {
                     assert_eq!(v, "EnvironmentType");
-                },
-                _ => unreachable!()
+                }
+                _ => unreachable!(),
             }
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
-    let ec2_image = match traversal.at("/Resources/myEC2Instance/Properties/ImageId/Fn::FindInMap", root)? {
+    let ec2_image = match traversal.at(
+        "/Resources/myEC2Instance/Properties/ImageId/Fn::FindInMap",
+        root,
+    )? {
         TraversalResult::Value(n) => n,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
     match traversal.at("0/0", ec2_image)?.as_value().unwrap().value() {
         PathAwareValue::String((_, region)) => {
             assert_eq!("RegionMap", region);
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
-    match traversal.at("0/1/Ref", ec2_image)?.as_value().unwrap().value() {
+    match traversal
+        .at("0/1/Ref", ec2_image)?
+        .as_value()
+        .unwrap()
+        .value()
+    {
         PathAwareValue::String((_, region)) => {
             assert_eq!("AWS::Region", region);
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
     match traversal.at("0/2", ec2_image)?.as_value().unwrap().value() {
         PathAwareValue::String((_, region)) => {
             assert_eq!("HVM64", region);
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
-
 
     println!("{:?}", path_value);
     Ok(())

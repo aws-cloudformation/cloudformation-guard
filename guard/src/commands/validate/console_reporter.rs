@@ -1,53 +1,74 @@
-use crate::commands::validate::{Reporter, OutputFormatType};
-use std::io::Write;
-use crate::rules::{Status, RecordType, ClauseCheck, NamedStatus, BlockCheck, QueryResult, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, TypeBlockCheck};
 use crate::commands::tracker::StatusContext;
+use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::EventRecord;
-use crate::rules::values::CmpOperator;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::values::CmpOperator;
+use crate::rules::{
+    BlockCheck, ClauseCheck, ComparisonClauseCheck, NamedStatus, QueryResult, RecordType, Status,
+    TypeBlockCheck, UnaryValueCheck, ValueCheck,
+};
+use std::io::Write;
 
 #[derive(Debug)]
-pub(crate) struct ConsoleReporter{}
+pub(crate) struct ConsoleReporter {}
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
-fn pprint_failed_sub_tree(current: &EventRecord<'_>,
-                          prefix: String,
-                          last: bool,
-                          rules_file_name: &str,
-                          data_file_name: &str,
-                          writer: &mut dyn Write)
-    -> crate::rules::Result<()>
-{
+fn pprint_failed_sub_tree(
+    current: &EventRecord<'_>,
+    prefix: String,
+    last: bool,
+    rules_file_name: &str,
+    data_file_name: &str,
+    writer: &mut dyn Write,
+) -> crate::rules::Result<()> {
     let prefix_current = if last { "`- " } else { "|- " };
     let increment_prefix = match &current.container {
-        Some(RecordType::TypeBlock(Status::FAIL))                                           |
-        Some(RecordType::BlockGuardCheck(BlockCheck{status: Status::FAIL, ..}))             |
-        Some(RecordType::GuardClauseBlockCheck(BlockCheck{status: Status::FAIL, ..}))       |
-        Some(RecordType::TypeBlock(Status::FAIL))                                           |
-        Some(RecordType::TypeCheck(TypeBlockCheck{block: BlockCheck{status: Status::FAIL, ..}, ..})) |
-        Some(RecordType::WhenCheck(BlockCheck{status: Status::FAIL, ..}))
-            => false,
-        Some(RecordType::FileCheck(NamedStatus{status: Status::FAIL, ..}))          |
-        Some(RecordType::RuleCheck(NamedStatus{status: Status::FAIL, ..}))          |
-        Some(RecordType::Disjunction(BlockCheck{status: Status::FAIL, ..}))
-            => {
-            writeln!(
-                writer,
-                "{}{}{}",
-                prefix,
-                prefix_current,
-                current)?;
+        Some(RecordType::TypeBlock(Status::FAIL))
+        | Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            ..
+        }))
+        | Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            ..
+        }))
+        | Some(RecordType::TypeBlock(Status::FAIL))
+        | Some(RecordType::TypeCheck(TypeBlockCheck {
+            block:
+                BlockCheck {
+                    status: Status::FAIL,
+                    ..
+                },
+            ..
+        }))
+        | Some(RecordType::WhenCheck(BlockCheck {
+            status: Status::FAIL,
+            ..
+        })) => false,
+        Some(RecordType::FileCheck(NamedStatus {
+            status: Status::FAIL,
+            ..
+        }))
+        | Some(RecordType::RuleCheck(NamedStatus {
+            status: Status::FAIL,
+            ..
+        }))
+        | Some(RecordType::Disjunction(BlockCheck {
+            status: Status::FAIL,
+            ..
+        })) => {
+            writeln!(writer, "{}{}{}", prefix, prefix_current, current)?;
             true
-        },
+        }
 
         Some(RecordType::ClauseValueCheck(check)) => {
             match check {
                 ClauseCheck::NoValueForEmptyCheck(msg) => {
-                    let custom_message = msg.as_ref()
-                        .map_or("".to_string(),
-                                |s| format!("{}", s.replace("\n", ";")));
+                    let custom_message = msg
+                        .as_ref()
+                        .map_or("".to_string(), |s| format!("{}", s.replace("\n", ";")));
 
                     writeln!(
                         writer,
@@ -59,7 +80,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                     )?;
                 }
 
-                ClauseCheck::Success => {},
+                ClauseCheck::Success => {}
 
                 ClauseCheck::DependentRule(missing) => {
                     writeln!(
@@ -71,14 +92,14 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                         file=rules_file_name,
                         cxt=current.context
                     )?;
-                },
+                }
 
                 ClauseCheck::MissingBlockValue(missing) => {
                     let (property, far) = match &missing.from {
                         QueryResult::UnResolved(ur) => {
                             (ur.remaining_query.as_str(), ur.traversed_to)
-                        },
-                        _ => unreachable!()
+                        }
+                        _ => unreachable!(),
                     };
                     writeln!(
                         writer,
@@ -89,33 +110,64 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                         data_file_name,
                         far
                     )?;
-                },
+                }
 
-                ClauseCheck::Unary(
-                    UnaryValueCheck{
-                        comparison: (cmp, not),
-                        value: ValueCheck{
+                ClauseCheck::Unary(UnaryValueCheck {
+                    comparison: (cmp, not),
+                    value:
+                        ValueCheck {
                             status: Status::FAIL,
                             from,
                             message,
-                            custom_message
-                        }}) => {
+                            custom_message,
+                        },
+                }) => {
                     let cmp_msg = match cmp {
-                        CmpOperator::Exists => if *not { "existed" } else { "did not exist" },
-                        CmpOperator::Empty => if *not { "was empty"} else { "was not empty" },
-                        CmpOperator::IsList => if *not { "was a list " } else { "was not list" },
-                        CmpOperator::IsMap => if *not { "was a struct" } else { "was not struct" },
-                        CmpOperator::IsString => if *not { "was a string " } else { "was not string" },
-                        _ => unreachable!()
+                        CmpOperator::Exists => {
+                            if *not {
+                                "existed"
+                            } else {
+                                "did not exist"
+                            }
+                        }
+                        CmpOperator::Empty => {
+                            if *not {
+                                "was empty"
+                            } else {
+                                "was not empty"
+                            }
+                        }
+                        CmpOperator::IsList => {
+                            if *not {
+                                "was a list "
+                            } else {
+                                "was not list"
+                            }
+                        }
+                        CmpOperator::IsMap => {
+                            if *not {
+                                "was a struct"
+                            } else {
+                                "was not struct"
+                            }
+                        }
+                        CmpOperator::IsString => {
+                            if *not {
+                                "was a string "
+                            } else {
+                                "was not string"
+                            }
+                        }
+                        _ => unreachable!(),
                     };
 
-                    let custom_message = custom_message.as_ref()
-                        .map_or("".to_string(),
-                                |s| format!(" Message = [{}]", s.replace("\n", ";")));
+                    let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
+                        format!(" Message = [{}]", s.replace("\n", ";"))
+                    });
 
-                    let error_message = message.as_ref()
-                        .map_or("".to_string(),
-                                |s| format!( " Error = [{}]", s));
+                    let error_message = message
+                        .as_ref()
+                        .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
@@ -130,7 +182,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                                 err=error_message,
                                 msg=custom_message
                             )?;
-                        },
+                        }
 
                         QueryResult::UnResolved(unres) => {
                             writeln!(
@@ -145,34 +197,31 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                             )?;
                         }
                     }
-                },
+                }
 
-
-                ClauseCheck::Comparison(ComparisonClauseCheck{
+                ClauseCheck::Comparison(ComparisonClauseCheck {
                     custom_message,
                     message,
                     comparison: (cmp, not),
                     from,
                     status: Status::FAIL,
-                    to }) => {
-                    let custom_message = custom_message.as_ref()
-                        .map_or("".to_string(),
-                                |s| format!(" Message = [{}]", s.replace("\n", ";")));
+                    to,
+                }) => {
+                    let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
+                        format!(" Message = [{}]", s.replace("\n", ";"))
+                    });
 
-                    let error_message = message.as_ref()
-                        .map_or("".to_string(),
-                                |s| format!( " Error = [{}]", s));
+                    let error_message = message
+                        .as_ref()
+                        .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
                     let to_result = match to {
-                        Some(to) => {
-                            match to {
-                                QueryResult::Literal(_) => unreachable!(),
-                                QueryResult::Resolved(to_res) => {
-                                    Some(*to_res)
-                                },
+                        Some(to) => match to {
+                            QueryResult::Literal(_) => unreachable!(),
+                            QueryResult::Resolved(to_res) => Some(*to_res),
 
-                                QueryResult::UnResolved(to_unres) => {
-                                    writeln!(
+                            QueryResult::UnResolved(to_unres) => {
+                                writeln!(
                                         writer,
                                         "{}{}Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}{msg}",
                                         prefix,
@@ -182,14 +231,11 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                                         err=error_message,
                                         msg=custom_message
                                     )?;
-                                    return Ok(())
-                                }
+                                return Ok(());
                             }
                         },
 
-                        None => {
-                            None
-                        }
+                        None => None,
                     };
 
                     match from {
@@ -205,7 +251,7 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                                 err=error_message,
                                 msg=custom_message
                             )?;
-                        },
+                        }
 
                         QueryResult::Resolved(res) => {
                             writeln!(
@@ -229,37 +275,40 @@ fn pprint_failed_sub_tree(current: &EventRecord<'_>,
                             )?;
                         }
                     }
-                },
+                }
 
-                _ => {
-                    return Ok(())
-                } // Success skip
-
+                _ => return Ok(()), // Success skip
             }
             false
         }
 
-        _ => {
-            return Ok(())
-        }
+        _ => return Ok(()),
     };
 
-    let prefix= if increment_prefix {
+    let prefix = if increment_prefix {
         let prefix_child = if last { "   " } else { "|  " };
         prefix + prefix_child
-    } else { prefix };
+    } else {
+        prefix
+    };
 
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_failed_sub_tree(child, prefix.clone(), i == last_child, rules_file_name, data_file_name, writer)?;
+            pprint_failed_sub_tree(
+                child,
+                prefix.clone(),
+                i == last_child,
+                rules_file_name,
+                data_file_name,
+                writer,
+            )?;
         }
     }
     Ok(())
 }
 
 impl Reporter for ConsoleReporter {
-
     fn report(
         &self,
         _writer: &mut dyn Write,
@@ -270,7 +319,8 @@ impl Reporter for ConsoleReporter {
         _rules_file: &str,
         _data_file: &str,
         _data: &Traversal<'_>,
-        _output_format_type: OutputFormatType) -> crate::rules::Result<()> {
+        _output_format_type: OutputFormatType,
+    ) -> crate::rules::Result<()> {
         Ok(())
     }
 
@@ -283,15 +333,15 @@ impl Reporter for ConsoleReporter {
         _data_file: &str,
         _data_file_bytes: &str,
         _data: &Traversal<'value>,
-        _output_type: OutputFormatType) -> crate::rules::Result<()> {
+        _output_type: OutputFormatType,
+    ) -> crate::rules::Result<()> {
         pprint_failed_sub_tree(
             _root_record,
             "".to_string(),
             true,
             _rules_file,
             _data_file,
-            _write
+            _write,
         )
     }
-
 }

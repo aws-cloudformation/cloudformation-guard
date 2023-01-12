@@ -1,15 +1,15 @@
-use ffi_support::{ExternError, ErrorCode};
 use cfn_guard::{Error, ErrorKind};
+use ffi_support::{ErrorCode, ExternError};
 
 pub struct FfiError(pub Error);
 
 impl From<Error> for FfiError {
-    fn from(e : Error) -> Self {
+    fn from(e: Error) -> Self {
         FfiError(e)
     }
 }
 
-fn get_code(e : &Error) -> ErrorCode {
+fn get_code(e: &Error) -> ErrorCode {
     let code = match &e.0 {
         ErrorKind::JsonError(_err) => 1,
         ErrorKind::YamlError(_err) => 2,

@@ -4,11 +4,11 @@
 /* require return types marked as must_use to be used (such as Result types) */
 #![deny(unused_must_use)]
 
-mod rules;
-pub mod commands;
 pub mod command;
+pub mod commands;
 mod migrate;
+mod rules;
 mod utils;
 
-pub use crate::rules::errors::{Error, ErrorKind};
 pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
+pub use crate::rules::errors::{Error, ErrorKind};

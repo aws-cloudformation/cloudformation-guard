@@ -1,25 +1,25 @@
+pub(crate) mod display;
 pub(crate) mod errors;
+pub(crate) mod eval;
+pub(crate) mod eval_context;
 pub(crate) mod evaluate;
 pub(crate) mod exprs;
-pub(crate) mod parser;
-pub(crate) mod values;
-pub(crate) mod path_value;
-pub(crate) mod eval_context;
-pub(crate) mod eval;
-pub(crate) mod display;
 pub(crate) mod functions;
 mod libyaml;
+pub(crate) mod parser;
+pub(crate) mod path_value;
+pub(crate) mod values;
 
 use errors::Error;
 
-use std::fmt::Formatter;
-use colored::*;
-use crate::rules::path_value::PathAwareValue;
-use nom::lib::std::convert::TryFrom;
 use crate::rules::errors::ErrorKind;
-use serde::Serialize;
-use crate::rules::values::CmpOperator;
 use crate::rules::exprs::{ParameterizedRule, QueryPart};
+use crate::rules::path_value::PathAwareValue;
+use crate::rules::values::CmpOperator;
+use colored::*;
+use nom::lib::std::convert::TryFrom;
+use serde::Serialize;
+use std::fmt::Formatter;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -55,9 +55,10 @@ impl TryFrom<&str> for Status {
             "PASS" => Ok(Status::PASS),
             "FAIL" => Ok(Status::FAIL),
             "SKIP" => Ok(Status::SKIP),
-            _ => Err(Error::new(ErrorKind::IncompatibleError(
-                format!("Status code is incorrect {}", value)
-            )))
+            _ => Err(Error::new(ErrorKind::IncompatibleError(format!(
+                "Status code is incorrect {}",
+                value
+            )))),
         }
     }
 }
@@ -72,7 +73,7 @@ pub(crate) enum EvaluationType {
     Filter,
     Conjunction,
     BlockClause,
-    Clause
+    Clause,
 }
 
 impl std::fmt::Display for EvaluationType {
@@ -92,7 +93,6 @@ impl std::fmt::Display for EvaluationType {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct UnResolved<'value> {
     pub(crate) traversed_to: &'value PathAwareValue,
@@ -110,14 +110,14 @@ pub(crate) enum QueryResult<'value> {
 impl<'value> QueryResult<'value> {
     pub(crate) fn resolved(&self) -> Option<&'value PathAwareValue> {
         if let QueryResult::Resolved(res) = self {
-            return Some(*res)
+            return Some(*res);
         }
         None
     }
 
     pub(crate) fn unresolved_traversed_to(&self) -> Option<&'value PathAwareValue> {
         if let QueryResult::UnResolved(res) = self {
-            return Some(res.traversed_to)
+            return Some(res.traversed_to);
         }
         None
     }
@@ -142,7 +142,6 @@ pub(crate) struct InComparisonCheck<'value> {
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ValueCheck<'value> {
@@ -174,7 +173,7 @@ pub(crate) enum ClauseCheck<'value> {
     Unary(UnaryValueCheck<'value>),
     NoValueForEmptyCheck(Option<String>),
     DependentRule(MissingValueCheck<'value>),
-    MissingBlockValue(ValueCheck<'value>)
+    MissingBlockValue(ValueCheck<'value>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -194,7 +193,7 @@ pub(crate) struct BlockCheck {
 pub(crate) struct NamedStatus<'value> {
     pub(crate) name: &'value str,
     pub(crate) status: Status,
-    pub(crate) message: Option<String>
+    pub(crate) message: Option<String>,
 }
 
 impl<'value> Default for NamedStatus<'value> {
@@ -202,7 +201,7 @@ impl<'value> Default for NamedStatus<'value> {
         NamedStatus {
             name: "",
             status: Status::PASS,
-            message: None
+            message: None,
         }
     }
 }
@@ -267,7 +266,7 @@ pub(crate) enum RecordType<'value> {
     // TypeCheck is only present as a part of the RuleBlock
     // Used for a IN operator event as well as IN is effectively a short-form for ORs
     //
-    Disjunction(BlockCheck),  // in operator is a short-form for Disjunctions
+    Disjunction(BlockCheck), // in operator is a short-form for Disjunctions
 
     //
     // has as many child events for each
@@ -283,11 +282,11 @@ pub(crate) enum RecordType<'value> {
     //
     // one per value check, unary or binary
     //
-    ClauseValueCheck(ClauseCheck<'value>)
+    ClauseValueCheck(ClauseCheck<'value>),
 }
 
 struct ParameterRuleResult<'value, 'loc> {
-    rule: &'value ParameterizedRule<'loc>
+    rule: &'value ParameterizedRule<'loc>,
 }
 
 pub(crate) trait RecordTracer<'value> {
@@ -295,20 +294,32 @@ pub(crate) trait RecordTracer<'value> {
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
 }
 
-pub(crate) trait EvalContext<'value, 'loc: 'value> : RecordTracer<'value> {
+pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
-    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>>;
+    fn find_parameterized_rule(
+        &mut self,
+        rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&mut self) -> &'value PathAwareValue;
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>>;
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()>;
-    fn add_variable_capture_index(&mut self, variable_name: &str, index: &'value PathAwareValue) -> Result<()> { Ok(()) }
+    fn add_variable_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: &'value PathAwareValue,
+    ) -> Result<()>;
+    fn add_variable_capture_index(
+        &mut self,
+        variable_name: &str,
+        index: &'value PathAwareValue,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub(crate) trait EvaluationContext {
-    fn resolve_variable(&self,
-                        variable: &str) -> Result<Vec<&PathAwareValue>>;
+    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>>;
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
@@ -320,14 +331,16 @@ pub(crate) trait EvaluationContext {
         from: Option<PathAwareValue>,
         to: Option<PathAwareValue>,
         status: Option<Status>,
-        comparator: Option<(CmpOperator, bool)>
+        comparator: Option<(CmpOperator, bool)>,
     );
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }
 
 pub(crate) trait Evaluate {
-    fn evaluate<'s>(&self,
-                context: &'s PathAwareValue,
-                var_resolver: &'s dyn EvaluationContext) -> Result<Status>;
+    fn evaluate<'s>(
+        &self,
+        context: &'s PathAwareValue,
+        var_resolver: &'s dyn EvaluationContext,
+    ) -> Result<Status>;
 }
