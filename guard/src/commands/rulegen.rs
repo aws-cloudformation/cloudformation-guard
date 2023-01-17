@@ -9,7 +9,9 @@ use clap::{App, Arg, ArgMatches};
 use itertools::Itertools;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use string_builder::Builder;
+use crate::commands::wrapper::Wrapper;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct Rulegen {}
@@ -33,7 +35,7 @@ impl Command for Rulegen {
             .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: Wrapper)-> Result<i32> {
         let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 

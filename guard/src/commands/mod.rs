@@ -9,6 +9,7 @@ pub mod validate;
 mod aws_meta_appender;
 mod common_test_helpers;
 mod tracker;
+pub mod wrapper;
 
 //
 // Constants

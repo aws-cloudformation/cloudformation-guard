@@ -1,9 +1,12 @@
+use std::cell::RefCell;
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, stdout, Write};
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
 
 use clap::{App, Arg, ArgGroup, ArgMatches};
@@ -14,25 +17,26 @@ use serde::Deserialize;
 use Type::CFNTemplate;
 
 use crate::command::Command;
+use crate::commands::{
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS,
+    RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+};
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
-};
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
+use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
+use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::commands::wrapper::{WrappedType, Wrapper, WrappedType::Stdout};
 
 mod cfn;
 mod cfn_reporter;
@@ -137,16 +141,16 @@ or rules files.
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
-                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                     .multiple(true))
+                .multiple(true))
             .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary"])
+                .possible_values(&["json", "yaml", "single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
@@ -172,7 +176,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, mut writer: Wrapper) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -324,6 +328,7 @@ or rules files.
         let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
         let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
+
         let mut exit_code = 0;
         if app.is_present(RULES.0) {
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
@@ -341,12 +346,12 @@ or rules files.
                     {
                         if entry.path().is_file()
                             && entry
-                                .path()
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .map_or(false, |s| {
-                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                })
+                            .path()
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .map_or(false, |s| {
+                                has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
+                            })
                         {
                             rules.push(entry.path().to_path_buf());
                         }
@@ -398,6 +403,7 @@ or rules files.
                                     show_clause_failures,
                                     new_version_eval_engine,
                                     summary_type,
+                                    &mut writer,
                                 )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
@@ -460,6 +466,7 @@ or rules files.
                             show_clause_failures,
                             new_version_eval_engine,
                             summary_type,
+                            &mut writer,
                         )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
@@ -517,7 +524,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     reporters: &'r Vec<&'r dyn Reporter>,
@@ -526,6 +533,7 @@ pub(crate) struct ConsoleReporter<'r> {
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
+    writer: &'r mut Wrapper,
 }
 
 fn indent_spaces(indent: usize) {
@@ -562,7 +570,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         cxt.context,
         common::colored_string(cxt.status)
     )
-    .underline();
+        .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -613,7 +621,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
             common::colored_string(matched.status),
             matched.context
         )
-        .underline();
+            .underline();
         if !first {
             print!("{space:>longest$}", space = " ", longest = longest + 4)
         }
@@ -661,7 +669,8 @@ impl<'r> ConsoleReporter<'r> {
         verbose: bool,
         print_json: bool,
         show_clause_failures: bool,
-    ) -> Self {
+        writer: &'r mut Wrapper
+    ) -> ConsoleReporter<'r> {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -670,11 +679,12 @@ impl<'r> ConsoleReporter<'r> {
             verbose,
             print_json,
             show_clause_failures,
+            writer,
         }
     }
 
     pub fn get_result_json(
-        self,
+        mut self,
         root: &PathAwareValue,
         output_format_type: OutputFormatType,
     ) -> Result<String> {
@@ -692,7 +702,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -711,7 +721,7 @@ impl<'r> ConsoleReporter<'r> {
         }
     }
 
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
+    fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
         let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
@@ -729,7 +739,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -803,14 +813,16 @@ fn evaluate_against_data_input<'r>(
     show_clause_failures: bool,
     new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
+    mut write_output: &mut Wrapper,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
+    // let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> =
         Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> =
         Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
@@ -819,6 +831,7 @@ fn evaluate_against_data_input<'r>(
             cfn.as_ref(),
         )) as Box<dyn Reporter>
     };
+
     for file in data_files {
         if new_engine_version {
             let each = match &extra_data {
@@ -829,6 +842,7 @@ fn evaluate_against_data_input<'r>(
             let mut root_scope = root_scope(rules, &each)?;
             let status = eval_rules_file(rules, &mut root_scope)?;
             let root_record = root_scope.reset_recorder().extract();
+
             reporter.report_eval(
                 &mut write_output,
                 status,
@@ -839,12 +853,15 @@ fn evaluate_against_data_input<'r>(
                 &traversal,
                 output,
             )?;
+
             if verbose {
                 print_verbose_tree(&root_record);
             }
+
             if print_json {
                 println!("{}", serde_json::to_string_pretty(&root_record)?)
             }
+
             if status == Status::FAIL {
                 overall = Status::FAIL
             }
@@ -853,6 +870,7 @@ fn evaluate_against_data_input<'r>(
             let root_context = RootScope::new(rules, each)?;
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
+
             let reporter = ConsoleReporter::new(
                 stacker,
                 &renderers,
@@ -861,7 +879,9 @@ fn evaluate_against_data_input<'r>(
                 verbose,
                 print_json,
                 show_clause_failures,
+                write_output,
             );
+
             let appender = MetadataAppender {
                 delegate: &reporter,
                 root_context: each,
@@ -911,6 +931,7 @@ fn get_longest(top: &StatusContext) -> usize {
         .map(|elem| elem.context.len())
         .unwrap_or(20)
 }
+
 
 #[cfg(test)]
 #[path = "validate_tests.rs"]

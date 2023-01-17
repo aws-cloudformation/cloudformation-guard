@@ -1,6 +1,8 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use crate::commands::tracker::StackTracker;
 use crate::commands::validate::generic_summary::GenericSummary;
 use crate::commands::validate::{ConsoleReporter, OutputFormatType, Reporter};
@@ -13,6 +15,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::{Evaluate, Result};
 use std::convert::TryFrom;
 use std::io::BufWriter;
+use std::rc::Rc;
 
 pub struct ValidateInput<'a> {
     pub content: &'a str,

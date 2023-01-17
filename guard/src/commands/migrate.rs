@@ -10,9 +10,10 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::Write as IoWrite;
+use std::io::{Write as IoWrite, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use crate::commands::wrapper::Wrapper;
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
@@ -56,7 +57,7 @@ impl Command for Migrate {
             )
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: Wrapper) -> Result<i32> {
         let file_input = app.value_of(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();

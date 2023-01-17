@@ -1,7 +1,9 @@
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::colored_string;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::eval_context::EventRecord;
+use crate::rules::eval_context::{EventRecord, reset_with};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::RecordType;
 use crate::rules::{NamedStatus, Status};
@@ -9,6 +11,7 @@ use colored::*;
 use enumflags2::{bitflags, BitFlags};
 use itertools::Itertools;
 use std::io::Write;
+use std::rc::Rc;
 
 #[bitflags]
 #[repr(u8)]
@@ -75,7 +78,7 @@ fn print_summary(
 impl<'r> Reporter for SummaryTable<'r> {
     fn report(
         &self,
-        writer: &mut dyn Write,
+        mut writer: &mut dyn Write,
         status: Option<Status>,
         failed_rules: &[&StatusContext],
         passed_or_skipped: &[&StatusContext],
@@ -120,7 +123,7 @@ impl<'r> Reporter for SummaryTable<'r> {
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed_rules.is_empty() {
             writeln!(
-                writer,
+               writer,
                 "{} Status = {}",
                 data_file_name,
                 colored_string(status)
@@ -134,7 +137,7 @@ impl<'r> Reporter for SummaryTable<'r> {
             writeln!(writer, "---")?;
         }
         self.next.report(
-            writer,
+           writer,
             status,
             failed_rules,
             passed_or_skipped,
@@ -148,7 +151,7 @@ impl<'r> Reporter for SummaryTable<'r> {
 
     fn report_eval<'value>(
         &self,
-        _write: &mut dyn Write,
+        mut _write: &mut dyn Write,
         _status: Status,
         _root_record: &EventRecord<'value>,
         _rules_file: &str,
@@ -188,7 +191,7 @@ impl<'r> Reporter for SummaryTable<'r> {
             )?;
             wrote_header_line = true;
             writeln!(_write, "{}", "SKIP rules".bold())?;
-            print_summary(_write, _rules_file, longest, &skipped)?;
+            print_summary( _write, _rules_file, longest, &skipped)?;
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
@@ -202,7 +205,7 @@ impl<'r> Reporter for SummaryTable<'r> {
                 )?;
             }
             writeln!(_write, "{}", "PASS rules".bold())?;
-            print_summary(_write, _rules_file, longest, &passed)?;
+            print_summary(_write,_rules_file, longest, &passed)?;
         }
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed.is_empty() {

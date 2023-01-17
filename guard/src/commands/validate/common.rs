@@ -1,3 +1,4 @@
+use std::cell::{Ref, RefCell};
 use colored::*;
 use serde::Serialize;
 
@@ -20,6 +21,7 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
+use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -103,7 +105,7 @@ struct DataOutput<'a> {
 impl GenericReporter for StructuredSummary {
     fn report(
         &self,
-        writer: &mut dyn Write,
+        mut writer: &mut dyn Write,
         rules_file_name: &str,
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,

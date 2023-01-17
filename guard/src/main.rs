@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use clap::App;
 use std::collections::HashMap;
+use std::io::Write;
 
 mod command;
 mod commands;
@@ -11,6 +13,10 @@ use crate::command::Command;
 use crate::commands::{APP_NAME, APP_VERSION};
 use rules::errors::Error;
 use std::process::exit;
+use std::rc::Rc;
+use commands::wrapper;
+use crate::commands::wrapper::WrappedType;
+use crate::commands::wrapper::WrappedType::Stdout;
 
 fn main() -> Result<(), Error> {
     let mut app = App::new(APP_NAME).version(APP_VERSION).about(
@@ -46,7 +52,7 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                match (*command).execute(value) {
+                match (*command).execute(value, wrapper::Wrapper::new(Stdout(std::io::stdout()))) {
                     Err(e) => {
                         println!("Error occurred {}", e);
                         exit(-1);
@@ -64,3 +70,4 @@ fn main() -> Result<(), Error> {
     }
     Ok(())
 }
+

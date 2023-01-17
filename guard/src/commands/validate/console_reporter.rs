@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::EventRecord;
@@ -8,6 +9,7 @@ use crate::rules::{
     TypeBlockCheck, UnaryValueCheck, ValueCheck,
 };
 use std::io::Write;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter {}
@@ -311,7 +313,7 @@ fn pprint_failed_sub_tree(
 impl Reporter for ConsoleReporter {
     fn report(
         &self,
-        _writer: &mut dyn Write,
+        _writer: &mut dyn std::io::Write,
         _status: Option<Status>,
         _failed_rules: &[&StatusContext],
         _passed_or_skipped: &[&StatusContext],
@@ -326,7 +328,7 @@ impl Reporter for ConsoleReporter {
 
     fn report_eval<'value>(
         &self,
-        _write: &mut dyn Write,
+        _write: &mut dyn std::io::Write,
         _status: Status,
         _root_record: &EventRecord<'value>,
         _rules_file: &str,
