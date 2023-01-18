@@ -33,7 +33,7 @@ pub(crate) const PAYLOAD: (&str, &str) = ("payload", "P");
 pub(crate) const PREVIOUS_ENGINE: (&str, &str) = ("previous-engine", "E");
 pub(crate) const PRINT_JSON: (&str, &str) = ("print-json", "p");
 pub(crate) const SHOW_CLAUSE_FAILURES: (&str, &str) = ("show-clause-failures", "s");
-pub(crate) const SHOW_SUMMARY: (&str, &str) = ("show-summary", "S");
+pub const SHOW_SUMMARY: (&str, &str) = ("show-summary", "S");
 pub(crate) const TYPE: (&str, &str) = ("type", "t");
 pub(crate) const VERBOSE: (&str, &str) = ("verbose", "v");
 // Arguments for validate, migrate, parse tree

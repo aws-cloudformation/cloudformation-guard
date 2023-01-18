@@ -36,7 +36,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
-use crate::commands::wrapper::{WrappedType, Wrapper, WrappedType::Stdout};
+use crate::commands::wrapper::{WriteBuffer, Writer, WriteBuffer::Stdout};
 
 mod cfn;
 mod cfn_reporter;
@@ -176,7 +176,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Wrapper) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Writer) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -533,7 +533,7 @@ pub(crate) struct ConsoleReporter<'r> {
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
-    writer: &'r mut Wrapper,
+    writer: &'r mut Writer,
 }
 
 fn indent_spaces(indent: usize) {
@@ -669,7 +669,7 @@ impl<'r> ConsoleReporter<'r> {
         verbose: bool,
         print_json: bool,
         show_clause_failures: bool,
-        writer: &'r mut Wrapper
+        writer: &'r mut Writer
     ) -> ConsoleReporter<'r> {
         ConsoleReporter {
             root_context: root,
@@ -813,7 +813,7 @@ fn evaluate_against_data_input<'r>(
     show_clause_failures: bool,
     new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
-    mut write_output: &mut Wrapper,
+    mut write_output: &mut Writer,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
     // let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;

@@ -12,7 +12,7 @@ use cfn_guard::command::Command;
 use cfn_guard::commands::{DATA, RULES};
 use cfn_guard::commands::test::Test;
 use cfn_guard::commands::validate::Validate;
-use cfn_guard::commands::wrapper::{WrappedType, Wrapper};
+use cfn_guard::commands::wrapper::{WriteBuffer, Writer};
 
 pub fn get_data_option() -> String {
     format!("-{}", DATA.1)
@@ -35,6 +35,27 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     let mut resource = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     resource.push(path);
     return resource.display().to_string();
+}
+
+pub(crate) fn compare_write_buffer_with_file(expected_output_relative_file_path: &str, mut actual_output_writer: Writer){
+    let expected_output_full_file_path =
+        get_full_path_for_resource_file(
+            expected_output_relative_file_path
+        );
+    let expected_output = read_from_resource_file(
+        &expected_output_full_file_path
+    );
+    let actual_output = actual_output_writer
+        .from_utf8()
+        .unwrap();
+    assert_eq!(expected_output, actual_output)
+}
+
+pub(crate) fn compare_write_buffer_with_string(expected_output: &str, mut actual_output_writer: Writer){
+    let actual_output = actual_output_writer
+        .from_utf8()
+        .unwrap();
+    assert_eq!(expected_output, actual_output)
 }
 
 pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
@@ -64,7 +85,7 @@ pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                match (*command).execute(value, &mut Wrapper::new(WrappedType::Stdout(stdout()))) {
+                match (*command).execute(value, &mut Writer::new(WriteBuffer::Stdout(stdout()))) {
                     Err(e) => {
                         println!("Error occurred {}", e);
                         -1
@@ -80,7 +101,7 @@ pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
     }
 }
 
-pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, mut writer: &mut Wrapper) -> i32 {
+pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, mut writer: &mut Writer) -> i32 {
     let TEST_APP_NAME = "cfn-guard-test";
     let mut app = App::new(TEST_APP_NAME);
     let mut command_options = Vec::new();
@@ -121,5 +142,25 @@ pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, m
         }
 
         (_, None) => -3,
+    }
+}
+
+#[macro_export]
+macro_rules! assert_output_from_file_eq {
+    ($expected_output_relative_file_path: expr, $actual_output_writer: expr) => {
+        crate::utils::compare_write_buffer_with_file(
+            $expected_output_relative_file_path,
+            $actual_output_writer
+        )
+    }
+}
+
+#[macro_export]
+macro_rules! assert_output_from_str_eq {
+    ($expected_output: expr, $actual_output_writer: expr) => {
+        crate::utils::compare_write_buffer_with_string(
+            $expected_output,
+            $actual_output_writer
+        )
     }
 }

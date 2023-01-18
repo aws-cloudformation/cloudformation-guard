@@ -1,57 +1,57 @@
 use std::io::{Stdout, Write};
 use std::string::FromUtf8Error;
 
-pub struct Wrapper {
-    inner: WrappedType,
+pub struct Writer {
+    buffer: WriteBuffer,
 }
 
-impl Wrapper {
-    pub fn new(inner: WrappedType) -> Self {
-        Self { inner }
+impl Writer {
+    pub fn new(buffer: WriteBuffer) -> Self {
+        Self { buffer }
     }
 
     pub fn from_utf8(self) -> Result<String, FromUtf8Error> {
-        self.inner.from_utf8()
+        self.buffer.from_utf8()
     }
 }
 
-impl Write for Wrapper {
+impl Write for Writer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner
+        self.buffer
             .write(String::from_utf8_lossy(buf).as_bytes())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+        self.buffer.flush()
     }
 }
 
-pub enum WrappedType {
+pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),
 }
 
-impl WrappedType {
+impl WriteBuffer {
     fn from_utf8(self) -> Result<String, FromUtf8Error> {
         match self {
-            WrappedType::Stdout(..) => unimplemented!(),
-            WrappedType::Vec(vec) => String::from_utf8(vec),
+            WriteBuffer::Stdout(..) => unimplemented!(),
+            WriteBuffer::Vec(vec) => String::from_utf8(vec),
         }
     }
 }
 
-impl Write for WrappedType {
+impl Write for WriteBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            WrappedType::Stdout(stdout) => stdout.write(buf),
-            WrappedType::Vec(vec) => vec.write(buf),
+            WriteBuffer::Stdout(stdout) => stdout.write(buf),
+            WriteBuffer::Vec(vec) => vec.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            WrappedType::Stdout(stdout) => stdout.flush(),
-            WrappedType::Vec(vec) => vec.flush(),
+            WriteBuffer::Stdout(stdout) => stdout.flush(),
+            WriteBuffer::Vec(vec) => vec.flush(),
         }
     }
 }

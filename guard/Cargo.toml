@@ -39,6 +39,7 @@ grep-matcher = "0.1.5"
 grep-regex = "0.1.9"
 unsafe-libyaml = "0.2.2"
 rstest = "0.15.0"
+indoc = "1.0.8"
 
 [dependencies.serde_json]
 version = "1.0.85"

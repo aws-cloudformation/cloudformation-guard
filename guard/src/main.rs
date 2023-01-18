@@ -15,8 +15,8 @@ use rules::errors::Error;
 use std::process::exit;
 use std::rc::Rc;
 use commands::wrapper;
-use crate::commands::wrapper::WrappedType;
-use crate::commands::wrapper::WrappedType::Stdout;
+use crate::commands::wrapper::WriteBuffer;
+use crate::commands::wrapper::WriteBuffer::Stdout;
 
 fn main() -> Result<(), Error> {
     let mut app = App::new(APP_NAME).version(APP_VERSION).about(
@@ -52,7 +52,7 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                match (*command).execute(value, &mut wrapper::Wrapper::new(Stdout(std::io::stdout()))) {
+                match (*command).execute(value, &mut wrapper::Writer::new(Stdout(std::io::stdout()))) {
                     Err(e) => {
                         println!("Error occurred {}", e);
                         exit(-1);
