@@ -52,7 +52,7 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                match (*command).execute(value, wrapper::Wrapper::new(Stdout(std::io::stdout()))) {
+                match (*command).execute(value, &mut wrapper::Wrapper::new(Stdout(std::io::stdout()))) {
                     Err(e) => {
                         println!("Error occurred {}", e);
                         exit(-1);

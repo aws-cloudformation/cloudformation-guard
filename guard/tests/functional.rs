@@ -10,6 +10,7 @@ mod tests {
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE};
+    use cfn_guard::commands::wrapper::{WrappedType, Wrapper};
 
     use crate::utils;
 
@@ -656,6 +657,32 @@ mod tests {
             assert_eq!(-1, utils::cfn_guard_test_command(Validate::new(), args))
         }
     }
+
+    #[test]
+    fn test_single_data_file_single_rules_file_verbose() {
+        let data_arg = utils::get_full_path_for_resource_file(
+            "resources/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+        );
+        let rules_arg = utils::get_full_path_for_resource_file(
+            "resources/rules-dir/s3_bucket_public_read_prohibited.guard",
+        );
+        let data_option = format!("-{}", DATA.1);
+        let rules_option = format!("-{}", RULES.1);
+        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
+        let mut writer = Wrapper::new(WrappedType::Vec(vec![]));
+        let status_code = utils::cfn_guard_test_command_verbose(Validate::new(), args, &mut writer);
+        assert_eq!(5, status_code);
+
+
+
+        // let expected = "some str";
+        let expected = "s3-public-read-prohibited-template-non-compliant.yaml Status = FAIL\nFAILED rules\ns3_bucket_public_read_prohibited.guard/S3_BUCKET_PUBLIC_READ_PROHIBITED    FAIL\n---\nEvaluating data s3-public-read-prohibited-template-non-compliant.yaml against rules s3_bucket_public_read_prohibited.guard\nNumber of non-compliant resources 1\nResource = MyBucket {\n  Type      = AWS::S3::Bucket\n  Rule = S3_BUCKET_PUBLIC_READ_PROHIBITED {\n    ALL {\n      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS   {\n        RequiredPropertyError {\n          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]\n          MissingProperty = PublicAccessBlockConfiguration\n          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]\n          Code:\n               11.      #   BlockPublicPolicy: true\n               12.      #   IgnorePublicAcls: true\n               13.      #   RestrictPublicBuckets: true\n               14.      BucketEncryption:\n               15.        ServerSideEncryptionConfiguration:\n               16.          - ServerSideEncryptionByDefault:\n        }\n      }\n      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true {\n        RequiredPropertyError {\n          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]\n          MissingProperty = PublicAccessBlockConfiguration.BlockPublicAcls\n          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]\n          Code:\n               11.      #   BlockPublicPolicy: true\n               12.      #   IgnorePublicAcls: true\n               13.      #   RestrictPublicBuckets: true\n               14.      BucketEncryption:\n               15.        ServerSideEncryptionConfiguration:\n               16.          - ServerSideEncryptionByDefault:\n        }\n      }\n      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true {\n        RequiredPropertyError {\n          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]\n          MissingProperty = PublicAccessBlockConfiguration.BlockPublicPolicy\n          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]\n          Code:\n               11.      #   BlockPublicPolicy: true\n               12.      #   IgnorePublicAcls: true\n               13.      #   RestrictPublicBuckets: true\n               14.      BucketEncryption:\n               15.        ServerSideEncryptionConfiguration:\n               16.          - ServerSideEncryptionByDefault:\n        }\n      }\n      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true {\n        RequiredPropertyError {\n          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]\n          MissingProperty = PublicAccessBlockConfiguration.IgnorePublicAcls\n          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]\n          Code:\n               11.      #   BlockPublicPolicy: true\n               12.      #   IgnorePublicAcls: true\n               13.      #   RestrictPublicBuckets: true\n               14.      BucketEncryption:\n               15.        ServerSideEncryptionConfiguration:\n               16.          - ServerSideEncryptionByDefault:\n        }\n      }\n      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true {\n        Message {\n          Violation: S3 Bucket Public Write Access controls need to be restricted.\n          Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.\n        }\n        RequiredPropertyError {\n          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]\n          MissingProperty = PublicAccessBlockConfiguration.RestrictPublicBuckets\n          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]\n          Code:\n               11.      #   BlockPublicPolicy: true\n               12.      #   IgnorePublicAcls: true\n               13.      #   RestrictPublicBuckets: true\n               14.      BucketEncryption:\n               15.        ServerSideEncryptionConfiguration:\n               16.          - ServerSideEncryptionByDefault:\n        }\n      }\n    }\n  }\n}\n";
+
+
+        let string = writer.from_utf8().unwrap();
+        assert_eq!(expected, string)
+    }
+
 }
 
 #[cfg(test)]

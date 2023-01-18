@@ -1,12 +1,17 @@
 use std::io::{Stdout, Write};
+use std::string::FromUtf8Error;
 
 pub struct Wrapper {
     inner: WrappedType,
 }
 
 impl Wrapper {
-    pub(crate) fn new(inner: WrappedType) -> Self {
+    pub fn new(inner: WrappedType) -> Self {
         Self { inner }
+    }
+
+    pub fn from_utf8(self) -> Result<String, FromUtf8Error> {
+        self.inner.from_utf8()
     }
 }
 
@@ -24,6 +29,15 @@ impl Write for Wrapper {
 pub enum WrappedType {
     Stdout(Stdout),
     Vec(Vec<u8>),
+}
+
+impl WrappedType {
+    fn from_utf8(self) -> Result<String, FromUtf8Error> {
+        match self {
+            WrappedType::Stdout(..) => unimplemented!(),
+            WrappedType::Vec(vec) => String::from_utf8(vec),
+        }
+    }
 }
 
 impl Write for WrappedType {

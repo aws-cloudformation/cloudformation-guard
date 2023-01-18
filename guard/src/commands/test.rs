@@ -80,7 +80,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: Wrapper) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Wrapper) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical

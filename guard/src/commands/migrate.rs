@@ -57,7 +57,7 @@ impl Command for Migrate {
             )
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: Wrapper) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Wrapper) -> Result<i32> {
         let file_input = app.value_of(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();

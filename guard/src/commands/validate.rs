@@ -176,7 +176,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, mut writer: Wrapper) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Wrapper) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {

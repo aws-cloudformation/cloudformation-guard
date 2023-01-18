@@ -58,7 +58,7 @@ impl Command for ParseTree {
             )
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: Wrapper) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Wrapper) -> Result<i32> {
         let mut file: Box<dyn std::io::Read> = match app.value_of(RULES.0) {
             Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
             None => Box::new(std::io::stdin()),
