@@ -1,4 +1,5 @@
-use std::io::{Stdout, Write};
+use std::fs::File;
+use std::io::{Read, Stdout, Write};
 use std::string::FromUtf8Error;
 
 pub struct Writer {
@@ -29,6 +30,7 @@ impl Write for Writer {
 pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),
+    File(File)
 }
 
 impl WriteBuffer {
@@ -36,6 +38,11 @@ impl WriteBuffer {
         match self {
             WriteBuffer::Stdout(..) => unimplemented!(),
             WriteBuffer::Vec(vec) => String::from_utf8(vec),
+            WriteBuffer::File(mut file) => {
+                let mut data = String::new();
+                file.read_to_string(&mut data).expect("Unable to read from file");
+                Ok(data)
+            }
         }
     }
 }
@@ -45,6 +52,7 @@ impl Write for WriteBuffer {
         match self {
             WriteBuffer::Stdout(stdout) => stdout.write(buf),
             WriteBuffer::Vec(vec) => vec.write(buf),
+            WriteBuffer::File(file) => file.write(buf),
         }
     }
 
@@ -52,6 +60,7 @@ impl Write for WriteBuffer {
         match self {
             WriteBuffer::Stdout(stdout) => stdout.flush(),
             WriteBuffer::Vec(vec) => vec.flush(),
+            WriteBuffer::File(file) => file.flush(),
         }
     }
 }

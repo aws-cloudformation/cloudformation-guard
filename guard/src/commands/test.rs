@@ -21,7 +21,7 @@ use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
     RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
-use crate::commands::wrapper::Writer;
+use crate::utils::writer::Writer;
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;

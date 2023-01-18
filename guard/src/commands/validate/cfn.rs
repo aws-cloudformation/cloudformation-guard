@@ -6,7 +6,6 @@ use std::{
     rc::Rc,
 };
 use std::borrow::BorrowMut;
-use std::io::stdout;
 use std::ops::Deref;
 
 use colored::*;

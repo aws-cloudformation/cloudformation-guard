@@ -9,7 +9,6 @@ pub mod validate;
 mod aws_meta_appender;
 mod common_test_helpers;
 mod tracker;
-pub mod wrapper;
 
 //
 // Constants
@@ -18,9 +17,9 @@ pub mod wrapper;
 pub const APP_NAME: &str = "cfn-guard";
 pub const APP_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 // Commands
-pub(crate) const MIGRATE: &str = "migrate";
-pub(crate) const PARSE_TREE: &str = "parse-tree";
-pub(crate) const RULEGEN: &str = "rulegen";
+pub const MIGRATE: &str = "migrate";
+pub const PARSE_TREE: &str = "parse-tree";
+pub const RULEGEN: &str = "rulegen";
 pub const TEST: &str = "test";
 pub const VALIDATE: &str = "validate";
 // Arguments for validate
@@ -39,7 +38,7 @@ pub(crate) const VERBOSE: (&str, &str) = ("verbose", "v");
 // Arguments for validate, migrate, parse tree
 pub const RULES: (&str, &str) = ("rules", "r");
 // Arguments for migrate, parse-tree, rulegen
-pub(crate) const OUTPUT: (&str, &str) = ("output", "o");
+pub const OUTPUT: (&str, &str) = ("output", "o");
 // Arguments for parse-tree
 pub(crate) const PRINT_YAML: (&str, &str) = ("print-yaml", "y");
 // Arguments for test

@@ -1,6 +1,6 @@
 use clap::{App, ArgMatches};
 
-use crate::commands::wrapper::Writer;
+use crate::utils::writer::Writer;
 use crate::rules::errors::Error;
 
 pub trait Command {

@@ -12,7 +12,7 @@ use cfn_guard::command::Command;
 use cfn_guard::commands::{DATA, RULES};
 use cfn_guard::commands::test::Test;
 use cfn_guard::commands::validate::Validate;
-use cfn_guard::commands::wrapper::{WriteBuffer, Writer};
+use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
 pub fn get_data_option() -> String {
     format!("-{}", DATA.1)

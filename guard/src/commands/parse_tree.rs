@@ -1,10 +1,10 @@
 use crate::command::Command;
-use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES, wrapper};
+use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
 use crate::rules::Result;
 use clap::{App, Arg, ArgMatches};
 use std::fs::File;
 use std::io::Write;
-use crate::commands::wrapper::Writer;
+use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ParseTree {}
@@ -64,11 +64,6 @@ impl Command for ParseTree {
             None => Box::new(std::io::stdin()),
         };
 
-        let out = match app.value_of(OUTPUT.0) {
-            Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
-            None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>,
-        };
-
         let yaml = !app.is_present(PRINT_JSON.0);
         let mut content = String::new();
         file.read_to_string(&mut content)?;
@@ -81,9 +76,9 @@ impl Command for ParseTree {
 
             Ok(rules) => {
                 if yaml {
-                    serde_yaml::to_writer(out, &rules)?;
+                    serde_yaml::to_writer(writer, &rules)?;
                 } else {
-                    serde_json::to_writer(out, &rules)?;
+                    serde_json::to_writer(writer, &rules)?;
                 }
             }
         }

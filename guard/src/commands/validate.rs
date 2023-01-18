@@ -3,7 +3,7 @@ use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::{BufReader, Read, stdout, Write};
+use std::io::{BufReader, Read, Write};
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -36,7 +36,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
-use crate::commands::wrapper::{WriteBuffer, Writer, WriteBuffer::Stdout};
+use crate::utils::writer::Writer;
 
 mod cfn;
 mod cfn_reporter;
@@ -724,7 +724,6 @@ impl<'r> ConsoleReporter<'r> {
     fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
@@ -816,7 +815,6 @@ fn evaluate_against_data_input<'r>(
     mut write_output: &mut Writer,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
-    // let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> =
         Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
