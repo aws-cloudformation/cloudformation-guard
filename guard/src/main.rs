@@ -1,9 +1,6 @@
-use std::cell::RefCell;
 use clap::App;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Write;
-
 mod command;
 mod commands;
 mod migrate;
@@ -16,7 +13,7 @@ use rules::errors::Error;
 use std::process::exit;
 use std::rc::Rc;
 use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
-use crate::utils::writer::{WriteBuffer, Writer, WriteBuffer::File as WBFile, WriteBuffer::Stdout};
+use crate::utils::writer::{Writer, WriteBuffer::File as WBFile, WriteBuffer::Stdout};
 
 fn main() -> Result<(), Error> {
     let mut app = App::new(APP_NAME).version(APP_VERSION).about(

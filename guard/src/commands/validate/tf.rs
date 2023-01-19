@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::{
@@ -9,7 +8,6 @@ use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
 use crate::rules::Status;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
-use std::rc::Rc;
 
 use lazy_static::lazy_static;
 
@@ -46,7 +44,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
 
     fn report_eval<'value>(
         &self,
-        mut write: &mut dyn Write,
+        write: &mut dyn Write,
         status: Status,
         root_record: &EventRecord<'value>,
         rules_file: &str,

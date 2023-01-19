@@ -1,4 +1,3 @@
-use std::cell::{Ref, RefCell};
 use colored::*;
 use serde::Serialize;
 
@@ -11,7 +10,7 @@ use crate::rules::eval_context::{
 };
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    ClauseCheck, EvaluationType, InComparisonCheck, NamedStatus, QueryResult, RecordType, Status,
+    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
     UnResolved,
 };
 use lazy_static::*;
@@ -21,7 +20,6 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
-use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -105,7 +103,7 @@ struct DataOutput<'a> {
 impl GenericReporter for StructuredSummary {
     fn report(
         &self,
-        mut writer: &mut dyn Write,
+        writer: &mut dyn Write,
         rules_file_name: &str,
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,

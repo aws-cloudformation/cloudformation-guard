@@ -1,14 +1,10 @@
-use std::cell::RefCell;
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
-use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::str::FromStr;
-
 use clap::{App, Arg, ArgGroup, ArgMatches};
 use colored::*;
 use enumflags2::BitFlags;

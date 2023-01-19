@@ -7,20 +7,8 @@ use std::io::{BufReader, Read, stdout};
 use std::path::PathBuf;
 
 use clap::App;
-
 use cfn_guard::command::Command;
-use cfn_guard::commands::{DATA, RULES};
-use cfn_guard::commands::test::Test;
-use cfn_guard::commands::validate::Validate;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
-
-pub fn get_data_option() -> String {
-    format!("-{}", DATA.1)
-}
-
-pub fn get_rules_option() -> String {
-    format!("-{}", RULES.1)
-}
 
 pub fn read_from_resource_file(path: &str) -> String {
     let mut resource = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -37,7 +25,7 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
-pub(crate) fn compare_write_buffer_with_file(expected_output_relative_file_path: &str, mut actual_output_writer: Writer){
+pub(crate) fn compare_write_buffer_with_file(expected_output_relative_file_path: &str, actual_output_writer: Writer){
     let expected_output_full_file_path =
         get_full_path_for_resource_file(
             expected_output_relative_file_path
@@ -51,7 +39,7 @@ pub(crate) fn compare_write_buffer_with_file(expected_output_relative_file_path:
     assert_eq!(expected_output, actual_output)
 }
 
-pub(crate) fn compare_write_buffer_with_string(expected_output: &str, mut actual_output_writer: Writer){
+pub(crate) fn compare_write_buffer_with_string(expected_output: &str, actual_output_writer: Writer){
     let actual_output = actual_output_writer
         .from_utf8()
         .unwrap();
@@ -59,10 +47,10 @@ pub(crate) fn compare_write_buffer_with_string(expected_output: &str, mut actual
 }
 
 pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
-    let TEST_APP_NAME = "cfn-guard-test";
-    let mut app = App::new(TEST_APP_NAME);
+    let test_app_name = "cfn-guard-test";
+    let mut app = App::new(test_app_name);
     let mut command_options = Vec::new();
-    command_options.push(TEST_APP_NAME);
+    command_options.push(test_app_name);
     command_options.append(args.clone().as_mut());
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
@@ -102,10 +90,10 @@ pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
 }
 
 pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, mut writer: &mut Writer) -> i32 {
-    let TEST_APP_NAME = "cfn-guard-test";
-    let mut app = App::new(TEST_APP_NAME);
+    let test_app_name = "cfn-guard-test";
+    let mut app = App::new(test_app_name);
     let mut command_options = Vec::new();
-    command_options.push(TEST_APP_NAME);
+    command_options.push(test_app_name);
     command_options.append(args.clone().as_mut());
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);

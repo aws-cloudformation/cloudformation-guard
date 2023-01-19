@@ -1,10 +1,7 @@
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
-
 use clap::{App, Arg, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;

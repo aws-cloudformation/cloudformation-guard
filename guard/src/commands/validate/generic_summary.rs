@@ -1,9 +1,6 @@
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
-use std::rc::Rc;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::find_all_failing_clauses;
@@ -216,7 +213,7 @@ fn binary_error_message(
 impl GenericReporter for SingleLineSummary {
     fn report(
         &self,
-        mut writer: &mut dyn std::io::Write,
+        writer: &mut dyn Write,
         rules_file_name: &str,
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,

@@ -5,15 +5,13 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::format;
-
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE, SHOW_SUMMARY};
     use cfn_guard::utils::writer::{WriteBuffer, Writer};
     use indoc::indoc;
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
-    use crate::utils::{read_from_resource_file, get_full_path_for_resource_file, cfn_guard_test_command, cfn_guard_test_command_verbose};
+    use crate::utils::{get_full_path_for_resource_file, cfn_guard_test_command, cfn_guard_test_command_verbose};
 
     #[test]
     fn test_run_check() {
@@ -735,7 +733,7 @@ mod test_test_command {
     use cfn_guard::commands::{RULES, TEST, TEST_DATA};
     use cfn_guard::Error;
     use rstest::rstest;
-    use crate::utils::{read_from_resource_file, get_full_path_for_resource_file, cfn_guard_test_command};
+    use crate::utils::{get_full_path_for_resource_file, cfn_guard_test_command};
 
     #[rstest::rstest]
     #[case("json")]

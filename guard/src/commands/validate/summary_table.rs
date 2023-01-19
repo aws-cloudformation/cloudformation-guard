@@ -1,9 +1,7 @@
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::colored_string;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::eval_context::{EventRecord, reset_with};
+use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::RecordType;
 use crate::rules::{NamedStatus, Status};
@@ -11,7 +9,6 @@ use colored::*;
 use enumflags2::{bitflags, BitFlags};
 use itertools::Itertools;
 use std::io::Write;
-use std::rc::Rc;
 
 #[bitflags]
 #[repr(u8)]
@@ -78,7 +75,7 @@ fn print_summary(
 impl<'r> Reporter for SummaryTable<'r> {
     fn report(
         &self,
-        mut writer: &mut dyn Write,
+        writer: &mut dyn Write,
         status: Option<Status>,
         failed_rules: &[&StatusContext],
         passed_or_skipped: &[&StatusContext],
@@ -151,7 +148,7 @@ impl<'r> Reporter for SummaryTable<'r> {
 
     fn report_eval<'value>(
         &self,
-        mut _write: &mut dyn Write,
+        _write: &mut dyn Write,
         _status: Status,
         _root_record: &EventRecord<'value>,
         _rules_file: &str,

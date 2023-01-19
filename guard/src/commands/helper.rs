@@ -1,21 +1,16 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
-use crate::commands::tracker::StackTracker;
 use crate::commands::validate::generic_summary::GenericSummary;
-use crate::commands::validate::{ConsoleReporter, OutputFormatType, Reporter};
+use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::root_scope;
-use crate::rules::evaluate::RootScope;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
-use crate::rules::{Evaluate, Result};
+use crate::rules::Result;
 use std::convert::TryFrom;
 use std::io::BufWriter;
-use std::rc::Rc;
 
 pub struct ValidateInput<'a> {
     pub content: &'a str,
@@ -29,7 +24,7 @@ pub fn validate_and_return_json(
 ) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(&data.content) {
         Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => {
+        Err(_) => {
             let value = serde_yaml::from_str::<serde_yaml::Value>(&data.content)?;
             PathAwareValue::try_from(value)
         }

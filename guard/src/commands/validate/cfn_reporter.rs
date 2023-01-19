@@ -1,9 +1,6 @@
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
-use std::rc::Rc;
 
 use lazy_static::*;
 use regex::Regex;
@@ -37,7 +34,7 @@ impl CfnReporter {
 impl Reporter for CfnReporter {
     fn report(
         &self,
-        writer: &mut dyn std::io::Write,
+        writer: &mut dyn Write,
         _status: Option<Status>,
         failed_rules: &[&StatusContext],
         passed_or_skipped: &[&StatusContext],
@@ -176,7 +173,7 @@ struct SingleLineReporter {}
 impl super::common::GenericReporter for SingleLineReporter {
     fn report(
         &self,
-        mut writer: &mut dyn Write,
+        writer: &mut dyn Write,
         rules_file_name: &str,
         data_file_name: &str,
         by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,

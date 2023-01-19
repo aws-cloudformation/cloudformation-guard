@@ -1,12 +1,9 @@
 use std::{
-    cell::RefCell,
     cmp::max,
     collections::{BTreeSet, HashMap, HashSet},
     io::Write,
     rc::Rc,
 };
-use std::borrow::BorrowMut;
-use std::ops::Deref;
 
 use colored::*;
 use lazy_static::lazy_static;
@@ -63,7 +60,7 @@ impl<'reporter> CfnAware<'reporter> {
 impl<'reporter> Reporter for CfnAware<'reporter> {
     fn report(
         &self,
-        _writer: &mut dyn std::io::Write,
+        _writer: &mut dyn Write,
         _status: Option<Status>,
         _failed_rules: &[&StatusContext],
         _passed_or_skipped: &[&StatusContext],
@@ -78,7 +75,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 
     fn report_eval<'value>(
         &self,
-        mut write: &mut dyn std::io::Write,
+        write: &mut dyn Write,
         status: Status,
         root_record: &EventRecord<'value>,
         rules_file: &str,
@@ -88,7 +85,6 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
         output_type: OutputFormatType,
     ) -> rules::Result<()> {
         let root = data.root().unwrap();
-
         if let Ok(_) = data.at("/Resources", root) {
             let failure_report = simplifed_json_from_root(root_record)?;
             Ok(match output_type {
@@ -121,16 +117,14 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 }
 
 fn binary_err_msg(
-    writer: Rc<RefCell<dyn Write>>,
+    writer: &mut dyn Write,
     _clause: &ClauseReport<'_>,
     bc: &BinaryComparison<'_>,
     prefix: &str,
 ) -> rules::Result<usize> {
     let width = "PropertyPath".len() + 4;
-    let mut rc_write = writer.try_borrow_mut().unwrap();
-
     writeln!(
-        rc_write,
+        writer,
         "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
         width = width,
         pp = "PropertyPath",
@@ -167,7 +161,7 @@ fn unary_err_msg(
 }
 
 fn single_line(
-    mut writer: &mut dyn Write,
+    writer: &mut dyn Write,
     data_file: &str,
     data_content: &str,
     rules_file: &str,
@@ -384,7 +378,6 @@ fn single_line(
                 let mut err_writer = ErrWriter {
                     code_segment: &mut code_segment,
                 };
-
                 super::common::pprint_clauses(
                     writer,
                     each_rule,

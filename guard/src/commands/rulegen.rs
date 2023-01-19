@@ -1,5 +1,4 @@
 use std::fs;
-use std::fs::File;
 use std::process;
 
 use crate::command::Command;
@@ -172,7 +171,7 @@ fn gen_rules(
 //     }
 fn print_rules(
     rule_map: HashMap<String, HashMap<String, HashSet<String>>>,
-    mut writer: &mut Writer,
+    writer: &mut Writer,
 ) -> Result<()> {
     let mut str = Builder::default();
 
