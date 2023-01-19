@@ -3,12 +3,12 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read, stdout};
+use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use clap::App;
 use cfn_guard::command::Command;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
+use clap::App;
 
 pub fn read_from_resource_file(path: &str) -> String {
     let mut resource = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -25,24 +25,22 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
-pub(crate) fn compare_write_buffer_with_file(expected_output_relative_file_path: &str, actual_output_writer: Writer){
+pub(crate) fn compare_write_buffer_with_file(
+    expected_output_relative_file_path: &str,
+    actual_output_writer: Writer,
+) {
     let expected_output_full_file_path =
-        get_full_path_for_resource_file(
-            expected_output_relative_file_path
-        );
-    let expected_output = read_from_resource_file(
-        &expected_output_full_file_path
-    );
-    let actual_output = actual_output_writer
-        .from_utf8()
-        .unwrap();
+        get_full_path_for_resource_file(expected_output_relative_file_path);
+    let expected_output = read_from_resource_file(&expected_output_full_file_path);
+    let actual_output = actual_output_writer.into_string().unwrap();
     assert_eq!(expected_output, actual_output)
 }
 
-pub(crate) fn compare_write_buffer_with_string(expected_output: &str, actual_output_writer: Writer){
-    let actual_output = actual_output_writer
-        .from_utf8()
-        .unwrap();
+pub(crate) fn compare_write_buffer_with_string(
+    expected_output: &str,
+    actual_output_writer: Writer,
+) {
+    let actual_output = actual_output_writer.into_string().unwrap();
     assert_eq!(expected_output, actual_output)
 }
 
@@ -89,7 +87,11 @@ pub fn cfn_guard_test_command<T: Command>(command: T, args: Vec<&str>) -> i32 {
     }
 }
 
-pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, mut writer: &mut Writer) -> i32 {
+pub fn cfn_guard_test_command_verbose<T: Command>(
+    command: T,
+    args: Vec<&str>,
+    mut writer: &mut Writer,
+) -> i32 {
     let test_app_name = "cfn-guard-test";
     let mut app = App::new(test_app_name);
     let mut command_options = Vec::new();
@@ -99,8 +101,7 @@ pub fn cfn_guard_test_command_verbose<T: Command>(command: T, args: Vec<&str>, m
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
     commands.push(Box::new(command));
 
-    let mappings = commands.iter()
-        .map(|s| (s.name(), s)).fold(
+    let mappings = commands.iter().map(|s| (s.name(), s)).fold(
         HashMap::with_capacity(commands.len()),
         |mut map, entry| {
             map.insert(entry.0, entry.1.as_ref());
@@ -138,17 +139,14 @@ macro_rules! assert_output_from_file_eq {
     ($expected_output_relative_file_path: expr, $actual_output_writer: expr) => {
         crate::utils::compare_write_buffer_with_file(
             $expected_output_relative_file_path,
-            $actual_output_writer
+            $actual_output_writer,
         )
-    }
+    };
 }
 
 #[macro_export]
 macro_rules! assert_output_from_str_eq {
     ($expected_output: expr, $actual_output_writer: expr) => {
-        crate::utils::compare_write_buffer_with_string(
-            $expected_output,
-            $actual_output_writer
-        )
-    }
+        crate::utils::compare_write_buffer_with_string($expected_output, $actual_output_writer)
+    };
 }
