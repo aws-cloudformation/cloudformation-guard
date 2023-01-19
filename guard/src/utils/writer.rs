@@ -11,15 +11,14 @@ impl Writer {
         Self { buffer }
     }
 
-    pub fn from_utf8(self) -> Result<String, FromUtf8Error> {
-        self.buffer.from_utf8()
+    pub fn into_string(self) -> Result<String, FromUtf8Error> {
+        self.buffer.into_string()
     }
 }
 
 impl Write for Writer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buffer
-            .write(String::from_utf8_lossy(buf).as_bytes())
+        self.buffer.write(String::from_utf8_lossy(buf).as_bytes())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -30,17 +29,18 @@ impl Write for Writer {
 pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),
-    File(File)
+    File(File),
 }
 
 impl WriteBuffer {
-    fn from_utf8(self) -> Result<String, FromUtf8Error> {
+    fn into_string(self) -> Result<String, FromUtf8Error> {
         match self {
             WriteBuffer::Stdout(..) => unimplemented!(),
             WriteBuffer::Vec(vec) => String::from_utf8(vec),
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
-                file.read_to_string(&mut data).expect("Unable to read from file");
+                file.read_to_string(&mut data)
+                    .expect("Unable to read from file");
                 Ok(data)
             }
         }
