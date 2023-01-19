@@ -10,7 +10,7 @@ use crate::rules::eval_context::{
 };
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    ClauseCheck, EvaluationType, InComparisonCheck, NamedStatus, QueryResult, RecordType, Status,
+    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
     UnResolved,
 };
 use lazy_static::*;

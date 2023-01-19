@@ -120,7 +120,7 @@ impl<'r> Reporter for SummaryTable<'r> {
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed_rules.is_empty() {
             writeln!(
-                writer,
+               writer,
                 "{} Status = {}",
                 data_file_name,
                 colored_string(status)
@@ -134,7 +134,7 @@ impl<'r> Reporter for SummaryTable<'r> {
             writeln!(writer, "---")?;
         }
         self.next.report(
-            writer,
+           writer,
             status,
             failed_rules,
             passed_or_skipped,
@@ -188,7 +188,7 @@ impl<'r> Reporter for SummaryTable<'r> {
             )?;
             wrote_header_line = true;
             writeln!(_write, "{}", "SKIP rules".bold())?;
-            print_summary(_write, _rules_file, longest, &skipped)?;
+            print_summary( _write, _rules_file, longest, &skipped)?;
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
@@ -202,7 +202,7 @@ impl<'r> Reporter for SummaryTable<'r> {
                 )?;
             }
             writeln!(_write, "{}", "PASS rules".bold())?;
-            print_summary(_write, _rules_file, longest, &passed)?;
+            print_summary(_write,_rules_file, longest, &passed)?;
         }
 
         if self.summary_type.contains(SummaryType::FAIL) && !failed.is_empty() {

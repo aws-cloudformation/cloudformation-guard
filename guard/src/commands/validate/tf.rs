@@ -29,7 +29,7 @@ impl<'reporter> TfAware<'reporter> {
 impl<'reporter> Reporter for TfAware<'reporter> {
     fn report(
         &self,
-        _writer: &mut dyn Write,
+        _writer:&mut dyn Write,
         _status: Option<Status>,
         _failed_rules: &[&StatusContext],
         _passed_or_skipped: &[&StatusContext],

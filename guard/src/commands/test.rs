@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::path::PathBuf;
-
 use clap::{App, Arg, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
@@ -19,6 +18,7 @@ use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
     RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
+use crate::utils::writer::Writer;
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;
@@ -77,7 +77,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical

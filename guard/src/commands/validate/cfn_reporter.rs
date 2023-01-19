@@ -240,7 +240,7 @@ impl super::common::GenericReporter for SingleLineReporter {
             )?;
         }
         super::common::print_compliant_skipped_info(
-            writer,
+             writer,
             &passed,
             &skipped,
             rules_file_name,

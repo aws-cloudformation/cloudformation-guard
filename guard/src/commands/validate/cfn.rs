@@ -1,5 +1,3 @@
-use lazy_static::lazy_static;
-use regex::Regex;
 use std::{
     cmp::max,
     collections::{BTreeSet, HashMap, HashSet},
@@ -7,12 +5,16 @@ use std::{
     rc::Rc,
 };
 
+use colored::*;
+use lazy_static::lazy_static;
+use regex::Regex;
+
 use crate::{
     commands::{
         tracker::StatusContext,
         validate::{
             common::{
-                populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree,
+                IdentityHash, LocalResourceAggr, PathTree, populate_hierarchy_path_trees,
                 RuleHierarchy,
             },
             OutputFormatType, Reporter,
@@ -22,18 +24,17 @@ use crate::{
         self,
         display::ValueOnlyDisplay,
         eval_context::{
-            simplifed_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
-            InComparison, RuleReport, UnaryComparison,
+            BinaryComparison, ClauseReport, EventRecord, FileReport, InComparison,
+            RuleReport, simplifed_json_from_root, UnaryComparison,
         },
         path_value::{
-            traversal::{Node, Traversal, TraversalResult},
             PathAwareValue,
+            traversal::{Node, Traversal, TraversalResult},
         },
         Status, UnResolved,
     },
     utils::ReadCursor,
 };
-use colored::*;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?")
