@@ -1,8 +1,8 @@
 pub(crate) mod files;
 pub(crate) mod helper;
-pub(crate) mod migrate;
-pub(crate) mod parse_tree;
-pub(crate) mod rulegen;
+pub mod migrate;
+pub mod parse_tree;
+pub mod rulegen;
 pub mod test;
 pub mod validate;
 
@@ -30,7 +30,7 @@ pub(crate) const OUTPUT_FORMAT: (&str, &str) = ("output-format", "o");
 pub const INPUT_PARAMETERS: (&str, &str) = ("input-parameters", "i");
 pub(crate) const PAYLOAD: (&str, &str) = ("payload", "P");
 pub(crate) const PREVIOUS_ENGINE: (&str, &str) = ("previous-engine", "E");
-pub(crate) const PRINT_JSON: (&str, &str) = ("print-json", "p");
+pub const PRINT_JSON: (&str, &str) = ("print-json", "p");
 pub(crate) const SHOW_CLAUSE_FAILURES: (&str, &str) = ("show-clause-failures", "s");
 pub const SHOW_SUMMARY: (&str, &str) = ("show-summary", "S");
 pub(crate) const TYPE: (&str, &str) = ("type", "t");

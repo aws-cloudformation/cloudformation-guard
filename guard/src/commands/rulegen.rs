@@ -13,10 +13,10 @@ use string_builder::Builder;
 use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Rulegen {}
+pub struct Rulegen {}
 
 impl Rulegen {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Rulegen {}
     }
 }

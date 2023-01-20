@@ -8,5 +8,3 @@ pub trait Command {
     fn command(&self) -> App<'static, 'static>;
     fn execute(&self, args: &ArgMatches, writer: &mut Writer) -> Result<i32, Error>;
 }
-
-
