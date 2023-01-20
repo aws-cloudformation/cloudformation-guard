@@ -6,10 +6,10 @@ use std::fs::File;
 use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct ParseTree {}
+pub struct ParseTree {}
 
 impl ParseTree {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ParseTree {}
     }
 }

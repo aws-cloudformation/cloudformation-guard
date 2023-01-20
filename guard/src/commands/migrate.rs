@@ -20,10 +20,10 @@ use crate::utils::writer::Writer;
 mod migrate_tests;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Migrate {}
+pub struct Migrate {}
 
 impl Migrate {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Migrate {}
     }
 }
