@@ -1,9 +1,0 @@
-Resources:
-  ApiStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      AccessLogSettings:
-        DestinationArn: arn:aws:logs:us-east-1:123456789012:log-group:example-log-group
-        Format: >-
-          {"requestId":"$context.requestId", "ip": "$context.identity.sourceIp",
-          "user":"$context.identity.user","requestTime":"$context.requestTime"}
