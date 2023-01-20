@@ -1,0 +1,30 @@
+
+let api_gwv2_access_logs_enabled = Resources.*[ Type == "AWS::ApiGatewayV2::Stage"
+  Metadata.guard.SuppressedRules not exists or
+  Metadata.guard.SuppressedRules.* != "API_GWV2_ACCESS_LOGS_ENABLED"
+]
+
+rule API_GWV2_ACCESS_LOGS_ENABLED when %api_gwv2_access_logs_enabled !empty {
+    %api_gwv2_access_logs_enabled.Properties {
+        AccessLogSettings exists
+        AccessLogSettings is_struct
+
+        AccessLogSettings {
+            DestinationArn exists
+            DestinationArn is_string or
+            DestinationArn is_struct
+            <<
+                Violation: Amazon API Gateway V2 stages have access logging enabled
+                Fix: In AccessLogSettings, set DestinationArn to the ARN of an Amazon CloudWatch log group and Format to a single line log format configuration.
+            >>
+
+            Format exists
+            Format is_string or
+            Format is_struct
+            <<
+                Violation: Amazon API Gateway V2 stages have access logging enabled
+                Fix: In AccessLogSettings, set DestinationArn to the ARN of an Amazon CloudWatch log group and Format to a single line log format configuration.
+            >>
+        }
+  }
+}
