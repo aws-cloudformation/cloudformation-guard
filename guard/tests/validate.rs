@@ -6,7 +6,7 @@ pub(crate) mod utils;
 #[cfg(test)]
 mod validate_command_tests {
     use crate::utils::{
-        cfn_guard_test_command, compare_write_buffer_with_file, compare_write_buffer_with_string,
+        compare_write_buffer_with_file, compare_write_buffer_with_string,
         get_full_path_for_resource_file, CommandTestRunner,
     };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};

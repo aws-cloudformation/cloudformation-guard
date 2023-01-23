@@ -13,9 +13,7 @@ mod parse_tree_command_tests {
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
-    use crate::utils::{
-        cfn_guard_test_command, get_full_path_for_resource_file, CommandTestRunner,
-    };
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
     #[derive(Default)]

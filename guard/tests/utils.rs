@@ -44,55 +44,55 @@ pub fn compare_write_buffer_with_string(expected_output: &str, actual_output_wri
     assert_eq!(expected_output, actual_output)
 }
 
-pub fn cfn_guard_test_command(args: Vec<&str>, mut writer: &mut Writer) -> i32 {
-    let test_app_name = String::from("cfn-guard-test");
-    let mut app = App::new(&test_app_name);
-    let mut command_options = args.iter().fold(vec![test_app_name], |mut res, arg| {
-        res.push(arg.to_string());
-        res
-    });
-    // command_options.push(test_app_name);
-    // command_options.append(args.clone().as_mut());
-
-    let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(Box::new(Validate::new()));
-    commands.push(Box::new(Test::new()));
-    commands.push(Box::new(ParseTree::new()));
-    commands.push(Box::new(Migrate::new()));
-    commands.push(Box::new(Rulegen::new()));
-
-    let mappings = commands.iter().map(|s| (s.name(), s)).fold(
-        HashMap::with_capacity(commands.len()),
-        |mut map, entry| {
-            map.insert(entry.0, entry.1.as_ref());
-            map
-        },
-    );
-
-    for each in &commands {
-        app = app.subcommand(each.command());
-    }
-
-    let app = app.get_matches_from(command_options);
-
-    match app.subcommand() {
-        (name, Some(value)) => {
-            if let Some(command) = mappings.get(name) {
-                match (*command).execute(value, &mut writer) {
-                    Err(e) => {
-                        println!("Error occurred {}", e);
-                        -1
-                    }
-                    Ok(code) => code,
-                }
-            } else {
-                -2
-            }
-        }
-
-        (_, None) => -3,
-    }
-}
+// pub fn cfn_guard_test_command(args: Vec<&str>, mut writer: &mut Writer) -> i32 {
+//     let test_app_name = String::from("cfn-guard-test");
+//     let mut app = App::new(&test_app_name);
+//     let mut command_options = args.iter().fold(vec![test_app_name], |mut res, arg| {
+//         res.push(arg.to_string());
+//         res
+//     });
+//     // command_options.push(test_app_name);
+//     // command_options.append(args.clone().as_mut());
+//
+//     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
+//     commands.push(Box::new(Validate::new()));
+//     commands.push(Box::new(Test::new()));
+//     commands.push(Box::new(ParseTree::new()));
+//     commands.push(Box::new(Migrate::new()));
+//     commands.push(Box::new(Rulegen::new()));
+//
+//     let mappings = commands.iter().map(|s| (s.name(), s)).fold(
+//         HashMap::with_capacity(commands.len()),
+//         |mut map, entry| {
+//             map.insert(entry.0, entry.1.as_ref());
+//             map
+//         },
+//     );
+//
+//     for each in &commands {
+//         app = app.subcommand(each.command());
+//     }
+//
+//     let app = app.get_matches_from(command_options);
+//
+//     match app.subcommand() {
+//         (name, Some(value)) => {
+//             if let Some(command) = mappings.get(name) {
+//                 match (*command).execute(value, &mut writer) {
+//                     Err(e) => {
+//                         println!("Error occurred {}", e);
+//                         -1
+//                     }
+//                     Ok(code) => code,
+//                 }
+//             } else {
+//                 -2
+//             }
+//         }
+//
+//         (_, None) => -3,
+//     }
+// }
 
 pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;

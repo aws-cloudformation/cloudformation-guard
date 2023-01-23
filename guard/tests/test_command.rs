@@ -5,9 +5,7 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod test_command_tests {
-    use crate::utils::{
-        cfn_guard_test_command, get_full_path_for_resource_file, CommandTestRunner,
-    };
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner};
     use cfn_guard::commands::{
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES, RULES_AND_TEST_FILE,
         RULES_FILE, TEST, TEST_DATA, VERBOSE,
