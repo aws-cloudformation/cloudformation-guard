@@ -1,7 +1,7 @@
 use clap::{App, ArgMatches};
 
-use crate::utils::writer::Writer;
 use crate::rules::errors::Error;
+use crate::utils::writer::Writer;
 
 pub trait Command {
     fn name(&self) -> &'static str;

@@ -5,11 +5,8 @@
 mod functional_tests {
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
-    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE, SHOW_SUMMARY};
+    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, SHOW_SUMMARY, VALIDATE};
     use cfn_guard::utils::writer::{WriteBuffer, Writer};
-    use indoc::indoc;
-    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
-    use crate::utils::{get_full_path_for_resource_file, cfn_guard_test_command, cfn_guard_test_command_verbose};
 
     #[test]
     fn test_run_check() {
@@ -166,4 +163,3 @@ mod functional_tests {
         assert_eq!(expected, result);
     }
 }
-

@@ -14,6 +14,20 @@ impl Writer {
     pub fn into_string(self) -> Result<String, FromUtf8Error> {
         self.buffer.into_string()
     }
+
+    pub fn stripped(self) -> Result<String, FromUtf8Error> {
+        match self.buffer {
+            WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(&vec).unwrap()),
+            WriteBuffer::File(mut file) => {
+                let mut data = String::new();
+                file.read_to_string(&mut data)
+                    .expect("Unable to read from file");
+
+                String::from_utf8(strip_ansi_escapes::strip(data).unwrap())
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl Write for Writer {

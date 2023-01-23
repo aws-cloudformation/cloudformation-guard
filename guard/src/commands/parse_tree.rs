@@ -1,9 +1,9 @@
 use crate::command::Command;
 use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
 use crate::rules::Result;
+use crate::utils::writer::Writer;
 use clap::{App, Arg, ArgMatches};
 use std::fs::File;
-use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ParseTree {}

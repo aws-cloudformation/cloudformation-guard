@@ -6,6 +6,7 @@ use crate::commands::{MIGRATE, OUTPUT, RULES};
 use crate::migrate::parser::{parse_rules_file, Clause, Rule, RuleLineType, TypeName};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::Result;
+use crate::utils::writer::Writer;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
@@ -13,7 +14,6 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
-use crate::utils::writer::Writer;
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
