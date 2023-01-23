@@ -5,11 +5,12 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_command_tests {
-    use crate::utils::{
-        compare_write_buffer_with_file, compare_write_buffer_with_string,
-        get_full_path_for_resource_file, CommandTestRunner,
-    };
-    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
+    use std::io::stdout;
+
+    use indoc::indoc;
+    use rstest::rstest;
+    use strip_ansi_escapes;
+
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{
@@ -17,10 +18,12 @@ mod validate_command_tests {
         PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, VALIDATE, VERBOSE,
     };
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
-    use indoc::indoc;
-    use rstest::rstest;
-    use std::io::stdout;
-    use strip_ansi_escapes;
+
+    use crate::utils::{
+        compare_write_buffer_with_file, compare_write_buffer_with_string,
+        get_full_path_for_resource_file, CommandTestRunner,
+    };
+    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
     #[derive(Default)]
     struct ValidateTestRunner<'args> {

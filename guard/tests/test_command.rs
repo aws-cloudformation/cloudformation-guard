@@ -5,7 +5,10 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod test_command_tests {
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner};
+    use std::io::stdout;
+
+    use rstest::rstest;
+
     use cfn_guard::commands::{
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES, RULES_AND_TEST_FILE,
         RULES_FILE, TEST, TEST_DATA, VERBOSE,
@@ -13,8 +16,8 @@ mod test_command_tests {
     use cfn_guard::utils::writer::WriteBuffer::Stdout;
     use cfn_guard::utils::writer::Writer;
     use cfn_guard::Error;
-    use rstest::rstest;
-    use std::io::stdout;
+
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
