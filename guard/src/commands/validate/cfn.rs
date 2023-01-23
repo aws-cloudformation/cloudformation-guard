@@ -14,7 +14,7 @@ use crate::{
         tracker::StatusContext,
         validate::{
             common::{
-                IdentityHash, LocalResourceAggr, PathTree, populate_hierarchy_path_trees,
+                populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree,
                 RuleHierarchy,
             },
             OutputFormatType, Reporter,
@@ -24,12 +24,12 @@ use crate::{
         self,
         display::ValueOnlyDisplay,
         eval_context::{
-            BinaryComparison, ClauseReport, EventRecord, FileReport, InComparison,
-            RuleReport, simplifed_json_from_root, UnaryComparison,
+            simplifed_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
+            InComparison, RuleReport, UnaryComparison,
         },
         path_value::{
-            PathAwareValue,
             traversal::{Node, Traversal, TraversalResult},
+            PathAwareValue,
         },
         Status, UnResolved,
     },

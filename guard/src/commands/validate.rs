@@ -1,3 +1,7 @@
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use colored::*;
+use enumflags2::BitFlags;
+use serde::Deserialize;
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
@@ -5,33 +9,29 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use colored::*;
-use enumflags2::BitFlags;
-use serde::Deserialize;
 
 use Type::CFNTemplate;
 
 use crate::command::Command;
-use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULE_FILE_SUPPORTED_EXTENSIONS,
-    RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
-};
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::commands::{
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+};
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{EventRecord, root_scope, simplifed_json_from_root};
+use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::path_value::PathAwareValue;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
+use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 use crate::utils::writer::Writer;
 
 mod cfn;
@@ -324,7 +324,6 @@ or rules files.
         let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
         let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
-
         let mut exit_code = 0;
         if app.is_present(RULES.0) {
             let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
@@ -342,12 +341,12 @@ or rules files.
                     {
                         if entry.path().is_file()
                             && entry
-                            .path()
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .map_or(false, |s| {
-                                has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                            })
+                                .path()
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .map_or(false, |s| {
+                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
+                                })
                         {
                             rules.push(entry.path().to_path_buf());
                         }
@@ -566,7 +565,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         cxt.context,
         common::colored_string(cxt.status)
     )
-        .underline();
+    .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
@@ -617,7 +616,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
             common::colored_string(matched.status),
             matched.context
         )
-            .underline();
+        .underline();
         if !first {
             print!("{space:>longest$}", space = " ", longest = longest + 4)
         }
@@ -665,7 +664,7 @@ impl<'r> ConsoleReporter<'r> {
         verbose: bool,
         print_json: bool,
         show_clause_failures: bool,
-        writer: &'r mut Writer
+        writer: &'r mut Writer,
     ) -> ConsoleReporter<'r> {
         ConsoleReporter {
             root_context: root,
@@ -925,7 +924,6 @@ fn get_longest(top: &StatusContext) -> usize {
         .map(|elem| elem.context.len())
         .unwrap_or(20)
 }
-
 
 #[cfg(test)]
 #[path = "validate_tests.rs"]

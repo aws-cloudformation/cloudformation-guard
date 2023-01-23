@@ -7,13 +7,13 @@ mod migrate;
 mod rules;
 mod utils;
 
+use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
+use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use command::Command;
 use commands::{APP_NAME, APP_VERSION};
 use rules::errors::Error;
 use std::process::exit;
 use std::rc::Rc;
-use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
-use crate::utils::writer::{Writer, WriteBuffer::File as WBFile, WriteBuffer::Stdout};
 
 fn main() -> Result<(), Error> {
     let mut app = App::new(APP_NAME).version(APP_VERSION).about(
@@ -78,4 +78,3 @@ fn main() -> Result<(), Error> {
     }
     Ok(())
 }
-

@@ -10,8 +10,7 @@ use crate::rules::eval_context::{
 };
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
-    UnResolved,
+    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
 };
 use lazy_static::*;
 use regex::Regex;
