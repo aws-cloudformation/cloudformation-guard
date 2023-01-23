@@ -1,0 +1,108 @@
+assignments: []
+guard_rules:
+- rule_name: ensure_container_limits_are_enforced
+  conditions:
+  - - Clause:
+        access_clause:
+          query:
+            query:
+            - This
+            - Key: apiVersion
+            match_all: true
+          comparator:
+          - Eq
+          - false
+          compare_with:
+            Value:
+              path: ''
+              value: v1
+          custom_message: null
+          location:
+            line: 2
+            column: 10
+        negation: false
+  - - Clause:
+        access_clause:
+          query:
+            query:
+            - This
+            - Key: kind
+            match_all: true
+          comparator:
+          - Eq
+          - false
+          compare_with:
+            Value:
+              path: ''
+              value: Pod
+          custom_message: null
+          location:
+            line: 3
+            column: 10
+        negation: false
+  block:
+    assignments: []
+    conjunctions:
+    - - Clause:
+          BlockClause:
+            query:
+              query:
+              - This
+              - Key: spec
+              - Key: containers
+              - AllIndices: null
+              match_all: true
+            block:
+              assignments: []
+              conjunctions:
+              - - BlockClause:
+                    query:
+                      query:
+                      - This
+                      - Key: resources
+                      - Key: limits
+                      match_all: true
+                    block:
+                      assignments: []
+                      conjunctions:
+                      - - Clause:
+                            access_clause:
+                              query:
+                                query:
+                                - This
+                                - Key: cpu
+                                match_all: true
+                              comparator:
+                              - Exists
+                              - false
+                              compare_with: null
+                              custom_message: "\n                Id: K8S_REC_18\n                Description: CPU limit must be set for the container\n            "
+                              location:
+                                line: 10
+                                column: 13
+                            negation: false
+                      - - Clause:
+                            access_clause:
+                              query:
+                                query:
+                                - This
+                                - Key: memory
+                                match_all: true
+                              comparator:
+                              - Exists
+                              - false
+                              compare_with: null
+                              custom_message: "\n                Id: K8S_REC_22\n                Description: Memory limit must be set for the container\n            "
+                              location:
+                                line: 19
+                                column: 13
+                            negation: false
+                    location:
+                      line: 6
+                      column: 9
+                    not_empty: false
+            location:
+              line: 5
+              column: 5
+            not_empty: false
+parameterized_rules: []

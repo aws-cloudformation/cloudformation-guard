@@ -1,0 +1,145 @@
+assignments:
+- var: aws_serverless_functions
+  value:
+    AccessClause:
+      query:
+      - Key: Resources
+      - AllValues: null
+      - Filter:
+        - null
+        - - - Clause:
+                access_clause:
+                  query:
+                    query:
+                    - Key: Type
+                    match_all: true
+                  comparator:
+                  - Eq
+                  - false
+                  compare_with:
+                    Value:
+                      path: ''
+                      value: AWS::Serverless::Function
+                  custom_message: null
+                  location:
+                    line: 1
+                    column: 45
+                negation: false
+      match_all: true
+guard_rules:
+- rule_name: KEY_COMPLIANCE_CHECK
+  conditions:
+  - - Clause:
+        access_clause:
+          query:
+            query:
+            - Key: '%aws_serverless_functions'
+            match_all: true
+          comparator:
+          - Empty
+          - true
+          compare_with: null
+          custom_message: null
+          location:
+            line: 3
+            column: 32
+        negation: false
+  block:
+    assignments:
+    - var: key
+      value:
+        AccessClause:
+          query:
+          - Key: '%aws_serverless_functions'
+          - AllIndices: null
+          - Key: Properties
+          - Key: Tags
+          - MapKeyFilter:
+            - null
+            - comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: /^(?i)first([-|_])?name$/
+          match_all: true
+    conjunctions:
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%aws_serverless_functions'
+                - AllIndices: null
+                - Key: Properties
+                - Key: Tags
+                match_all: true
+              comparator:
+              - IsMap
+              - false
+              compare_with: null
+              custom_message: null
+              location:
+                line: 4
+                column: 3
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%aws_serverless_functions'
+                - AllIndices: null
+                - Key: Properties
+                - Key: Tags
+                match_all: true
+              comparator:
+              - Empty
+              - true
+              compare_with: null
+              custom_message: null
+              location:
+                line: 5
+                column: 3
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%aws_serverless_functions'
+                - AllIndices: null
+                - Key: Properties
+                - Key: Tags
+                - AllValues: null
+                match_all: false
+              comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: /^(?i)prod$/
+              custom_message: null
+              location:
+                line: 11
+                column: 3
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%key'
+                match_all: true
+              comparator:
+              - Empty
+              - true
+              compare_with: null
+              custom_message: null
+              location:
+                line: 13
+                column: 3
+            negation: false
+parameterized_rules: []
