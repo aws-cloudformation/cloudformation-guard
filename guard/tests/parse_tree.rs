@@ -67,7 +67,7 @@ mod parse_tree_command_tests {
     }
 
     fn get_path_for_resource_file(file: &str) -> String {
-        get_full_path_for_resource_file(&format!("resources/validate/{}", file))
+        get_full_path_for_resource_file(&format!("resources/{}", file))
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod parse_tree_command_tests {
         let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .print_json(true)
-            .rules("rules-dir/s3_bucket_server_side_encryption_enabled.guard")
+            .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
             .run(&mut writer);
 
         assert_eq!(0, status_code);
@@ -91,22 +91,22 @@ mod parse_tree_command_tests {
 
     #[rstest::rstest]
     #[case(
-        "rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        "validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
         YAML_S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_PARSE_TREE,
         0
     )]
     #[case(
-        "rules-dir/s3_bucket_public_read_prohibited.guard",
+        "validate/rules-dir/s3_bucket_public_read_prohibited.guard",
         S3_BUCKET_PUBLIC_READ_PROHIBITED_PARSE_TREE,
         0
     )]
     #[case(
-        "rules-dir/s3_bucket_logging_enabled.guard",
+        "validate/rules-dir/s3_bucket_logging_enabled.guard",
         S3_BUCKET_LOGGING_ENABLED_PARSE_TREE,
         0
     )]
-    #[case("rules-dir/dne.guard", "", -1)]
-    #[case("rules-dir/malformed-rule.guard", "", -1)]
+    #[case("validate/rules-dir/dne.guard", "", -1)]
+    #[case("validate/rules-dir/malformed-rule.guard", "", -1)]
     fn test_yaml_output(
         #[case] rules_arg: &str,
         #[case] expected_writer_output: &str,
@@ -119,5 +119,30 @@ mod parse_tree_command_tests {
 
         assert_eq!(expected_status_code, status_code);
         assert_output_from_str_eq!(expected_writer_output, writer)
+    }
+
+    #[rstest::rstest]
+    #[case(
+        "parse-tree/rules-dir/iterate_through_json_list_without_key.guard",
+        "resources/parse-tree/output-dir/test_rule_iterate_through_json_list_without_key.out",
+        0
+    )]
+    #[case(
+        "parse-tree/rules-dir/rule_with_this_keyword.guard",
+        "resources/parse-tree/output-dir/test_rule_with_this_keyword.out",
+        0
+    )]
+    fn test_yaml_output_compare_buffer_to_file(
+        #[case] rules_arg: &str,
+        #[case] expected_writer_output: &str,
+        #[case] expected_status_code: i32,
+    ) {
+        let mut writer = Writer::new(WBVec(vec![]));
+        let status_code = ParseTreeTestRunner::default()
+            .rules(rules_arg)
+            .run(&mut writer);
+
+        assert_eq!(expected_status_code, status_code);
+        assert_output_from_file_eq!(expected_writer_output, writer)
     }
 }
