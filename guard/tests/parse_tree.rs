@@ -124,12 +124,12 @@ mod parse_tree_command_tests {
     #[rstest::rstest]
     #[case(
         "parse-tree/rules-dir/iterate_through_json_list_without_key.guard",
-        "resources/parse-tree/output-dir/test_rule_iterate_through_json_list_without_key.out",
+        "resources/parse-tree/output-dir/test_rule_iterate_through_json_list_without_key.yaml",
         0
     )]
     #[case(
         "parse-tree/rules-dir/rule_with_this_keyword.guard",
-        "resources/parse-tree/output-dir/test_rule_with_this_keyword.out",
+        "resources/parse-tree/output-dir/test_rule_with_this_keyword.yaml",
         0
     )]
     fn test_yaml_output_compare_buffer_to_file(
