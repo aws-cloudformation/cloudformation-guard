@@ -1,9 +1,9 @@
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::path::PathBuf;
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
 
 use validate::validate_path;
@@ -18,7 +18,6 @@ use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
     RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
-use crate::utils::writer::Writer;
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;
@@ -26,6 +25,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
 use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
+use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Test {}

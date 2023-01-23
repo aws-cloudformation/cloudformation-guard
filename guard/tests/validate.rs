@@ -5,57 +5,236 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_command_tests {
-    use std::io::stdout;
+    use crate::utils::{
+        cfn_guard_test_command, cfn_guard_test_command2, compare_write_buffer_with_file,
+        compare_write_buffer_with_string, get_full_path_for_resource_file, CommandTestRunner,
+    };
+    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
-    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, VALIDATE, SHOW_SUMMARY};
-    use cfn_guard::utils::writer::{Writer, WriteBuffer::Stdout, WriteBuffer::Vec as WBVec};
+    use cfn_guard::commands::{
+        ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD,
+        PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, VALIDATE, VERBOSE,
+    };
+    use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use indoc::indoc;
-    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
-    use crate::utils::{get_full_path_for_resource_file, cfn_guard_test_command};
+    use rstest::rstest;
+    use std::io::stdout;
+    use strip_ansi_escapes;
 
+    #[derive(Default)]
+    struct ValidateTestRunner<'args> {
+        data: Vec<&'args str>,
+        rules: Vec<&'args str>,
+        show_summary: Vec<&'args str>,
+        input_parameters: Vec<&'args str>,
+        output_format: Option<&'args str>,
+        previous_engine: bool,
+        show_clause_failures: bool,
+        alphabetical: bool,
+        last_modified: bool,
+        verbose: bool,
+        print_json: bool,
+        payload: Option<&'args str>,
+    }
 
-    #[test]
-    fn test_single_data_file_single_rules_file_compliant() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
+    impl<'args> ValidateTestRunner<'args> {
+        fn data(&'args mut self, args: Vec<&'args str>) -> &'args mut ValidateTestRunner {
+            if self.payload.is_some() {
+                panic!("data argument conflicts with the payload argument")
+            }
 
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
+            self.data = args;
+            self
+        }
 
+        fn rules(&'args mut self, args: Vec<&'args str>) -> &'args mut ValidateTestRunner {
+            if self.payload.is_some() {
+                panic!("data argument conflicts with the payload argument")
+            }
+
+            self.rules = args;
+            self
+        }
+
+        fn show_summary(&'args mut self, args: Vec<&'args str>) -> &'args mut ValidateTestRunner {
+            self.show_summary = args;
+            self
+        }
+
+        fn input_parameters(
+            &'args mut self,
+            args: Vec<&'args str>,
+        ) -> &'args mut ValidateTestRunner {
+            self.input_parameters = args;
+            self
+        }
+
+        fn output_format(
+            &'args mut self,
+            arg: Option<&'args str>,
+        ) -> &'args mut ValidateTestRunner {
+            self.output_format = arg;
+            self
+        }
+
+        fn payload(&'args mut self, arg: Option<&'args str>) -> &'args mut ValidateTestRunner {
+            if !self.data.is_empty() || !self.rules.is_empty() {
+                panic!("data argument conflicts with the payload argument")
+            }
+
+            self.payload = arg;
+            self
+        }
+
+        fn previous_engine(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            self.previous_engine = arg;
+            self
+        }
+
+        fn show_clause_failures(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            self.show_clause_failures = arg;
+            self
+        }
+
+        fn alphabetical(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            if self.last_modified {
+                panic!("alphabetical and last modified are conflicting")
+            }
+
+            self.alphabetical = arg;
+            self
+        }
+
+        fn last_modified(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            if self.alphabetical {
+                panic!("alphabetical and last modified are conflicting")
+            }
+
+            self.last_modified = arg;
+            self
+        }
+
+        fn verbose(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            self.verbose = arg;
+            self
+        }
+
+        fn print_json(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
+            self.print_json = arg;
+            self
+        }
+    }
+
+    impl<'args> CommandTestRunner for ValidateTestRunner<'args> {
+        fn build_args(&self) -> Vec<String> {
+            let mut args = vec![String::from(VALIDATE)];
+
+            if !self.data.is_empty() {
+                args.push(format!("-{}", DATA.1));
+
+                for data_arg in &self.data {
+                    args.push(get_path_for_resource_file(data_arg));
+                }
+            }
+
+            if !self.rules.is_empty() {
+                args.push(format!("-{}", RULES.1));
+
+                for rule_arg in &self.rules {
+                    args.push(get_path_for_resource_file(rule_arg));
+                }
+            }
+
+            if !self.input_parameters.is_empty() {
+                args.push(format!("-{}", INPUT_PARAMETERS.1));
+
+                for input_param_arg in &self.input_parameters {
+                    args.push(get_path_for_resource_file(input_param_arg));
+                }
+            }
+
+            if !self.show_summary.is_empty() {
+                args.push(format!("-{}", SHOW_SUMMARY.1));
+                args.push(self.show_summary.join(","));
+            }
+
+            if let Some(output_format) = self.output_format {
+                args.push(format!("-{}", OUTPUT_FORMAT.1));
+            }
+
+            if self.previous_engine {
+                args.push(format!("-{}", PREVIOUS_ENGINE.1));
+            }
+
+            if self.show_clause_failures {
+                args.push(format!("-{}", SHOW_CLAUSE_FAILURES.1));
+            }
+
+            if self.alphabetical {
+                args.push(format!("-{}", ALPHABETICAL.1));
+            }
+
+            if self.last_modified {
+                args.push(format!("-{}", LAST_MODIFIED.1));
+            }
+
+            if self.verbose {
+                args.push(format!("-{}", VERBOSE.1));
+            }
+
+            if self.print_json {
+                args.push(format!("-{}", PRINT_JSON.1));
+            }
+
+            if let Some(payload) = self.payload {
+                args.push(format!("-{}", PAYLOAD.1));
+                args.push(payload.to_string());
+            }
+
+            args
+        }
+    }
+
+    fn get_path_for_resource_file(file: &str) -> String {
+        get_full_path_for_resource_file(&format!("resources/validate/{}", file))
+    }
+
+    #[rstest::rstest]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], 0)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], 5)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], -1)]
+    #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], 5)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard", "blank-rule.guard"], 5 )]
+    #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
+    #[case(vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
+    #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], -1)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], -1)]
+    fn test_single_data_file_single_rules_file(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+        #[case] expected_status_code: i32,
+    ) {
         let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(0, status_code);
+        let status_code = ValidateTestRunner::default()
+            .data(data_arg)
+            .rules(rules_arg)
+            .run(&mut writer);
+
+        assert_eq!(expected_status_code, status_code);
     }
 
     #[test]
     fn test_single_data_file_single_rules_file_compliant_verbose() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-        let show_summary_arg = "all";
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let show_summary_option = format!("-{}", SHOW_SUMMARY.1);
-        let args = vec![VALIDATE,
-                        &data_option, &data_arg,
-                        &rules_option, &rules_arg,
-                        &show_summary_option, &show_summary_arg];
-
         let mut writer = Writer::new(WBVec(vec![]));
-        let status_code = cfn_guard_test_command(
-            args,
-            &mut writer
-        );
+        let status_code = ValidateTestRunner::default()
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-compliant.yaml",
+            ])
+            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer);
 
         let expected_output = indoc! {
             r#"s3-public-read-prohibited-template-compliant.yaml Status = PASS
@@ -70,46 +249,15 @@ mod validate_command_tests {
     }
 
     #[test]
-    fn test_single_data_file_single_rules_file() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
     fn test_single_data_file_single_rules_file_verbose() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-        let show_summary_arg = "all";
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let show_summary_option = format!("-{}", SHOW_SUMMARY.1);
-        let args = vec![VALIDATE,
-                        &data_option, &data_arg,
-                        &rules_option, &rules_arg,
-                        &show_summary_option, &show_summary_arg];
-
         let mut writer = Writer::new(WBVec(vec![]));
-        let status_code = cfn_guard_test_command(
-            args,
-            &mut writer
-        );
+        let status_code = ValidateTestRunner::default()
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer);
 
         assert_eq!(5, status_code);
         assert_output_from_file_eq!(
@@ -118,560 +266,78 @@ mod validate_command_tests {
         )
     }
 
-    #[test]
-    fn test_data_dir_single_rules_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
+    #[rstest::rstest]
+    #[case(
+        vec!["data-dir/s3-server-side-encryption-template-compliant.yaml", "data-dir/s3-public-read-prohibited-template-compliant.yaml"],
+        vec!["rules-dir/s3_bucket_public_read_prohibited.guard"]
+    )]
+    #[case(
+        vec!["data-dir/s3-public-read-prohibited-template-compliant.yaml"],
+        vec!["rules-dir/s3_bucket_public_read_prohibited.guard", "rules-dir/s3_bucket_public_read_prohibited.guard"]
+    )]
+    fn test_different_combinations_of_rules_and_data(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+    ) {
         let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
+        let status_code = ValidateTestRunner::default()
+            .data(data_arg)
+            .rules(rules_arg)
+            .run(&mut writer);
 
-    #[test]
-    fn test_single_data_file_rules_dir() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file("resources/validate/rules-dir/");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_data_dir_rules_dir() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg = get_full_path_for_resource_file("resources/validate/rules-dir/");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_multiple_data_files_single_rules_file() {
-        let data_arg1 = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let data_arg2 = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg1,
-            &data_option,
-            &data_arg2,
-            &rules_option,
-            &rules_arg,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_multiple_rules_files() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let rules_arg1 = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-        let rules_arg2 = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg1,
-            &rules_option,
-            &rules_arg2,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_data_file_and_dir_single_rules_file() {
-        let data_arg1 = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let data_arg2 = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg1,
-            &data_option,
-            &data_arg2,
-            &rules_option,
-            &rules_arg,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_rules_file_and_dir() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let rules_arg1 = get_full_path_for_resource_file("resources/validate/rules-dir/");
-        let rules_arg2 = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg1,
-            &rules_option,
-            &rules_arg2,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_data_dir_rules_file_and_dir() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg1 = get_full_path_for_resource_file("resources/validate/rules-dir/");
-        let rules_arg2 = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg1,
-            &rules_option,
-            &rules_arg2,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_data_file_and_dir_rules_dir() {
-        let data_arg1 = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let data_arg2 = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg = get_full_path_for_resource_file("resources/validate/rules-dir/");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg1,
-            &data_option,
-            &data_arg2,
-            &rules_option,
-            &rules_arg,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_data_file_and_dir_rules_file_and_dir() {
-        let data_arg1 = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let data_arg2 = get_full_path_for_resource_file("resources/validate/data-dir/");
-        let rules_arg1 = get_full_path_for_resource_file("resources/validate/rules-dir/");
-        let rules_arg2 = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg1,
-            &data_option,
-            &data_arg2,
-            &rules_option,
-            &rules_arg1,
-            &rules_option,
-            &rules_arg2,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rules_file_single_input_parameters_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg =
-            get_full_path_for_resource_file("resources/validate/input-parameters-dir/db_params.yaml");
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rules_file_multiple_input_parameters_files() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg1 =
-            get_full_path_for_resource_file("resources/validate/input-parameters-dir/db_params.yaml");
-        let input_parameters_arg2 = get_full_path_for_resource_file(
-            "resources/validate/input-parameters-dir/db_metadata.yaml",
-        );
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg1,
-            &input_parameters_option,
-            &input_parameters_arg2,
-        ];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
         assert_eq!(0, status_code);
     }
 
-    #[test]
-    fn test_single_data_file_single_rules_file_input_parameters_dir() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg =
-            get_full_path_for_resource_file("resources/validate/input-parameters-dir/");
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg,
-        ];
-
+    #[rstest::rstest]
+    #[case(vec!["data-dir/"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/"])]
+    #[case(vec!["data-dir/"], vec!["rules-dir/"])]
+    #[case(
+        vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml", "data-dir/s3-public-read-prohibited-template-compliant.yaml"],
+        vec!["rules-dir/s3_bucket_public_read_prohibited.guard"]
+    )]
+    #[case(
+        vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"],
+        vec!["rules-dir/s3_bucket_public_read_prohibited.guard", "rules-dir/s3_bucket_server_side_encryption_enabled.guard"]
+    )]
+    #[case(vec!["data-dir/", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["rules-dir/", "s3_bucket_server_side_encryption_enabled_2.guard"])]
+    #[case(vec!["data-dir/"], vec!["rules-dir/", "s3_bucket_server_side_encryption_enabled_2.guard"])]
+    #[case(vec!["data-dir/", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["rules-dir/"])]
+    #[case(vec!["data-dir/", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["rules-dir/", "s3_bucket_server_side_encryption_enabled_2.guard"])]
+    fn test_combinations_of_rules_and_data_non_compliant(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+    ) {
         let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(0, status_code);
-    }
+        let status_code = ValidateTestRunner::default()
+            .data(data_arg)
+            .rules(rules_arg)
+            .run(&mut writer);
 
-    #[test]
-    fn test_single_data_file_malformed_rules_file() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file("resources/validate/malformed-rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_malformed_data_file_single_rules_file() {
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/malformed-template.yaml"
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rules_file_malformed_input_parameters_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg =
-            get_full_path_for_resource_file("resources/validate/malformed-template.yaml");
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg,
-        ];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_blank_rules_file() {
-        // The parsing exits with status code 5 = FAIL for allowing other rules to get evaluated even when one of them fails to get parsed
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/blank-rule.guard"
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
         assert_eq!(5, status_code);
     }
 
-    #[test]
-    fn test_single_data_file_blank_and_valid_rules_file() {
-        // The parsing exits with status code 5 = FAIL for allowing other rules to get evaluated even when one of them fails to get parsed
-        let data_arg = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let rules_arg1 = get_full_path_for_resource_file("resources/validate/blank-rule.guard");
-        let rules_arg2 = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg1,
-            &rules_option,
-            &rules_arg2,
-        ];
-
+    #[rstest::rstest]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml"], 5)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml", "input-parameters-dir/db_metadata.yaml"], 0)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/"], 0)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/malformed-template.yaml"], -1)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml"], -1)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml", "input-parameters-dir/db_params.yaml"], -1)]
+    fn test_combinations_of_rules_data_and_input_params_files(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+        #[case] input_params_arg: Vec<&str>,
+        #[case] expected_status_code: i32,
+    ) {
         let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(5, status_code);
-    }
+        let status_code = ValidateTestRunner::default()
+            .data(data_arg)
+            .rules(rules_arg)
+            .input_parameters(input_params_arg)
+            .run(&mut writer);
 
-    #[test]
-    fn test_blank_data_file_single_rules_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/blank-template.yaml");
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![VALIDATE, &data_option, &data_arg, &rules_option, &rules_arg];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_blank_and_valid_data_file_single_rules_file() {
-        let data_arg1 = get_full_path_for_resource_file("resources/validate/blank-template.yaml");
-        let data_arg2 = get_full_path_for_resource_file(
-            "resources/validate/s3-server-side-encryption-template-non-compliant-2.yaml",
-        );
-        let rules_arg = get_full_path_for_resource_file(
-            "resources/validate/s3_bucket_server_side_encryption_enabled_2.guard",
-        );
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg1,
-            &data_option,
-            &data_arg2,
-            &rules_option,
-            &rules_arg,
-        ];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rules_file_blank_input_parameters_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg =
-            get_full_path_for_resource_file("resources/validate/blank-template.yaml");
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg,
-        ];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rules_file_blank_and_valid_input_parameters_file() {
-        let data_arg = get_full_path_for_resource_file("resources/validate/db_resource.yaml");
-        let input_parameters_arg1 =
-            get_full_path_for_resource_file("resources/validate/blank-template.yaml");
-        let input_parameters_arg2 =
-            get_full_path_for_resource_file("resources/validate/input-parameters-dir/db_params.yaml");
-        let rules_arg =
-            get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard");
-
-        let data_option = format!("-{}", DATA.1);
-        let rules_option = format!("-{}", RULES.1);
-        let input_parameters_option = format!("-{}", INPUT_PARAMETERS.1);
-        let args = vec![
-            VALIDATE,
-            &data_option,
-            &data_arg,
-            &rules_option,
-            &rules_arg,
-            &input_parameters_option,
-            &input_parameters_arg1,
-            &input_parameters_option,
-            &input_parameters_arg2,
-        ];
-
-        // -1 status code equates to Error being thrown
-        let mut writer = Writer::new(Stdout(stdout()));
-        let status_code = cfn_guard_test_command(args, &mut writer);
-        assert_eq!(-1, status_code);
-    }
-
-    #[test]
-    fn test_single_data_file_single_rule_file_when_either_data_or_rule_file_dne() {
-        for arg in vec![
-            (
-                get_full_path_for_resource_file("fake_file.yaml"),
-                get_full_path_for_resource_file("resources/validate/db_param_port_rule.guard"),
-            ),
-            (
-                get_full_path_for_resource_file("resources/validate/db_resource.yaml"),
-                get_full_path_for_resource_file("fake_file.guard"),
-            ),
-        ] {
-            let data_option = &format!("-{}", DATA.1);
-            let rules_option = &format!("-{}", RULES.1);
-            let args = vec![VALIDATE, data_option, &arg.0, rules_option, &arg.1];
-
-            // -1 status code equates to Error being thrown
-            let mut writer = Writer::new(Stdout(stdout()));
-            let status_code = cfn_guard_test_command(args, &mut writer);
-            assert_eq!(-1, status_code);
-        }
+        assert_eq!(expected_status_code, status_code);
     }
 }
