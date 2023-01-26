@@ -1,0 +1,30 @@
+Test Case #1
+Name: Empty, SKIP
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+
+Test Case #2
+Name: No resources, SKIP
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+
+Test Case #3
+Name: S3 Bucket Encryption set to SSE AES 256, PASS
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = PASS
+
+Test Case #4
+Name: S3 Bucket Encryption set to SSE AWS KMS key, PASS
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = PASS
+
+Test Case #5
+Name: S3 Bucket Encryption not set, FAIL
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = FAIL
+
+Test Case #6
+Name: S3 Bucket Encryption not set but rule is suppressed, SKIP
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+

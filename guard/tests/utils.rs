@@ -14,6 +14,19 @@ use cfn_guard::commands::{
 };
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
+#[non_exhaustive]
+pub struct StatusCode;
+
+impl StatusCode {
+    pub const SUCCESS: i32 = 0;
+    pub const INTERNAL_FAILURE: i32 = -1;
+    pub const COMMAND_MAPPING_ERROR: i32 = -2;
+    pub const PREPROCESSOR_ERROR: i32 = -3;
+    pub const INCORRECT_STATUS_ERROR: i32 = 1;
+    pub const TEST_COMMAND_FAILURE: i32 = 7;
+    pub const PARSING_ERROR: i32 = 5;
+}
+
 pub fn read_from_resource_file(path: &str) -> String {
     let mut resource = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     resource.push(path);
@@ -86,16 +99,16 @@ pub trait CommandTestRunner {
                     match (*command).execute(value, &mut writer) {
                         Err(e) => {
                             println!("Error occurred {}", e);
-                            -1
+                            StatusCode::INTERNAL_FAILURE
                         }
                         Ok(code) => code,
                     }
                 } else {
-                    -2
+                    StatusCode::PREPROCESSOR_ERROR
                 }
             }
 
-            (_, None) => -3,
+            (_, None) => StatusCode::PREPROCESSOR_ERROR,
         }
     }
 }

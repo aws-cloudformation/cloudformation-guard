@@ -46,7 +46,7 @@ pub const RULES_FILE: (&str, &str) = ("rules-file", "r");
 pub const TEST_DATA: (&str, &str) = ("test-data", "t");
 pub const DIRECTORY: (&str, &str) = ("dir", "d");
 // Arguments for rulegen
-pub(crate) const TEMPLATE: (&str, &str) = ("template", "t");
+pub const TEMPLATE: (&str, &str) = ("template", "t");
 // Arg group for validate
 pub(crate) const REQUIRED_FLAGS: &str = "required_flags";
 // Arg group for test

@@ -1,0 +1,4 @@
+let aws_s3_bucket_resources = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule aws_s3_bucket when %aws_s3_bucket_resources !empty {
+  %aws_s3_bucket_resources.Properties.PublicAccessBlockConfiguration == {"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true}
+}
