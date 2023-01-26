@@ -19,7 +19,10 @@ mod validate_tests {
     };
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
-    use crate::utils::{compare_write_buffer_with_file, compare_write_buffer_with_string, get_full_path_for_resource_file, CommandTestRunner, StatusCode};
+    use crate::utils::{
+        compare_write_buffer_with_file, compare_write_buffer_with_string,
+        get_full_path_for_resource_file, CommandTestRunner, StatusCode,
+    };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
     #[derive(Default)]

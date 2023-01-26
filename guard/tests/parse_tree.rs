@@ -106,7 +106,11 @@ mod parse_tree_tests {
         StatusCode::SUCCESS
     )]
     #[case("validate/rules-dir/dne.guard", "", StatusCode::INTERNAL_FAILURE)]
-    #[case("validate/rules-dir/malformed-rule.guard", "", StatusCode::INTERNAL_FAILURE)]
+    #[case(
+        "validate/rules-dir/malformed-rule.guard",
+        "",
+        StatusCode::INTERNAL_FAILURE
+    )]
     fn test_yaml_output(
         #[case] rules_arg: &str,
         #[case] expected_writer_output: &str,

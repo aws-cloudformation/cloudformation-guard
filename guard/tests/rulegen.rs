@@ -9,10 +9,10 @@ mod rulegen_tests {
 
     use rstest::rstest;
 
-    use cfn_guard::commands::{RULEGEN, TEMPLATE, OUTPUT};
+    use crate::assert_output_from_file_eq;
+    use cfn_guard::commands::{OUTPUT, RULEGEN, TEMPLATE};
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
-    use crate::assert_output_from_file_eq;
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
 
@@ -53,12 +53,20 @@ mod rulegen_tests {
     }
 
     #[rstest::rstest]
-    #[case(Some("resources/rulegen/data-dir/s3-public-read-prohibited-template-compliant.json"), "resources/rulegen/output-dir/test_rulegen_from_template.out", StatusCode::SUCCESS)]
-    #[case(Some("resources/rulegen/data-dir/s3-public-read-prohibited-template-compliant.yaml"), "resources/rulegen/output-dir/test_rulegen_from_template.out", StatusCode::SUCCESS)]
+    #[case(
+        Some("resources/rulegen/data-dir/s3-public-read-prohibited-template-compliant.json"),
+        "resources/rulegen/output-dir/test_rulegen_from_template.out",
+        StatusCode::SUCCESS
+    )]
+    #[case(
+        Some("resources/rulegen/data-dir/s3-public-read-prohibited-template-compliant.yaml"),
+        "resources/rulegen/output-dir/test_rulegen_from_template.out",
+        StatusCode::SUCCESS
+    )]
     fn test_rulegen_from_template(
         #[case] template_arg: Option<&str>,
         #[case] expected_output_file_path: &str,
-        #[case] expected_status_code: i32
+        #[case] expected_status_code: i32,
     ) {
         let mut writer = Writer::new(WBVec(vec![]));
         let status_code = RulegenTestRunner::default()
@@ -66,9 +74,6 @@ mod rulegen_tests {
             .run(&mut writer);
 
         assert_eq!(expected_status_code, status_code);
-        assert_output_from_file_eq!(
-            expected_output_file_path,
-            writer
-        )
+        assert_output_from_file_eq!(expected_output_file_path, writer)
     }
 }

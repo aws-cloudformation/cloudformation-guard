@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use walkdir::DirEntry;
-use std::io::Write;
 
 use validate::validate_path;
 
@@ -166,16 +166,18 @@ or failure testing.
             for (_dir, guard_files) in ordered_guard_files {
                 for each_rule_file in guard_files {
                     if each_rule_file.test_files.is_empty() {
-                        writeln!(writer,
-                                   "Guard File {} did not have any tests associated, skipping.",
-                                   each_rule_file.file.path().display()
+                        writeln!(
+                            writer,
+                            "Guard File {} did not have any tests associated, skipping.",
+                            each_rule_file.file.path().display()
                         )?;
                         writeln!(writer, "---")?;
                         continue;
                     }
-                    writeln!(writer,
-                               "Testing Guard File {}",
-                               each_rule_file.file.path().display()
+                    writeln!(
+                        writer,
+                        "Testing Guard File {}",
+                        each_rule_file.file.path().display()
                     )?;
                     let rule_file = File::open(each_rule_file.file.path())?;
                     let content = read_file_content(rule_file)?;
@@ -183,10 +185,7 @@ or failure testing.
                         crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => {
-                            writeln!(writer,
-                                       "Parse Error on ruleset file {}", 
-                                       e
-                            )?;
+                            writeln!(writer, "Parse Error on ruleset file {}", e)?;
                             exit_code = 1;
                         }
                         Ok(rules) => {
@@ -195,8 +194,13 @@ or failure testing.
                                 .iter()
                                 .map(|de| de.path().to_path_buf())
                                 .collect::<Vec<PathBuf>>();
-                            let test_exit_code =
-                                test_with_data(&data_test_files, &rules, verbose, new_engine, writer)?;
+                            let test_exit_code = test_with_data(
+                                &data_test_files,
+                                &rules,
+                                verbose,
+                                new_engine,
+                                writer,
+                            )?;
                             exit_code = if exit_code == 0 {
                                 test_exit_code
                             } else {
@@ -243,25 +247,24 @@ or failure testing.
             }) {
                 match rules {
                     Err(e) => {
-                        write!(writer,
-                                   "Unable to read rule file content {}", 
-                                   e
-                        )?;
+                        write!(writer, "Unable to read rule file content {}", e)?;
                         exit_code = 1;
                     }
                     Ok((context, path)) => {
                         let span = crate::rules::parser::Span::new_extra(&context, &path);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                writeln!(writer,
-                                           "Parse Error on ruleset file {}", 
-                                           e
-                                )?;
+                                writeln!(writer, "Parse Error on ruleset file {}", e)?;
                                 exit_code = 1;
                             }
                             Ok(rules) => {
-                                let curr_exit_code =
-                                    test_with_data(&data_test_files, &rules, verbose, new_engine, writer)?;
+                                let curr_exit_code = test_with_data(
+                                    &data_test_files,
+                                    &rules,
+                                    verbose,
+                                    new_engine,
+                                    writer,
+                                )?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -294,7 +297,7 @@ fn test_with_data(
     rules: &RulesFile<'_>,
     verbose: bool,
     new_engine: bool,
-    mut writer: &mut Writer
+    mut writer: &mut Writer,
 ) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
@@ -318,10 +321,7 @@ fn test_with_data(
             }
             Ok(specs) => {
                 for each in specs {
-                    writeln!(writer,
-                                 "Test Case #{}",
-                                 test_counter
-                    )?;
+                    writeln!(writer, "Test Case #{}", test_counter)?;
                     if each.name.is_some() {
                         writeln!(writer, "Name: {}", each.name.unwrap())?;
                     }
@@ -346,9 +346,10 @@ fn test_with_data(
                             let expected = match each.expectations.rules.get(rule_name) {
                                 Some(exp) => Status::try_from(exp.as_str())?,
                                 None => {
-                                    writeln!(writer,
-                                             "  No Test expectation was set for Rule {}",
-                                             rule_name
+                                    writeln!(
+                                        writer,
+                                        "  No Test expectation was set for Rule {}",
+                                        rule_name
                                     )?;
                                     continue;
                                 }
@@ -452,12 +453,11 @@ fn test_with_data(
                                         }
                                     }
                                 },
-                                None => {
-                                    writeln!(writer,
-                                        "  No Test expectation was set for Rule {}",
-                                        each.context
-                                    )?
-                                }
+                                None => writeln!(
+                                    writer,
+                                    "  No Test expectation was set for Rule {}",
+                                    each.context
+                                )?,
                             }
                         }
                         by_result
@@ -471,7 +471,10 @@ fn test_with_data(
     Ok(exit_code)
 }
 
-pub(crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>, mut writer: &mut Writer) {
+pub(crate) fn print_test_case_report(
+    by_result: &HashMap<String, indexmap::IndexSet<String>>,
+    mut writer: &mut Writer,
+) {
     use itertools::Itertools;
     let mut results = by_result.keys().cloned().collect_vec();
 

@@ -9,10 +9,10 @@ mod migrate_tests {
 
     use rstest::rstest;
 
-    use cfn_guard::commands::{MIGRATE, RULES, OUTPUT};
+    use crate::assert_output_from_file_eq;
+    use cfn_guard::commands::{MIGRATE, OUTPUT, RULES};
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
-    use crate::assert_output_from_file_eq;
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
 
@@ -53,11 +53,15 @@ mod migrate_tests {
     }
 
     #[rstest::rstest]
-    #[case(Some("resources/migrate/rules-dir/rule_1dot0.guard"), "resources/migrate/output-dir/test_migrate_rule.guard", StatusCode::SUCCESS)]
+    #[case(
+        Some("resources/migrate/rules-dir/rule_1dot0.guard"),
+        "resources/migrate/output-dir/test_migrate_rule.guard",
+        StatusCode::SUCCESS
+    )]
     fn test_migrate_rule(
         #[case] rules_arg: Option<&str>,
         #[case] expected_output_file_path: &str,
-        #[case] expected_status_code: i32
+        #[case] expected_status_code: i32,
     ) {
         let mut writer = Writer::new(WBVec(vec![]));
         let status_code = MigrateTestRunner::default()
@@ -65,9 +69,6 @@ mod migrate_tests {
             .run(&mut writer);
 
         assert_eq!(expected_status_code, status_code);
-        assert_output_from_file_eq!(
-            expected_output_file_path,
-            writer
-        )
+        assert_output_from_file_eq!(expected_output_file_path, writer)
     }
 }
