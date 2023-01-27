@@ -4,7 +4,7 @@
 pub(crate) mod utils;
 
 #[cfg(test)]
-mod validate_command_tests {
+mod validate_tests {
     use std::io::stdout;
 
     use indoc::indoc;
@@ -21,7 +21,7 @@ mod validate_command_tests {
 
     use crate::utils::{
         compare_write_buffer_with_file, compare_write_buffer_with_string,
-        get_full_path_for_resource_file, CommandTestRunner,
+        get_full_path_for_resource_file, CommandTestRunner, StatusCode,
     };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
@@ -204,16 +204,16 @@ mod validate_command_tests {
     }
 
     #[rstest::rstest]
-    #[case(vec!["data-dir/s3-public-read-prohibited-template-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], 0)]
-    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], 5)]
-    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], -1)]
-    #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
-    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], 5)]
-    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard", "blank-rule.guard"], 5 )]
-    #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
-    #[case(vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], -1)]
-    #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], -1)]
-    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], -1)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::SUCCESS)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::PARSING_ERROR)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], StatusCode::PARSING_ERROR)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard", "blank-rule.guard"], StatusCode::PARSING_ERROR )]
+    #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
     fn test_single_data_file_single_rules_file(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
@@ -247,7 +247,7 @@ mod validate_command_tests {
                "#
         };
 
-        assert_eq!(0, status_code);
+        assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_str_eq!(expected_output, writer)
     }
 
@@ -262,7 +262,7 @@ mod validate_command_tests {
             .show_summary(vec!["all"])
             .run(&mut writer);
 
-        assert_eq!(5, status_code);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
         assert_output_from_file_eq!(
             "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose.out",
             writer
@@ -288,7 +288,7 @@ mod validate_command_tests {
             .rules(rules_arg)
             .run(&mut writer);
 
-        assert_eq!(0, status_code);
+        assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
     #[rstest::rstest]
@@ -318,16 +318,16 @@ mod validate_command_tests {
             .rules(rules_arg)
             .run(&mut writer);
 
-        assert_eq!(5, status_code);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     #[rstest::rstest]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml"], 5)]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml", "input-parameters-dir/db_metadata.yaml"], 0)]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/"], 0)]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/malformed-template.yaml"], -1)]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml"], -1)]
-    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml", "input-parameters-dir/db_params.yaml"], -1)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml"], StatusCode::PARSING_ERROR)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/db_params.yaml", "input-parameters-dir/db_metadata.yaml"], StatusCode::SUCCESS)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/"], StatusCode::SUCCESS)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/malformed-template.yaml"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["db_resource.yaml"], vec!["db_param_port_rule.guard"], vec!["input-parameters-dir/blank-template.yaml", "input-parameters-dir/db_params.yaml"], StatusCode::INTERNAL_FAILURE)]
     fn test_combinations_of_rules_data_and_input_params_files(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,

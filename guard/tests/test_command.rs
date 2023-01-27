@@ -9,15 +9,15 @@ mod test_command_tests {
 
     use rstest::rstest;
 
+    use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES, RULES_AND_TEST_FILE,
         RULES_FILE, TEST, TEST_DATA, VERBOSE,
     };
-    use cfn_guard::utils::writer::WriteBuffer::Stdout;
-    use cfn_guard::utils::writer::Writer;
+    use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
 
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner};
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
@@ -143,11 +143,11 @@ mod test_command_tests {
         }
     }
 
-    #[rstest::rstest]
+    #[rstest]
     #[case("json")]
     #[case("yaml")]
-    fn test_test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
-        let mut writer = Writer::new(Stdout(stdout()));
+    fn test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_logging_enabled_tests.{}",
@@ -156,18 +156,23 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
+            .verbose(true)
             .run(&mut writer);
 
-        assert_eq!(0, status_code);
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/test_data_file_with_shorthand_reference.out",
+            writer
+        );
 
         Ok(())
     }
 
-    #[rstest::rstest]
+    #[rstest]
     #[case("json")]
     #[case("yaml")]
-    fn test_test_data_file(#[case] file_type: &str) -> Result<(), Error> {
-        let mut writer = Writer::new(Stdout(stdout()));
+    fn test_data_file(#[case] file_type: &str) -> Result<(), Error> {
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.{}",
@@ -176,9 +181,14 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
+            .verbose(true)
             .run(&mut writer);
 
-        assert_eq!(0, status_code);
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/test_data_file.out",
+            writer
+        );
 
         Ok(())
     }
