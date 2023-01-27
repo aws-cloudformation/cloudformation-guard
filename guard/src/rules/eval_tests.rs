@@ -4,7 +4,6 @@ use grep_searcher::SearcherBuilder;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
-use crate::rules::libyaml::loader::Loader;
 
 use super::*;
 
