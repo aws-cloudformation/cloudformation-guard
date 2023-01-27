@@ -161,7 +161,7 @@ mod test_command_tests {
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
-            "resources/test-command/output-dir/test_test_data_file_with_shorthand_reference.out",
+            "resources/test-command/output-dir/test_data_file_with_shorthand_reference.out",
             writer
         );
 
@@ -186,7 +186,7 @@ mod test_command_tests {
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
-            "resources/test-command/output-dir/test_test_data_file.out",
+            "resources/test-command/output-dir/test_data_file.out",
             writer
         );
 
