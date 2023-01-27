@@ -1,10 +1,12 @@
-use super::*;
+use std::collections::HashMap;
+
+use grep_searcher::SearcherBuilder;
+
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
 use crate::rules::libyaml::loader::Loader;
-use grep_matcher::Match;
-use grep_searcher::{LineStep, SearcherBuilder, SinkMatch};
-use std::collections::HashMap;
+
+use super::*;
 
 //
 // All unary function simple tests
@@ -37,11 +39,13 @@ fn test_all_unary_functions() -> Result<()> {
     let int_range_value = PathAwareValue::try_from(r#"r(10, 20)"#)?;
     let float_range_value = PathAwareValue::try_from(r#"r(10.0, 20.5]"#)?;
 
-    let tests: Vec<(
+    type UnaryTest<'test> = Vec<(
         Box<dyn Fn(&QueryResult<'_>) -> Result<bool>>,
-        Vec<QueryResult<'_>>,
-        Vec<QueryResult<'_>>,
-    )> = vec![
+        Vec<QueryResult<'test>>,
+        Vec<QueryResult<'test>>,
+    )>;
+
+    let tests: UnaryTest = vec![
         (
             Box::new(exists_operation),
             // Successful tests
@@ -253,11 +257,11 @@ fn test_all_unary_functions() -> Result<()> {
         println!("Testing Case #{}", index);
         for (idx, each_success) in successes.iter().enumerate() {
             println!("Testing Success Case {}#{}", index, idx);
-            assert_eq!((*func)(each_success)?, true);
+            assert!((*func)(each_success)?);
         }
         for (idx, each_failure) in failures.iter().enumerate() {
             println!("Testing Failure Case {}#{}", index, idx);
-            assert_eq!((*func)(each_failure)?, false);
+            assert!(!(*func)(each_failure)?);
         }
     }
 
@@ -371,7 +375,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
                 QueryResult::Resolved(ptr) => *ptr,
                 _ => unreachable!(),
             };
-            assert_eq!(std::ptr::eq(rhs_ptr, *value), true);
+            assert!(std::ptr::eq(rhs_ptr, *value));
         }
 
         _ => unreachable!(),
@@ -387,7 +391,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     let cmp_result = &result[0];
     match cmp_result {
         ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
-            assert_eq!(*outcome, false);
+            assert!(!(*outcome));
         }
 
         _ => unreachable!(),
@@ -403,7 +407,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     let cmp_result = &result[0];
     match cmp_result {
         ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
-            assert_eq!(*outcome, true);
+            assert!(*outcome);
         }
 
         _ => unreachable!(),
@@ -455,7 +459,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                     match (lhs, rhs) {
                         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => {
                             assert_eq!(s1, s2);
-                            assert_eq!(std::ptr::eq(s1, s2), false);
+                            assert!(!std::ptr::eq(s1, s2));
                             assert_eq!(s1.as_str(), "ami-123456789012")
                         }
                         (_, _) => unreachable!(),
@@ -464,7 +468,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                     match (lhs, rhs) {
                         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => {
                             assert_ne!(s1, s2);
-                            assert_eq!(std::ptr::eq(s1, s2), false);
+                            assert!(!std::ptr::eq(s1, s2));
                             assert_eq!(s1.as_str(), "ami-123456789012");
                             assert_eq!(s2.as_str(), "ami-01234567890");
                         }
@@ -527,7 +531,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                             if !outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             } else {
-                                assert_eq!(lhs.self_path().0.starts_with("/Resources/iam/Properties/PolicyDocument/Statement/1/Principal"), true);
+                                assert!(lhs.self_path().0.starts_with("/Resources/iam/Properties/PolicyDocument/Statement/1/Principal"));
                             }
                         }
 
@@ -647,7 +651,7 @@ fn binary_comparisons_gt_ge() -> Result<()> {
           string: Hi
     "#,
     )?)?;
-    let mut eval = eval_context::eval_context_tests::BasicQueryTesting {
+    let mut eval = BasicQueryTesting {
         root: &path_value,
         recorder: None,
     };
@@ -932,46 +936,37 @@ fn block_guard_pass() -> Result<()> {
     let top = tracker.extract();
     match top.container.as_ref() {
         Some(record) => {
-            assert_eq!(
-                matches!(
-                    record,
-                    RecordType::BlockGuardCheck(BlockCheck {
-                        status: Status::FAIL,
-                        ..
-                    })
-                ),
-                true
-            );
+            assert!(matches!(
+                record,
+                RecordType::BlockGuardCheck(BlockCheck {
+                    status: Status::FAIL,
+                    ..
+                })
+            ),);
             //
             // 2 Map Filters, 1 Block Clause
             //
             assert_eq!(top.children.len(), 3);
             let top_child = &top.children[2];
-            assert_eq!(
-                matches!(
-                    top_child.container.as_ref().unwrap(),
-                    RecordType::BlockGuardCheck(BlockCheck {
-                        status: Status::FAIL,
-                        ..
-                    })
-                ),
-                true
-            );
+            assert!(matches!(
+                top_child.container.as_ref().unwrap(),
+                RecordType::BlockGuardCheck(BlockCheck {
+                    status: Status::FAIL,
+                    ..
+                })
+            ),);
             assert_eq!(top_child.children.len(), 2); // There are 2 Statements inside PolicyDocument
             for (idx, each) in top_child.children.iter().enumerate() {
                 match each.container.as_ref() {
                     Some(inner) => {
                         if idx == 0 {
-                            assert_eq!(
-                                matches!(
-                                    inner,
-                                    RecordType::GuardClauseBlockCheck(BlockCheck {
-                                        status: Status::FAIL,
-                                        ..
-                                    })
-                                ),
-                                true
-                            );
+                            assert!(matches!(
+                                inner,
+                                RecordType::GuardClauseBlockCheck(BlockCheck {
+                                    status: Status::FAIL,
+                                    ..
+                                })
+                            ),);
                             assert_eq!(each.children.len(), 1); // only on principal value
                             let guard_rec = &each.children[0];
                             match guard_rec.container.as_ref().unwrap() {
@@ -981,35 +976,28 @@ fn block_guard_pass() -> Result<()> {
                                         custom_message: Some(msg),
                                         message: None,
                                         comparison: (CmpOperator::Eq, true),
-                                        from: QueryResult::Resolved(fromQ),
+                                        from: QueryResult::Resolved(from_q),
                                         to: Some(QueryResult::Resolved(_)),
                                     },
                                 )) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");
-                                    assert_eq!(fromQ.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
+                                    assert_eq!(from_q.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                                 }
                                 _ => unreachable!(),
                             }
                         } else {
-                            assert_eq!(
-                                matches!(
-                                    inner,
-                                    RecordType::GuardClauseBlockCheck(BlockCheck {
-                                        status: Status::PASS,
-                                        ..
-                                    })
-                                ),
-                                true
-                            );
+                            assert!(matches!(
+                                inner,
+                                RecordType::GuardClauseBlockCheck(BlockCheck {
+                                    status: Status::PASS,
+                                    ..
+                                })
+                            ),);
                             assert_eq!(each.children.len(), 2); // there are 2 principal values
                             for each_clause_check in &each.children {
                                 match &each_clause_check.container {
-                                    Some(clause_rec) => match clause_rec {
-                                        RecordType::ClauseValueCheck(ClauseCheck::Success) => {}
-
-                                        _ => unreachable!(),
-                                    },
-                                    None => unreachable!(),
+                                    Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => {}
+                                    _ => unreachable!(),
                                 }
                             }
                         }
@@ -1270,64 +1258,49 @@ fn variable_projections_failures() -> Result<()> {
     for (idx, each_rule_clause) in rule.children.iter().enumerate() {
         if idx == 0 {
             // Condition block
-            assert_eq!(
-                matches!(
-                    each_rule_clause.container,
-                    Some(RecordType::RuleCondition(Status::PASS))
-                ),
-                true
-            );
+            assert!(matches!(
+                each_rule_clause.container,
+                Some(RecordType::RuleCondition(Status::PASS))
+            ),);
             assert_eq!(each_rule_clause.children.len(), 1); //
             let gbc = &each_rule_clause.children[0];
-            assert_eq!(
-                matches!(
-                    gbc.container,
-                    Some(RecordType::GuardClauseBlockCheck(BlockCheck {
-                        status: Status::PASS,
-                        ..
-                    }))
-                ),
-                true
-            );
+            assert!(matches!(
+                gbc.container,
+                Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                    status: Status::PASS,
+                    ..
+                }))
+            ),);
         } else if idx == 2 {
-            assert_eq!(
-                matches!(
-                    each_rule_clause.container,
-                    Some(RecordType::GuardClauseBlockCheck(BlockCheck {
-                        status: Status::FAIL,
-                        ..
-                    }))
-                ),
-                true
-            );
+            assert!(matches!(
+                each_rule_clause.container,
+                Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                    status: Status::FAIL,
+                    ..
+                }))
+            ),);
             assert_eq!(each_rule_clause.children.len(), 2); //
             let failed_clause = &each_rule_clause.children[1];
-            assert_eq!(
-                matches!(
-                    failed_clause.container,
-                    Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(
-                        UnaryValueCheck {
-                            comparison: (CmpOperator::Empty, true),
-                            value: ValueCheck {
-                                status: Status::FAIL,
-                                ..
-                            }
+            assert!(matches!(
+                failed_clause.container,
+                Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(
+                    UnaryValueCheck {
+                        comparison: (CmpOperator::Empty, true),
+                        value: ValueCheck {
+                            status: Status::FAIL,
+                            ..
                         }
-                    )))
-                ),
-                true
-            );
+                    }
+                )))
+            ),);
         } else {
-            assert_eq!(
-                matches!(
-                    each_rule_clause.container,
-                    Some(RecordType::GuardClauseBlockCheck(BlockCheck {
-                        status: Status::PASS,
-                        ..
-                    }))
-                ),
-                true
-            );
+            assert!(matches!(
+                each_rule_clause.container,
+                Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                    status: Status::PASS,
+                    ..
+                }))
+            ),);
         }
     }
 
@@ -1406,7 +1379,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
     let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1424,7 +1397,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
     let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
@@ -1442,7 +1415,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = super::eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
     let status = eval_rules_file(&rules_files, &mut root_scope)?;
     assert_eq!(status, Status::PASS);
 
@@ -1782,14 +1755,14 @@ fn test_inner_when_skipped() -> Result<()> {
 
 #[test]
 fn test_multiple_valued_clause_reporting() -> Result<()> {
-    struct ReportAssertions {};
+    struct ReportAssertions {}
 
     impl<'value> RecordTracer<'value> for ReportAssertions {
-        fn start_record(&mut self, context: &str) -> Result<()> {
+        fn start_record(&mut self, _context: &str) -> Result<()> {
             Ok(())
         }
 
-        fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        fn end_record(&mut self, _context: &str, record: RecordType<'value>) -> Result<()> {
             match record {
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     message,
@@ -1798,7 +1771,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
                 }) => {
                     assert_eq!(message, None);
                     assert_eq!(status, Status::FAIL);
-                    assert_eq!(at_least_one_matches, false);
+                    assert!(!at_least_one_matches);
                 }
 
                 RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
@@ -1807,15 +1780,14 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
                     to,
                     ..
                 })) => {
-                    assert_eq!(to.is_some(), true);
+                    assert!(to.is_some());
                     assert_eq!(status, Status::FAIL);
                     match from {
                         QueryResult::Resolved(res) => {
-                            assert_eq!(
+                            assert!(
                                 res.self_path().0.as_str() == "/Resources/second/Properties/Name"
                                     || res.self_path().0.as_str()
                                         == "/Resources/failed/Properties/Name",
-                                true
                             );
                         }
 
@@ -2258,7 +2230,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
             }
         }
     }"#;
-    let resources = PathAwareValue::try_from(resources_str)?;
+    let _resources = PathAwareValue::try_from(resources_str)?;
     let selection_query = AccessQuery::try_from(selection_str)?;
     let mut eval = BasicQueryTesting {
         root: &values,
@@ -2437,7 +2409,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
         Properties:
           ImageId: ami-1234554657
     "#;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
+    let _value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting {
         root: &values,
         recorder: None,
@@ -2542,21 +2514,15 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     for each in failed_clauses {
         if let Some(RecordType::ClauseValueCheck(check)) = &each.container {
             match check {
-                ClauseCheck::Comparison(ComparisonClauseCheck {
-                    status, from, to, ..
-                }) => {
+                ClauseCheck::Comparison(ComparisonClauseCheck { status, from, .. }) => {
                     assert_eq!(*status, Status::FAIL);
-                    assert_eq!(
-                        each.context.contains("Action") || each.context.contains("Principal"),
-                        true
-                    );
-                    assert_eq!(from.resolved().map_or(false, |res|
-                        {
-                            let path = res.self_path().0.as_str();
-                            path == "/Resources/iam/Properties/PolicyDocument/Statement/Action" ||
-                                path == "/Resources/iam/Properties/PolicyDocument/Statement/Principal/0"
-                        }
-                    ), true)
+                    assert!(each.context.contains("Action") || each.context.contains("Principal"),);
+                    assert!(from.resolved().map_or(false, |res| {
+                        let path = res.self_path().0.as_str();
+                        path == "/Resources/iam/Properties/PolicyDocument/Statement/Action"
+                            || path
+                                == "/Resources/iam/Properties/PolicyDocument/Statement/Principal/0"
+                    }))
                 }
 
                 _ => unreachable!(),
@@ -3192,7 +3158,6 @@ fn test_iam_statement_clauses() -> Result<()> {
         ]
     }"###;
     let value = PathAwareValue::try_from(sample)?;
-    let mut tracker = RecordTracker::new();
     let mut eval = BasicQueryTesting {
         root: &value,
         recorder: None,
@@ -3599,7 +3564,7 @@ rule deny_egress when %sgs NOT EMPTY {
     };
 
     for (index, each) in samples.iter().enumerate() {
-        let mut root_context = root_scope(&rules_file, &each)?;
+        let mut root_context = root_scope(&rules_file, each)?;
         let status = eval_rules_file(&rules_file, &mut root_context)?;
         println!("{}", format!("Status {} = {}", index, status).underline());
     }
@@ -3940,6 +3905,8 @@ fn using_resource_names_for_assessment() -> Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore]
 fn test_string_in_comparison() -> Result<()> {
     let resources = r###"
     Resources:
@@ -3991,10 +3958,7 @@ fn test_searcher() -> Result<()> {
 
     use grep_matcher::Matcher;
     use grep_regex::RegexMatcher;
-    use grep_searcher::LineIter;
-    use grep_searcher::Searcher;
-    use grep_searcher::Sink;
-    struct MySink {};
+
     let matcher = RegexMatcher::new("\\s+(s3):$|\\s+(s3Policy):$").unwrap();
     SearcherBuilder::new()
         .line_number(true)
@@ -4002,34 +3966,12 @@ fn test_searcher() -> Result<()> {
         .search_slice(
             &matcher,
             resources.as_bytes(),
-            grep_searcher::sinks::UTF8(|lnum, line| {
+            grep_searcher::sinks::UTF8(|_, line| {
                 let mut captures = matcher.new_captures()?;
                 let _matched = matcher.captures(line.trim_end().as_bytes(), &mut captures)?;
-                // println!("Line {}, Match {}", lnum, line[matched].to_string());
                 Ok(true)
             }),
         )?;
-
-    Ok(())
-}
-
-#[test]
-fn yaml_loader() -> Result<()> {
-    let docs = r###"
-#    apiVersion: v1
-#    next: true
-#    number: 3
-#    spec:
-#      containers:
-#        - image: blah
-#          second: true
-    Name: !Sub
-      - www.${Domain}
-      - { Domain: !Ref RootDomainName }
-    "###;
-
-    let mut loader = Loader::new();
-    loader.load(String::from(docs))?;
 
     Ok(())
 }
