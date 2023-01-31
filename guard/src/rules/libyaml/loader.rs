@@ -1,3 +1,6 @@
+use lazy_static::lazy_static;
+use std::borrow::Cow;
+
 use crate::rules::{
     self,
     errors::{Error, ErrorKind},
@@ -8,7 +11,69 @@ use crate::rules::{
     path_value::Location,
     values::MarkedValue,
 };
-use std::borrow::Cow;
+
+use std::collections::{HashMap, HashSet};
+
+lazy_static! {
+    static ref SHORT_FORM_TO_LONG_MAPPING: HashMap<&'static str, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert("Ref", "Ref");
+        m.insert("GetAtt", "Fn::GetAtt");
+        m.insert("Base64", "Fn::Base64");
+        m.insert("Sub", "Fn::Sub");
+        m.insert("GetAZs", "Fn::GetAZs");
+        m.insert("ImportValue", "Fn::ImportValue");
+        m.insert("Condition", "Condition");
+        m.insert("RefAll", "Fn::RefAll");
+        m.insert("Select", "Fn::Select");
+        m.insert("Split", "Fn::Split");
+        m.insert("Join", "Fn::Join");
+        m.insert("FindInMap", "Fn::FindInMap");
+        m.insert("And", "Fn::And");
+        m.insert("Equals", "Fn::Equals");
+        m.insert("Contains", "Fn::Contains");
+        m.insert("EachMemberIn", "Fn::EachMemberIn");
+        m.insert("EachMemberEquals", "Fn::EachMemberEquals");
+        m.insert("ValueOf", "Fn::ValueOf");
+        m.insert("If", "Fn::If");
+        m.insert("Not", "Fn::Not");
+        m.insert("Or", "Fn::Or");
+        m
+    };
+    static ref SINGLE_VALUE_FUNC_REF: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("Ref");
+        set.insert("Base64");
+        set.insert("Sub");
+        set.insert("GetAZs");
+        set.insert("ImportValue");
+        set.insert("GetAtt");
+        set.insert("Condition");
+        set.insert("RefAll");
+        set
+    };
+    static ref SEQUENCE_VALUE_FUNC_REF: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("GetAtt");
+        set.insert("Sub");
+        set.insert("Select");
+        set.insert("Split");
+        set.insert("Join");
+        set.insert("FindInMap");
+        set.insert("And");
+        set.insert("Equals");
+        set.insert("Contains");
+        set.insert("EachMemberIn");
+        set.insert("EachMemberEquals");
+        set.insert("ValueOf");
+        set.insert("If");
+        set.insert("Not");
+        set.insert("Or");
+        set
+    };
+}
+
+const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
 
 #[derive(Debug, Default)]
 pub struct Loader {
@@ -49,7 +114,6 @@ impl Loader {
                                 "Guard does not currently support aliases",
                             ))))
                         }
-                        _ => todo!(),
                     };
                 }
                 Err(e) => return Err(Error(ErrorKind::ParseError(format!("{}", e)))),
@@ -65,37 +129,34 @@ impl Loader {
             Ok(s) => s.to_string(),
             Err(_) => "".to_string(),
         };
+
         let path_value = if let Some(tag) = tag {
             let handle = tag.get_handle();
             let suffix = tag.get_suffix(handle.len());
-            if handle == "!!" {
-                Self::handle_type_ref(val, location, suffix.as_ref())
-            } else if handle == "!" {
-                Self::handle_single_value_func_ref(val.clone(), location.clone(), suffix.as_ref())
+
+            if handle == "!" {
+                handle_single_value_func_ref(val.clone(), location.clone(), suffix.as_ref())
                     .map_or(MarkedValue::String(val, location), std::convert::identity)
+            } else if suffix.starts_with(TYPE_REF_PREFIX) {
+                handle_type_ref(val, location, suffix.as_ref())
             } else {
                 MarkedValue::String(val, location)
             }
         } else if style != ScalarStyle::Plain {
             MarkedValue::String(val, location)
         } else {
-            if !val.is_empty() && Self::is_number(&val) {
-                match val.parse::<i64>() {
-                    Ok(i) => MarkedValue::Int(i, location),
-                    Err(_) => val
-                        .parse::<f64>()
-                        .ok()
-                        .map_or(MarkedValue::BadValue(val, location.clone()), |f| {
-                            MarkedValue::Float(f, location)
-                        }),
-                }
-            } else {
-                match val.parse::<bool>() {
-                    Ok(b) => MarkedValue::Bool(b, location),
-                    Err(_) => MarkedValue::String(val, location),
-                }
+            match val.parse::<i64>() {
+                Ok(i) => MarkedValue::Int(i, location),
+                Err(_) => match val.parse::<f64>() {
+                    Ok(f) => MarkedValue::Float(f, location),
+                    Err(_) => match val.parse::<bool>() {
+                        Ok(b) => MarkedValue::Bool(b, location),
+                        Err(_) => MarkedValue::String(val, location),
+                    },
+                },
             }
         };
+
         self.stack.push(path_value);
     }
 
@@ -127,15 +188,14 @@ impl Loader {
     }
 
     fn handle_sequence_start(&mut self, event: SequenceStart, location: Location) {
-        // let a = event.anchor.unwrap();
         if let Some(tag) = &event.tag {
             let handle = tag.get_handle();
             let suffix = tag.get_suffix(handle.len());
             if handle == "!" {
-                match Self::handle_sequence_value_func_ref(location.clone(), &suffix) {
+                match handle_sequence_value_func_ref(location.clone(), &suffix) {
                     Some(value) => {
                         self.stack.push(value);
-                        let fn_ref = Self::short_form_to_long(&suffix);
+                        let fn_ref = short_form_to_long(&suffix);
                         self.func_support_index
                             .push((self.stack.len() - 1, (fn_ref.to_owned(), location.clone())));
                     }
@@ -170,104 +230,67 @@ impl Loader {
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
     }
+}
 
-    fn is_number(val: &str) -> bool {
-        for c in val.chars() {
-            if !c.is_numeric() {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    fn short_form_to_long(fn_ref: &str) -> &'static str {
-        match fn_ref {
-            "Ref" => "Ref",
-            "GetAtt" => "Fn::GetAtt",
-            "Base64" => "Fn::Base64",
-            "Sub" => "Fn::Sub",
-            "GetAZs" => "Fn::GetAZs",
-            "ImportValue" => "Fn::ImportValue",
-            "Condition" => "Condition",
-            "RefAll" => "Fn::RefAll",
-            "Select" => "Fn::Select",
-            "Split" => "Fn::Split",
-            "Join" => "Fn::Join",
-            "FindInMap" => "Fn::FindInMap",
-            "And" => "Fn::And",
-            "Equals" => "Fn::Equals",
-            "Contains" => "Fn::Contains",
-            "EachMemberIn" => "Fn::EachMemberIn",
-            "EachMemberEquals" => "Fn::EachMemberEquals",
-            "ValueOf" => "Fn::ValueOf",
-            "If" => "Fn::If",
-            "Not" => "Fn::Not",
-            "Or" => "Fn::Or",
-            _ => unreachable!(),
-        }
-    }
-
-    fn handle_single_value_func_ref(
-        val: String,
-        loc: Location,
-        fn_ref: &str,
-    ) -> Option<MarkedValue> {
-        match fn_ref {
-            "Ref" | "Base64" | "Sub" | "GetAZs" | "ImportValue" | "GetAtt" | "Condition"
-            | "RefAll" => {
-                let mut map = indexmap::IndexMap::new();
-                let fn_ref = Self::short_form_to_long(fn_ref);
-                map.insert(
-                    (fn_ref.to_string(), loc.clone()),
-                    MarkedValue::String(val, loc.clone()),
-                );
-                Some(MarkedValue::Map(map, loc))
-            }
-
-            _ => None,
-        }
-    }
-
-    fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedValue> {
-        match fn_ref {
-            "GetAtt" | "Sub" | "Select" | "Split" | "Join" | "FindInMap" | "And" | "Equals"
-            | "Contains" | "EachMemberIn" | "EachMemberEquals" | "ValueOf" | "If" | "Not"
-            | "Or" => {
-                let mut map = indexmap::IndexMap::new();
-                let fn_ref = Self::short_form_to_long(fn_ref);
-                map.insert(
-                    (fn_ref.to_string(), loc.clone()),
-                    MarkedValue::Null(loc.clone()),
-                );
-                Some(MarkedValue::Map(map, loc))
-            }
-
-            _ => None,
-        }
-    }
-
-    fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
-        match type_ref {
-            "bool" => {
-                // "true" or "false"
-                match val.parse::<bool>() {
-                    Err(_) => MarkedValue::String(val, loc),
-                    Ok(v) => MarkedValue::Bool(v, loc),
-                }
-            }
-            "int" => match val.parse::<i64>() {
-                Err(_) => MarkedValue::BadValue(val, loc),
-                Ok(v) => MarkedValue::Int(v, loc),
-            },
-            "float" => match val.parse::<f64>() {
-                Err(_) => MarkedValue::BadValue(val, loc),
-                Ok(v) => MarkedValue::Float(v, loc),
-            },
-            "null" => match val.as_ref() {
-                "~" | "null" => MarkedValue::Null(loc),
-                _ => MarkedValue::BadValue(val, loc),
-            },
-            _ => MarkedValue::String(val, loc),
-        }
+fn short_form_to_long(fn_ref: &str) -> &'static str {
+    match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
+        Some(fn_ref) => fn_ref,
+        _ => unreachable!(),
     }
 }
+
+fn handle_single_value_func_ref(val: String, loc: Location, fn_ref: &str) -> Option<MarkedValue> {
+    if SINGLE_VALUE_FUNC_REF.contains(fn_ref) {
+        let mut map = indexmap::IndexMap::new();
+        let fn_ref = short_form_to_long(fn_ref);
+        map.insert(
+            (fn_ref.to_string(), loc.clone()),
+            MarkedValue::String(val, loc.clone()),
+        );
+
+        return Some(MarkedValue::Map(map, loc));
+    }
+
+    None
+}
+
+fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedValue> {
+    if SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
+        let mut map = indexmap::IndexMap::new();
+        let fn_ref = short_form_to_long(fn_ref);
+        map.insert(
+            (fn_ref.to_string(), loc.clone()),
+            MarkedValue::Null(loc.clone()),
+        );
+
+        return Some(MarkedValue::Map(map, loc));
+    }
+
+    None
+}
+
+fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
+    match type_ref {
+        "tag:yaml.org,2002:bool" => match val.parse::<bool>() {
+            Err(_) => MarkedValue::String(val, loc),
+            Ok(v) => MarkedValue::Bool(v, loc),
+        },
+        "tag:yaml.org,2002:int" => match val.parse::<i64>() {
+            Err(_) => MarkedValue::BadValue(val, loc),
+            Ok(v) => MarkedValue::Int(v, loc),
+        },
+        "tag:yaml.org,2002:float" => match val.parse::<f64>() {
+            Err(_) => MarkedValue::BadValue(val, loc),
+            Ok(v) => MarkedValue::Float(v, loc),
+        },
+        "tag:yaml.org,2002:null" => match val.as_ref() {
+            "~" | "null" => MarkedValue::Null(loc),
+            _ => MarkedValue::BadValue(val, loc),
+        },
+        _ => MarkedValue::String(val, loc),
+    }
+}
+
+#[cfg(test)]
+#[path = "loader_tests.rs"]
+mod loader_tests;

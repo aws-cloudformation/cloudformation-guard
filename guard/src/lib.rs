@@ -8,7 +8,7 @@ pub mod command;
 pub mod commands;
 mod migrate;
 mod rules;
-mod utils;
+pub mod utils;
 
 pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
 pub use crate::rules::errors::{Error, ErrorKind};

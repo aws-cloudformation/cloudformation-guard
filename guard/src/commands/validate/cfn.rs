@@ -1,11 +1,13 @@
-use lazy_static::lazy_static;
-use regex::Regex;
 use std::{
     cmp::max,
     collections::{BTreeSet, HashMap, HashSet},
     io::Write,
     rc::Rc,
 };
+
+use colored::*;
+use lazy_static::lazy_static;
+use regex::Regex;
 
 use crate::{
     commands::{
@@ -33,7 +35,6 @@ use crate::{
     },
     utils::ReadCursor,
 };
-use colored::*;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?")
