@@ -1,21 +1,22 @@
 use std::fs;
-use std::fs::File;
 use std::process;
 
 use crate::command::Command;
 use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
 use crate::rules::Result;
+use crate::utils::writer::Writer;
 use clap::{App, Arg, ArgMatches};
 use itertools::Itertools;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use string_builder::Builder;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Rulegen {}
+pub struct Rulegen {}
 
 impl Rulegen {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Rulegen {}
     }
 }
@@ -33,17 +34,12 @@ impl Command for Rulegen {
             .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
         let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 
-        let out = match app.value_of(OUTPUT.0) {
-            Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
-            None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>,
-        };
-
         let result = parse_template_and_call_gen(&template_contents);
-        print_rules(result, out)?;
+        print_rules(result, writer)?;
 
         Ok(0 as i32)
     }
@@ -174,7 +170,7 @@ fn gen_rules(
 //     }
 fn print_rules(
     rule_map: HashMap<String, HashMap<String, HashSet<String>>>,
-    mut writer: Box<dyn std::io::Write>,
+    writer: &mut Writer,
 ) -> Result<()> {
     let mut str = Builder::default();
 

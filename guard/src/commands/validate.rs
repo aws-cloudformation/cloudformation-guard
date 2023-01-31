@@ -1,3 +1,7 @@
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use colored::*;
+use enumflags2::BitFlags;
+use serde::Deserialize;
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
@@ -5,11 +9,6 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use colored::*;
-use enumflags2::BitFlags;
-use serde::Deserialize;
 
 use Type::CFNTemplate;
 
@@ -33,6 +32,7 @@ use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::utils::writer::Writer;
 
 mod cfn;
 mod cfn_reporter;
@@ -137,16 +137,16 @@ or rules files.
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
-                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                     .multiple(true))
+                .multiple(true))
             .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary"])
+                .possible_values(&["json", "yaml", "single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
@@ -172,7 +172,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Writer) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -398,6 +398,7 @@ or rules files.
                                     show_clause_failures,
                                     new_version_eval_engine,
                                     summary_type,
+                                    &mut writer,
                                 )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
@@ -460,6 +461,7 @@ or rules files.
                             show_clause_failures,
                             new_version_eval_engine,
                             summary_type,
+                            &mut writer,
                         )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
@@ -517,7 +519,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     reporters: &'r Vec<&'r dyn Reporter>,
@@ -526,6 +528,7 @@ pub(crate) struct ConsoleReporter<'r> {
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
+    writer: &'r mut Writer,
 }
 
 fn indent_spaces(indent: usize) {
@@ -661,7 +664,8 @@ impl<'r> ConsoleReporter<'r> {
         verbose: bool,
         print_json: bool,
         show_clause_failures: bool,
-    ) -> Self {
+        writer: &'r mut Writer,
+    ) -> ConsoleReporter<'r> {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -670,11 +674,12 @@ impl<'r> ConsoleReporter<'r> {
             verbose,
             print_json,
             show_clause_failures,
+            writer,
         }
     }
 
     pub fn get_result_json(
-        self,
+        mut self,
         root: &PathAwareValue,
         output_format_type: OutputFormatType,
     ) -> Result<String> {
@@ -692,7 +697,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -711,10 +716,9 @@ impl<'r> ConsoleReporter<'r> {
         }
     }
 
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
+    fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
@@ -729,7 +733,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -803,14 +807,15 @@ fn evaluate_against_data_input<'r>(
     show_clause_failures: bool,
     new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
+    mut write_output: &mut Writer,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> =
         Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> =
         Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
@@ -819,6 +824,7 @@ fn evaluate_against_data_input<'r>(
             cfn.as_ref(),
         )) as Box<dyn Reporter>
     };
+
     for file in data_files {
         if new_engine_version {
             let each = match &extra_data {
@@ -829,6 +835,7 @@ fn evaluate_against_data_input<'r>(
             let mut root_scope = root_scope(rules, &each)?;
             let status = eval_rules_file(rules, &mut root_scope)?;
             let root_record = root_scope.reset_recorder().extract();
+
             reporter.report_eval(
                 &mut write_output,
                 status,
@@ -839,12 +846,15 @@ fn evaluate_against_data_input<'r>(
                 &traversal,
                 output,
             )?;
+
             if verbose {
                 print_verbose_tree(&root_record);
             }
+
             if print_json {
                 println!("{}", serde_json::to_string_pretty(&root_record)?)
             }
+
             if status == Status::FAIL {
                 overall = Status::FAIL
             }
@@ -853,6 +863,7 @@ fn evaluate_against_data_input<'r>(
             let root_context = RootScope::new(rules, each)?;
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
+
             let reporter = ConsoleReporter::new(
                 stacker,
                 &renderers,
@@ -861,7 +872,9 @@ fn evaluate_against_data_input<'r>(
                 verbose,
                 print_json,
                 show_clause_failures,
+                write_output,
             );
+
             let appender = MetadataAppender {
                 delegate: &reporter,
                 root_context: each,

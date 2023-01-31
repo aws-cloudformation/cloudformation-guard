@@ -107,7 +107,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
             }
 
             QueryPart::Index(idx) => {
-                write!(f, "{}", idx.to_string())?;
+                write!(f, "{}", idx)?;
             }
 
             QueryPart::Filter(name, _c) => {
@@ -272,8 +272,11 @@ pub(crate) struct ParameterizedRule<'loc> {
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RulesFile<'loc> {
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) assignments: Vec<LetExpr<'loc>>,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) guard_rules: Vec<Rule<'loc>>,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) parameterized_rules: Vec<ParameterizedRule<'loc>>,
 }
 
@@ -307,6 +310,7 @@ impl<'loc> std::fmt::Display for GuardClause<'loc> {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 impl<'loc> std::fmt::Display for BlockGuardClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {{ ", self.query)?;
