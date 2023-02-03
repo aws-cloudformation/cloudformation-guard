@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 use std::fmt::Formatter;
+use fancy_regex::Regex;
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
@@ -260,7 +261,16 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
         }
 
         regex.push_str(fragment);
-        return Ok((remainder, Value::Regex(regex)));
+
+        let validate_regex = Regex::new(regex.as_str());
+        return match validate_regex {
+            Ok(valid_regex) => Ok((remainder, Value::Regex(regex))),
+            Err(e) => Err(nom::Err::Error(ParserError {
+                context: format!("Could not parse regular expression: {}", e.to_string()),
+                kind: ErrorKind::RegexpMatch,
+                span: input,
+            }))
+        };
     }
 }
 

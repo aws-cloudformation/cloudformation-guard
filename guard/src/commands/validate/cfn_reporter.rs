@@ -3,13 +3,15 @@ use std::fmt::Debug;
 use std::io::Write;
 
 use lazy_static::*;
-use regex::Regex;
+use fancy_regex::Regex;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::{
     find_all_failing_clauses, GenericReporter, NameInfo, StructureType, StructuredSummary,
 };
 use crate::commands::validate::{OutputFormatType, Reporter};
+use crate::rules::errors::ErrorKind;
+use crate::rules::errors::Error;
 
 use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
@@ -80,16 +82,17 @@ impl Reporter for CfnReporter {
                             )?;
                             let (resource_name, property_path) =
                                 match CFN_RESOURCES.captures(&resource_info.path) {
-                                    Some(caps) => {
+                                    Ok(Some(caps)) => {
                                         (caps["name"].to_string(), caps["rest"].replace("/", "."))
                                     }
-                                    None => (
+                                    Ok(None) => (
                                         format!(
                                             "Rule {} Resource {} {}",
                                             each_failed_rule.context, idx, clause_idx
                                         ),
                                         "".to_string(),
                                     ),
+                                    Err(e) =>  return Err(Error::new(ErrorKind::RegexError(e)))
                                 };
                             resource_info.path = property_path;
                             by_resource_name

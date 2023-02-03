@@ -8,7 +8,7 @@ use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
 use crate::rules::Status;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
-
+use fancy_regex::Regex;
 use lazy_static::lazy_static;
 
 #[derive(Debug)]
@@ -100,7 +100,7 @@ struct ResourceView<'report, 'value: 'report> {
 }
 
 lazy_static! {
-    static ref RESOURCE_CHANGE_EXTRACTION: regex::Regex = regex::Regex::new(
+    static ref RESOURCE_CHANGE_EXTRACTION: Regex = Regex::new(
         "/resource_changes/(?P<index_or_name>[^/]+)/change/after/(?P<property_name>.*)?"
     )
     .ok()
@@ -114,6 +114,8 @@ use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::path_value::PathAwareValue;
 use colored::*;
 use nom::Slice;
+use crate::rules::errors::ErrorKind;
+use crate::rules::errors::Error;
 
 fn single_line(
     writer: &mut dyn Write,
@@ -137,8 +139,9 @@ fn single_line(
     let mut by_resources = HashMap::new();
     for (key, value) in path_tree.range("/resource_changes/"..) {
         let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key) {
-            Some(cap) => cap.name("index_or_name").unwrap().as_str(),
-            None => unreachable!(),
+            Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
+            Ok(None) => unreachable!(),
+            Err(e) =>  return Err(Error::new(ErrorKind::RegexError(e)))
         };
         let address = format!("/resource_changes/{}", resource_ptr);
         let resource = match data.at(&address, root)? {

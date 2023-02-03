@@ -14,12 +14,15 @@ use crate::rules::{
     UnResolved,
 };
 use lazy_static::*;
-use regex::Regex;
+use fancy_regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
+use crate::rules::errors::ErrorKind;
+use crate::rules::errors::Error;
+
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {
@@ -484,8 +487,9 @@ pub(super) fn extract_name_info<'a>(
                 .map_or(
                     ("".to_string(), "".to_string()),
                     |msg| match PATH_FROM_MSG.captures(msg) {
-                        Some(cap) => (cap["path"].to_string(), msg.clone()),
-                        None => ("".to_string(), msg.clone()),
+                        Ok(Some(cap)) => (cap["path"].to_string(), msg.clone()),
+                        Ok(None) => ("".to_string(), msg.clone()),
+                        Err(e) =>  ("".to_string(), e.to_string())
                     },
                 );
 

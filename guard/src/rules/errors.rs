@@ -120,7 +120,7 @@ pub enum ErrorKind {
     FormatError(std::fmt::Error),
     IoError(std::io::Error),
     ParseError(String),
-    RegexError(regex::Error),
+    RegexError(fancy_regex::Error),
     MissingProperty(String),
     MissingValue(String),
     RetrievalError(String),
@@ -158,8 +158,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<regex::Error> for Error {
-    fn from(err: regex::Error) -> Self {
+impl From<fancy_regex::Error> for Error {
+    fn from(err: fancy_regex::Error) -> Self {
         Error(ErrorKind::RegexError(err))
     }
 }
