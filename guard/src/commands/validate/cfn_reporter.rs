@@ -2,16 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
 
-use lazy_static::*;
 use fancy_regex::Regex;
+use lazy_static::*;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::{
     find_all_failing_clauses, GenericReporter, NameInfo, StructureType, StructuredSummary,
 };
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::errors::ErrorKind;
 use crate::rules::errors::Error;
+use crate::rules::errors::ErrorKind;
 
 use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
@@ -92,7 +92,7 @@ impl Reporter for CfnReporter {
                                         ),
                                         "".to_string(),
                                     ),
-                                    Err(e) =>  return Err(Error::new(ErrorKind::RegexError(e)))
+                                    Err(e) => return Err(Error::new(ErrorKind::RegexError(e))),
                                 };
                             resource_info.path = property_path;
                             by_resource_name

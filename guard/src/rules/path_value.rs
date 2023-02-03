@@ -19,9 +19,9 @@ use super::{Evaluate, EvaluationContext, Status};
 //
 use super::values::*;
 use crate::rules::exprs::LetValue;
+use fancy_regex::Regex;
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::hash::{Hash, Hasher};
-use fancy_regex::Regex;
 
 //
 // crate level
@@ -1272,9 +1272,7 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     let match_result = reg.is_match(s);
     match match_result {
         Ok(is_match) => Ok(is_match),
-        Err(error) => {
-            return Err(Error::new(ErrorKind::RegexError(error)))
-        }
+        Err(error) => return Err(Error::new(ErrorKind::RegexError(error))),
     }
 }
 

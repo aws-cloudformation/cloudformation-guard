@@ -1,7 +1,7 @@
 use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::path_value::PathAwareValue;
-use lazy_static::lazy_static;
 use fancy_regex::Regex;
+use lazy_static::lazy_static;
 use std::collections::BTreeMap;
 
 lazy_static! {

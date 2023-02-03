@@ -6,10 +6,10 @@ use crate::rules::eval_context::{
 };
 use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
 use crate::rules::Status;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io::Write;
 use fancy_regex::Regex;
 use lazy_static::lazy_static;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::io::Write;
 
 #[derive(Debug)]
 pub(crate) struct TfAware<'reporter> {
@@ -111,11 +111,11 @@ use super::common::{
     populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
 };
 use crate::rules::display::ValueOnlyDisplay;
+use crate::rules::errors::Error;
+use crate::rules::errors::ErrorKind;
 use crate::rules::path_value::PathAwareValue;
 use colored::*;
 use nom::Slice;
-use crate::rules::errors::ErrorKind;
-use crate::rules::errors::Error;
 
 fn single_line(
     writer: &mut dyn Write,
@@ -141,7 +141,7 @@ fn single_line(
         let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key) {
             Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
             Ok(None) => unreachable!(),
-            Err(e) =>  return Err(Error::new(ErrorKind::RegexError(e)))
+            Err(e) => return Err(Error::new(ErrorKind::RegexError(e))),
         };
         let address = format!("/resource_changes/{}", resource_ptr);
         let resource = match data.at(&address, root)? {

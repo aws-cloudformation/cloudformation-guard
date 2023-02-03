@@ -2,10 +2,10 @@ use crate::rules::path_value::{Path, PathAwareValue};
 use crate::rules::QueryResult;
 
 use crate::rules::errors::{Error, ErrorKind};
+use fancy_regex::Regex;
 use nom::Slice;
 use std::convert::TryFrom;
 use urlencoding;
-use fancy_regex::Regex;
 
 pub(crate) fn url_decode(
     args: &[QueryResult<'_>],

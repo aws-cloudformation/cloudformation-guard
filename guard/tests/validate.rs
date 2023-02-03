@@ -269,10 +269,7 @@ mod validate_tests {
             .run(&mut writer);
 
         assert_eq!(expected_status_code, status_code);
-        assert_output_from_file_eq!(
-            expected_output,
-            writer
-        )
+        assert_output_from_file_eq!(expected_output, writer)
     }
 
     #[rstest::rstest]
