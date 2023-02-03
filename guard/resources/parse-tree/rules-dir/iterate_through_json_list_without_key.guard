@@ -1,0 +1,14 @@
+let aws_serverless_functions = Resources.*[ Type == 'AWS::Serverless::Function' ]
+
+rule KEY_COMPLIANCE_CHECK when %aws_serverless_functions !empty {
+  %aws_serverless_functions.Properties.Tags is_struct
+  %aws_serverless_functions.Properties.Tags !empty
+
+  # check the key ignoring capitalization/casing
+  let key = %aws_serverless_functions.Properties.Tags[ keys == /^(?i)first([-|_])?name$/ ]
+
+  # check the value
+  some %aws_serverless_functions.Properties.Tags.* == /^(?i)prod$/
+
+  %key !empty
+}

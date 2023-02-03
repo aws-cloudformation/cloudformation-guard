@@ -1,3 +1,5 @@
+pub mod writer;
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReadCursor<'buffer> {
     line_num: usize,

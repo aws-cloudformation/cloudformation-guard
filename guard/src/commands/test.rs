@@ -1,10 +1,10 @@
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
-
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
 
 use validate::validate_path;
@@ -26,6 +26,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
 use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
+use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Test {}
@@ -77,7 +78,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Writer) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical
@@ -165,24 +166,26 @@ or failure testing.
             for (_dir, guard_files) in ordered_guard_files {
                 for each_rule_file in guard_files {
                     if each_rule_file.test_files.is_empty() {
-                        println!(
+                        writeln!(
+                            writer,
                             "Guard File {} did not have any tests associated, skipping.",
                             each_rule_file.file.path().display()
-                        );
-                        println!("---");
+                        )?;
+                        writeln!(writer, "---")?;
                         continue;
                     }
-                    println!(
+                    writeln!(
+                        writer,
                         "Testing Guard File {}",
                         each_rule_file.file.path().display()
-                    );
+                    )?;
                     let rule_file = File::open(each_rule_file.file.path())?;
                     let content = read_file_content(rule_file)?;
                     let span =
                         crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => {
-                            eprintln!("Parse Error on ruleset file {}", e);
+                            writeln!(writer, "Parse Error on ruleset file {}", e)?;
                             exit_code = 1;
                         }
                         Ok(rules) => {
@@ -191,8 +194,13 @@ or failure testing.
                                 .iter()
                                 .map(|de| de.path().to_path_buf())
                                 .collect::<Vec<PathBuf>>();
-                            let test_exit_code =
-                                test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                            let test_exit_code = test_with_data(
+                                &data_test_files,
+                                &rules,
+                                verbose,
+                                new_engine,
+                                writer,
+                            )?;
                             exit_code = if exit_code == 0 {
                                 test_exit_code
                             } else {
@@ -200,7 +208,7 @@ or failure testing.
                             }
                         }
                     }
-                    println!("---");
+                    writeln!(writer, "---")?;
                 }
             }
         } else {
@@ -239,19 +247,24 @@ or failure testing.
             }) {
                 match rules {
                     Err(e) => {
-                        eprintln!("Unable to read rule file content {}", e);
+                        write!(writer, "Unable to read rule file content {}", e)?;
                         exit_code = 1;
                     }
                     Ok((context, path)) => {
                         let span = crate::rules::parser::Span::new_extra(&context, &path);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                eprintln!("Parse Error on ruleset file {}", e);
+                                writeln!(writer, "Parse Error on ruleset file {}", e)?;
                                 exit_code = 1;
                             }
                             Ok(rules) => {
-                                let curr_exit_code =
-                                    test_with_data(&data_test_files, &rules, verbose, new_engine)?;
+                                let curr_exit_code = test_with_data(
+                                    &data_test_files,
+                                    &rules,
+                                    verbose,
+                                    new_engine,
+                                    writer,
+                                )?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -284,6 +297,7 @@ fn test_with_data(
     rules: &RulesFile<'_>,
     verbose: bool,
     new_engine: bool,
+    mut writer: &mut Writer,
 ) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
@@ -302,14 +316,14 @@ fn test_with_data(
     }) {
         match specs {
             Err(e) => {
-                eprintln!("Error processing {}", e);
+                writeln!(writer, "Error processing {}", e)?;
                 exit_code = 1;
             }
             Ok(specs) => {
                 for each in specs {
-                    println!("Test Case #{}", test_counter);
+                    writeln!(writer, "Test Case #{}", test_counter)?;
                     if each.name.is_some() {
-                        println!("Name: {}", each.name.unwrap());
+                        writeln!(writer, "Name: {}", each.name.unwrap())?;
                     }
 
                     let by_result = if new_engine {
@@ -332,10 +346,11 @@ fn test_with_data(
                             let expected = match each.expectations.rules.get(rule_name) {
                                 Some(exp) => Status::try_from(exp.as_str())?,
                                 None => {
-                                    println!(
+                                    writeln!(
+                                        writer,
                                         "  No Test expectation was set for Rule {}",
                                         rule_name
-                                    );
+                                    )?;
                                     continue;
                                 }
                             };
@@ -410,7 +425,7 @@ fn test_with_data(
                             match expectations.get(&each.context) {
                                 Some(value) => match Status::try_from(value.as_str()) {
                                     Err(e) => {
-                                        eprintln!("Incorrect STATUS provided {}", e);
+                                        writeln!(writer, "Incorrect STATUS provided {}", e)?;
                                         exit_code = 1;
                                     }
                                     Ok(status) => {
@@ -438,17 +453,16 @@ fn test_with_data(
                                         }
                                     }
                                 },
-                                None => {
-                                    println!(
-                                        "  No Test expectation was set for Rule {}",
-                                        each.context
-                                    )
-                                }
+                                None => writeln!(
+                                    writer,
+                                    "  No Test expectation was set for Rule {}",
+                                    each.context
+                                )?,
                             }
                         }
                         by_result
                     };
-                    print_test_case_report(&by_result);
+                    print_test_case_report(&by_result, writer);
                     test_counter += 1;
                 }
             }
@@ -457,17 +471,20 @@ fn test_with_data(
     Ok(exit_code)
 }
 
-pub(crate) fn print_test_case_report(by_result: &HashMap<String, indexmap::IndexSet<String>>) {
+pub(crate) fn print_test_case_report(
+    by_result: &HashMap<String, indexmap::IndexSet<String>>,
+    mut writer: &mut Writer,
+) {
     use itertools::Itertools;
     let mut results = by_result.keys().cloned().collect_vec();
 
     results.sort(); // Deterministic order of results
 
     for result in &results {
-        println!("  {} Rules:", result);
+        writeln!(writer, "  {} Rules:", result).expect("Unable to write to the output");
         for each_case in by_result.get(result).unwrap() {
-            println!("    {}", *each_case);
+            writeln!(writer, "    {}", *each_case).expect("Unable to write to the output");
         }
     }
-    println!();
+    writeln!(writer, "").expect("Unable to write to the output");
 }

@@ -7,6 +7,10 @@ use std::{
     rc::Rc,
 };
 
+use colored::*;
+use lazy_static::lazy_static;
+use regex::Regex;
+
 use crate::{
     commands::{
         tracker::StatusContext,
@@ -33,7 +37,6 @@ use crate::{
     },
     utils::ReadCursor,
 };
-use colored::*;
 
 lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?")
