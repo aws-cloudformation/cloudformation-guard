@@ -251,20 +251,26 @@ mod validate_tests {
         assert_output_from_str_eq!(expected_output, writer)
     }
 
-    #[test]
-    fn test_single_data_file_single_rules_file_verbose() {
+    #[rstest::rstest]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose.out", StatusCode::PARSING_ERROR)]
+    #[case(vec!["data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml"], vec!["rules-dir/advanced_regex_negative_lookbehind_rule.guard"], "resources/validate/output-dir/advanced_regex_negative_lookbehind_non_compliant.out", StatusCode::PARSING_ERROR)]
+    #[case(vec!["data-dir/advanced_regex_negative_lookbehind_compliant.yaml"], vec!["rules-dir/advanced_regex_negative_lookbehind_rule.guard"], "resources/validate/output-dir/advanced_regex_negative_lookbehind_compliant.out", StatusCode::SUCCESS)]
+    fn test_single_data_file_single_rules_file_verbose(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+        #[case] expected_output: &str,
+        #[case] expected_status_code: i32,
+    ) {
         let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
-            .data(vec![
-                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-            ])
-            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+            .data(data_arg)
+            .rules(rules_arg)
             .show_summary(vec!["all"])
             .run(&mut writer);
 
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(expected_status_code, status_code);
         assert_output_from_file_eq!(
-            "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose.out",
+            expected_output,
             writer
         )
     }

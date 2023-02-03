@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use fancy_regex::Regex;
 use std::{
     cmp::max,
@@ -9,7 +8,6 @@ use std::{
 
 use colored::*;
 use lazy_static::lazy_static;
-use regex::Regex;
 
 use crate::{
     commands::{

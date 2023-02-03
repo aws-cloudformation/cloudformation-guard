@@ -170,7 +170,16 @@ fn test_parse_regex() {
     };
     assert_eq!(
         parse_regex(from_str2(s)),
-        Ok((cmp, Value::Regex("arn:[\\w+=".to_string())))
+        Err(nom::Err::Error(ParserError {
+                context: "Could not parse regular expression: Parsing error at position 9: Invalid character class".to_string(),
+                kind: ErrorKind::RegexpMatch,
+                span: unsafe { Span::new_from_raw_offset(
+                    1,
+                    1,
+                    "arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
+                    ""
+                ) },
+            }))
     );
 
     let s = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
