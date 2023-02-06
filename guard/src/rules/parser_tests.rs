@@ -159,7 +159,8 @@ fn test_parse_regex() {
         Ok((cmp, Value::Regex(".*PROD.*".to_string())))
     );
 
-    let improperly_escaped_regular_expression = "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
+    let improperly_escaped_regular_expression =
+        "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
     let cmp = unsafe {
         Span::new_from_raw_offset(
             11,
@@ -183,7 +184,8 @@ fn test_parse_regex() {
     );
 
     let properly_escaped_regular_expression = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
-    let cmp = unsafe { Span::new_from_raw_offset(properly_escaped_regular_expression.len(), 1, "", "") };
+    let cmp =
+        unsafe { Span::new_from_raw_offset(properly_escaped_regular_expression.len(), 1, "", "") };
     assert_eq!(
         parse_regex(from_str2(properly_escaped_regular_expression)),
         Ok((
