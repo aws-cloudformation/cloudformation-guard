@@ -487,7 +487,7 @@ pub(super) fn extract_name_info<'a>(
                     |msg| match PATH_FROM_MSG.captures(msg) {
                         Ok(Some(cap)) => (cap["path"].to_string(), msg.clone()),
                         Ok(None) => ("".to_string(), msg.clone()),
-                        Err(e) => ("".to_string(), e.to_string()),
+                        Err(_) => panic!("Error while parsing retrieval errors"),
                     },
                 );
 
