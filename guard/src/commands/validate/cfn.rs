@@ -1,3 +1,4 @@
+use fancy_regex::Regex;
 use std::{
     cmp::max,
     collections::{BTreeSet, HashMap, HashSet},
@@ -7,7 +8,6 @@ use std::{
 
 use colored::*;
 use lazy_static::lazy_static;
-use regex::Regex;
 
 use crate::{
     commands::{
@@ -201,7 +201,7 @@ fn single_line(
             }
         } else {
             let resource_name = match CFN_RESOURCES.captures(*key) {
-                Some(cap) => cap.get(1).unwrap().as_str(),
+                Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
                     println!("key: {}", key);
                     unreachable!()
@@ -452,7 +452,7 @@ fn get_resource_name(key: &&str, count: usize, matches: usize) -> String {
 
     // placeholder = "/Resources/foo\fbar/baz"
     match CFN_RESOURCES.captures(&placeholder) {
-        Some(cap) => {
+        Ok(Some(cap)) => {
             // resource_name = "foo/bar"
             str::replace(cap.get(1).unwrap().as_str(), c, "/")
         }

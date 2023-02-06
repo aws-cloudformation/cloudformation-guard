@@ -19,6 +19,7 @@ use super::{Evaluate, EvaluationContext, Status};
 //
 use super::values::*;
 use crate::rules::exprs::LetValue;
+use fancy_regex::Regex;
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::hash::{Hash, Hasher};
 
@@ -335,15 +336,15 @@ impl PartialEq for PathAwareValue {
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
 
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-                if let Ok(regex) = regex::Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str())
+                if let Ok(regex) = Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
                 } else {
                     false
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-                if let Ok(regex) = regex::Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str())
+                if let Ok(regex) = Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
                 } else {
                     false
                 }
@@ -1195,10 +1196,10 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
 pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
     let (reg, s) = match (first, second) {
         (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-            (regex::Regex::new(r.as_str())?, s.as_str())
+            (Regex::new(r.as_str())?, s.as_str())
         }
         (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-            (regex::Regex::new(r.as_str())?, s.as_str())
+            (Regex::new(r.as_str())?, s.as_str())
         }
 
         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => return Ok(s1 == s2),
@@ -1268,7 +1269,11 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
             }
         }
     };
-    Ok(reg.is_match(s))
+    let match_result = reg.is_match(s);
+    match match_result {
+        Ok(is_match) => Ok(is_match),
+        Err(error) => return Err(Error::new(ErrorKind::RegexError(error))),
+    }
 }
 
 pub(crate) fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {

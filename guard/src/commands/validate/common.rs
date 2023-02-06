@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::OutputFormatType;
+use crate::rules::errors::Error;
+use crate::rules::errors::ErrorKind;
 use crate::rules::eval_context::{
     simplifed_json_from_root, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
     GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
@@ -12,8 +14,8 @@ use crate::rules::values::CmpOperator;
 use crate::rules::{
     ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
 };
+use fancy_regex::Regex;
 use lazy_static::*;
-use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt::Debug;
@@ -483,8 +485,9 @@ pub(super) fn extract_name_info<'a>(
                 .map_or(
                     ("".to_string(), "".to_string()),
                     |msg| match PATH_FROM_MSG.captures(msg) {
-                        Some(cap) => (cap["path"].to_string(), msg.clone()),
-                        None => ("".to_string(), msg.clone()),
+                        Ok(Some(cap)) => (cap["path"].to_string(), msg.clone()),
+                        Ok(None) => ("".to_string(), msg.clone()),
+                        Err(_) => panic!("Error while parsing retrieval errors"),
                     },
                 );
 
