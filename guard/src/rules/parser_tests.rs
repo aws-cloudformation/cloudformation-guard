@@ -159,7 +159,7 @@ fn test_parse_regex() {
         Ok((cmp, Value::Regex(".*PROD.*".to_string())))
     );
 
-    let s = "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
+    let improperly_escaped_regular_expression = "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
     let cmp = unsafe {
         Span::new_from_raw_offset(
             11,
@@ -169,7 +169,7 @@ fn test_parse_regex() {
         )
     };
     assert_eq!(
-        parse_regex(from_str2(s)),
+        parse_regex(from_str2(improperly_escaped_regular_expression)),
         Err(nom::Err::Error(ParserError {
                 context: "Could not parse regular expression: Parsing error at position 9: Invalid character class".to_string(),
                 kind: ErrorKind::RegexpMatch,
@@ -182,10 +182,10 @@ fn test_parse_regex() {
             }))
     );
 
-    let s = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
-    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    let properly_escaped_regular_expression = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
+    let cmp = unsafe { Span::new_from_raw_offset(properly_escaped_regular_expression.len(), 1, "", "") };
     assert_eq!(
-        parse_regex(from_str2(s)),
+        parse_regex(from_str2(properly_escaped_regular_expression)),
         Ok((
             cmp,
             Value::Regex(
