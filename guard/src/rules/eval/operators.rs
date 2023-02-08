@@ -1,4 +1,4 @@
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::path_value::*;
 use crate::rules::{CmpOperator, QueryResult, UnResolved};
 
@@ -224,7 +224,7 @@ where
             }
         }
 
-        Err(Error(ErrorKind::NotComparable(reason))) => {
+        Err(Error::NotComparable(reason)) => {
             ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
                 reason,
                 pair: LhsRhsPair {
@@ -641,8 +641,9 @@ impl Comparator for crate::rules::CmpOperator {
             }
             .compare(lhs, rhs),
             _ => {
-                return Err(crate::rules::Error::new(ErrorKind::IncompatibleError(
-                    format!("Operation {} NOT PERMITTED", self),
+                return Err(crate::rules::Error::IncompatibleError(format!(
+                    "Operation {} NOT PERMITTED",
+                    self
                 )))
             }
         }

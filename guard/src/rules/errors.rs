@@ -1,173 +1,68 @@
 use std::convert::Infallible;
-use std::fmt::Display;
-use std::fmt::Formatter;
+use std::fmt::{Debug, Formatter};
+use thiserror::Error;
 
-use crate::rules::errors::ErrorKind::IncompatibleError;
 use crate::rules::parser::{ParserError, Span};
 
-#[derive(Debug)]
-pub struct Error(pub ErrorKind);
-
-impl Error {
-    pub fn new(kind: ErrorKind) -> Error {
-        Error(kind)
-    }
-}
-
-fn error_kind_msg(kind: &ErrorKind) -> String {
-    match kind {
-        ErrorKind::JsonError(err) => {
-            format!("Error parsing incoming JSON context {}", err)
-        }
-
-        ErrorKind::YamlError(err) => {
-            format!("Error parsing incoming YAML context {}", err)
-        }
-
-        ErrorKind::FormatError(fmt) => {
-            format!("Formatting error when writing {}", fmt)
-        }
-
-        ErrorKind::IoError(io) => {
-            format!("I/O error when reading {}", io)
-        }
-
-        ErrorKind::ParseError(err) => {
-            format!("Parser Error when parsing {}", err)
-        }
-
-        ErrorKind::RegexError(err) => {
-            format!("Regex expression parse error for rules file {}", err)
-        }
-
-        ErrorKind::MissingProperty(err) => {
-            format!("Could not evaluate clause for a rule with missing property for incoming context {}", err)
-        }
-
-        ErrorKind::MissingVariable(err) => {
-            format!(
-                "Variable assignment could not be resolved in rule file or incoming context {}",
-                err
-            )
-        }
-
-        ErrorKind::MultipleValues(err) => {
-            format!(
-                "Conflicting rule or variable assignments inside the same scope {}",
-                err
-            )
-        }
-
-        ErrorKind::IncompatibleRetrievalError(err) => {
-            format!(
-                "Types or variable assignments have incompatible types to retrieve {}",
-                err
-            )
-        }
-
-        IncompatibleError(err) => {
-            format!("Types or variable assignments are incompatible {}", err)
-        }
-
-        ErrorKind::NotComparable(err) => {
-            format!(
-                "Comparing incoming context with literals or dynamic results wasn't possible {}",
-                err
-            )
-        }
-
-        ErrorKind::ConversionError(_ignore) => "Could not convert in JSON value object".to_string(),
-
-        ErrorKind::Errors(all) => {
-            let vec = all.iter().map(error_kind_msg).collect::<Vec<String>>();
-            format!("{:?}", &vec)
-        }
-
-        ErrorKind::RetrievalError(err) => {
-            format!(
-                "Could not retrieve data from incoming context. Error = {}",
-                err
-            )
-        }
-
-        ErrorKind::MissingValue(err) => {
-            format!(
-                "There was no variable or value object to resolve. Error = {}",
-                err
-            )
-        }
-
-        ErrorKind::FileNotFoundError(path) => {
-            format!("The path {} does not exist", path)
-        }
-    }
-}
-
-fn error_kind_fmt(kind: &ErrorKind, f: &mut Formatter<'_>) -> std::fmt::Result {
-    writeln!(f, "{}", error_kind_msg(kind))
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        error_kind_fmt(&self.0, f)
-    }
-}
-
-#[derive(Debug)]
-pub enum ErrorKind {
-    JsonError(serde_json::Error),
-    YamlError(serde_yaml::Error),
-    FormatError(std::fmt::Error),
-    IoError(std::io::Error),
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Error parsing incoming JSON context")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Error parsing incoming YAML context")]
+    YamlError(#[from] serde_yaml::Error),
+    #[error("Formatting error when writing")]
+    FormatError(#[from] std::fmt::Error),
+    #[error("I/O error when reading")]
+    IoError(#[from] std::io::Error),
+    #[error("Parser error when parsing `{0}`")]
     ParseError(String),
-    RegexError(regex::Error),
+    #[error("Regex expression parse error for rules file")]
+    RegexError(#[from] regex::Error),
+    #[error(
+        "Could not evaluate clause for a rule with missing property for incoming context `{0}`"
+    )]
     MissingProperty(String),
+    #[error("There was no variable or value object to resolve. Error = {0}`")]
     MissingValue(String),
+    #[error("Could not retrieve data from incoming context. Error = {0}`")]
     RetrievalError(String),
+    #[error("Variable assignment could not be resolved in rule file or incoming context `{0}`")]
     MissingVariable(String),
+    #[error("Conflicting rule or variable assignments inside the same scope `{0}`")]
     MultipleValues(String),
+    #[error("Types or variable assignments have incompatible types to retrieve `{0}`")]
     IncompatibleRetrievalError(String),
+    #[error("Types or variable assignments are incompatible `{0}`")]
     IncompatibleError(String),
+    #[error("Comparing incoming context with literals or dynamic results wasn't possible `{0}`")]
     NotComparable(String),
-    ConversionError(Infallible),
-    Errors(Vec<ErrorKind>),
+    #[error("Could not convert in JSON value object `{0}`")]
+    ConversionError(#[from] Infallible),
+    #[error("The path `{0}` does not exist")]
     FileNotFoundError(String),
+    #[error(transparent)]
+    Errors(#[from] Errors),
 }
 
-impl From<std::fmt::Error> for Error {
-    fn from(e: std::fmt::Error) -> Self {
-        Error::new(ErrorKind::FormatError(e))
+#[derive(Debug, Error)]
+pub struct Errors(pub Vec<Error>);
+
+impl std::fmt::Display for Errors {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let vec = self
+            .0
+            .iter()
+            .map(|e| format!("{e:#?}"))
+            .collect::<Vec<String>>();
+
+        format!("{:?}", &vec);
+
+        Ok(())
     }
 }
 
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error(ErrorKind::JsonError(err))
-    }
-}
-
-impl From<serde_yaml::Error> for Error {
-    fn from(err: serde_yaml::Error) -> Self {
-        Error(ErrorKind::YamlError(err))
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Error {
-        Error::new(ErrorKind::IoError(err))
-    }
-}
-
-impl From<regex::Error> for Error {
-    fn from(err: regex::Error) -> Self {
-        Error(ErrorKind::RegexError(err))
-    }
-}
-
-impl From<Infallible> for Error {
-    fn from(err: Infallible) -> Self {
-        Error(ErrorKind::ConversionError(err))
-    }
+fn print(e: Error) {
+    println!("{e}");
 }
 
 impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
@@ -185,9 +80,18 @@ impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
                 )
             }
         };
-        Error(ErrorKind::ParseError(msg))
+        Error::ParseError(msg)
     }
 }
+
+// impl From<Vec<Error>> for Error {
+//     fn from(value: Vec<Error>) -> Self {
+//         value.iter().collect::<Vec<Error>>()
+//
+//         let vec = all.iter().map(error_kind_msg).collect::<Vec<String>>();
+//         format!("{:?}", &vec)
+//     }
+// }
 
 impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     fn from(err: nom::Err<ParserError<'a>>) -> Self {
@@ -195,17 +99,6 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
             nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {}", e),
             nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
         };
-        Error(ErrorKind::ParseError(msg))
+        Error::ParseError(msg)
     }
 }
-
-impl serde::ser::Error for Error {
-    fn custom<T>(msg: T) -> Self
-    where
-        T: Display,
-    {
-        Error::new(IncompatibleError(msg.to_string()))
-    }
-}
-
-impl serde::ser::StdError for Error {}
