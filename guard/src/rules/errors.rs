@@ -84,15 +84,6 @@ impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     }
 }
 
-// impl From<Vec<Error>> for Error {
-//     fn from(value: Vec<Error>) -> Self {
-//         value.iter().collect::<Vec<Error>>()
-//
-//         let vec = all.iter().map(error_kind_msg).collect::<Vec<String>>();
-//         format!("{:?}", &vec)
-//     }
-// }
-
 impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     fn from(err: nom::Err<ParserError<'a>>) -> Self {
         let msg = match err {
