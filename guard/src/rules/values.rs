@@ -294,22 +294,20 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
                 }
             }
             serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
-            serde_yaml::Value::Sequence(sequence) => {
-                Ok(Value::List(sequence.iter().fold(vec![], |mut res, val| {
-                    res.push(Value::try_from(val).unwrap());
-                    res
-                })))
-            }
-            serde_yaml::Value::Mapping(mapping) => Ok(Value::Map(mapping.iter().fold(
-                IndexMap::with_capacity(mapping.len()),
-                |mut res, (key, val)| {
-                    res.insert(
-                        key.as_str().unwrap().to_owned(),
-                        Value::try_from(val).unwrap(),
-                    );
-                    res
+            serde_yaml::Value::Sequence(sequence) => Ok(Value::List(sequence.iter().try_fold(
+                vec![],
+                |mut res, val| -> Result<Vec<Self>, Self::Error> {
+                    res.push(Value::try_from(val)?);
+                    Ok(res)
                 },
-            ))),
+            )?)),
+            serde_yaml::Value::Mapping(mapping) => Ok(Value::Map(mapping.iter().try_fold(
+                IndexMap::with_capacity(mapping.len()),
+                |mut res, (key, val)| -> Result<IndexMap<String, Self>, Self::Error> {
+                    res.insert(key.as_str().unwrap().to_owned(), Value::try_from(val)?);
+                    Ok(res)
+                },
+            )?)),
             serde_yaml::Value::Tagged(tag) => Ok(Value::try_from(tag.value.clone())?),
             serde_yaml::Value::Null => Ok(Value::Null),
         }
