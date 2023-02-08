@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use crate::rules::{
     self,
-    errors::Error,
+    errors::{Error, ErrorKind},
     libyaml::{
         event::{Event, Scalar, ScalarStyle, SequenceStart},
         parser::Parser,
@@ -92,8 +92,8 @@ impl Loader {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
 
         loop {
-            match parser.next()? {
-                (event, location) => {
+            match parser.next() {
+                Ok((event, location)) => {
                     match event {
                         Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
                         Event::DocumentEnd => {
@@ -110,12 +110,13 @@ impl Loader {
                         Event::SequenceEnd => self.handle_sequence_end(),
                         Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
                         Event::Alias(_) => {
-                            return Err(Error::ParseError(String::from(
+                            return Err(Error(ErrorKind::ParseError(String::from(
                                 "Guard does not currently support aliases",
-                            )))
+                            ))))
                         }
                     };
                 }
+                Err(e) => return Err(Error(ErrorKind::ParseError(format!("{}", e)))),
             };
         }
     }

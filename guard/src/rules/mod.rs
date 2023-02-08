@@ -12,6 +12,7 @@ pub(crate) mod values;
 
 use errors::Error;
 
+use crate::rules::errors::ErrorKind;
 use crate::rules::exprs::{ParameterizedRule, QueryPart};
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
@@ -54,10 +55,10 @@ impl TryFrom<&str> for Status {
             "PASS" => Ok(Status::PASS),
             "FAIL" => Ok(Status::FAIL),
             "SKIP" => Ok(Status::SKIP),
-            _ => Err(Error::IncompatibleError(format!(
+            _ => Err(Error::new(ErrorKind::IncompatibleError(format!(
                 "Status code is incorrect {}",
                 value
-            ))),
+            )))),
         }
     }
 }

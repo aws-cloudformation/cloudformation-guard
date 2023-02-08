@@ -6,7 +6,7 @@ use crate::rules::{
         util::Owned,
     },
     path_value::Location,
-    Result,
+    ErrorKind, Result,
 };
 
 use std::{borrow::Cow, mem::MaybeUninit, ptr::addr_of_mut};
@@ -30,7 +30,7 @@ impl<'input> Parser<'input> {
             if sys::yaml_parser_initialize(parser).fail {
                 panic!(
                     "malloc error: {}",
-                    Error::ParseError("error parsing file".to_string())
+                    Error(ErrorKind::ParseError("error parsing file".to_string()))
                 );
             }
             sys::yaml_parser_set_encoding(parser, sys::YAML_UTF8_ENCODING);
@@ -46,11 +46,15 @@ impl<'input> Parser<'input> {
         unsafe {
             let parser = addr_of_mut!((*self.pin.ptr).sys);
             if (*parser).error != sys::YAML_NO_ERROR {
-                return Err(Error::ParseError("error parsing file".to_string()));
+                return Err(Error(ErrorKind::ParseError(
+                    "error parsing file".to_string(),
+                )));
             }
             let event = event.as_mut_ptr();
             if sys::yaml_parser_parse(parser, event).fail {
-                return Err(Error::ParseError("error parsing file".to_string()));
+                return Err(Error(ErrorKind::ParseError(
+                    "error parsing file".to_string(),
+                )));
             }
             let ret = convert_event(&*event, &(*self.pin.ptr).input);
             let location = system_mark_to_location((*event).start_mark);

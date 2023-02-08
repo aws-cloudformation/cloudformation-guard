@@ -4,7 +4,7 @@ use crate::command::Command;
 use crate::commands::files::read_file_content;
 use crate::commands::{MIGRATE, OUTPUT, RULES};
 use crate::migrate::parser::{parse_rules_file, Clause, Rule, RuleLineType, TypeName};
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::Result;
 use crate::utils::writer::Writer;
 use itertools::Itertools;
@@ -66,7 +66,7 @@ impl Command for Migrate {
         match read_file_content(file) {
             Err(e) => {
                 println!("Unable read content from file {}", e);
-                Err(Error::IoError(e))
+                Err(Error::new(ErrorKind::IoError(e)))
             }
             Ok(file_content) => match parse_rules_file(&file_content, &file_name) {
                 Err(e) => {

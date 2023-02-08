@@ -22,11 +22,11 @@ fn element_empty_operation(value: &QueryResult<'_>) -> Result<bool> {
             PathAwareValue::String((_, string)) => string.is_empty(),
             PathAwareValue::Bool((_, boolean)) => (*boolean).to_string().is_empty(),
             _ => {
-                return Err(Error::IncompatibleError(format!(
+                return Err(Error::new(ErrorKind::IncompatibleError(format!(
                     "Attempting EMPTY operation on type {} that does not support it at {}",
                     value.type_info(),
                     value.self_path()
-                )))
+                ))))
             }
         },
 
@@ -430,7 +430,7 @@ where
                         }));
                     }
 
-                    Err(Error::NotComparable(reason)) => {
+                    Err(Error(ErrorKind::NotComparable(reason))) => {
                         if lhs.is_list() {
                             // && each_rhs_resolved.is_scalar() {
                             if let PathAwareValue::List((_, inner)) = lhs {
@@ -448,7 +448,7 @@ where
                                             ));
                                         }
 
-                                        Err(Error::NotComparable(reason)) => {
+                                        Err(Error(ErrorKind::NotComparable(reason))) => {
                                             statues.push(ComparisonResult::NotComparable(
                                                 NotComparableWithRhs {
                                                     reason,
@@ -485,7 +485,7 @@ where
                                                 ));
                                             }
 
-                                            Err(Error::NotComparable(reason)) => {
+                                            Err(Error(ErrorKind::NotComparable(reason))) => {
                                                 statues.push(ComparisonResult::NotComparable(
                                                     NotComparableWithRhs {
                                                         reason,
@@ -1150,10 +1150,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         )),
                     }),
                 )?;
-                return Err(Error::NotComparable(format!(
+                return Err(Error::new(ErrorKind::NotComparable(format!(
                     "GuardAccessClause {}, did not have a RHS for compare operation",
                     blk_context
-                )));
+                ))));
             }
         };
         binary_operation(
@@ -1588,12 +1588,12 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     let param_rule = resolver.find_parameterized_rule(&call_rule.named_rule.dependent_rule)?;
 
     if param_rule.parameter_names.len() != call_rule.parameters.len() {
-        return Err(Error::IncompatibleError(format!(
+        return Err(Error::new(ErrorKind::IncompatibleError(format!(
             "Arity mismatch for called parameter rule {}, expected {}, got {}",
             call_rule.named_rule.dependent_rule,
             param_rule.parameter_names.len(),
             call_rule.parameters.len()
-        )));
+        ))));
     }
 
     let mut resolved_parameters = HashMap::with_capacity(call_rule.parameters.len());

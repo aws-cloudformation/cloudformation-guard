@@ -23,7 +23,7 @@ use crate::commands::{
     OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
     RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
 };
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
@@ -479,14 +479,14 @@ or rules files.
 pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).exists() {
         true => Ok(()),
-        false => Err(Error::FileNotFoundError(base.to_string())),
+        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
     }
 }
 
 pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(data) {
         Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::ParseError(e.to_string())),
+        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     };
 
     let span = crate::rules::parser::Span::new_extra(rules, "lambda");
@@ -503,14 +503,14 @@ pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
             }
             Err(e) => Err(e),
         },
-        Err(e) => Err(Error::ParseError(e.to_string())),
+        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::ParseError(e.to_string())),
+        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
     }
 }
 
@@ -711,7 +711,7 @@ impl<'r> ConsoleReporter<'r> {
 
             match String::from_utf8(output) {
                 Ok(s) => Ok(s),
-                Err(e) => Err(Error::ParseError(e.to_string())),
+                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
             }
         }
     }
@@ -891,16 +891,16 @@ fn evaluate_against_data_input<'r>(
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
     if content.trim().is_empty() {
-        Err(Error::ParseError("blank data".to_string()))
+        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
     } else {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
             Err(_) => {
                 let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::ParseError(format!(
+                return Err(Error::new(ErrorKind::ParseError(format!(
                     "data beginning with \n{}\n ...",
                     &content[..str_len]
-                )));
+                ))));
             }
         };
         Ok(path_value)

@@ -1,4 +1,4 @@
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::exprs::{
     AccessQuery, Block, Conjunctions, GuardClause, LetExpr, LetValue, ParameterizedRule, QueryPart,
     Rule, RulesFile, SliceDisplay,
@@ -432,9 +432,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         }
                                     },
 
-                                    _ => return Err(Error::IncompatibleError(
+                                    _ => return Err(Error::new(ErrorKind::IncompatibleError(
                                         format!("This type of query {} based variable interpolation is not supported {}, {}",
-                                                query[1], current.type_info(), SliceDisplay(query))))
+                                                query[1], current.type_info(), SliceDisplay(query)))))
                                 }
                         } else {
                             keys
@@ -492,27 +492,27 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                                     },
 
                                                     rest => {
-                                                        return Err(Error
-                                                            ::NotComparable(
+                                                        return Err(Error::new(
+                                                            ErrorKind::NotComparable(
                                                                 format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
                                                                         SliceDisplay(query),
                                                                         key.type_info(),
                                                                         key.self_value()
                                                                 )
-
+                                                            )
                                                         ))
                                                     }
                                                 }
                                         }
                                     } else {
-                                        return Err(Error
-                                               ::NotComparable(
+                                        return Err(Error::new(
+                                                ErrorKind::NotComparable(
                                                     format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
                                                             SliceDisplay(query),
                                                             key.type_info(),
                                                             key.self_value()
                                                     )
-
+                                                )
                                             ));
                                     }
                                 }
@@ -1006,10 +1006,10 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
         let matched = match self.events.pop() {
             Some(mut event) => {
                 if &event.context != context {
-                    return Err(Error::IncompatibleError(format!(
+                    return Err(Error::new(ErrorKind::IncompatibleError(format!(
                         "Event Record context start and end does not match {}",
                         context
-                    )));
+                    ))));
                 }
 
                 event.container = Some(record);
@@ -1017,10 +1017,10 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
             }
 
             None => {
-                return Err(Error::IncompatibleError(format!(
+                return Err(Error::new(ErrorKind::IncompatibleError(format!(
                     "Event Record end with context {} did not have a corresponding start",
                     context
-                )))
+                ))))
             }
         };
 
@@ -1048,11 +1048,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     ) -> Result<&'value ParameterizedRule<'loc>> {
         match self.parameterized_rules.get(rule_name) {
             Some(r) => Ok(*r),
-            _ => Err(Error::MissingValue(format!(
+            _ => Err(Error::new(ErrorKind::MissingValue(format!(
                 "Parameterized Rule with name {} was not found, candiate {:?}",
                 rule_name,
                 self.parameterized_rules.keys()
-            ))),
+            )))),
         }
     }
 
@@ -1068,11 +1068,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         let rule = match self.rules.get(rule_name) {
             Some(rule) => rule.clone(),
             None => {
-                return Err(Error::MissingValue(format!(
+                return Err(Error::new(ErrorKind::MissingValue(format!(
                     "Rule {} by that name does not exist, Rule Names = {:?}",
                     rule_name,
                     self.rules.keys()
-                )))
+                ))))
             }
         };
 
@@ -1111,10 +1111,10 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
             None => {
-                return Err(Error::MissingValue(format!(
+                return Err(Error::new(ErrorKind::MissingValue(format!(
                     "Could not resolve variable by name {} across scopes",
                     variable_name
-                )))
+                ))))
             }
         };
 

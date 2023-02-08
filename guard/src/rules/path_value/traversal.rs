@@ -1,4 +1,4 @@
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, ErrorKind};
 use crate::rules::path_value::PathAwareValue;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -137,20 +137,20 @@ impl<'value> Traversal<'value> {
                         current = match self.nodes.get(prev) {
                             Some(node) => node,
                             None => {
-                                return Err(Error::RetrievalError(format!(
+                                return Err(Error::new(ErrorKind::RetrievalError(format!(
                                     "No ancestors found at path {}, current value at {}",
                                     prev,
                                     current.value.self_path()
-                                )))
+                                ))))
                             }
                         }
                     }
 
                     None => {
-                        return Err(Error::RetrievalError(format!(
+                        return Err(Error::new(ErrorKind::RetrievalError(format!(
                             "No more ancestors found. Path {} pointing to beyond root",
                             pointer
-                        )))
+                        ))))
                     }
                 }
                 ancestor += 1;
@@ -173,12 +173,12 @@ impl<'value> Traversal<'value> {
         match self.nodes.get(pointer) {
             Some(node) => Ok(TraversalResult::Value(node)),
             None => {
-                return Err(Error::RetrievalError(format!(
+                return Err(Error::new(ErrorKind::RetrievalError(format!(
                     "Path {} did not yield value. Current Path {}, expected sub-paths {:?}",
                     pointer,
                     node.value().self_path().0,
                     self.nodes.range(pointer..)
-                )))
+                ))))
             }
         }
     }

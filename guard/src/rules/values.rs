@@ -8,7 +8,12 @@ use std::{
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
-use crate::rules::{errors::Error, libyaml::loader::Loader, parser::Span, path_value::Location};
+use crate::rules::{
+    errors::{Error, ErrorKind},
+    libyaml::loader::Loader,
+    parser::Span,
+    path_value::Location,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -415,7 +420,7 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::ParseError(format!("{}", e.to_string()))),
+        Err(e) => Err(Error::new(ErrorKind::ParseError(format!("{}", e)))),
     }
 }
 
