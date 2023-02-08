@@ -19,7 +19,7 @@ use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
     RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
@@ -236,9 +236,9 @@ or failure testing.
 
             let rule_file = File::open(path.clone())?;
             if !rule_file.metadata()?.is_file() {
-                return Err(Error::new(ErrorKind::IoError(std::io::Error::from(
+                return Err(Error::IoError(std::io::Error::from(
                     std::io::ErrorKind::InvalidInput,
-                ))));
+                )));
             }
 
             let ruleset = vec![path];
@@ -306,11 +306,11 @@ fn test_with_data(
             Ok(spec) => Ok(spec),
             Err(_) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
                 Ok(specs) => Ok(specs),
-                Err(e) => Err(Error::new(ErrorKind::ParseError(format!(
+                Err(e) => Err(Error::ParseError(format!(
                     "Unable to process data in file {}, Error {},",
                     path.display(),
                     e
-                )))),
+                ))),
             },
         }
     }) {

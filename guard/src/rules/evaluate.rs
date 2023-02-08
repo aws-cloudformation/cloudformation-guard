@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Formatter;
 
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::exprs::{
     AccessQuery, Block, Conjunctions, GuardAccessClause, LetExpr, LetValue, Rule, RulesFile,
     SliceDisplay,
@@ -349,8 +349,8 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             var_resolver,
         ) {
             Ok(v) => (Some(v), None),
-            Err(Error(ErrorKind::RetrievalError(e)))
-            | Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => (None, Some(e)),
+            Err(Error::RetrievalError(e))
+            | Err(Error::IncompatibleRetrievalError(e)) => (None, Some(e)),
             Err(e) => return Err(e),
         };
 
@@ -509,10 +509,10 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
 
         let rhs_local = match &clause.access_clause.compare_with {
             None => {
-                return Err(Error::new(ErrorKind::IncompatibleRetrievalError(format!(
+                return Err(Error::IncompatibleRetrievalError(format!(
                     "Expecting a RHS for comparison and did not find one, clause@{}",
                     clause.access_clause.location
-                ))))
+                )))
             }
 
             Some(expr) => match expr {
@@ -841,8 +841,8 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
         let mut report = AutoReport::new(EvaluationType::BlockClause, var_resolver, &blk_context);
         let all = self.query.match_all;
         let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
-            Err(Error(ErrorKind::RetrievalError(e)))
-            | Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
+            Err(Error::RetrievalError(e))
+            | Err(Error::IncompatibleRetrievalError(e)) => {
                 return Ok(report.message(e).status(Status::FAIL).get_status())
             }
 
@@ -1155,10 +1155,10 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             };
             Ok(values)
         } else {
-            Err(Error::new(ErrorKind::MissingVariable(format!(
+            Err(Error::MissingVariable(format!(
                 "Could not resolve variable {}",
                 variable
-            ))))
+            )))
         };
     }
 
@@ -1173,10 +1173,10 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             return Ok(status);
         }
 
-        Err(Error::new(ErrorKind::MissingValue(format!(
+        Err(Error::MissingValue(format!(
             "Attempting to resolve rule_status for rule = {}, rule not found",
             rule_name
-        ))))
+        )))
     }
 
     fn end_evaluation(
