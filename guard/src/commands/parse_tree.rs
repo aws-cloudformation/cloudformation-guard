@@ -32,7 +32,7 @@ impl Command for ParseTree {
                     .long(RULES.0)
                     .short(RULES.1)
                     .takes_value(true)
-                    .help("Provid a rules file")
+                    .help("Provide a rules file")
                     .required(false),
             )
             .arg(
