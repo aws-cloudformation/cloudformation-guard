@@ -1,4 +1,4 @@
-use clap::App;
+use clap::{App, ArgMatches};
 use std::collections::HashMap;
 use std::fs::File;
 mod command;
@@ -47,9 +47,11 @@ fn main() -> Result<(), Error> {
         app = app.subcommand(each.command());
     }
 
+    let help = app.render_usage();
     let app = app.get_matches();
+
     match app.subcommand() {
-        (name, Some(value)) => {
+        Some((name, value)) => {
             if let Some(command) = mappings.get(name) {
                 let mut output_writer: Writer = if [PARSE_TREE, MIGRATE, RULEGEN]
                     .contains(&command.name())
@@ -76,13 +78,13 @@ fn main() -> Result<(), Error> {
                     Ok(code) => exit(code),
                 }
             } else {
-                println!("{}", app.usage());
+                println!("{}", help);
             }
         }
-
-        (_, None) => {
-            println!("{}", app.usage());
+        None => {
+            println!("{}", help);
         }
     }
+
     Ok(())
 }

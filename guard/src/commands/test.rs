@@ -43,7 +43,7 @@ impl Command for Test {
         TEST
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(TEST)
             .about(r#"Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
@@ -79,7 +79,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical

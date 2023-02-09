@@ -23,30 +23,30 @@ pub const RULEGEN: &str = "rulegen";
 pub const TEST: &str = "test";
 pub const VALIDATE: &str = "validate";
 // Arguments for validate
-pub const ALPHABETICAL: (&str, &str) = ("alphabetical", "a");
-pub const DATA: (&str, &str) = ("data", "d");
-pub const LAST_MODIFIED: (&str, &str) = ("last-modified", "m");
-pub const OUTPUT_FORMAT: (&str, &str) = ("output-format", "o");
-pub const INPUT_PARAMETERS: (&str, &str) = ("input-parameters", "i");
-pub const PAYLOAD: (&str, &str) = ("payload", "P");
-pub const PREVIOUS_ENGINE: (&str, &str) = ("previous-engine", "E");
-pub const PRINT_JSON: (&str, &str) = ("print-json", "p");
-pub const SHOW_CLAUSE_FAILURES: (&str, &str) = ("show-clause-failures", "s");
-pub const SHOW_SUMMARY: (&str, &str) = ("show-summary", "S");
-pub const TYPE: (&str, &str) = ("type", "t");
-pub const VERBOSE: (&str, &str) = ("verbose", "v");
+pub const ALPHABETICAL: (&str, char) = ("alphabetical", 'a');
+pub const DATA: (&str, char) = ("data", 'd');
+pub const LAST_MODIFIED: (&str, char) = ("last-modified", 'm');
+pub const OUTPUT_FORMAT: (&str, char) = ("output-format", 'o');
+pub const INPUT_PARAMETERS: (&str, char) = ("input-parameters", 'i');
+pub const PAYLOAD: (&str, char) = ("payload", 'P');
+pub const PREVIOUS_ENGINE: (&str, char) = ("previous-engine", 'E');
+pub const PRINT_JSON: (&str, char) = ("print-json", 'p');
+pub const SHOW_CLAUSE_FAILURES: (&str, char) = ("show-clause-failures", 's');
+pub const SHOW_SUMMARY: (&str, char) = ("show-summary", 'S');
+pub const TYPE: (&str, char) = ("type", 't');
+pub const VERBOSE: (&str, char) = ("verbose", 'v');
 // Arguments for validate, migrate, parse tree
-pub const RULES: (&str, &str) = ("rules", "r");
+pub const RULES: (&str, char) = ("rules", 'r');
 // Arguments for migrate, parse-tree, rulegen
-pub const OUTPUT: (&str, &str) = ("output", "o");
+pub const OUTPUT: (&str, char) = ("output", 'o');
 // Arguments for parse-tree
-pub const PRINT_YAML: (&str, &str) = ("print-yaml", "y");
+pub const PRINT_YAML: (&str, char) = ("print-yaml", 'y');
 // Arguments for test
-pub const RULES_FILE: (&str, &str) = ("rules-file", "r");
-pub const TEST_DATA: (&str, &str) = ("test-data", "t");
-pub const DIRECTORY: (&str, &str) = ("dir", "d");
+pub const RULES_FILE: (&str, char) = ("rules-file", 'r');
+pub const TEST_DATA: (&str, char) = ("test-data", 't');
+pub const DIRECTORY: (&str, char) = ("dir", 'd');
 // Arguments for rulegen
-pub const TEMPLATE: (&str, &str) = ("template", "t");
+pub const TEMPLATE: (&str, char) = ("template", 't');
 // Arg group for validate
 pub(crate) const REQUIRED_FLAGS: &str = "required_flags";
 // Arg group for test

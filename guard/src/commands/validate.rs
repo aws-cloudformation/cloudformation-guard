@@ -116,7 +116,7 @@ impl Command for Validate {
         VALIDATE
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure.
 You can point rules flag to a rules directory and point data flag to a data directory.
@@ -173,7 +173,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
