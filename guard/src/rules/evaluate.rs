@@ -349,8 +349,9 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             var_resolver,
         ) {
             Ok(v) => (Some(v), None),
-            Err(Error::RetrievalError(e))
-            | Err(Error::IncompatibleRetrievalError(e)) => (None, Some(e)),
+            Err(Error::RetrievalError(e)) | Err(Error::IncompatibleRetrievalError(e)) => {
+                (None, Some(e))
+            }
             Err(e) => return Err(e),
         };
 
@@ -841,8 +842,7 @@ impl<'loc> Evaluate for BlockGuardClause<'loc> {
         let mut report = AutoReport::new(EvaluationType::BlockClause, var_resolver, &blk_context);
         let all = self.query.match_all;
         let block_values = match resolve_query(all, &self.query.query, context, var_resolver) {
-            Err(Error::RetrievalError(e))
-            | Err(Error::IncompatibleRetrievalError(e)) => {
+            Err(Error::RetrievalError(e)) | Err(Error::IncompatibleRetrievalError(e)) => {
                 return Ok(report.message(e).status(Status::FAIL).get_status())
             }
 
