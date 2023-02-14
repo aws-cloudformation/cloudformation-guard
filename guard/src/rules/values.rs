@@ -13,6 +13,7 @@ use crate::rules::{
     libyaml::loader::Loader,
     parser::Span,
     path_value::Location,
+    short_form_to_long, SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
 };
 
 use serde::{Deserialize, Serialize};
@@ -308,7 +309,18 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
                     Ok(res)
                 },
             )?)),
-            serde_yaml::Value::Tagged(tag) => Ok(Value::try_from(tag.value.clone())?),
+            serde_yaml::Value::Tagged(tag) => {
+                let prefix = tag.tag.to_string();
+                let value = tag.value.clone();
+
+                match prefix.matches('!').count() {
+                    1 => {
+                        let stripped_prefix = prefix.strip_prefix('!').unwrap();
+                        Ok(handle_tagged_value(value, stripped_prefix)?)
+                    }
+                    _ => Ok(Value::try_from(value)?),
+                }
+            }
             serde_yaml::Value::Null => Ok(Value::Null),
         }
     }
@@ -429,6 +441,18 @@ where
     I: IntoIterator<Item = (&'a str, Value)>,
 {
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
+}
+
+fn handle_tagged_value(val: serde_yaml::Value, fn_ref: &str) -> crate::rules::Result<Value> {
+    if SINGLE_VALUE_FUNC_REF.contains(fn_ref) || SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
+        let mut map = indexmap::IndexMap::new();
+        let fn_ref = short_form_to_long(fn_ref);
+        map.insert(fn_ref.to_string(), Value::try_from(val)?);
+
+        return Ok(Value::Map(map));
+    }
+
+    Value::try_from(val)
 }
 
 #[cfg(test)]
