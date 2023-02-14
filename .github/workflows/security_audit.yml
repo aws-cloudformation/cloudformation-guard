@@ -1,7 +1,7 @@
 name: Security audit
 on:
   schedule:
-    - cron: '0 12 * * *'
+    - cron: '0 17 * * *'
 jobs:
   audit:
     runs-on: ubuntu-latest
