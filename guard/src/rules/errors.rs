@@ -17,7 +17,7 @@ pub enum Error {
     #[error("Parser Error when parsing `{0}`")]
     ParseError(String),
     #[error("Regex expression parse error for rules file {0}")]
-    RegexError(#[from] regex::Error),
+    RegexError(#[from] fancy_regex::Error),
     #[error(
         "Could not evaluate clause for a rule with missing property for incoming context `{0}`"
     )]

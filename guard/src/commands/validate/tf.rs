@@ -112,7 +112,6 @@ use super::common::{
 };
 use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::errors::Error;
-use crate::rules::errors::ErrorKind;
 use crate::rules::path_value::PathAwareValue;
 use colored::*;
 use nom::Slice;
@@ -141,7 +140,7 @@ fn single_line(
         let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key) {
             Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
             Ok(None) => unreachable!(),
-            Err(e) => return Err(Error::new(ErrorKind::RegexError(e))),
+            Err(e) => return Err(Error::from(e)),
         };
         let address = format!("/resource_changes/{}", resource_ptr);
         let resource = match data.at(&address, root)? {

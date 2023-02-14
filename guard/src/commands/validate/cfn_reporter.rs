@@ -11,7 +11,6 @@ use crate::commands::validate::common::{
 };
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
-use crate::rules::errors::ErrorKind;
 
 use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
@@ -92,7 +91,7 @@ impl Reporter for CfnReporter {
                                         ),
                                         "".to_string(),
                                     ),
-                                    Err(e) => return Err(Error::new(ErrorKind::RegexError(e))),
+                                    Err(e) => return Err(Error::from(e)),
                                 };
                             resource_info.path = property_path;
                             by_resource_name
