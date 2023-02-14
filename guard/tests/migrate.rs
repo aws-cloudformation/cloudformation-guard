@@ -71,4 +71,17 @@ mod migrate_tests {
         assert_eq!(expected_status_code, status_code);
         assert_output_from_file_eq!(expected_output_file_path, writer)
     }
+
+    #[test]
+    fn test_migrate_rule2() {
+        let mut writer = Writer::new_with_custom_stderr(WBVec(vec![]));
+        let status_code = MigrateTestRunner::default()
+            .rules(Option::from(
+                "/Users/joshfri/repos/cloudformation-guard/target/debug/cfn-guard",
+            ))
+            .run(&mut writer);
+
+        // assert_eq!(expected_status_code, status_code);
+        println!("{}", writer.err_to_stripped().unwrap());
+    }
 }

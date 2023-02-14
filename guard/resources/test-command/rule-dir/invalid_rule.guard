@@ -1,0 +1,9 @@
+let redshift_clusters = Resources.*[ Type == 'AWS::Redshift::Cluster'
+  Metadata.guard.SuppressedRules not exists or
+  Metadata.guard.SuppressedRules.* != "REDSHIFT_ENCRYPTED_CMK"
+]
+
+rule REDSHIFT_ENCRYPTED_CMK when %redshift_clusters !empty {
+    %redshift_clusters.Properties.KmsKeyId !empty
+    %redshift_clusters.Properties.KmsKeyId == {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
+}

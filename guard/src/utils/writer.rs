@@ -1,14 +1,47 @@
 use std::fs::File;
-use std::io::{Read, Stdout, Write};
+use std::io::{stderr, Read, Stderr, Stdout, Write};
 use std::string::FromUtf8Error;
 
 pub struct Writer {
     buffer: WriteBuffer,
+    err: WriteBuffer,
 }
 
 impl Writer {
     pub fn new(buffer: WriteBuffer) -> Self {
-        Self { buffer }
+        if let WriteBuffer::Stderr(_) = buffer {
+            panic!("unable to use stderr as regular buffer");
+        }
+
+        Self {
+            buffer,
+            err: WriteBuffer::Stderr(stderr()),
+        }
+    }
+
+    pub fn new_with_custom_stderr(buffer: WriteBuffer) -> Self {
+        Self {
+            buffer,
+            err: WriteBuffer::Vec(vec![]),
+        }
+    }
+
+    pub fn write_err(&mut self, s: String) -> std::io::Result<()> {
+        writeln!(self.err, "{s}")
+    }
+
+    pub fn err_to_stripped(self) -> Result<String, FromUtf8Error> {
+        match self.err {
+            WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(vec).unwrap()),
+            WriteBuffer::File(mut file) => {
+                let mut data = String::new();
+                file.read_to_string(&mut data)
+                    .expect("Unable to read from file");
+
+                String::from_utf8(strip_ansi_escapes::strip(data).unwrap())
+            }
+            _ => unreachable!(),
+        }
     }
 
     pub fn into_string(self) -> Result<String, FromUtf8Error> {
@@ -17,7 +50,7 @@ impl Writer {
 
     pub fn stripped(self) -> Result<String, FromUtf8Error> {
         match self.buffer {
-            WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(&vec).unwrap()),
+            WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(vec).unwrap()),
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
                 file.read_to_string(&mut data)
@@ -44,12 +77,14 @@ pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),
     File(File),
+    Stderr(Stderr),
 }
 
 impl WriteBuffer {
     fn into_string(self) -> Result<String, FromUtf8Error> {
         match self {
             WriteBuffer::Stdout(..) => unimplemented!(),
+            WriteBuffer::Stderr(..) => unimplemented!(),
             WriteBuffer::Vec(vec) => String::from_utf8(vec),
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
@@ -65,6 +100,7 @@ impl Write for WriteBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             WriteBuffer::Stdout(stdout) => stdout.write(buf),
+            WriteBuffer::Stderr(stderr) => stderr.write(buf),
             WriteBuffer::Vec(vec) => vec.write(buf),
             WriteBuffer::File(file) => file.write(buf),
         }
@@ -73,6 +109,7 @@ impl Write for WriteBuffer {
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             WriteBuffer::Stdout(stdout) => stdout.flush(),
+            WriteBuffer::Stderr(stderr) => stderr.flush(),
             WriteBuffer::Vec(vec) => vec.flush(),
             WriteBuffer::File(file) => file.flush(),
         }

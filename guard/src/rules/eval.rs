@@ -1130,7 +1130,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                             RecordType::GuardClauseBlockCheck(BlockCheck {
                                 status: Status::FAIL,
                                 at_least_one_matches: !all,
-                                message: Some(format!("Error {} when handling clause, bailing", e)),
+                                message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
                         return Err(e);

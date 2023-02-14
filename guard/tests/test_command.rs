@@ -192,4 +192,41 @@ mod test_command_tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_parse_error_when_guard_rule_has_syntax_error() {
+        let mut writer = Writer::new(WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some("resources/test-command/data-dir/test.yaml"))
+            .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
+            .verbose(true)
+            .run(&mut writer);
+
+        let expected_err_msg = String::from(
+            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
+}
+`
+"#,
+        );
+
+        assert_eq!(StatusCode::INCORRECT_STATUS_ERROR, status_code);
+        assert_eq!(expected_err_msg, writer.stripped().unwrap());
+    }
+
+    #[test]
+    fn test_parse_error_when_file_dne() {
+        let mut writer = Writer::new_with_custom_stderr(WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some("resources/test-command/data-dir/test.yaml"))
+            .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))
+            .verbose(true)
+            .run(&mut writer);
+
+        let expected_err_msg = String::from(
+            "Error occurred The path `/resources/test-command/data-dir/invalid_rule.guard` does not exist\n",
+        );
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        assert_eq!(expected_err_msg, writer.err_to_stripped().unwrap());
+    }
 }

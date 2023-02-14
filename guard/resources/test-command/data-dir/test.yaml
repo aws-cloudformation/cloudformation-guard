@@ -1,0 +1,21 @@
+- name: CodeBuild project with safe environment variables, PASS
+  input:
+    Resources:
+      myCluster:
+        Type: "AWS::Redshift::Cluster"
+        Properties:
+          DBName: "mydb"
+          KmsKeyId:
+            Fn::ImportValue:
+              !Sub "${pSecretKmsKey}"
+          MasterUsername: "master"
+          MasterUserPassword:
+            Ref: "MasterUserPassword"
+          NodeType: "ds2.xlarge"
+          ClusterType: "single-node"
+          Tags:
+            - Key: foo
+              Value: bar
+  expectations:
+    rules:
+      REDSHIFT_ENCRYPTED_CMK: PASS

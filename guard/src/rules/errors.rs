@@ -6,25 +6,25 @@ use crate::rules::parser::{ParserError, Span};
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Error parsing incoming JSON context")]
+    #[error("Error parsing incoming JSON context {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("Error parsing incoming YAML context")]
+    #[error("Error parsing incoming YAML context {0}")]
     YamlError(#[from] serde_yaml::Error),
-    #[error("Formatting error when writing")]
+    #[error("Formatting error when writing {0}")]
     FormatError(#[from] std::fmt::Error),
-    #[error("I/O error when reading")]
+    #[error("I/O error when reading {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Parser error when parsing `{0}`")]
+    #[error("Parser Error when parsing `{0}`")]
     ParseError(String),
-    #[error("Regex expression parse error for rules file")]
+    #[error("Regex expression parse error for rules file {0}")]
     RegexError(#[from] regex::Error),
     #[error(
         "Could not evaluate clause for a rule with missing property for incoming context `{0}`"
     )]
     MissingProperty(String),
-    #[error("There was no variable or value object to resolve. Error = {0}`")]
+    #[error("There was no variable or value object to resolve. Error = `{0}`")]
     MissingValue(String),
-    #[error("Could not retrieve data from incoming context. Error = {0}`")]
+    #[error("Could not retrieve data from incoming context. Error = `{0}`")]
     RetrievalError(String),
     #[error("Variable assignment could not be resolved in rule file or incoming context `{0}`")]
     MissingVariable(String),
@@ -36,7 +36,7 @@ pub enum Error {
     IncompatibleError(String),
     #[error("Comparing incoming context with literals or dynamic results wasn't possible `{0}`")]
     NotComparable(String),
-    #[error("Could not convert in JSON value object `{0}`")]
+    #[error("Could not convert in JSON value object {0}")]
     ConversionError(#[from] Infallible),
     #[error("The path `{0}` does not exist")]
     FileNotFoundError(String),
@@ -48,7 +48,7 @@ pub enum Error {
 pub struct Errors(pub Vec<Error>);
 
 impl std::fmt::Display for Errors {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
         let vec = self
             .0
             .iter()
@@ -59,10 +59,6 @@ impl std::fmt::Display for Errors {
 
         Ok(())
     }
-}
-
-fn print(e: Error) {
-    println!("{e}");
 }
 
 impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
@@ -87,7 +83,7 @@ impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
 impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     fn from(err: nom::Err<ParserError<'a>>) -> Self {
         let msg = match err {
-            nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {}", e),
+            nom::Err::Failure(e) | nom::Err::Error(e) => format!("Parsing Error {e}"),
             nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
         };
         Error::ParseError(msg)

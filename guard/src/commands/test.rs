@@ -31,6 +31,7 @@ use crate::utils::writer::Writer;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Test {}
 
+#[allow(clippy::new_without_default)]
 impl Test {
     pub fn new() -> Self {
         Test {}
@@ -78,7 +79,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical
@@ -185,7 +186,7 @@ or failure testing.
                         crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
                     match crate::rules::parser::rules_file(span) {
                         Err(e) => {
-                            writeln!(writer, "Parse Error on ruleset file {}", e)?;
+                            writeln!(writer, "Parse Error on ruleset file {e}",)?;
                             exit_code = 1;
                         }
                         Ok(rules) => {
@@ -217,6 +218,7 @@ or failure testing.
 
             validate_path(file)?;
             validate_path(data)?;
+
             let data_test_files = get_files_with_filter(data, cmp, |entry| {
                 entry
                     .file_name()
@@ -247,14 +249,14 @@ or failure testing.
             }) {
                 match rules {
                     Err(e) => {
-                        write!(writer, "Unable to read rule file content {}", e)?;
+                        write!(writer, "Unable to read rule file content {e}")?;
                         exit_code = 1;
                     }
                     Ok((context, path)) => {
                         let span = crate::rules::parser::Span::new_extra(&context, &path);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                writeln!(writer, "Parse Error on ruleset file {}", e)?;
+                                writeln!(writer, "Parse Error on ruleset file {e}")?;
                                 exit_code = 1;
                             }
                             Ok(rules) => {
@@ -297,7 +299,7 @@ fn test_with_data(
     rules: &RulesFile<'_>,
     verbose: bool,
     new_engine: bool,
-    mut writer: &mut Writer,
+    writer: &mut Writer,
 ) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
@@ -316,12 +318,12 @@ fn test_with_data(
     }) {
         match specs {
             Err(e) => {
-                writeln!(writer, "Error processing {}", e)?;
+                writeln!(writer, "Error processing {e}")?;
                 exit_code = 1;
             }
             Ok(specs) => {
                 for each in specs {
-                    writeln!(writer, "Test Case #{}", test_counter)?;
+                    writeln!(writer, "Test Case #{test_counter}")?;
                     if each.name.is_some() {
                         writeln!(writer, "Name: {}", each.name.unwrap())?;
                     }
@@ -348,8 +350,7 @@ fn test_with_data(
                                 None => {
                                     writeln!(
                                         writer,
-                                        "  No Test expectation was set for Rule {}",
-                                        rule_name
+                                        "  No Test expectation was set for Rule {rule_name}"
                                     )?;
                                     continue;
                                 }
@@ -392,7 +393,7 @@ fn test_with_data(
                                     by_result
                                         .entry(String::from("PASS"))
                                         .or_insert_with(indexmap::IndexSet::new)
-                                        .insert(format!("{}: Expected = {}", rule_name, status));
+                                        .insert(format!("{rule_name}: Expected = {status}"));
                                 }
 
                                 None => {
@@ -400,8 +401,7 @@ fn test_with_data(
                                         .entry(String::from("FAIL"))
                                         .or_insert_with(indexmap::IndexSet::new)
                                         .insert(format!(
-                                            "{}: Expected = {}, Evaluated = {:?}",
-                                            rule_name, expected, statues
+                                            "{rule_name}: Expected = {expected}, Evaluated = {statues:?}"
                                         ));
                                     exit_code = 7;
                                 }
@@ -425,7 +425,7 @@ fn test_with_data(
                             match expectations.get(&each.context) {
                                 Some(value) => match Status::try_from(value.as_str()) {
                                     Err(e) => {
-                                        writeln!(writer, "Incorrect STATUS provided {}", e)?;
+                                        writeln!(writer, "Incorrect STATUS provided {e}")?;
                                         exit_code = 1;
                                     }
                                     Ok(status) => {
@@ -473,7 +473,7 @@ fn test_with_data(
 
 pub(crate) fn print_test_case_report(
     by_result: &HashMap<String, indexmap::IndexSet<String>>,
-    mut writer: &mut Writer,
+    writer: &mut Writer,
 ) {
     use itertools::Itertools;
     let mut results = by_result.keys().cloned().collect_vec();
@@ -481,10 +481,10 @@ pub(crate) fn print_test_case_report(
     results.sort(); // Deterministic order of results
 
     for result in &results {
-        writeln!(writer, "  {} Rules:", result).expect("Unable to write to the output");
+        writeln!(writer, "  {result} Rules:").expect("Unable to write to the output");
         for each_case in by_result.get(result).unwrap() {
             writeln!(writer, "    {}", *each_case).expect("Unable to write to the output");
         }
     }
-    writeln!(writer, "").expect("Unable to write to the output");
+    writeln!(writer).expect("Unable to write to the output");
 }
