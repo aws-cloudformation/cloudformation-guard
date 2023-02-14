@@ -11,6 +11,7 @@ mod parse_tree_tests {
 
     use cfn_guard;
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
@@ -72,7 +73,7 @@ mod parse_tree_tests {
 
     #[test]
     fn test_json_output() {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .print_json(true)
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
@@ -110,7 +111,7 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer);
@@ -135,7 +136,7 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new_with_custom_stderr(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer);
@@ -160,7 +161,7 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer);

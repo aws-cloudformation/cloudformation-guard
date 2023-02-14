@@ -1,7 +1,7 @@
 use crate::commands::rulegen;
 use crate::utils::writer::WriteBuffer;
 use crate::utils::writer::Writer;
-use std::io::stdout;
+use std::io::{stderr, stdout};
 
 #[test]
 fn test_rulegen() {
@@ -30,7 +30,7 @@ fn test_rulegen() {
         "#,
     );
 
-    let mut writer = Writer::new(WriteBuffer::Stdout(stdout()));
+    let mut writer = Writer::new(WriteBuffer::Stdout(stdout()), WriteBuffer::Stderr(stderr()));
     let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
 
     assert_eq!(1, generated_rules.len());
@@ -61,7 +61,7 @@ fn test_rulegen_no_properties() {
         "#,
     );
 
-    let mut writer = Writer::new(WriteBuffer::Stdout(stdout()));
+    let mut writer = Writer::new(WriteBuffer::Stdout(stdout()), WriteBuffer::Stderr(stderr()));
     let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
 
     assert_eq!(0, generated_rules.len());

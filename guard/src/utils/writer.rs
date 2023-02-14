@@ -8,22 +8,12 @@ pub struct Writer {
 }
 
 impl Writer {
-    pub fn new(buffer: WriteBuffer) -> Self {
+    pub fn new(buffer: WriteBuffer, err: WriteBuffer) -> Self {
         if let WriteBuffer::Stderr(_) = buffer {
             panic!("unable to use stderr as regular buffer");
         }
 
-        Self {
-            buffer,
-            err: WriteBuffer::Stderr(stderr()),
-        }
-    }
-
-    pub fn new_with_custom_stderr(buffer: WriteBuffer) -> Self {
-        Self {
-            buffer,
-            err: WriteBuffer::Vec(vec![]),
-        }
+        Self { buffer, err }
     }
 
     pub fn write_err(&mut self, s: String) -> std::io::Result<()> {

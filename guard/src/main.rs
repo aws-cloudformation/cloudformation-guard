@@ -51,16 +51,19 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                let mut output_writer: Writer =
-                    if [PARSE_TREE, MIGRATE, RULEGEN].contains(&command.name()) {
-                        let writer: Writer = match app.value_of(OUTPUT.0) {
-                            Some(file) => Writer::new(WBFile(File::create(file)?)),
-                            None => Writer::new(Stdout(std::io::stdout())),
-                        };
-                        writer
-                    } else {
-                        Writer::new(Stdout(std::io::stdout()))
+                let mut output_writer: Writer = if [PARSE_TREE, MIGRATE, RULEGEN]
+                    .contains(&command.name())
+                {
+                    let writer: Writer = match app.value_of(OUTPUT.0) {
+                        Some(file) => {
+                            Writer::new(WBFile(File::create(file)?), Stderr(std::io::stderr()))
+                        }
+                        None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
                     };
+                    writer
+                } else {
+                    Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr()))
+                };
 
                 match (*command).execute(value, &mut output_writer) {
                     Err(e) => {
