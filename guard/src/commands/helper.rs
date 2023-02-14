@@ -3,7 +3,7 @@
 
 use crate::commands::validate::generic_summary::GenericSummary;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::root_scope;
 use crate::rules::path_value::traversal::Traversal;
@@ -62,11 +62,11 @@ pub fn validate_and_return_json(
 
                 match String::from_utf8(write_output.buffer().to_vec()) {
                     Ok(val) => return Ok(val),
-                    Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+                    Err(e) => return Err(Error::ParseError(e.to_string())),
                 }
             }
             Err(e) => return Err(e),
         },
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => return Err(Error::ParseError(e.to_string())),
     }
 }

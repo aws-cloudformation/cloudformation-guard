@@ -8,6 +8,7 @@ use std::fs::File;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ParseTree {}
 
+#[allow(clippy::new_without_default)]
 impl ParseTree {
     pub fn new() -> Self {
         ParseTree {}
@@ -69,7 +70,7 @@ impl Command for ParseTree {
         let span = crate::rules::parser::Span::new_extra(&content, "");
         match crate::rules::parser::rules_file(span) {
             Err(e) => {
-                println!("Parsing error handling rule, Error = {}", e);
+                writer.write_err(format!("Parsing error handling rule, Error = {e}"))?;
                 return Err(e);
             }
 
@@ -82,6 +83,6 @@ impl Command for ParseTree {
             }
         }
 
-        Ok(0 as i32)
+        Ok(0_i32)
     }
 }

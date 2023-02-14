@@ -8,9 +8,7 @@ use std::fs::read_to_string;
 
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
 use crate::rules::path_value::{PathAwareValue, QueryResolver};
-use crate::rules::{
-    errors::ErrorKind, Error, Evaluate, EvaluationContext, EvaluationType, Result, Status,
-};
+use crate::rules::{Error, Evaluate, EvaluationContext, EvaluationType, Result, Status};
 
 #[test]
 fn test_convert_from_to_value() -> Result<()> {
@@ -144,10 +142,7 @@ fn test_query_on_value() -> Result<()> {
             if let Some(v) = self.cache.get(variable) {
                 return Ok(v.clone());
             }
-            Err(Error::new(ErrorKind::MissingVariable(format!(
-                "Not found {}",
-                variable
-            ))))
+            Err(Error::MissingVariable(format!("Not found {}", variable)))
         }
 
         fn rule_status(&self, _rule_name: &str) -> Result<Status> {

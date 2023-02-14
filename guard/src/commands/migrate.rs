@@ -4,7 +4,7 @@ use crate::command::Command;
 use crate::commands::files::read_file_content;
 use crate::commands::{MIGRATE, OUTPUT, RULES};
 use crate::migrate::parser::{parse_rules_file, Clause, Rule, RuleLineType, TypeName};
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::Result;
 use crate::utils::writer::Writer;
 use itertools::Itertools;
@@ -22,6 +22,7 @@ mod migrate_tests;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Migrate {}
 
+#[allow(clippy::new_without_default)]
 impl Migrate {
     pub fn new() -> Self {
         Migrate {}
@@ -65,12 +66,12 @@ impl Command for Migrate {
 
         match read_file_content(file) {
             Err(e) => {
-                println!("Unable read content from file {}", e);
-                Err(Error::new(ErrorKind::IoError(e)))
+                writer.write_err(format!("Unable read content from file {e}"))?;
+                Err(Error::IoError(e))
             }
             Ok(file_content) => match parse_rules_file(&file_content, &file_name) {
                 Err(e) => {
-                    println!("Could not parse 1.0 rule file: {}. Please ensure the file is valid with the old version of the tool and try again.", file_name);
+                    writer.write_err(format!("Could not parse 1.0 rule file: {file_name}. Please ensure the file is valid with the old version of the tool and try again."))?;
                     Err(e)
                 }
                 Ok(rules) => {
@@ -78,14 +79,13 @@ impl Command for Migrate {
                     let span = crate::rules::parser::Span::new_extra(&migrated_rules, "");
                     match crate::rules::parser::rules_file(span) {
                         Ok(_rules) => {
-                            write!(writer, "{}", migrated_rules)?;
-                            Ok(0 as i32)
+                            write!(writer, "{migrated_rules}")?;
+                            Ok(0_i32)
                         }
                         Err(e) => {
-                            println!(
-                                "Could not parse migrated ruleset for file: '{}': {}",
-                                &file_name, e
-                            );
+                            writer.write_err(format!(
+                                "Could not parse migrated ruleset for file: '{file_name}': {e}"
+                            ))?;
                             Err(e)
                         }
                     }
@@ -95,6 +95,7 @@ impl Command for Migrate {
     }
 }
 
+#[allow(clippy::uninlined_format_args)]
 pub(crate) fn migrated_rules_by_type(
     rules: &[RuleLineType],
     by_type: &HashMap<TypeName, indexmap::IndexSet<&Clause>>,

@@ -1,4 +1,4 @@
-use cfn_guard::{Error, ErrorKind};
+use cfn_guard::Error;
 use ffi_support::{ErrorCode, ExternError};
 
 pub struct FfiError(pub Error);
@@ -10,24 +10,24 @@ impl From<Error> for FfiError {
 }
 
 fn get_code(e: &Error) -> ErrorCode {
-    let code = match &e.0 {
-        ErrorKind::JsonError(_err) => 1,
-        ErrorKind::YamlError(_err) => 2,
-        ErrorKind::FormatError(_fmt) => 3,
-        ErrorKind::IoError(_io) => 4,
-        ErrorKind::ParseError(_err) => 5,
-        ErrorKind::RegexError(_err) => 6,
-        ErrorKind::MissingProperty(_err) => 7,
-        ErrorKind::MissingVariable(_err) => 8,
-        ErrorKind::MultipleValues(_err) => 9,
-        ErrorKind::IncompatibleRetrievalError(_err) => 10,
-        ErrorKind::IncompatibleError(_err) => 11,
-        ErrorKind::NotComparable(_err) => 12,
-        ErrorKind::ConversionError(_ignore) => 13,
-        ErrorKind::Errors(_all) => 14,
-        ErrorKind::RetrievalError(_err) => 15,
-        ErrorKind::MissingValue(_err) => 16,
-        ErrorKind::FileNotFoundError(_) => 17,
+    let code = match &e {
+        Error::JsonError(_err) => 1,
+        Error::YamlError(_err) => 2,
+        Error::FormatError(_fmt) => 3,
+        Error::IoError(_io) => 4,
+        Error::ParseError(_err) => 5,
+        Error::RegexError(_err) => 6,
+        Error::MissingProperty(_err) => 7,
+        Error::MissingVariable(_err) => 8,
+        Error::MultipleValues(_err) => 9,
+        Error::IncompatibleRetrievalError(_err) => 10,
+        Error::IncompatibleError(_err) => 11,
+        Error::NotComparable(_err) => 12,
+        Error::ConversionError(_ignore) => 13,
+        Error::Errors(_all) => 14,
+        Error::RetrievalError(_err) => 15,
+        Error::MissingValue(_err) => 16,
+        Error::FileNotFoundError(_) => 17,
     };
     ErrorCode::new(code)
 }

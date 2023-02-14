@@ -11,4 +11,4 @@ mod rules;
 pub mod utils;
 
 pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
-pub use crate::rules::errors::{Error, ErrorKind};
+pub use crate::rules::errors::Error;

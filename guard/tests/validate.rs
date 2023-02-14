@@ -5,7 +5,7 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_tests {
-    use std::io::stdout;
+    use std::io::{stderr, stdout};
 
     use indoc::indoc;
     use rstest::rstest;
@@ -17,6 +17,7 @@ mod validate_tests {
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD,
         PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, VALIDATE, VERBOSE,
     };
+    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{
@@ -219,7 +220,7 @@ mod validate_tests {
         #[case] rules_arg: Vec<&str>,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(Stdout(stdout()));
+        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -230,7 +231,7 @@ mod validate_tests {
 
     #[test]
     fn test_single_data_file_single_rules_file_compliant_verbose() {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(vec![
                 "data-dir/s3-public-read-prohibited-template-compliant.yaml",
@@ -261,7 +262,7 @@ mod validate_tests {
         #[case] expected_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -285,7 +286,7 @@ mod validate_tests {
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
     ) {
-        let mut writer = Writer::new(Stdout(stdout()));
+        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -315,7 +316,7 @@ mod validate_tests {
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
     ) {
-        let mut writer = Writer::new(Stdout(stdout()));
+        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -337,7 +338,7 @@ mod validate_tests {
         #[case] input_params_arg: Vec<&str>,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(Stdout(stdout()));
+        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)

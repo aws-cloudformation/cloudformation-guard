@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
@@ -98,7 +99,10 @@ pub trait CommandTestRunner {
                 if let Some(command) = mappings.get(name) {
                     match (*command).execute(value, &mut writer) {
                         Err(e) => {
-                            println!("Error occurred {}", e);
+                            writer
+                                .write_err(format!("Error occurred {e}"))
+                                .expect("failed to write to stderr");
+
                             StatusCode::INTERNAL_FAILURE
                         }
                         Ok(code) => code,

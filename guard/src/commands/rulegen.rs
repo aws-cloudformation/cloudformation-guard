@@ -15,6 +15,7 @@ use string_builder::Builder;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Rulegen {}
 
+#[allow(clippy::new_without_default)]
 impl Rulegen {
     pub fn new() -> Self {
         Rulegen {}
@@ -38,20 +39,23 @@ impl Command for Rulegen {
         let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 
-        let result = parse_template_and_call_gen(&template_contents);
+        let result = parse_template_and_call_gen(&template_contents, writer);
         print_rules(result, writer)?;
 
-        Ok(0 as i32)
+        Ok(0_i32)
     }
 }
 
 pub fn parse_template_and_call_gen(
     template_contents: &str,
+    writer: &mut Writer,
 ) -> HashMap<String, HashMap<String, HashSet<String>>> {
     let cfn_template: HashMap<String, Value> = match serde_yaml::from_str(template_contents) {
         Ok(s) => s,
         Err(e) => {
-            println!("Parsing error handling template file, Error = {}", e);
+            writer
+                .write_err(format!("Parsing error handling template file, Error = {e}"))
+                .expect("failed to write to stderr");
             process::exit(1);
         }
     };
@@ -59,7 +63,9 @@ pub fn parse_template_and_call_gen(
     let cfn_resources_clone = match cfn_template.get("Resources") {
         Some(y) => y.clone(),
         None => {
-            println!("Template lacks a Resources section");
+            writer
+                .write_err(String::from("Template lacks a Resources section"))
+                .expect("failed to write to stderr");
             process::exit(1);
         }
     };
@@ -67,7 +73,11 @@ pub fn parse_template_and_call_gen(
     let cfn_resources: HashMap<String, Value> = match serde_json::from_value(cfn_resources_clone) {
         Ok(y) => y,
         Err(e) => {
-            println!("Template Resources section has an invalid structure: {}", e);
+            writer
+                .write_err(format!(
+                    "Template Resources section has an invalid structure: {e}"
+                ))
+                .expect("failed to write to stderr");
             process::exit(1);
         }
     };
@@ -220,7 +230,9 @@ fn print_rules(
             write!(writer, "{}", generated_rules)?;
         }
         Err(e) => {
-            println!("Parsing error with generated rules file, Error = {}", e);
+            writer.write_err(format!(
+                "Parsing error with generated rules file, Error = {e}"
+            ))?;
         }
     }
     Ok(())

@@ -11,7 +11,7 @@ use std::fmt::Formatter;
 use crate::rules::evaluate::{resolve_query, AutoReport};
 use crate::rules::EvaluationType;
 
-use super::errors::{Error, ErrorKind};
+use super::errors::Error;
 use super::exprs::{QueryPart, SliceDisplay};
 use super::{Evaluate, EvaluationContext, Status};
 //
@@ -151,10 +151,10 @@ impl Path {
     pub(crate) fn extend_with_value(&self, part: &Value) -> Result<Path, Error> {
         match part {
             Value::String(s) => Ok(self.extend_string(s)),
-            _ => Err(Error::new(ErrorKind::IncompatibleError(format!(
+            _ => Err(Error::IncompatibleError(format!(
                 "Value type is not String, Value = {:?}",
                 part
-            )))),
+            ))),
         }
     }
 }
@@ -557,10 +557,10 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             }
 
             MarkedValue::BadValue(val, loc) => {
-                return Err(Error::new(ErrorKind::ParseError(format!(
+                return Err(Error::ParseError(format!(
                     "Bad Value encountered parsing incoming file Value = {}, Loc = {}",
                     val, loc
-                ))))
+                )))
             }
         }
     }
@@ -587,10 +587,10 @@ impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
                 serde_json::Value::Number(match serde_json::Number::from_f64(*f64_) {
                     Some(num) => num,
                     None => {
-                        return Err(Error::new(ErrorKind::IncompatibleError(format!(
+                        return Err(Error::IncompatibleError(format!(
                             "Could not convert float {} to serde::Value::Number",
                             *f64_
-                        ))))
+                        )))
                     }
                 }),
             )),
@@ -733,9 +733,9 @@ impl QueryResolver for PathAwareValue {
                                             }
                                         },
 
-                                        _ => return Err(Error::new(ErrorKind::IncompatibleError(
+                                        _ => return Err(Error::IncompatibleError(
                                             format!("THIS type of variable interpolation is not supported {}, {}", self.type_info(), SliceDisplay(query))
-                                        )))
+                                        ))
                                     }
                                 } else {
                                     keys
@@ -745,21 +745,21 @@ impl QueryResolver for PathAwareValue {
                                         if let Some(next) = map.values.get(k) {
                                             acc.extend(next.select(all, &query[1..], resolver)?);
                                         } else if all {
-                                            return Err(Error::new(
-                                                ErrorKind::RetrievalError(
+                                            return Err(Error::
+                                                RetrievalError(
                                                     format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
                                                             key, self, path, SliceDisplay(query))
-                                                )));
+                                                ));
                                         }
                                     } else {
-                                        return Err(Error::new(
-                                            ErrorKind::NotComparable(
+                                        return Err(Error
+                                            ::NotComparable(
                                                 format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
                                                         SliceDisplay(query),
                                                         each_key.type_info(),
                                                         each_key.self_value()
-                                                )
-                                            )
+                                               )
+
                                         ));
                                     }
                                 }
@@ -885,17 +885,15 @@ impl QueryResolver for PathAwareValue {
                             let mut filter =
                                 AutoReport::new(EvaluationType::Filter, resolver, &context);
                             match conjunctions.evaluate(each, resolver) {
-                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                Err(Error::RetrievalError(e)) => {
                                     if all {
-                                        return Err(Error::new(ErrorKind::RetrievalError(e)));
+                                        return Err(Error::RetrievalError(e));
                                     }
                                     // Else treat is like a filter
                                 }
-                                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
+                                Err(Error::IncompatibleRetrievalError(e)) => {
                                     if all {
-                                        return Err(Error::new(
-                                            ErrorKind::IncompatibleRetrievalError(e),
-                                        ));
+                                        return Err(Error::IncompatibleRetrievalError(e));
                                     }
                                     // Else treat is like a filter
                                 }
@@ -986,10 +984,10 @@ impl PathAwareValue {
             (PathAwareValue::Map((_, map)), PathAwareValue::Map((path, other_map))) => {
                 for (key, value) in other_map.values {
                     if map.values.contains_key(&key) {
-                        return Err(Error::new(ErrorKind::MultipleValues(format!(
+                        return Err(Error::MultipleValues(format!(
                             "Key {}, already exists in map",
                             key
-                        ))));
+                        )));
                     }
 
                     map.values.insert(key.clone(), value);
@@ -999,11 +997,11 @@ impl PathAwareValue {
             }
 
             (this, that) => {
-                return Err(Error::new(ErrorKind::IncompatibleError(format!(
+                return Err(Error::IncompatibleError(format!(
                     "Types are not compatible for merges {}, {}",
                     this.type_info(),
                     that.type_info()
-                ))))
+                )))
             }
         }
         Ok(self)
@@ -1033,8 +1031,7 @@ impl PathAwareValue {
     fn map_error_or_empty(&self, all: bool, e: Error) -> Result<Vec<&PathAwareValue>, Error> {
         if !all {
             match e {
-                Error(ErrorKind::IncompatibleRetrievalError(_))
-                | Error(ErrorKind::RetrievalError(_)) => Ok(vec![]),
+                Error::IncompatibleRetrievalError(_) | Error::RetrievalError(_) => Ok(vec![]),
 
                 rest => return Err(rest),
             }
@@ -1049,10 +1046,10 @@ impl PathAwareValue {
         query: &[QueryPart<'_>],
     ) -> Result<Vec<&PathAwareValue>, Error> {
         if all {
-            Err(Error::new(ErrorKind::IncompatibleRetrievalError(
+            Err(Error::IncompatibleRetrievalError(
                 format!("Attempting to retrieve array index or key from map at path = {} , Type was not an array/object {}, Remaining Query = {}",
                         self.self_value().0, self.type_info(), SliceDisplay(query))
-            )))
+            ))
         } else {
             Ok(vec![])
         }
@@ -1135,11 +1132,11 @@ impl PathAwareValue {
         if check < list.len() {
             Ok(&list[check])
         } else {
-            Err(Error::new(
-                ErrorKind::RetrievalError(
+            Err(Error::
+                RetrievalError(
                     format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
                             parent.self_path(), index, list, SliceDisplay(query))
-                )))
+                ))
         }
     }
 
@@ -1151,11 +1148,11 @@ impl PathAwareValue {
         resolver: &dyn EvaluationContext,
     ) -> Result<Vec<&'v PathAwareValue>, Error> {
         if elements.is_empty() && !query.is_empty() && all {
-            return Err(Error::new(ErrorKind::RetrievalError(format!(
+            return Err(Error::RetrievalError(format!(
                 "No entries for path = {} . Remaining Query {}",
                 parent.self_path(),
                 SliceDisplay(query)
-            ))));
+            )));
         }
 
         let mut accumulated = Vec::with_capacity(elements.len());
@@ -1180,16 +1177,16 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         (PathAwareValue::String((_, s)), PathAwareValue::String((_, o))) => Ok(s.cmp(o)),
         (PathAwareValue::Float((_, f)), PathAwareValue::Float((_, s))) => match f.partial_cmp(s) {
             Some(o) => Ok(o),
-            None => Err(Error::new(ErrorKind::NotComparable(
+            None => Err(Error::NotComparable(
                 "Float values are not comparable".to_owned(),
-            ))),
+            )),
         },
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
-        (_, _) => Err(Error::new(ErrorKind::NotComparable(format!(
+        (_, _) => Err(Error::NotComparable(format!(
             "PathAwareValues are not comparable {}, {}",
             first.type_info(),
             other.type_info()
-        )))),
+        ))),
     }
 }
 
@@ -1272,7 +1269,7 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     let match_result = reg.is_match(s);
     match match_result {
         Ok(is_match) => Ok(is_match),
-        Err(error) => return Err(Error::new(ErrorKind::RegexError(error))),
+        Err(error) => return Err(Error::from(error)),
     }
 }
 

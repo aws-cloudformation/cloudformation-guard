@@ -1,7 +1,7 @@
 use crate::rules::path_value::{Path, PathAwareValue};
 use crate::rules::QueryResult;
 
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use fancy_regex::Regex;
 use nom::Slice;
 use std::convert::TryFrom;
@@ -172,17 +172,17 @@ pub(crate) fn join(
                     aggr.push_str(delimiter);
                     aggr.push_str(val);
                 } else {
-                    return Err(Error::new(ErrorKind::IncompatibleError(format!(
+                    return Err(Error::IncompatibleError(format!(
                         "Joining non string values {}",
                         v
-                    ))));
+                    )));
                 }
             }
             QueryResult::UnResolved(ur) => {
-                return Err(Error::new(ErrorKind::IncompatibleError(format!(
+                return Err(Error::IncompatibleError(format!(
                     "Joining non unresolved values is not allowed {}, unsatisfied part {}",
                     ur.traversed_to, ur.remaining_query
-                ))));
+                )));
             }
         }
     }

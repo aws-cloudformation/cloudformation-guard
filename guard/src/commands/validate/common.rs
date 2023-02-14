@@ -4,7 +4,6 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::OutputFormatType;
 use crate::rules::errors::Error;
-use crate::rules::errors::ErrorKind;
 use crate::rules::eval_context::{
     simplifed_json_from_root, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
     GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,

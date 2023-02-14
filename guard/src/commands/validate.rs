@@ -23,7 +23,7 @@ use crate::commands::{
     OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
     RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
 };
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
@@ -104,6 +104,7 @@ pub(crate) struct Payload {
     list_of_data: Vec<String>,
 }
 
+#[allow(clippy::new_without_default)]
 impl Validate {
     pub fn new() -> Self {
         Validate {}
@@ -172,7 +173,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, mut writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -356,7 +357,7 @@ or rules files.
             for each_file_content in iterate_over(&rules, |content, file| {
                 Ok((
                     content,
-                    match file.strip_prefix(&file) {
+                    match file.strip_prefix(file) {
                         Ok(path) => {
                             if path == empty_path {
                                 file.file_name().unwrap().to_str().unwrap().to_string()
@@ -369,18 +370,16 @@ or rules files.
                 ))
             }) {
                 match each_file_content {
-                    Err(e) => println!("Unable read content from file {}", e),
+                    Err(e) => writer.write_err(format!("Unable read content from file {e}"))?,
                     Ok((file_content, rule_file_name)) => {
                         let span =
                             crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                println!(
-                                    "Parsing error handling rule file = {}, Error = {}",
+                                writer.write_err(format!(
+                                    "Parsing error handling rule file = {}, Error = {e}\n---",
                                     rule_file_name.underline(),
-                                    e
-                                );
-                                println!("---");
+                                ))?;
                                 exit_code = 5;
                                 continue;
                             }
@@ -398,7 +397,7 @@ or rules files.
                                     show_clause_failures,
                                     new_version_eval_engine,
                                     summary_type,
-                                    &mut writer,
+                                    writer,
                                 )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
@@ -438,12 +437,10 @@ or rules files.
             for (each_rules, location) in rules_collection {
                 match parse_rules(&each_rules, &location) {
                     Err(e) => {
-                        println!(
-                            "Parsing error handling rules = {}, Error = {}",
+                        writer.write_err(format!(
+                            "Parsing error handling rules  = {}, Error = {e}\n---",
                             location.underline(),
-                            e
-                        );
-                        println!("---");
+                        ))?;
                         exit_code = 5;
                         continue;
                     }
@@ -461,7 +458,7 @@ or rules files.
                             show_clause_failures,
                             new_version_eval_engine,
                             summary_type,
-                            &mut writer,
+                            writer,
                         )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
@@ -479,14 +476,14 @@ or rules files.
 pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).exists() {
         true => Ok(()),
-        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
+        false => Err(Error::FileNotFoundError(base.to_string())),
     }
 }
 
 pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(data) {
         Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => return Err(Error::ParseError(e.to_string())),
     };
 
     let span = crate::rules::parser::Span::new_extra(rules, "lambda");
@@ -503,14 +500,14 @@ pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
             }
             Err(e) => Err(e),
         },
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
@@ -533,13 +530,14 @@ pub(crate) struct ConsoleReporter<'r> {
 
 fn indent_spaces(indent: usize) {
     for _idx in 0..indent {
-        print!("{}", INDENT)
+        print!("{INDENT}")
     }
 }
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
+#[allow(clippy::uninlined_format_args)]
 fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool) {
     let prefix_current = if last { "`- " } else { "|- " };
     println!("{}{}{}", prefix, prefix_current, current);
@@ -569,12 +567,12 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
     indent_spaces(depth - 1);
-    println!("{}", header);
+    println!("{header}");
     match &cxt.from {
         Some(v) => {
             indent_spaces(depth);
             print!("|  ");
-            println!("From: {:?}", v);
+            println!("From: {v:?}");
         }
         None => {}
     }
@@ -582,7 +580,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         Some(v) => {
             indent_spaces(depth);
             print!("|  ");
-            println!("To: {:?}", v);
+            println!("To: {v:?}");
         }
         None => {}
     }
@@ -590,7 +588,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
         Some(message) => {
             indent_spaces(depth);
             print!("|  ");
-            println!("Message: {}", message);
+            println!("Message: {message}");
         }
         None => {}
     }
@@ -600,6 +598,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     }
 }
 
+#[allow(clippy::uninlined_format_args)]
 fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
     print!(
         "{file}/{rule:<0$}",
@@ -655,6 +654,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl<'r> ConsoleReporter<'r> {
     pub(crate) fn new(
         root: StackTracker<'r>,
@@ -678,6 +678,7 @@ impl<'r> ConsoleReporter<'r> {
         }
     }
 
+    #[allow(dead_code)] // TODO: probably should jsut delete this...
     pub fn get_result_json(
         mut self,
         root: &PathAwareValue,
@@ -688,7 +689,7 @@ impl<'r> ConsoleReporter<'r> {
         if self.verbose {
             Ok(serde_json::to_string_pretty(&top.children).unwrap())
         } else {
-            let mut output = Vec::new();
+            let output = Vec::new();
             let longest = get_longest(top);
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
                 partition_failed_and_rest(top);
@@ -711,7 +712,7 @@ impl<'r> ConsoleReporter<'r> {
 
             match String::from_utf8(output) {
                 Ok(s) => Ok(s),
-                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+                Err(e) => Err(Error::ParseError(e.to_string())),
             }
         }
     }
@@ -722,7 +723,7 @@ impl<'r> ConsoleReporter<'r> {
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
-            println!("{}", serialized_user);
+            println!("{serialized_user}");
         } else {
             let longest = get_longest(top);
 
@@ -891,16 +892,16 @@ fn evaluate_against_data_input<'r>(
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
     if content.trim().is_empty() {
-        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
+        Err(Error::ParseError("blank data".to_string()))
     } else {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
             Err(_) => {
                 let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::new(ErrorKind::ParseError(format!(
+                return Err(Error::ParseError(format!(
                     "data beginning with \n{}\n ...",
                     &content[..str_len]
-                ))));
+                )));
             }
         };
         Ok(path_value)
@@ -914,13 +915,13 @@ fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
 fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
     top.children
         .iter()
-        .partition(|ctx| matches!((*ctx).status, Some(Status::FAIL)))
+        .partition(|ctx| matches!(ctx.status, Some(Status::FAIL)))
 }
 
 fn get_longest(top: &StatusContext) -> usize {
     top.children
         .iter()
-        .max_by(|f, s| (*f).context.len().cmp(&(*s).context.len()))
+        .max_by(|f, s| f.context.len().cmp(&s.context.len()))
         .map(|elem| elem.context.len())
         .unwrap_or(20)
 }

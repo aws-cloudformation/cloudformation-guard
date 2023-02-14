@@ -11,6 +11,7 @@ mod parse_tree_tests {
 
     use cfn_guard;
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
@@ -72,7 +73,7 @@ mod parse_tree_tests {
 
     #[test]
     fn test_json_output() {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .print_json(true)
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
@@ -105,24 +106,43 @@ mod parse_tree_tests {
         S3_BUCKET_LOGGING_ENABLED_PARSE_TREE,
         StatusCode::SUCCESS
     )]
-    #[case("validate/rules-dir/dne.guard", "", StatusCode::INTERNAL_FAILURE)]
-    #[case(
-        "validate/rules-dir/malformed-rule.guard",
-        "",
-        StatusCode::INTERNAL_FAILURE
-    )]
     fn test_yaml_output(
         #[case] rules_arg: &str,
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer);
 
         assert_eq!(expected_status_code, status_code);
         assert_output_from_str_eq!(expected_writer_output, writer)
+    }
+
+    #[rstest::rstest]
+    #[case(
+        "validate/rules-dir/dne.guard",
+        "Error occurred I/O error when reading No such file or directory (os error 2)\n",
+        StatusCode::INTERNAL_FAILURE
+    )]
+    #[case(
+        "validate/rules-dir/malformed-rule.guard",
+        "Error occurred I/O error when reading No such file or directory (os error 2)\n",
+        StatusCode::INTERNAL_FAILURE
+    )]
+    fn test_yaml_output_with_expected_failures(
+        #[case] rules_arg: &str,
+        #[case] expected_writer_output: &str,
+        #[case] expected_status_code: i32,
+    ) {
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = ParseTreeTestRunner::default()
+            .rules(rules_arg)
+            .run(&mut writer);
+
+        assert_eq!(expected_status_code, status_code);
+        assert_eq!(expected_writer_output, writer.err_to_stripped().unwrap());
     }
 
     #[rstest::rstest]
@@ -141,7 +161,7 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer);

@@ -8,10 +8,12 @@ mod rules;
 mod utils;
 
 use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
+use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use command::Command;
 use commands::{APP_NAME, APP_VERSION};
 use rules::errors::Error;
+use std::io::Write;
 use std::process::exit;
 use std::rc::Rc;
 
@@ -27,11 +29,11 @@ fn main() -> Result<(), Error> {
     );
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-    commands.push(Box::new(crate::commands::parse_tree::ParseTree::new()));
-    commands.push(Box::new(crate::commands::test::Test::new()));
-    commands.push(Box::new(crate::commands::validate::Validate::new()));
-    commands.push(Box::new(crate::commands::rulegen::Rulegen::new()));
-    commands.push(Box::new(crate::commands::migrate::Migrate::new()));
+    commands.push(Box::new(commands::parse_tree::ParseTree::new()));
+    commands.push(Box::new(commands::test::Test::new()));
+    commands.push(Box::new(commands::validate::Validate::new()));
+    commands.push(Box::new(commands::rulegen::Rulegen::new()));
+    commands.push(Box::new(commands::migrate::Migrate::new()));
 
     let mappings = commands.iter().map(|s| (s.name(), s)).fold(
         HashMap::with_capacity(commands.len()),
@@ -49,20 +51,26 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         (name, Some(value)) => {
             if let Some(command) = mappings.get(name) {
-                let mut output_writer: Writer =
-                    if [PARSE_TREE, MIGRATE, RULEGEN].contains(&command.name()) {
-                        let writer: Writer = match app.value_of(OUTPUT.0) {
-                            Some(file) => Writer::new(WBFile(File::create(file)?)),
-                            None => Writer::new(Stdout(std::io::stdout())),
-                        };
-                        writer
-                    } else {
-                        Writer::new(Stdout(std::io::stdout()))
+                let mut output_writer: Writer = if [PARSE_TREE, MIGRATE, RULEGEN]
+                    .contains(&command.name())
+                {
+                    let writer: Writer = match app.value_of(OUTPUT.0) {
+                        Some(file) => {
+                            Writer::new(WBFile(File::create(file)?), Stderr(std::io::stderr()))
+                        }
+                        None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
                     };
+                    writer
+                } else {
+                    Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr()))
+                };
 
                 match (*command).execute(value, &mut output_writer) {
                     Err(e) => {
-                        println!("Error occurred {}", e);
+                        output_writer
+                            .write_err(format!("Error occurred {e}"))
+                            .expect("failed to write to stderr");
+
                         exit(-1);
                     }
                     Ok(code) => exit(code),

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::rules::{
     self,
-    errors::{Error, ErrorKind},
+    errors::Error,
     libyaml::{
         event::{Event, Scalar, ScalarStyle, SequenceStart},
         parser::Parser,
@@ -32,31 +32,29 @@ impl Loader {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
 
         loop {
-            match parser.next() {
-                Ok((event, location)) => {
-                    match event {
-                        Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
-                        Event::DocumentEnd => {
-                            self.documents.push(self.stack.pop().unwrap());
-                            self.stack.clear();
-                            self.last_container_index.clear();
-                            return Ok(self.documents.pop().unwrap());
-                        }
-                        Event::MappingStart(..) => self.handle_mapping_start(location),
-                        Event::MappingEnd => self.handle_mapping_end(),
-                        Event::SequenceStart(sequence_start) => {
-                            self.handle_sequence_start(sequence_start, location)
-                        }
-                        Event::SequenceEnd => self.handle_sequence_end(),
-                        Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
-                        Event::Alias(_) => {
-                            return Err(Error(ErrorKind::ParseError(String::from(
-                                "Guard does not currently support aliases",
-                            ))))
-                        }
-                    };
-                }
-                Err(e) => return Err(Error(ErrorKind::ParseError(format!("{}", e)))),
+            let (event, location) = parser.next()?;
+            {
+                match event {
+                    Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
+                    Event::DocumentEnd => {
+                        self.documents.push(self.stack.pop().unwrap());
+                        self.stack.clear();
+                        self.last_container_index.clear();
+                        return Ok(self.documents.pop().unwrap());
+                    }
+                    Event::MappingStart(..) => self.handle_mapping_start(location),
+                    Event::MappingEnd => self.handle_mapping_end(),
+                    Event::SequenceStart(sequence_start) => {
+                        self.handle_sequence_start(sequence_start, location)
+                    }
+                    Event::SequenceEnd => self.handle_sequence_end(),
+                    Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
+                    Event::Alias(_) => {
+                        return Err(Error::ParseError(String::from(
+                            "Guard does not currently support aliases",
+                        )))
+                    }
+                };
             };
         }
     }
