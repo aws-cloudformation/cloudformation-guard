@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn test_deserialize_payload_success() {
     let serialized_payload = "{\"data\":[\"data as string 1\",\"data as string 2\"], \"rules\":[\"rules as string 1\",\"rules as string 2\"]}";
-    let deserialized_payload = validate::deserialize_payload(serialized_payload).unwrap();
+    let deserialized_payload = deserialize_payload(serialized_payload).unwrap();
     assert_eq!(
         deserialized_payload.list_of_data,
         vec!["data as string 1", "data as string 2"]
@@ -19,72 +19,72 @@ fn test_deserialize_payload_success() {
 #[should_panic]
 fn test_deserialize_payload_malformed_string() {
     let serialized_payload = "{\"data:[\"data as string 1\",\"data as string 2\"], \"rules\":[\"rules as string 1\",\"rules as string 2\"]}";
-    validate::deserialize_payload(serialized_payload).unwrap();
+    deserialize_payload(serialized_payload).unwrap();
 }
 
 #[test]
 #[should_panic]
 fn test_deserialize_payload_unrecognized_property() {
     let serialized_payload = "{\"data\":[\"data as string 1\",\"data as string 2\"], \"wrongProperty\":\"wrongProperty\"}";
-    validate::deserialize_payload(serialized_payload).unwrap();
+    deserialize_payload(serialized_payload).unwrap();
 }
 
 #[test]
 #[should_panic]
 fn test_deserialize_payload_empty_input() {
     let serialized_payload = "";
-    validate::deserialize_payload(serialized_payload).unwrap();
+    deserialize_payload(serialized_payload).unwrap();
 }
 
 #[test]
 fn test_supported_extensions() {
     // Data extensions
     assert!(has_a_supported_extension(
-        &"blah.json".to_string(),
+        "blah.json",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(has_a_supported_extension(
-        &"blah.jsn".to_string(),
+        "blah.jsn",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(has_a_supported_extension(
-        &"blah.yaml".to_string(),
+        "blah.yaml",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(has_a_supported_extension(
-        &"blah.template".to_string(),
+        "blah.template",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(has_a_supported_extension(
-        &"blah.yml".to_string(),
+        "blah.yml",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     // unsupported
     assert!(!has_a_supported_extension(
-        &"blah.txt".to_string(),
+        "blah.txt",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(!has_a_supported_extension(
-        &"blah".to_string(),
+        "blah",
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
 
     // Rules extensions
     assert!(has_a_supported_extension(
-        &"blah.guard".to_string(),
+        "blah.guard",
         &RULE_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(has_a_supported_extension(
-        &"blah.ruleset".to_string(),
+        "blah.ruleset",
         &RULE_FILE_SUPPORTED_EXTENSIONS
     ));
     // unsupported
     assert!(!has_a_supported_extension(
-        &"blah.txt".to_string(),
+        "blah.txt",
         &RULE_FILE_SUPPORTED_EXTENSIONS
     ));
     assert!(!has_a_supported_extension(
-        &"blah".to_string(),
+        "blah",
         &RULE_FILE_SUPPORTED_EXTENSIONS
     ));
 }

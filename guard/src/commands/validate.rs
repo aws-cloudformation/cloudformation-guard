@@ -10,15 +10,12 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use Type::CFNTemplate;
-
 use crate::command::Command;
 use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::commands::validate::Type::Generic;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
     OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
@@ -60,8 +57,8 @@ pub(crate) enum Type {
 impl From<&str> for Type {
     fn from(value: &str) -> Self {
         match value {
-            "CFNTemplate" => CFNTemplate,
-            _ => Generic,
+            "CFNTemplate" => Type::CFNTemplate,
+            _ => Type::Generic,
         }
     }
 }
