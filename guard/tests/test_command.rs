@@ -142,6 +142,7 @@ mod test_command_tests {
             if self.verbose {
                 args.push(format!("-{}", VERBOSE.1));
             }
+
             args
         }
     }

@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 use colored::*;
 use enumflags2::BitFlags;
 use serde::Deserialize;
@@ -117,8 +117,8 @@ impl Command for Validate {
         VALIDATE
     }
 
-    fn command(&self) -> App<'static> {
-        App::new(VALIDATE)
+    fn command(&self) -> clap::Command {
+        clap::Command::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure.
 You can point rules flag to a rules directory and point data flag to a data directory.
 When pointed to a directory it will read all rules in the directory file and evaluate
@@ -128,64 +128,69 @@ Note - When pointing the command to a directory, the directory may not contain a
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 "#)
-            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true)
+            .arg(Arg::new(RULES.0).long(RULES.0).short(RULES.1)
+                .num_args(0..)
+                .action(ArgAction::Append)
                 .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-                .multiple(true)
                 .conflicts_with("payload"))
-            .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
+            .arg(Arg::new(DATA.0).long(DATA.0).short(DATA.1)
+                .num_args(0..)
+                .action(ArgAction::Append)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .multiple(true)
                 .conflicts_with("payload"))
-            .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
+            .arg(Arg::new(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1)
+                .num_args(0..)
+                .action(ArgAction::Append)
                 .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
-                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .multiple(true))
-            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(["CFNTemplate"])
-                .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(["json", "yaml", "single-line-summary"])
+                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template"))
+            .arg(Arg::new(TYPE.0).long(TYPE.0).short(TYPE.1)
+                .help("Specify the type of data file used for improved messaging - ex: CFNTemplate"))
+            .arg(Arg::new(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1)
+                .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
+            .arg(Arg::new(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1)
+                .action(ArgAction::SetTrue) //TODO: verify this is settrue, and not set false
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
-            .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
-                .possible_values(["none", "all", "pass", "fail", "skip"])
+            .arg(Arg::new(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).use_value_delimiter(true).action(ArgAction::Append)
+                .value_parser(SHOW_SUMMARY_VALUE_TYPE)
                 .default_value("fail")
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
+            .arg(Arg::new(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).action(ArgAction::SetTrue)
                 .help("Show clause failure along with summary"))
-            .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).required(false).help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with(ALPHABETICAL.0)
+            .arg(Arg::new(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).action(ArgAction::SetTrue).help("Validate files in a directory ordered alphabetically"))
+            .arg(Arg::new(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).action(ArgAction::SetTrue).conflicts_with(ALPHABETICAL.0)
                 .help("Validate files in a directory ordered by last modified times"))
-            .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
+            .arg(Arg::new(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).action(ArgAction::SetTrue)
                 .help("Verbose logging"))
-            .arg(Arg::with_name(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).required(false)
+            .arg(Arg::new(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).action(ArgAction::SetTrue)
                 .help("Print output in json format"))
-            .arg(Arg::with_name(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1)
+            .arg(Arg::new(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1).action(ArgAction::Set).required(false)
                 .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
-            .group(ArgGroup::with_name(REQUIRED_FLAGS)
-                .args(&[RULES.0, PAYLOAD.0])
+            .group(ArgGroup::new(REQUIRED_FLAGS)
+                .args([RULES.0, PAYLOAD.0])
                 .required(true))
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let cmp = if app.is_present(LAST_MODIFIED.0) {
+        let cmp = if app.get_flag(LAST_MODIFIED.0) {
             last_modified
         } else {
             alpabetical
         };
 
         let empty_path = Path::new("");
-        let mut streams: Vec<DataFile> = Vec::new();
-        let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
+        let mut streams = Vec::new();
+
+        let data_files = match app.get_many::<String>(DATA.0) {
             Some(list_of_file_or_dir) => {
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
@@ -227,7 +232,7 @@ or rules files.
                 streams
             }
             None => {
-                if app.is_present(RULES.0) {
+                if app.contains_id(RULES.0) {
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
                     let path_value = match get_path_aware_value_from_data(&content) {
@@ -246,7 +251,7 @@ or rules files.
             }
         };
 
-        let extra_data = match app.values_of(INPUT_PARAMETERS.0) {
+        let extra_data = match app.get_many::<String>(INPUT_PARAMETERS.0) {
             Some(list_of_file_or_dir) => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
                 for file_or_dir in list_of_file_or_dir {
@@ -279,9 +284,9 @@ or rules files.
             None => None,
         };
 
-        let verbose = app.is_present(VERBOSE.0);
+        let verbose = app.get_flag(VERBOSE.0);
 
-        let data_type = match app.value_of(TYPE.0) {
+        let data_type = match app.get_one::<String>(TYPE.0) {
             Some(t) => {
                 if t == "CFNTemplate" {
                     CFNTemplate
@@ -292,7 +297,7 @@ or rules files.
             None => Type::Generic,
         };
 
-        let output_type = match app.value_of(OUTPUT_FORMAT.0) {
+        let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
             Some(o) => {
                 if o == "single-line-summary" {
                     OutputFormatType::SingleLineSummary
@@ -306,10 +311,10 @@ or rules files.
         };
 
         let summary_type: BitFlags<SummaryType> =
-            app.values_of(SHOW_SUMMARY.0)
+            app.get_many::<String>(SHOW_SUMMARY.0)
                 .map_or(SummaryType::FAIL.into(), |v| {
                     v.fold(BitFlags::empty(), |mut st, elem| {
-                        match elem {
+                        match elem.as_str() {
                             "pass" => st.insert(SummaryType::PASS),
                             "fail" => st.insert(SummaryType::FAIL),
                             "skip" => st.insert(SummaryType::SKIP),
@@ -323,13 +328,13 @@ or rules files.
                     })
                 });
 
-        let print_json = app.is_present(PRINT_JSON.0);
-        let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
-        let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
+        let print_json = app.get_flag(PRINT_JSON.0);
+        let show_clause_failures = app.get_flag(SHOW_CLAUSE_FAILURES.0);
+        let new_version_eval_engine = !app.get_flag(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
-        if app.is_present(RULES.0) {
-            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
+        if app.contains_id(RULES.0) {
+            let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();
             let mut rules = Vec::new();
             for file_or_dir in list_of_file_or_dir {
                 validate_path(file_or_dir)?;
@@ -913,6 +918,28 @@ fn get_longest(top: &StatusContext) -> usize {
         .max_by(|f, s| f.context.len().cmp(&s.context.len()))
         .map(|elem| elem.context.len())
         .unwrap_or(20)
+}
+
+const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
+
+fn output_format_value_parser(value: &str) -> Result<String> {
+    match OUTPUT_FORMAT_VALUE_TYPE.contains(&value) {
+        true => Ok(String::from(value)),
+        false => Err(Error::ParseError(String::from(
+            "invalid output format type",
+        ))),
+    }
+}
+
+const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
+
+fn show_summary_parser(value: &str) -> Result<String> {
+    match SHOW_SUMMARY_VALUE_TYPE.contains(&value) {
+        true => Ok(String::from(value)),
+        false => Err(Error::ParseError(String::from(
+            "invalid output format type",
+        ))),
+    }
 }
 
 #[cfg(test)]

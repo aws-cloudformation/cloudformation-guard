@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches};
 
 use crate::command::Command;
 use crate::commands::files::read_file_content;
@@ -35,32 +35,31 @@ impl Command for Migrate {
         MIGRATE
     }
 
-    fn command(&self) -> App<'static> {
-        App::new(MIGRATE)
-            .about(
-                r#"Migrates 1.0 rules to 2.0 compatible rules.
-"#,
-            )
+    fn command(&self) -> clap::Command {
+        clap::Command::new(MIGRATE)
+            .about("Migrates 1.0 rules to 2.0 compatible rules.")
             .arg(
-                Arg::with_name(RULES.0)
+                Arg::new(RULES.0)
                     .long(RULES.0)
                     .short(RULES.1)
-                    .takes_value(true)
                     .help("Provide a rules file")
                     .required(true),
             )
             .arg(
-                Arg::with_name(OUTPUT.0)
+                Arg::new(OUTPUT.0)
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
-                    .takes_value(true)
                     .help("Write migrated rules to output file")
                     .required(false),
             )
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let file_input = app.value_of(RULES.0).unwrap();
+        let file_input = match app.get_one::<String>(RULES.0) {
+            Some(file_input) => file_input,
+            None => return Err(Error::ParseError(String::from("rip"))),
+        };
+
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();
         let file = File::open(file_input)?;

@@ -3,10 +3,11 @@ use std::process;
 
 use crate::command::Command;
 use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
+use crate::rules::errors::Error;
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches};
 use itertools::Itertools;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -28,16 +29,19 @@ impl Command for Rulegen {
         RULEGEN
     }
 
-    fn command(&self) -> App<'static> {
-        App::new(RULEGEN)
-            .about(r#"Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
-"#)
-            .arg(Arg::with_name(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
+    fn command(&self) -> clap::Command {
+        clap::Command::new(RULEGEN)
+            .about("Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)")
+            .arg(Arg::new(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
+            .arg(Arg::new(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).help("Write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let file = app.value_of(TEMPLATE.0).unwrap();
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        let file = match app.get_one::<String>(TEMPLATE.0) {
+            Some(file) => file,
+            None => return Err(Error::ParseError(String::from("rip"))), //todo: fixme
+        };
+
         let template_contents = fs::read_to_string(file)?;
 
         let result = parse_template_and_call_gen(&template_contents, writer);

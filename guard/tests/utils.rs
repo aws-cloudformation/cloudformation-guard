@@ -7,8 +7,6 @@ use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use clap::App;
-
 use cfn_guard::command::Command;
 use cfn_guard::commands::{
     migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
@@ -66,7 +64,7 @@ pub trait CommandTestRunner {
 
     fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
         let test_app_name = String::from("cfn-guard-test");
-        let mut app = App::new(&test_app_name);
+        let mut app = clap::Command::new("cfn-guard-test");
 
         let args = self.build_args();
 
