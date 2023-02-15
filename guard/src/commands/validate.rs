@@ -18,6 +18,7 @@ use crate::commands::files::{alpabetical, iterate_over, last_modified};
 use crate::commands::tracker::{StackTracker, StatusContext};
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
+use crate::commands::validate::Type::Generic;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
     OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
@@ -56,6 +57,15 @@ pub(crate) enum Type {
     Generic,
 }
 
+impl From<&str> for Type {
+    fn from(value: &str) -> Self {
+        match value {
+            "CFNTemplate" => CFNTemplate,
+            _ => Generic,
+        }
+    }
+}
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
@@ -63,6 +73,19 @@ pub(crate) enum OutputFormatType {
     JSON,
     YAML,
 }
+
+impl From<&str> for OutputFormatType {
+    fn from(value: &str) -> Self {
+        match value {
+            "single-line-summary" => OutputFormatType::SingleLineSummary,
+            "json" => OutputFormatType::JSON,
+            _ => OutputFormatType::YAML,
+        }
+    }
+}
+
+const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
+const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) trait Reporter: Debug {
@@ -287,26 +310,12 @@ or rules files.
         let verbose = app.get_flag(VERBOSE.0);
 
         let data_type = match app.get_one::<String>(TYPE.0) {
-            Some(t) => {
-                if t == "CFNTemplate" {
-                    CFNTemplate
-                } else {
-                    Type::Generic
-                }
-            }
+            Some(t) => Type::from(t.as_str()),
             None => Type::Generic,
         };
 
         let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
-            Some(o) => {
-                if o == "single-line-summary" {
-                    OutputFormatType::SingleLineSummary
-                } else if o == "json" {
-                    OutputFormatType::JSON
-                } else {
-                    OutputFormatType::YAML
-                }
-            }
+            Some(o) => OutputFormatType::from(o.as_str()),
             None => OutputFormatType::SingleLineSummary,
         };
 

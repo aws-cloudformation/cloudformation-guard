@@ -107,7 +107,7 @@ pub(crate) fn migrated_rules_by_type(
         }
     }
 
-    let mut types = by_type.keys().map(|elem| elem.clone()).collect_vec();
+    let mut types = by_type.keys().cloned().collect_vec();
     types.sort();
     for each_type in &types {
         writeln!(
