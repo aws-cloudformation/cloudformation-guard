@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{stderr, Read, Stderr, Stdout, Write};
+use std::io::{Read, Stderr, Stdout, Write};
 use std::string::FromUtf8Error;
 
 pub struct Writer {

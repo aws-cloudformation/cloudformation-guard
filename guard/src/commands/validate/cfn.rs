@@ -203,7 +203,7 @@ fn single_line(
             let resource_name = match CFN_RESOURCES.captures(*key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
-                    println!("key: {}", key);
+                    writeln!(writer, "key: {}", key)?;
                     unreachable!()
                 }
             };

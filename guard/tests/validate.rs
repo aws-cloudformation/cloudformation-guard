@@ -215,7 +215,7 @@ mod validate_tests {
     #[case(vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
-    fn test_single_data_file_single_rules_file(
+    fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
         #[case] expected_status_code: i32,
@@ -230,7 +230,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_single_data_file_single_rules_file_compliant_verbose() {
+    fn test_single_data_file_single_rules_file_compliant() {
         let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
         let status_code = ValidateTestRunner::default()
             .data(vec![
@@ -253,10 +253,31 @@ mod validate_tests {
     }
 
     #[rstest::rstest]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose_compliant.out", StatusCode::SUCCESS)]
+    #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose_non_compliant.out", StatusCode::PARSING_ERROR)]
+    fn test_single_data_file_single_rules_file_verbose(
+        #[case] data_arg: Vec<&str>,
+        #[case] rules_arg: Vec<&str>,
+        #[case] expected_output: &str,
+        #[case] expected_status_code: i32,
+    ) {
+        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
+        let status_code = ValidateTestRunner::default()
+            .data(data_arg)
+            .rules(rules_arg)
+            .show_summary(vec!["all"])
+            .verbose(true)
+            .run(&mut writer);
+
+        assert_eq!(expected_status_code, status_code);
+        assert_output_from_file_eq!(expected_output, writer)
+    }
+
+    #[rstest::rstest]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose.out", StatusCode::PARSING_ERROR)]
     #[case(vec!["data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml"], vec!["rules-dir/advanced_regex_negative_lookbehind_rule.guard"], "resources/validate/output-dir/advanced_regex_negative_lookbehind_non_compliant.out", StatusCode::PARSING_ERROR)]
     #[case(vec!["data-dir/advanced_regex_negative_lookbehind_compliant.yaml"], vec!["rules-dir/advanced_regex_negative_lookbehind_rule.guard"], "resources/validate/output-dir/advanced_regex_negative_lookbehind_compliant.out", StatusCode::SUCCESS)]
-    fn test_single_data_file_single_rules_file_verbose(
+    fn test_single_data_file_single_rules_file(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
         #[case] expected_output: &str,
