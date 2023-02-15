@@ -528,9 +528,9 @@ pub(crate) struct ConsoleReporter<'r> {
     writer: &'r mut Writer,
 }
 
-fn indent_spaces(indent: usize) {
+fn indent_spaces(indent: usize, mut writer: &mut Writer) {
     for _idx in 0..indent {
-        print!("{INDENT}")
+        write!(writer, "{INDENT}").expect("Unable to write to the output");
     }
 }
 
@@ -567,28 +567,28 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
-    indent_spaces(depth - 1);
+    indent_spaces(depth - 1, &mut writer);
     writeln!(writer, "{header}").expect("Unable to write to the output");
     match &cxt.from {
         Some(v) => {
-            indent_spaces(depth);
-            writeln!(writer, "|  ").expect("Unable to write to the output");
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.to {
         Some(v) => {
-            indent_spaces(depth);
-            writeln!(writer, "|  ").expect("Unable to write to the output");
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.msg {
         Some(message) => {
-            indent_spaces(depth);
-            writeln!(writer, "|  ").expect("Unable to write to the output");
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "Message: {message}").expect("Unable to write to the output");
         }
         None => {}
