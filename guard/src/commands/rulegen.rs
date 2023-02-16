@@ -4,6 +4,7 @@ use std::process;
 use crate::command::Command;
 use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
 use crate::rules::Result;
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::{App, Arg, ArgMatches};
 use itertools::Itertools;
@@ -35,7 +36,7 @@ impl Command for Rulegen {
             .arg(Arg::with_name(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).takes_value(true).help("Write to output file").required(false))
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let file = app.value_of(TEMPLATE.0).unwrap();
         let template_contents = fs::read_to_string(file)?;
 

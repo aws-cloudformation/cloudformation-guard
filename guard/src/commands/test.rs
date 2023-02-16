@@ -26,6 +26,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
 use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -79,7 +80,7 @@ or failure testing.
                 .help("Verbose logging"))
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let mut exit_code = 0;
         let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
             alpabetical

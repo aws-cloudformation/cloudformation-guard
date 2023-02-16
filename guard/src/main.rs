@@ -8,6 +8,7 @@ mod rules;
 mod utils;
 
 use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
+use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use command::Command;
@@ -67,7 +68,11 @@ fn main() -> Result<(), Error> {
                     Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr()))
                 };
 
-                match (*command).execute(value, &mut output_writer) {
+                match (*command).execute(
+                    value,
+                    &mut output_writer,
+                    &mut Reader::new(ReadBuffer::Stdin(std::io::stdin())),
+                ) {
                     Err(e) => {
                         output_writer
                             .write_err(format!("Error occurred {e}"))

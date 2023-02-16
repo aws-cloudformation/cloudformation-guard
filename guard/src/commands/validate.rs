@@ -32,6 +32,7 @@ use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
 mod cfn;
@@ -173,7 +174,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -226,7 +227,6 @@ or rules files.
             None => {
                 if app.is_present(RULES.0) {
                     let mut content = String::new();
-                    let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
                     let path_value = match get_path_aware_value_from_data(&content) {
                         Ok(t) => t,
@@ -411,7 +411,6 @@ or rules files.
             }
         } else {
             let mut context = String::new();
-            let mut reader = BufReader::new(std::io::stdin());
             reader.read_to_string(&mut context)?;
             let payload: Payload = deserialize_payload(&context)?;
             let mut data_collection: Vec<DataFile> = Vec::new();
