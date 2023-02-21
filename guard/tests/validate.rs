@@ -612,8 +612,28 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         let result = writer.stripped().unwrap();
+        let expected = indoc! {
+            r#"
+            DATA_STDIN[1] Status = PASS
+            PASS rules
+            RULES_STDIN[1]/default    PASS
+            ---
+            DATA_STDIN[2] Status = PASS
+            PASS rules
+            RULES_STDIN[1]/default    PASS
+            ---
+            DATA_STDIN[1] Status = PASS
+            PASS rules
+            RULES_STDIN[2]/default    PASS
+            ---
+            DATA_STDIN[2] Status = PASS
+            PASS rules
+            RULES_STDIN[2]/default    PASS
+            ---
+            "#
+        };
 
-        assert_eq!(result, "");
+        assert_eq!(expected, result);
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
@@ -661,7 +681,6 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
-            .previous_engine(true)
             .run(&mut writer, &mut reader);
 
         let result = writer.stripped().unwrap();
@@ -671,10 +690,14 @@ mod validate_tests {
             FAILED rules
             RULES_STDIN[2]/default    FAIL
             ---
+            Evaluating data DATA_STDIN[1] against rules RULES_STDIN[2]
+            Number of non-compliant resources 0
             DATA_STDIN[2] Status = FAIL
             FAILED rules
             RULES_STDIN[2]/default    FAIL
             ---
+            Evaluating data DATA_STDIN[2] against rules RULES_STDIN[2]
+            Number of non-compliant resources 0
             "#
         };
 
@@ -683,7 +706,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_with_payload_flag_fail_verbose() {
+    fn test_with_payload_flag_fail_verbose_prev_engine() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"SomeRandomString\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -736,7 +759,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_rules_with_data_from_stdin_fail_prev_engine2() {
+    fn test_rules_with_data_from_stdin_fail_prev_engine_show_clause_failures() {
         let path = "payload_verbose_show_failure.out";
         let file = File::open(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
