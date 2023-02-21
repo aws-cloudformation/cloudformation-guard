@@ -147,16 +147,16 @@ or rules files.
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true))
-            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
+            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json", "yaml", "single-line-summary"])
+                .possible_values(["json", "yaml", "single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
-                .possible_values(&["none", "all", "pass", "fail", "skip"])
+                .possible_values(["none", "all", "pass", "fail", "skip"])
                 .default_value("fail")
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
             .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
@@ -510,7 +510,7 @@ pub(crate) struct ConsoleReporter<'r> {
     writer: &'r mut Writer,
 }
 
-fn indent_spaces(indent: usize, mut writer: &mut Writer) {
+fn indent_spaces(indent: usize, writer: &mut Writer) {
     for _idx in 0..indent {
         write!(writer, "{INDENT}").expect("Unable to write to the output");
     }
@@ -520,7 +520,7 @@ fn indent_spaces(indent: usize, mut writer: &mut Writer) {
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
 #[allow(clippy::uninlined_format_args)]
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer: &mut Writer) {
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, writer: &mut Writer) {
     let prefix_current = if last { "`- " } else { "|- " };
     writeln!(writer, "{}{}{}", prefix, prefix_current, current)
         .expect("Unable to write to the output");
@@ -530,16 +530,16 @@ fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child, &mut writer);
+            pprint_tree(child, prefix.clone(), i == last_child, writer);
         }
     }
 }
 
-pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, mut writer: &mut Writer) {
-    pprint_tree(root, "".to_string(), true, &mut writer);
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut Writer) {
+    pprint_tree(root, "".to_string(), true, writer);
 }
 
-pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut Writer) {
+pub(super) fn print_context(cxt: &StatusContext, depth: usize, writer: &mut Writer) {
     let header = format!(
         "{}({}, {})",
         cxt.eval_type,
@@ -549,11 +549,11 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
-    indent_spaces(depth - 1, &mut writer);
+    indent_spaces(depth - 1, writer);
     writeln!(writer, "{header}").expect("Unable to write to the output");
     match &cxt.from {
         Some(v) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
         }
@@ -561,7 +561,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
     match &cxt.to {
         Some(v) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
         }
@@ -569,7 +569,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
     match &cxt.msg {
         Some(message) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "Message: {message}").expect("Unable to write to the output");
         }
@@ -577,7 +577,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
 
     for child in &cxt.children {
-        print_context(child, depth + 1, &mut writer)
+        print_context(child, depth + 1, writer)
     }
 }
 
@@ -586,7 +586,7 @@ fn print_failing_clause(
     rules_file_name: &str,
     rule: &StatusContext,
     longest: usize,
-    mut writer: &mut Writer,
+    writer: &mut Writer,
 ) {
     write!(
         writer,
@@ -731,14 +731,14 @@ impl<'r> ConsoleReporter<'r> {
                 writeln!(self.writer, "{}", "Clause Failure Summary".bold())
                     .expect("Unable to write to the output");
                 for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest, &mut self.writer);
+                    print_failing_clause(self.rules_file_name, each, longest, self.writer);
                 }
             }
 
             if self.verbose {
                 writeln!(self.writer, "Evaluation Tree").expect("Unable to write to the output");
                 for each in &top.children {
-                    print_context(each, 1, &mut self.writer);
+                    print_context(each, 1, self.writer);
                 }
             }
         }
@@ -831,7 +831,7 @@ fn evaluate_against_data_input<'r>(
             )?;
 
             if verbose {
-                print_verbose_tree(&root_record, &mut write_output);
+                print_verbose_tree(&root_record, write_output);
             }
 
             if print_json {
