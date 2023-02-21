@@ -459,8 +459,6 @@ mod validate_tests {
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .run(&mut writer, &mut reader);
 
-        let s = writer.err_to_stripped().unwrap();
-
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
