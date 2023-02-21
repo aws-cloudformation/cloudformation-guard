@@ -129,6 +129,9 @@ impl Validate {
     }
 }
 
+const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
+const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
+
 impl Command for Validate {
     fn name(&self) -> &'static str {
         VALIDATE
@@ -174,7 +177,7 @@ or rules files.
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::new(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1)
-                .action(ArgAction::SetTrue) //TODO: verify this is settrue, and not set false
+                .action(ArgAction::SetTrue)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::new(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).use_value_delimiter(true).action(ArgAction::Append)
                 .value_parser(SHOW_SUMMARY_VALUE_TYPE)
@@ -921,28 +924,6 @@ fn get_longest(top: &StatusContext) -> usize {
         .max_by(|f, s| f.context.len().cmp(&s.context.len()))
         .map(|elem| elem.context.len())
         .unwrap_or(20)
-}
-
-const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
-
-fn output_format_value_parser(value: &str) -> Result<String> {
-    match OUTPUT_FORMAT_VALUE_TYPE.contains(&value) {
-        true => Ok(String::from(value)),
-        false => Err(Error::ParseError(String::from(
-            "invalid output format type",
-        ))),
-    }
-}
-
-const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
-
-fn show_summary_parser(value: &str) -> Result<String> {
-    match SHOW_SUMMARY_VALUE_TYPE.contains(&value) {
-        true => Ok(String::from(value)),
-        false => Err(Error::ParseError(String::from(
-            "invalid output format type",
-        ))),
-    }
 }
 
 #[cfg(test)]
