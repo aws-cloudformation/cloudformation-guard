@@ -81,9 +81,6 @@ impl From<&str> for OutputFormatType {
     }
 }
 
-const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
-const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) trait Reporter: Debug {
     fn report(
@@ -192,7 +189,7 @@ or rules files.
                 .help("Verbose logging"))
             .arg(Arg::new(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).action(ArgAction::SetTrue)
                 .help("Print output in json format"))
-            .arg(Arg::new(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1).action(ArgAction::Set).required(false)
+            .arg(Arg::new(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1).action(ArgAction::SetTrue).required(false)
                 .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
             .group(ArgGroup::new(REQUIRED_FLAGS)
@@ -422,7 +419,7 @@ or rules files.
                     }
                 }
             }
-        } else if app.is_present(PAYLOAD.0) {
+        } else if app.contains_id(PAYLOAD.0) {
             let mut context = String::new();
             reader.read_to_string(&mut context)?;
             let payload = deserialize_payload(&context)?;
