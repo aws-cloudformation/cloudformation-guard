@@ -448,7 +448,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_payload() {
+    fn test_rules_with_data_from_stdin_yaml() {
         let file = File::open(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         )
@@ -463,7 +463,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_payload_verbose() {
+    fn test_rules_with_data_from_stdin_yaml_verbose() {
         let file = File::open(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         )
@@ -487,7 +487,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_payload_verbose_fail() {
+    fn test_rules_with_data_from_stdin_fail() {
         let file = File::open(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         )
@@ -511,7 +511,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_payload_verbose_fail2() {
+    fn test_rules_with_data_from_stdin_verbose_previous_engine_json_fail() {
         let file = File::open(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         )
