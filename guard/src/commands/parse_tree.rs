@@ -20,7 +20,7 @@ impl Command for ParseTree {
         PARSE_TREE
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(PARSE_TREE)
             .about(
                 r#"Prints out the parse tree for the rules defined in the file.
@@ -58,7 +58,7 @@ impl Command for ParseTree {
             )
     }
 
-    fn execute(&self, app: &ArgMatches<'_>, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
         let mut file: Box<dyn std::io::Read> = match app.value_of(RULES.0) {
             Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
             None => Box::new(std::io::stdin()),

@@ -95,7 +95,7 @@ pub trait CommandTestRunner {
         let app = app.get_matches_from(command_options);
 
         match app.subcommand() {
-            (name, Some(value)) => {
+            Some((name, value)) => {
                 if let Some(command) = mappings.get(name) {
                     match (*command).execute(value, &mut writer) {
                         Err(e) => {
@@ -112,7 +112,7 @@ pub trait CommandTestRunner {
                 }
             }
 
-            (_, None) => StatusCode::PREPROCESSOR_ERROR,
+            None => StatusCode::PREPROCESSOR_ERROR,
         }
     }
 }
