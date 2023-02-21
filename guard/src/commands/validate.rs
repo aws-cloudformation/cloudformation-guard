@@ -473,6 +473,8 @@ or rules files.
                     }
                 }
             }
+        } else {
+            unreachable!()
         }
 
         Ok(exit_code)
