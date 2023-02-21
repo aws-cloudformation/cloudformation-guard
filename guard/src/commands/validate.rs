@@ -25,7 +25,7 @@ use crate::commands::{
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
+use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
@@ -132,12 +132,14 @@ or rules files.
                 .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-                .multiple(true).conflicts_with("payload"))
+                .multiple(true)
+                .conflicts_with("payload"))
             .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .multiple(true).conflicts_with("payload"))
+                .multiple(true)
+                .conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
@@ -409,23 +411,27 @@ or rules files.
                     }
                 }
             }
-        } else {
+        } else if app.is_present(PAYLOAD.0) {
             let mut context = String::new();
             reader.read_to_string(&mut context)?;
-            let payload: Payload = deserialize_payload(&context)?;
+            let payload = deserialize_payload(&context)?;
             let mut data_collection: Vec<DataFile> = Vec::new();
+
             for (i, data) in payload.list_of_data.iter().enumerate() {
                 let content = data.to_string();
+
                 let path_value = match get_path_aware_value_from_data(&content) {
                     Ok(t) => t,
                     Err(e) => return Err(e),
                 };
+
                 data_collection.push(DataFile {
                     name: format!("DATA_STDIN[{}]", i + 1),
                     path_value,
                     content,
                 });
             }
+
             let rules_collection: Vec<(String, String)> = payload
                 .list_of_rules
                 .iter()
@@ -468,6 +474,7 @@ or rules files.
                 }
             }
         }
+
         Ok(exit_code)
     }
 }
@@ -476,30 +483,6 @@ pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).exists() {
         true => Ok(()),
         false => Err(Error::FileNotFoundError(base.to_string())),
-    }
-}
-
-pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(data) {
-        Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::ParseError(e.to_string())),
-    };
-
-    let span = crate::rules::parser::Span::new_extra(rules, "lambda");
-
-    match crate::rules::parser::rules_file(span) {
-        Ok(rules) => match input_data {
-            Ok(root) => {
-                let mut root_scope = root_scope(&rules, &root)?;
-                let _status = eval_rules_file(&rules, &mut root_scope)?;
-                let tracker = root_scope.reset_recorder();
-                let event = tracker.final_event.unwrap();
-                let file_report = simplifed_json_from_root(&event)?;
-                Ok(serde_json::to_string_pretty(&file_report)?)
-            }
-            Err(e) => Err(e),
-        },
-        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
@@ -515,7 +498,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-// #[derive(Debug)]
+#[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     reporters: &'r Vec<&'r dyn Reporter>,
@@ -712,45 +695,6 @@ impl<'r> ConsoleReporter<'r> {
             print_json,
             show_clause_failures,
             writer,
-        }
-    }
-
-    #[allow(dead_code)] // TODO: probably should jsut delete this...
-    pub fn get_result_json(
-        mut self,
-        root: &PathAwareValue,
-        output_format_type: OutputFormatType,
-    ) -> Result<String> {
-        let stack = self.root_context.stack();
-        let top = stack.first().unwrap();
-        if self.verbose {
-            Ok(serde_json::to_string_pretty(&top.children).unwrap())
-        } else {
-            let output = Vec::new();
-            let longest = get_longest(top);
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                partition_failed_and_rest(top);
-
-            let traversal = Traversal::from(root);
-
-            for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut self.writer,
-                    top.status,
-                    &failed,
-                    &rest,
-                    longest,
-                    self.rules_file_name,
-                    self.data_file_name,
-                    &traversal,
-                    output_format_type,
-                )?;
-            }
-
-            match String::from_utf8(output) {
-                Ok(s) => Ok(s),
-                Err(e) => Err(Error::ParseError(e.to_string())),
-            }
         }
     }
 

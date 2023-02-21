@@ -6,7 +6,7 @@ pub(crate) mod utils;
 #[cfg(test)]
 mod validate_tests {
     use std::fs::File;
-    use std::io::{stderr, stdout, Read};
+    use std::io::{stderr, stdout, Cursor, Read};
 
     use indoc::indoc;
     use rstest::rstest;
@@ -18,7 +18,7 @@ mod validate_tests {
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD,
         PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, VALIDATE, VERBOSE,
     };
-    use cfn_guard::utils::reader::ReadBuffer::{File as ReadFile, Stdin};
+    use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, File as ReadFile, Stdin};
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
@@ -42,7 +42,7 @@ mod validate_tests {
         last_modified: bool,
         verbose: bool,
         print_json: bool,
-        payload: Option<&'args str>,
+        payload: bool,
     }
 
     impl<'args> ValidateTestRunner<'args> {
@@ -77,12 +77,8 @@ mod validate_tests {
             self
         }
 
-        fn payload(&'args mut self, arg: Option<&'args str>) -> &'args mut ValidateTestRunner {
-            if !self.data.is_empty() || !self.rules.is_empty() {
-                panic!("data argument conflicts with the payload argument")
-            }
-
-            self.payload = arg;
+        fn payload(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.payload = true;
             self
         }
 
@@ -187,9 +183,8 @@ mod validate_tests {
                 args.push(format!("-{}", PRINT_JSON.1));
             }
 
-            if let Some(payload) = self.payload {
+            if self.payload {
                 args.push(format!("-{}", PAYLOAD.1));
-                args.push(payload.to_string());
             }
 
             args
@@ -592,6 +587,46 @@ mod validate_tests {
         let result = writer.stripped().unwrap();
 
         assert_eq!(expected, result);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
+    fn test_with_payload_flag() {
+        let x = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(x.as_bytes()))));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    #[test]
+    fn test_payload_json_fail2() {
+        let path = "payload_verbose_show_failure.out";
+        let file = File::open(
+            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+        )
+        .expect("failed to find mocked file ");
+        let mut reader = Reader::new(ReadFile(file));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+            .show_summary(vec!["none", "all", "pass", "fail", "skip"])
+            .verbose(true)
+            .previous_engine(true)
+            .show_clause_failures(true)
+            .run(&mut writer, &mut reader);
+
+        let mut file =
+            File::open("resources/validate/output-dir/payload_verbose_show_failure.out").unwrap();
+        let mut expect = String::new();
+        file.read_to_string(&mut expect).unwrap();
+
+        let result = writer.stripped().unwrap();
+
+        assert_eq!(expect, result);
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 }
