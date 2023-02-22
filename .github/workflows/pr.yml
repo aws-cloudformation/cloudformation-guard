@@ -40,3 +40,30 @@ jobs:
           components: rustfmt
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+
+  aws-guard-rules-registry-ubuntu-integration-tests:
+    name: Integration tests against aws-guard-rules-registry on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          path: cloudformation-guard
+      - name: Build
+        run: |
+          cd cloudformation-guard
+          cargo build --release
+      - uses: actions/checkout@v3
+        with:
+          name: aws-cloudformation/aws-guard-rules-registry
+          ref: refs/tags/1.0.2
+          path: aws-guard-rules-registry
+      - name: First integration test
+        run: |
+          cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
+          STATUS_CODE=$?
+          if [ $STATUS_CODE -ne 0 ]; then
+              echo "The aws-guard-rules-registry integration tests with Ubuntu have failed."
+              exit 1
+          else
+              echo "The aws-guard-rules-registry integration tests with Ubuntu have passed."
+          fi
