@@ -75,6 +75,7 @@ or failure testing.
                 .help("Sort by last modified times within a directory"))
             .arg(Arg::new(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).action(ArgAction::SetTrue)
                 .help("Verbose logging"))
+            .arg_required_else_help(true)
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {

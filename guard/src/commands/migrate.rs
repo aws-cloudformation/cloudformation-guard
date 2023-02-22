@@ -52,9 +52,10 @@ impl Command for Migrate {
                     .help("Write migrated rules to output file")
                     .required(false),
             )
+            .arg_required_else_help(true)
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let file_input = match app.get_one::<String>(RULES.0) {
             Some(file_input) => file_input,
             None => return Err(Error::ParseError(String::from("rip"))),
@@ -156,6 +157,7 @@ pub(crate) fn aggregate_by_type(
     by_type
 }
 
+#[allow(dead_code)] // not actually dead code, its used in tests
 pub(crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<TypeName>> {
     let mut resource_types = HashSet::new();
     for rule in rules {

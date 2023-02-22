@@ -197,7 +197,7 @@ or rules files.
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
             .group(ArgGroup::new(REQUIRED_FLAGS)
                 .args([RULES.0, PAYLOAD.0])
-                .required(true))
+                .required(true)).arg_required_else_help(true)
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {

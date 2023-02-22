@@ -52,6 +52,7 @@ impl Command for ParseTree {
                     .required(false)
                     .help("Print output in YAML format"),
             )
+            .arg_required_else_help(true)
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
