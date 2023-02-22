@@ -449,11 +449,9 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_yaml() {
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(Stdout(stdout()), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
@@ -464,59 +462,51 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_yaml_verbose() {
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose(true)
             .run(&mut writer, &mut reader);
 
-        let mut file =
-            File::open("resources/validate/output-dir/payload_verbose_success.out").unwrap();
-        let result = writer.stripped().unwrap();
-        let mut expected = String::new();
-
-        file.read_to_string(&mut expected).unwrap();
-
-        assert_eq!(expected, result);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_verbose_success.out",
+            writer
+        );
         assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    fn get_reader(path: &str) -> Reader {
+        let file = File::open(path).expect("failed to find mocked file");
+
+        Reader::new(ReadFile(file))
     }
 
     #[test]
     fn test_rules_with_data_from_stdin_fail() {
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose(true)
             .run(&mut writer, &mut reader);
 
-        let mut file =
-            File::open("resources/validate/output-dir/payload_verbose_non_compliant.out").unwrap();
-        let result = writer.stripped().unwrap();
-        let mut expected = String::new();
-
-        file.read_to_string(&mut expected).unwrap();
-
-        assert_eq!(result, expected);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_verbose_non_compliant.out",
+            writer
+        );
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     #[test]
     fn test_rules_with_data_from_stdin_verbose_previous_engine_json_fail() {
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
@@ -525,38 +515,29 @@ mod validate_tests {
             .print_json(true)
             .run(&mut writer, &mut reader);
 
-        let result = writer.stripped().unwrap();
-        let mut file =
-            File::open("resources/validate/output-dir/payload_verbose_json_non_compliant.out")
-                .unwrap();
-        let mut expect = String::new();
-        file.read_to_string(&mut expect).unwrap();
-
-        assert_eq!(expect, result);
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_verbose_json_non_compliant.out",
+            writer
+        )
     }
 
     #[test]
     fn test_payload_verbose_yaml_compliant() {
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose(true)
             .output_format(Some("yaml"))
             .run(&mut writer, &mut reader);
-        let result = writer.stripped().unwrap();
 
-        let mut file =
-            File::open("resources/validate/output-dir/payload_verbose_yaml_compliant.out").unwrap();
-        let mut expect = String::new();
-        file.read_to_string(&mut expect).unwrap();
-
-        assert_eq!(expect, result);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_verbose_yaml_compliant.out",
+            writer
+        );
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
@@ -600,9 +581,11 @@ mod validate_tests {
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
+    const COMPLIANT_PAYLOAD: &str = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
+
     #[test]
     fn test_with_payload_flag_prev_engine_show_summary_all() {
-        let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
+        let payload = COMPLIANT_PAYLOAD;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
@@ -716,56 +699,18 @@ mod validate_tests {
             .verbose(true)
             .run(&mut writer, &mut reader);
 
-        let result = writer.stripped().unwrap();
-        let expected = indoc! {
-            r#"
-            Evaluation Tree
-            Rule(default, PASS)
-                |  Message: DEFAULT MESSAGE(PASS)
-                Clause( Parameters.InstanceName EQUALS  "TestInstance", PASS)
-                    |  Message: DEFAULT MESSAGE(PASS)
-            Evaluation Tree
-            Rule(default, PASS)
-                |  Message: DEFAULT MESSAGE(PASS)
-                Clause( Parameters.InstanceName EQUALS  "TestInstance", PASS)
-                    |  Message: DEFAULT MESSAGE(PASS)
-            DATA_STDIN[1] Status = FAIL
-            FAILED rules
-            RULES_STDIN[2]/default    FAIL
-            ---
-            Evaluation Tree
-            Rule(default, FAIL)
-                |  Message: DEFAULT MESSAGE(FAIL)
-                Clause( Parameters.InstanceName EQUALS  "SomeRandomString", FAIL)
-                    |  From: String((Path("/Parameters/InstanceName", Location { line: 0, col: 276 }), "TestInstance"))
-                    |  To: String((Path("", Location { line: 0, col: 0 }), "SomeRandomString"))
-                    |  Message: DEFAULT MESSAGE(FAIL)
-            DATA_STDIN[2] Status = FAIL
-            FAILED rules
-            RULES_STDIN[2]/default    FAIL
-            ---
-            Evaluation Tree
-            Rule(default, FAIL)
-                |  Message: DEFAULT MESSAGE(FAIL)
-                Clause( Parameters.InstanceName EQUALS  "SomeRandomString", FAIL)
-                    |  From: String((Path("/Parameters/InstanceName", Location { line: 0, col: 276 }), "TestInstance"))
-                    |  To: String((Path("", Location { line: 0, col: 0 }), "SomeRandomString"))
-                    |  Message: DEFAULT MESSAGE(FAIL)
-            "#
-        };
-
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_flag_fail_verbose_prev_engine.out",
+            writer
+        );
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
-        assert_eq!(expected, result);
     }
 
     #[test]
     fn test_rules_with_data_from_stdin_fail_prev_engine_show_clause_failures() {
-        let path = "payload_verbose_show_failure.out";
-        let file = File::open(
+        let mut reader = get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
+        );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
@@ -776,14 +721,10 @@ mod validate_tests {
             .show_clause_failures(true)
             .run(&mut writer, &mut reader);
 
-        let mut file =
-            File::open("resources/validate/output-dir/payload_verbose_show_failure.out").unwrap();
-        let mut expect = String::new();
-        file.read_to_string(&mut expect).unwrap();
-
-        let result = writer.stripped().unwrap();
-
-        assert_eq!(expect, result);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/payload_verbose_show_failure.out",
+            writer
+        );
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 }
