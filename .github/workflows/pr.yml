@@ -46,18 +46,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        name: Checkout cfn-guard
         with:
           path: cloudformation-guard
-      - name: Build
+      - name: Build binary
         run: |
           cd cloudformation-guard
           cargo build --release
       - uses: actions/checkout@v3
+        name: Checkout aws-guard-rules-registry
         with:
-          name: aws-cloudformation/aws-guard-rules-registry
-          ref: ref/tags/v1.0.2
+          repository: aws-cloudformation/aws-guard-rules-registry
+          ref: ref/tags/1.0.2
           path: aws-guard-rules-registry
-      - name: First integration test
+      - name: Run integration test
         run: |
           cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
           STATUS_CODE=$?
