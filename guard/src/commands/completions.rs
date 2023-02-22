@@ -4,7 +4,7 @@ use crate::rules::errors;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use crate::{commands, rules};
-use clap::{ArgMatches, Parser, ValueEnum};
+use clap::{Arg, ArgAction, ArgMatches, Parser, ValueEnum};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -17,26 +17,40 @@ pub enum Shell {
     Fish,
     PowerShell,
 }
-
-#[derive(Parser, Debug)]
-struct Completions {
-    #[arg(
-        long,
-        short,
-        value_name = LOCATION,
-        help = "the location where the completions script will be, if no value is present the script will be written to stdout", 
-    )]
-    location: Option<String>,
-    #[arg(
-        long,
-        short,
-        value_name = "shell",
-        required = true,
-        help = "the shell you are currently running"
-    )]
-    shell: Shell,
+impl From<String> for Shell {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "bash" => Shell::Bash,
+            "zsh" => Shell::Zsh,
+            "fish" => Shell::Fish,
+            "powershell" => Shell::PowerShell,
+            _ => unimplemented!(),
+        }
+    }
 }
 
+// #[derive(Parser, Debug)]
+
+#[derive(Default, Debug)]
+pub struct Completions {
+    // #[arg(
+    //     long,
+    //     short,
+    //     value_name = LOCATION,
+    //     help = "the location where the completions script will be, if no value is present the script will be written to stdout",
+    // )]
+    // location: Option<String>,
+    // #[arg(
+    //     long,
+    //     short,
+    //     value_name = "shell",
+    //     required = true,
+    //     help = "the shell you are currently running"
+    // )]
+    // shell: Shell,
+}
+
+const SHELL_TYPES: [&str; 4] = ["bash", "zsh", "fish", "powershell"];
 const LOCATION: &str = "location";
 
 impl Command for Completions {
@@ -45,10 +59,25 @@ impl Command for Completions {
     }
 
     fn command(&self) -> clap::Command {
-        self.command()
+        clap::Command::new(COMPLETIONS)
+            .arg(
+                Arg::new("location")
+                    .long("location")
+                    .short('l')
+                    .required(false)
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("shell")
+                    .long("shell")
+                    .short('s')
+                    .required(true)
+                    .value_parser(SHELL_TYPES)
+                    .action(ArgAction::Set),
+            )
     }
 
-    fn execute(&self, _: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {
+    fn execute(&self, args: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {
         let mut app = clap::Command::new(APP_NAME).version(APP_VERSION);
 
         let mut commands: Vec<Box<dyn Command>> = vec![
@@ -71,7 +100,7 @@ impl Command for Completions {
             app = app.subcommand(each.command());
         }
 
-        let mut writer = match &self.location {
+        let mut writer = match &args.get_one::<String>("location") {
             Some(location) => {
                 let path = Path::new(&location);
                 if !path.exists() || !path.is_dir() {
@@ -85,31 +114,32 @@ impl Command for Completions {
             None => Box::new(std::io::stdout()) as Box<dyn Write>,
         };
 
-        match self.shell {
-            Shell::Bash => clap_complete::generate(
+        match args.get_one::<String>("shell").unwrap().as_str() {
+            "bash" => clap_complete::generate(
                 clap_complete::shells::Bash,
                 &mut app,
                 "cfn-guard",
                 &mut writer,
             ),
-            Shell::Zsh => clap_complete::generate(
+            "zsh" => clap_complete::generate(
                 clap_complete::shells::Zsh,
                 &mut app,
                 "cfn-guard",
                 &mut writer,
             ),
-            Shell::Fish => clap_complete::generate(
+            "fish" => clap_complete::generate(
                 clap_complete::shells::Fish,
                 &mut app,
                 "cfn-guard",
                 &mut writer,
             ),
-            Shell::PowerShell => clap_complete::generate(
+            "powershell" => clap_complete::generate(
                 clap_complete::shells::PowerShell,
                 &mut app,
                 "cfn-guard",
                 &mut writer,
             ),
+            _ => unreachable!(),
         }
 
         Ok(0)

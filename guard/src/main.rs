@@ -1,4 +1,4 @@
-use clap::ArgMatches;
+use clap::{ArgMatches, Parser};
 use std::collections::HashMap;
 use std::fs::File;
 mod command;
@@ -38,6 +38,7 @@ fn main() -> Result<(), Error> {
     commands.push(Box::new(commands::validate::Validate::new()));
     commands.push(Box::new(commands::rulegen::Rulegen::new()));
     commands.push(Box::new(commands::migrate::Migrate::new()));
+    commands.push(Box::new(commands::completions::Completions::default()));
 
     let mappings = commands.iter().map(|s| (s.name(), s)).fold(
         HashMap::with_capacity(commands.len()),
@@ -86,7 +87,8 @@ fn main() -> Result<(), Error> {
                     Ok(code) => exit(code),
                 }
             } else {
-                println!("{}", help);
+                println!("{}", name);
+                // println!("{}", help);
             }
         }
         None => {
