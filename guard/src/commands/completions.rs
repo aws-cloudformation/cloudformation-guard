@@ -29,29 +29,12 @@ impl From<String> for Shell {
     }
 }
 
-// #[derive(Parser, Debug)]
-
 #[derive(Default, Debug)]
-pub struct Completions {
-    // #[arg(
-    //     long,
-    //     short,
-    //     value_name = LOCATION,
-    //     help = "the location where the completions script will be, if no value is present the script will be written to stdout",
-    // )]
-    // location: Option<String>,
-    // #[arg(
-    //     long,
-    //     short,
-    //     value_name = "shell",
-    //     required = true,
-    //     help = "the shell you are currently running"
-    // )]
-    // shell: Shell,
-}
+pub struct Completions {}
 
 const SHELL_TYPES: [&str; 4] = ["bash", "zsh", "fish", "powershell"];
-const LOCATION: &str = "location";
+const LOCATION: (&str, char) = ("location", 'l');
+const SHELL: (&str, char) = ("shell", 's');
 
 impl Command for Completions {
     fn name(&self) -> &'static str {
@@ -61,16 +44,16 @@ impl Command for Completions {
     fn command(&self) -> clap::Command {
         clap::Command::new(COMPLETIONS)
             .arg(
-                Arg::new("location")
-                    .long("location")
-                    .short('l')
+                Arg::new(LOCATION.0)
+                    .long(LOCATION.0)
+                    .short(LOCATION.1)
                     .required(false)
                     .action(ArgAction::Set),
             )
             .arg(
-                Arg::new("shell")
-                    .long("shell")
-                    .short('s')
+                Arg::new(SHELL.0)
+                    .long(SHELL.0)
+                    .short(SHELL.1)
                     .required(true)
                     .value_parser(SHELL_TYPES)
                     .action(ArgAction::Set),
