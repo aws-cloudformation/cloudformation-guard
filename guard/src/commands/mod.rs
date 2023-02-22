@@ -8,6 +8,7 @@ pub mod validate;
 
 mod aws_meta_appender;
 mod common_test_helpers;
+pub mod completions;
 mod tracker;
 
 //
@@ -22,6 +23,7 @@ pub const PARSE_TREE: &str = "parse-tree";
 pub const RULEGEN: &str = "rulegen";
 pub const TEST: &str = "test";
 pub const VALIDATE: &str = "validate";
+pub const COMPLETIONS: &str = "completions";
 // Arguments for validate
 pub const ALPHABETICAL: (&str, char) = ("alphabetical", 'a');
 pub const DATA: (&str, char) = ("data", 'd');
