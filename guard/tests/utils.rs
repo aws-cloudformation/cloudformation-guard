@@ -13,6 +13,7 @@ use cfn_guard::command::Command;
 use cfn_guard::commands::{
     migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
 };
+use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
@@ -133,4 +134,10 @@ macro_rules! assert_output_from_str_eq {
     ($expected_output: expr, $actual_output_writer: expr) => {
         crate::utils::compare_write_buffer_with_string($expected_output, $actual_output_writer)
     };
+}
+
+pub fn get_reader(path: &str) -> Reader {
+    let file = File::open(path).expect("failed to find mocked file");
+
+    Reader::new(ReadFile(file))
 }

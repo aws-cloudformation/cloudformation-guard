@@ -27,7 +27,7 @@ mod validate_tests {
         compare_write_buffer_with_file, compare_write_buffer_with_string,
         get_full_path_for_resource_file, CommandTestRunner, StatusCode,
     };
-    use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
+    use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
 
     #[derive(Default)]
     struct ValidateTestRunner<'args> {
@@ -449,7 +449,7 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_yaml() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         );
         let mut writer = Writer::new(Stdout(stdout()), WBVec(vec![]));
@@ -462,7 +462,7 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_yaml_verbose() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -478,15 +478,9 @@ mod validate_tests {
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
-    fn get_reader(path: &str) -> Reader {
-        let file = File::open(path).expect("failed to find mocked file");
-
-        Reader::new(ReadFile(file))
-    }
-
     #[test]
     fn test_rules_with_data_from_stdin_fail() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -504,7 +498,7 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_verbose_previous_engine_json_fail() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -524,7 +518,7 @@ mod validate_tests {
 
     #[test]
     fn test_payload_verbose_yaml_compliant() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
         );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -708,7 +702,7 @@ mod validate_tests {
 
     #[test]
     fn test_rules_with_data_from_stdin_fail_prev_engine_show_clause_failures() {
-        let mut reader = get_reader(
+        let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         );
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
