@@ -38,13 +38,13 @@ mod parse_tree_tests {
             self
         }
 
-        fn print_yaml(&'args mut self, arg: bool) -> &'args mut ParseTreeTestRunner {
-            self.print_yaml = arg;
+        fn print_yaml(&'args mut self) -> &'args mut ParseTreeTestRunner {
+            self.print_yaml = true;
             self
         }
 
-        fn print_json(&'args mut self, arg: bool) -> &'args mut ParseTreeTestRunner {
-            self.print_json = arg;
+        fn print_json(&'args mut self) -> &'args mut ParseTreeTestRunner {
+            self.print_json = true;
             self
         }
     }
@@ -78,7 +78,7 @@ mod parse_tree_tests {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
-            .print_json(true)
+            .print_json()
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
             .run(&mut writer, &mut reader);
 

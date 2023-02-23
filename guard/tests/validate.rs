@@ -82,41 +82,33 @@ mod validate_tests {
             self
         }
 
-        fn previous_engine(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            self.previous_engine = arg;
+        fn previous_engine(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.previous_engine = true;
             self
         }
 
-        fn show_clause_failures(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            self.show_clause_failures = arg;
+        fn show_clause_failures(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.show_clause_failures = true;
             self
         }
 
-        fn alphabetical(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            if self.last_modified {
-                panic!("alphabetical and last modified are conflicting")
-            }
-
-            self.alphabetical = arg;
+        fn alphabetical(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.alphabetical = true;
             self
         }
 
-        fn last_modified(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            if self.alphabetical {
-                panic!("alphabetical and last modified are conflicting")
-            }
-
-            self.last_modified = arg;
+        fn last_modified(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.last_modified = true;
             self
         }
 
-        fn verbose(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            self.verbose = arg;
+        fn verbose(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.verbose = true;
             self
         }
 
-        fn print_json(&'args mut self, arg: bool) -> &'args mut ValidateTestRunner {
-            self.print_json = arg;
+        fn print_json(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.print_json = true;
             self
         }
     }
@@ -286,7 +278,7 @@ mod validate_tests {
             .data(data_arg)
             .rules(rules_arg)
             .show_summary(vec!["all"])
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
@@ -468,7 +460,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!(
@@ -486,7 +478,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!(
@@ -504,9 +496,9 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .verbose(true)
-            .previous_engine(true)
-            .print_json(true)
+            .verbose()
+            .previous_engine()
+            .print_json()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
@@ -524,7 +516,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .verbose(true)
+            .verbose()
             .output_format(Some("yaml"))
             .run(&mut writer, &mut reader);
 
@@ -545,8 +537,8 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .previous_engine(true)
-            .print_json(true)
+            .previous_engine()
+            .print_json()
             .run(&mut writer, &mut reader);
 
         let expected = indoc! {"
@@ -584,7 +576,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
-            .previous_engine(true)
+            .previous_engine()
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
 
@@ -621,7 +613,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
-            .previous_engine(true)
+            .previous_engine()
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
 
@@ -689,8 +681,8 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
-            .previous_engine(true)
-            .verbose(true)
+            .previous_engine()
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!(
@@ -710,9 +702,9 @@ mod validate_tests {
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .show_summary(vec!["none", "all", "pass", "fail", "skip"])
-            .verbose(true)
-            .previous_engine(true)
-            .show_clause_failures(true)
+            .verbose()
+            .previous_engine()
+            .show_clause_failures()
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!(

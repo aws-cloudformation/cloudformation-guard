@@ -60,28 +60,28 @@ mod test_command_tests {
             self
         }
 
-        fn directory_only(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.directory_only = arg;
+        fn directory_only(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.directory_only = true;
             self
         }
 
-        fn previous_engine(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.previous_engine = arg;
+        fn previous_engine(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.previous_engine = true;
             self
         }
 
-        fn alphabetical(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.alphabetical = arg;
+        fn alphabetical(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.alphabetical = true;
             self
         }
 
-        fn last_modified(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.last_modified = arg;
+        fn last_modified(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.last_modified = true;
             self
         }
 
-        fn verbose(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.verbose = arg;
+        fn verbose(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.verbose = true;
             self
         }
     }
@@ -189,7 +189,7 @@ mod test_command_tests {
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
@@ -210,7 +210,7 @@ mod test_command_tests {
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
@@ -232,7 +232,7 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
@@ -250,8 +250,8 @@ mod test_command_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
-            .directory_only(true)
-            .verbose(true)
+            .directory_only()
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
@@ -267,9 +267,9 @@ mod test_command_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
-            .directory_only(true)
-            .verbose(true)
-            .previous_engine(true)
+            .directory_only()
+            .verbose()
+            .previous_engine()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
