@@ -61,8 +61,8 @@ jobs:
           ref: main
       - name: Run integration test
         run: |
+          sed -i 's/"AWS::AccountId"/{"Ref":"AWS::AccountId"}/g' aws-guard-rules-registry/rules/aws/lambda/lambda_function_public_access_prohibited.guard
           cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
-          sed -i 's/"AWS::AccountId"/{"Ref":"AWS::AccountId"}/g' aws/lambda/lambda_function_public_access_prohibited.guard
           STATUS_CODE=$?
           if [ $STATUS_CODE -ne 0 ]; then
               echo "The aws-guard-rules-registry integration tests with Ubuntu have failed."
