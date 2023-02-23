@@ -29,6 +29,7 @@ impl Command for ParseTree {
                     .long(RULES.0)
                     .short(RULES.1)
                     .help("Provide a rules file")
+                    .action(ArgAction::Set)
                     .required(false),
             )
             .arg(
@@ -36,6 +37,7 @@ impl Command for ParseTree {
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
                     .help("Write to output file")
+                    .action(ArgAction::Set)
                     .required(false),
             )
             .arg(
@@ -49,6 +51,7 @@ impl Command for ParseTree {
                 Arg::new(PRINT_YAML.0)
                     .long(PRINT_YAML.0)
                     .short(PRINT_YAML.1)
+                    .action(ArgAction::SetTrue)
                     .required(false)
                     .help("Print output in YAML format"),
             )
