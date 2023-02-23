@@ -63,7 +63,7 @@ impl Command for Completions {
     fn execute(&self, args: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {
         let mut app = clap::Command::new(APP_NAME).version(APP_VERSION);
 
-        let mut commands: Vec<Box<dyn Command>> = vec![
+        let commands: Vec<Box<dyn Command>> = vec![
             Box::new(commands::parse_tree::ParseTree::new()),
             Box::new(commands::test::Test::new()),
             Box::new(commands::validate::Validate::new()),
@@ -71,60 +71,69 @@ impl Command for Completions {
             Box::new(commands::migrate::Migrate::new()),
         ];
 
-        let mappings = commands.iter().map(|s| (s.name(), s)).fold(
-            HashMap::with_capacity(commands.len()),
-            |mut map, entry| {
-                map.insert(entry.0, entry.1.as_ref());
-                map
-            },
-        );
-
         for each in &commands {
             app = app.subcommand(each.command());
         }
 
-        let mut writer = match &args.get_one::<String>("location") {
-            Some(location) => {
-                let path = Path::new(&location);
-                if !path.exists() || !path.is_dir() {
-                    return Err(errors::Error::InvalidCompletionsPath(String::from(
-                        "incompatible path",
-                    )));
-                }
-
-                Box::new(File::create(path.join("cfn-guard.sh"))?) as Box<dyn Write>
-            }
-            None => Box::new(std::io::stdout()) as Box<dyn Write>,
-        };
-
+        let location = args.get_one::<String>(LOCATION.0);
         match args.get_one::<String>("shell").unwrap().as_str() {
-            "bash" => clap_complete::generate(
-                clap_complete::shells::Bash,
-                &mut app,
-                "cfn-guard",
-                &mut writer,
-            ),
-            "zsh" => clap_complete::generate(
-                clap_complete::shells::Zsh,
-                &mut app,
-                "cfn-guard",
-                &mut writer,
-            ),
-            "fish" => clap_complete::generate(
-                clap_complete::shells::Fish,
-                &mut app,
-                "cfn-guard",
-                &mut writer,
-            ),
-            "powershell" => clap_complete::generate(
-                clap_complete::shells::PowerShell,
-                &mut app,
-                "cfn-guard",
-                &mut writer,
-            ),
+            "bash" => {
+                let mut writer = get_writer(location, "bash")?;
+                clap_complete::generate(
+                    clap_complete::shells::Bash,
+                    &mut app,
+                    "cfn-guard",
+                    &mut writer,
+                )
+            }
+            "zsh" => {
+                let mut writer = get_writer(location, "zsh")?;
+                clap_complete::generate(
+                    clap_complete::shells::Zsh,
+                    &mut app,
+                    "cfn-guard",
+                    &mut writer,
+                )
+            }
+            "fish" => {
+                let mut writer = get_writer(location, "fish")?;
+                clap_complete::generate(
+                    clap_complete::shells::Fish,
+                    &mut app,
+                    "cfn-guard",
+                    &mut writer,
+                )
+            }
+            "powershell" => {
+                let mut writer = get_writer(location, "ps1")?;
+                clap_complete::generate(
+                    clap_complete::shells::PowerShell,
+                    &mut app,
+                    "cfn-guard",
+                    &mut writer,
+                )
+            }
             _ => unreachable!(),
         }
 
         Ok(0)
     }
+}
+
+fn get_writer(location: Option<&String>, ext: &str) -> rules::Result<Box<dyn Write>> {
+    let mut writer = match location {
+        Some(location) => {
+            let path = Path::new(&location);
+            if !path.exists() || !path.is_dir() {
+                return Err(errors::Error::InvalidCompletionsPath(String::from(
+                    "incompatible path",
+                )));
+            }
+
+            Box::new(File::create(path.join(format!("cfn-guard.{}", ext)))?) as Box<dyn Write>
+        }
+        None => Box::new(std::io::stdout()) as Box<dyn Write>,
+    };
+
+    Ok(writer)
 }
