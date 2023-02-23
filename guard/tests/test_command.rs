@@ -14,6 +14,8 @@ mod test_command_tests {
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES, RULES_AND_TEST_FILE,
         RULES_FILE, TEST, TEST_DATA, VERBOSE,
     };
+    use cfn_guard::utils::reader::ReadBuffer::Stdin;
+    use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
@@ -148,6 +150,7 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     fn test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
@@ -157,7 +160,7 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
@@ -172,6 +175,7 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     fn test_data_file(#[case] file_type: &str) -> Result<(), Error> {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
@@ -181,7 +185,7 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
@@ -194,12 +198,13 @@ mod test_command_tests {
 
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
             .verbose(true)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
             r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
@@ -214,12 +219,13 @@ mod test_command_tests {
 
     #[test]
     fn test_parse_error_when_file_dne() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))
             .verbose(true)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
             "Error occurred The path `/resources/test-command/data-dir/invalid_rule.guard` does not exist\n",
@@ -231,6 +237,7 @@ mod test_command_tests {
 
     #[test]
     fn test_data_file_verbose() -> Result<(), Error> {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
@@ -240,7 +247,7 @@ mod test_command_tests {
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
             .verbose(true)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(

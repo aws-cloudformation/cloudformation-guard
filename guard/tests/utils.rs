@@ -13,6 +13,8 @@ use cfn_guard::command::Command;
 use cfn_guard::commands::{
     migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
 };
+use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
+use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
 #[non_exhaustive]
@@ -62,7 +64,7 @@ pub fn compare_write_buffer_with_string(expected_output: &str, actual_output_wri
 pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
-    fn run(&self, mut writer: &mut Writer) -> i32 {
+    fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
         let test_app_name = String::from("cfn-guard-test");
         let mut app = App::new(&test_app_name);
 
@@ -97,7 +99,7 @@ pub trait CommandTestRunner {
         match app.subcommand() {
             Some((name, value)) => {
                 if let Some(command) = mappings.get(name) {
-                    match (*command).execute(value, &mut writer) {
+                    match (*command).execute(value, &mut writer, &mut reader) {
                         Err(e) => {
                             writer
                                 .write_err(format!("Error occurred {e}"))
@@ -132,4 +134,10 @@ macro_rules! assert_output_from_str_eq {
     ($expected_output: expr, $actual_output_writer: expr) => {
         crate::utils::compare_write_buffer_with_string($expected_output, $actual_output_writer)
     };
+}
+
+pub fn get_reader(path: &str) -> Reader {
+    let file = File::open(path).expect("failed to find mocked file");
+
+    Reader::new(ReadFile(file))
 }

@@ -25,13 +25,14 @@ use crate::commands::{
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
+use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
 mod cfn;
@@ -131,12 +132,14 @@ or rules files.
                 .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-                .multiple(true).conflicts_with("payload"))
+                .multiple(true)
+                .conflicts_with("payload"))
             .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .multiple(true).conflicts_with("payload"))
+                .multiple(true)
+                .conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
                 .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
@@ -144,16 +147,16 @@ or rules files.
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true))
-            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
+            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json", "yaml", "single-line-summary"])
+                .possible_values(["json", "yaml", "single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
-                .possible_values(&["none", "all", "pass", "fail", "skip"])
+                .possible_values(["none", "all", "pass", "fail", "skip"])
                 .default_value("fail")
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
             .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
@@ -173,7 +176,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -226,7 +229,6 @@ or rules files.
             None => {
                 if app.is_present(RULES.0) {
                     let mut content = String::new();
-                    let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
                     let path_value = match get_path_aware_value_from_data(&content) {
                         Ok(t) => t,
@@ -409,24 +411,27 @@ or rules files.
                     }
                 }
             }
-        } else {
+        } else if app.is_present(PAYLOAD.0) {
             let mut context = String::new();
-            let mut reader = BufReader::new(std::io::stdin());
             reader.read_to_string(&mut context)?;
-            let payload: Payload = deserialize_payload(&context)?;
+            let payload = deserialize_payload(&context)?;
             let mut data_collection: Vec<DataFile> = Vec::new();
+
             for (i, data) in payload.list_of_data.iter().enumerate() {
                 let content = data.to_string();
+
                 let path_value = match get_path_aware_value_from_data(&content) {
                     Ok(t) => t,
                     Err(e) => return Err(e),
                 };
+
                 data_collection.push(DataFile {
                     name: format!("DATA_STDIN[{}]", i + 1),
                     path_value,
                     content,
                 });
             }
+
             let rules_collection: Vec<(String, String)> = payload
                 .list_of_rules
                 .iter()
@@ -468,7 +473,10 @@ or rules files.
                     }
                 }
             }
+        } else {
+            unreachable!()
         }
+
         Ok(exit_code)
     }
 }
@@ -477,30 +485,6 @@ pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).exists() {
         true => Ok(()),
         false => Err(Error::FileNotFoundError(base.to_string())),
-    }
-}
-
-pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(data) {
-        Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::ParseError(e.to_string())),
-    };
-
-    let span = crate::rules::parser::Span::new_extra(rules, "lambda");
-
-    match crate::rules::parser::rules_file(span) {
-        Ok(rules) => match input_data {
-            Ok(root) => {
-                let mut root_scope = root_scope(&rules, &root)?;
-                let _status = eval_rules_file(&rules, &mut root_scope)?;
-                let tracker = root_scope.reset_recorder();
-                let event = tracker.final_event.unwrap();
-                let file_report = simplifed_json_from_root(&event)?;
-                Ok(serde_json::to_string_pretty(&file_report)?)
-            }
-            Err(e) => Err(e),
-        },
-        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
@@ -516,7 +500,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-// #[derive(Debug)]
+#[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     reporters: &'r Vec<&'r dyn Reporter>,
@@ -528,7 +512,7 @@ pub(crate) struct ConsoleReporter<'r> {
     writer: &'r mut Writer,
 }
 
-fn indent_spaces(indent: usize, mut writer: &mut Writer) {
+fn indent_spaces(indent: usize, writer: &mut Writer) {
     for _idx in 0..indent {
         write!(writer, "{INDENT}").expect("Unable to write to the output");
     }
@@ -538,7 +522,7 @@ fn indent_spaces(indent: usize, mut writer: &mut Writer) {
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
 #[allow(clippy::uninlined_format_args)]
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer: &mut Writer) {
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, writer: &mut Writer) {
     let prefix_current = if last { "`- " } else { "|- " };
     writeln!(writer, "{}{}{}", prefix, prefix_current, current)
         .expect("Unable to write to the output");
@@ -548,16 +532,16 @@ fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child, &mut writer);
+            pprint_tree(child, prefix.clone(), i == last_child, writer);
         }
     }
 }
 
-pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, mut writer: &mut Writer) {
-    pprint_tree(root, "".to_string(), true, &mut writer);
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut Writer) {
+    pprint_tree(root, "".to_string(), true, writer);
 }
 
-pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut Writer) {
+pub(super) fn print_context(cxt: &StatusContext, depth: usize, writer: &mut Writer) {
     let header = format!(
         "{}({}, {})",
         cxt.eval_type,
@@ -567,11 +551,11 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
-    indent_spaces(depth - 1, &mut writer);
+    indent_spaces(depth - 1, writer);
     writeln!(writer, "{header}").expect("Unable to write to the output");
     match &cxt.from {
         Some(v) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
         }
@@ -579,7 +563,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
     match &cxt.to {
         Some(v) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
         }
@@ -587,7 +571,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
     match &cxt.msg {
         Some(message) => {
-            indent_spaces(depth, &mut writer);
+            indent_spaces(depth, writer);
             write!(writer, "|  ").expect("Unable to write to the output");
             writeln!(writer, "Message: {message}").expect("Unable to write to the output");
         }
@@ -595,7 +579,7 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut 
     }
 
     for child in &cxt.children {
-        print_context(child, depth + 1, &mut writer)
+        print_context(child, depth + 1, writer)
     }
 }
 
@@ -604,7 +588,7 @@ fn print_failing_clause(
     rules_file_name: &str,
     rule: &StatusContext,
     longest: usize,
-    mut writer: &mut Writer,
+    writer: &mut Writer,
 ) {
     write!(
         writer,
@@ -716,45 +700,6 @@ impl<'r> ConsoleReporter<'r> {
         }
     }
 
-    #[allow(dead_code)] // TODO: probably should jsut delete this...
-    pub fn get_result_json(
-        mut self,
-        root: &PathAwareValue,
-        output_format_type: OutputFormatType,
-    ) -> Result<String> {
-        let stack = self.root_context.stack();
-        let top = stack.first().unwrap();
-        if self.verbose {
-            Ok(serde_json::to_string_pretty(&top.children).unwrap())
-        } else {
-            let output = Vec::new();
-            let longest = get_longest(top);
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                partition_failed_and_rest(top);
-
-            let traversal = Traversal::from(root);
-
-            for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut self.writer,
-                    top.status,
-                    &failed,
-                    &rest,
-                    longest,
-                    self.rules_file_name,
-                    self.data_file_name,
-                    &traversal,
-                    output_format_type,
-                )?;
-            }
-
-            match String::from_utf8(output) {
-                Ok(s) => Ok(s),
-                Err(e) => Err(Error::ParseError(e.to_string())),
-            }
-        }
-    }
-
     fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
@@ -788,14 +733,14 @@ impl<'r> ConsoleReporter<'r> {
                 writeln!(self.writer, "{}", "Clause Failure Summary".bold())
                     .expect("Unable to write to the output");
                 for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest, &mut self.writer);
+                    print_failing_clause(self.rules_file_name, each, longest, self.writer);
                 }
             }
 
             if self.verbose {
                 writeln!(self.writer, "Evaluation Tree").expect("Unable to write to the output");
                 for each in &top.children {
-                    print_context(each, 1, &mut self.writer);
+                    print_context(each, 1, self.writer);
                 }
             }
         }
@@ -888,7 +833,7 @@ fn evaluate_against_data_input<'r>(
             )?;
 
             if verbose {
-                print_verbose_tree(&root_record, &mut write_output);
+                print_verbose_tree(&root_record, write_output);
             }
 
             if print_json {

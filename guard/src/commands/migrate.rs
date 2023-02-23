@@ -6,6 +6,7 @@ use crate::commands::{MIGRATE, OUTPUT, RULES};
 use crate::migrate::parser::{parse_rules_file, Clause, Rule, RuleLineType, TypeName};
 use crate::rules::errors::Error;
 use crate::rules::Result;
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
@@ -58,7 +59,7 @@ impl Command for Migrate {
             )
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let file_input = app.value_of(RULES.0).unwrap();
         let path = PathBuf::from_str(file_input).unwrap();
         let file_name = path.to_str().unwrap_or("").to_string();

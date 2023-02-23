@@ -1,6 +1,7 @@
 use crate::command::Command;
 use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
 use crate::rules::Result;
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::{App, Arg, ArgMatches};
 use std::fs::File;
@@ -31,7 +32,7 @@ impl Command for ParseTree {
                     .long(RULES.0)
                     .short(RULES.1)
                     .takes_value(true)
-                    .help("Provide a rules file")
+                    .help("Provid a rules file")
                     .required(false),
             )
             .arg(
@@ -58,10 +59,10 @@ impl Command for ParseTree {
             )
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let mut file: Box<dyn std::io::Read> = match app.value_of(RULES.0) {
             Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
-            None => Box::new(std::io::stdin()),
+            None => Box::new(reader),
         };
 
         let yaml = !app.is_present(PRINT_JSON.0);

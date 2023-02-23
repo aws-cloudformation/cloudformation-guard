@@ -11,6 +11,8 @@ mod parse_tree_tests {
 
     use cfn_guard;
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+    use cfn_guard::utils::reader::ReadBuffer::Stdin;
+    use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
@@ -73,11 +75,12 @@ mod parse_tree_tests {
 
     #[test]
     fn test_json_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .print_json(true)
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_str_eq!(
@@ -111,10 +114,11 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
         assert_output_from_str_eq!(expected_writer_output, writer)
@@ -136,10 +140,11 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
         assert_eq!(expected_writer_output, writer.err_to_stripped().unwrap());
@@ -161,10 +166,11 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
         assert_output_from_file_eq!(expected_writer_output, writer)

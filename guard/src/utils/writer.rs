@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{Read, Stderr, Stdout, Write};
 use std::string::FromUtf8Error;
 
+#[derive(Debug)]
 pub struct Writer {
     buffer: WriteBuffer,
     err: WriteBuffer,
@@ -63,6 +64,7 @@ impl Write for Writer {
     }
 }
 
+#[derive(Debug)]
 pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),
