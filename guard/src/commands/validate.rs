@@ -170,7 +170,7 @@ or rules files.
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template"))
-            .arg(Arg::new(TYPE.0).long(TYPE.0).short(TYPE.1)
+            .arg(Arg::new(TYPE.0).long(TYPE.0).short(TYPE.1).action(ArgAction::Set).required(false)
                 .help("Specify the type of data file used for improved messaging - ex: CFNTemplate"))
             .arg(Arg::new(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1)
                 .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
