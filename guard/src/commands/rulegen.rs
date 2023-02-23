@@ -32,8 +32,16 @@ impl Command for Rulegen {
     fn command(&self) -> clap::Command {
         clap::Command::new(RULEGEN)
             .about("Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)")
-            .arg(Arg::new(TEMPLATE.0).long(TEMPLATE.0).short(TEMPLATE.1).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::new(OUTPUT.0).long(OUTPUT.0).short(OUTPUT.1).help("Write to output file").required(false))
+            .arg(Arg::new(TEMPLATE.0)
+                .long(TEMPLATE.0)
+                .short(TEMPLATE.1)
+                .help("Provide path to a CloudFormation template file in JSON or YAML")
+                .required(true))
+            .arg(Arg::new(OUTPUT.0)
+                .long(OUTPUT.0)
+                .short(OUTPUT.1)
+                .help("Write to output file")
+                j.required(false))
             .arg_required_else_help(true)
     }
 
