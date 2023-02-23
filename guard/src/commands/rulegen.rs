@@ -41,7 +41,7 @@ impl Command for Rulegen {
                 .long(OUTPUT.0)
                 .short(OUTPUT.1)
                 .help("Write to output file")
-                j.required(false))
+                .required(false))
             .arg_required_else_help(true)
     }
 
