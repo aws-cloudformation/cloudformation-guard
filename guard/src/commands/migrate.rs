@@ -56,12 +56,9 @@ impl Command for Migrate {
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let file_input = match app.get_one::<String>(RULES.0) {
-            Some(file_input) => file_input,
-            None => return Err(Error::ParseError(String::from("rip"))),
-        };
+        let file_input = app.get_one::<String>(RULES.0).unwrap(); // safe because this flag is required
 
-        let path = PathBuf::from_str(file_input).unwrap();
+        let path = PathBuf::from_str(file_input)?;
         let file_name = path.to_str().unwrap_or("").to_string();
         let file = File::open(file_input)?;
 

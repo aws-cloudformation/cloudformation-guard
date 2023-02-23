@@ -45,12 +45,8 @@ impl Command for Rulegen {
             .arg_required_else_help(true)
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let file = match app.get_one::<String>(TEMPLATE.0) {
-            Some(file) => file,
-            None => return Err(Error::ParseError(String::from("rip"))), //todo: fixme
-        };
-
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
+        let file = app.get_one::<String>(TEMPLATE.0).unwrap(); // safe because this is a required arg
         let template_contents = fs::read_to_string(file)?;
 
         let result = parse_template_and_call_gen(&template_contents, writer);
