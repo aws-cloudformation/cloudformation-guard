@@ -59,16 +59,8 @@ jobs:
           ref: main
       - name: Run integration tests using test command
         run: |
-          sed -i 's/{"Ref":"AWS::AccountId"}/"AWS::AccountId"/g' aws-guard-rules-registry/rules/aws/lambda/lambda_function_public_access_prohibited.guard
           cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
 
-#          STATUS_CODE=$?
-#          if [ $STATUS_CODE -ne 0 ]; then
-#              echo "The aws-guard-rules-registry integration tests for test command with Ubuntu have failed."
-#              exit 1
-#          else
-#              echo "The aws-guard-rules-registry integration tests for test command with Ubuntu have passed."
-#          fi
       - name: Run integration tests using parse-tree command
         run: |
           cd aws-guard-rules-registry/rules
@@ -78,11 +70,9 @@ jobs:
           
           for rule in "${rules[@]}"
           do
-              ../../cloudformation-guard/target/release/cfn-guard parse-tree \
-                  --rules $rule
-              
-              STATUS_CODE=$?
-              if [ $STATUS_CODE -ne 0 ]; then
+              if ../../cloudformation-guard/target/release/cfn-guard parse-tree --rules $rule; then
+                  continue
+              else
                   FAILED_RULES+=("$rule")
               fi
           done
