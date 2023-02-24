@@ -5,6 +5,7 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod test_command_tests {
+    use indoc::indoc;
     use std::io::stdout;
 
     use rstest::rstest;
@@ -55,48 +56,32 @@ mod test_command_tests {
             &'args mut self,
             arg: Option<&'args str>,
         ) -> &'args mut TestCommandTestRunner {
-            if self.directory_only {
-                panic!("cannot have rules_and_test_file flag present if directory_only is set to true!")
-            }
-
             self.rules_and_test_file = arg;
             self
         }
 
-        fn directory_only(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            if self.rules_and_test_file.is_some() && arg {
-                panic!("cannot have directory_only set to true if rules_and_test_file is present!")
-            }
-
-            self.directory_only = arg;
+        fn directory_only(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.directory_only = true;
             self
         }
 
-        fn previous_engine(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.previous_engine = arg;
+        fn previous_engine(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.previous_engine = true;
             self
         }
 
-        fn alphabetical(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            if self.last_modified {
-                panic!("alphabetical and last modified are conflicting")
-            }
-
-            self.alphabetical = arg;
+        fn alphabetical(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.alphabetical = true;
             self
         }
 
-        fn last_modified(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            if self.alphabetical {
-                panic!("alphabetical and last modified are conflicting")
-            }
-
-            self.last_modified = arg;
+        fn last_modified(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.last_modified = true;
             self
         }
 
-        fn verbose(&'args mut self, arg: bool) -> &'args mut TestCommandTestRunner {
-            self.verbose = arg;
+        fn verbose(&'args mut self) -> &'args mut TestCommandTestRunner {
+            self.verbose = true;
             self
         }
     }
@@ -142,6 +127,7 @@ mod test_command_tests {
             if self.verbose {
                 args.push(format!("-{}", VERBOSE.1));
             }
+
             args
         }
     }
@@ -203,7 +189,7 @@ mod test_command_tests {
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
@@ -224,7 +210,7 @@ mod test_command_tests {
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         let expected_err_msg = String::from(
@@ -246,7 +232,7 @@ mod test_command_tests {
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
-            .verbose(true)
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
@@ -256,5 +242,40 @@ mod test_command_tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_with_rules_dir_verbose() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from("resources/test-command/dir"))
+            .directory_only()
+            .verbose()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/test_data_dir_verbose.out",
+            writer
+        );
+    }
+
+    #[test]
+    fn test_with_rules_dir_verbose_prev_engine() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from("resources/test-command/dir"))
+            .directory_only()
+            .verbose()
+            .previous_engine()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/test_data_dir_verbose_prev_engine.out",
+            writer
+        );
     }
 }

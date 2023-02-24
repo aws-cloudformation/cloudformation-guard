@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches};
 
 use crate::command::Command;
 use crate::commands::files::read_file_content;
@@ -35,33 +35,30 @@ impl Command for Migrate {
         MIGRATE
     }
 
-    fn command(&self) -> App<'static> {
-        App::new(MIGRATE)
-            .about(
-                r#"Migrates 1.0 rules to 2.0 compatible rules.
-"#,
-            )
+    fn command(&self) -> clap::Command {
+        clap::Command::new(MIGRATE)
+            .about("Migrates 1.0 rules to 2.0 compatible rules.")
             .arg(
-                Arg::with_name(RULES.0)
+                Arg::new(RULES.0)
                     .long(RULES.0)
                     .short(RULES.1)
-                    .takes_value(true)
                     .help("Provide a rules file")
                     .required(true),
             )
             .arg(
-                Arg::with_name(OUTPUT.0)
+                Arg::new(OUTPUT.0)
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
-                    .takes_value(true)
                     .help("Write migrated rules to output file")
                     .required(false),
             )
+            .arg_required_else_help(true)
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let file_input = app.value_of(RULES.0).unwrap();
-        let path = PathBuf::from_str(file_input).unwrap();
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
+        let file_input = app.get_one::<String>(RULES.0).unwrap(); // safe because this flag is required
+
+        let path = PathBuf::from_str(file_input)?;
         let file_name = path.to_str().unwrap_or("").to_string();
         let file = File::open(file_input)?;
 
@@ -108,7 +105,7 @@ pub(crate) fn migrated_rules_by_type(
         }
     }
 
-    let mut types = by_type.keys().map(|elem| elem.clone()).collect_vec();
+    let mut types = by_type.keys().cloned().collect_vec();
     types.sort();
     for each_type in &types {
         writeln!(
@@ -157,6 +154,7 @@ pub(crate) fn aggregate_by_type(
     by_type
 }
 
+#[allow(dead_code)] // not actually dead code, its used in tests
 pub(crate) fn get_resource_types_in_ruleset(rules: &Vec<RuleLineType>) -> Result<Vec<TypeName>> {
     let mut resource_types = HashSet::new();
     for rule in rules {

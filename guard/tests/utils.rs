@@ -7,8 +7,6 @@ use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use clap::App;
-
 use cfn_guard::command::Command;
 use cfn_guard::commands::{
     migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
@@ -19,6 +17,8 @@ use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
 #[non_exhaustive]
 pub struct StatusCode;
+
+const GUARD_TEST_APP_NAME: &str = "cfn-guard-test";
 
 impl StatusCode {
     pub const SUCCESS: i32 = 0;
@@ -65,15 +65,16 @@ pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
     fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
-        let test_app_name = String::from("cfn-guard-test");
-        let mut app = App::new(&test_app_name);
+        let mut app = clap::Command::new(GUARD_TEST_APP_NAME);
 
         let args = self.build_args();
 
-        let mut command_options = args.iter().fold(vec![test_app_name], |mut res, arg| {
-            res.push(arg.to_string());
-            res
-        });
+        let mut command_options =
+            args.iter()
+                .fold(vec![String::from(GUARD_TEST_APP_NAME)], |mut res, arg| {
+                    res.push(arg.to_string());
+                    res
+                });
 
         let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
         commands.push(Box::new(Validate::new()));
