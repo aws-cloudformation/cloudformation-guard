@@ -131,6 +131,7 @@ impl Validate {
 
 const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
 const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
+const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
 
 impl Command for Validate {
     fn name(&self) -> &'static str {
@@ -181,6 +182,7 @@ or rules files.
                 .short(TYPE.1)
                 .action(ArgAction::Set)
                 .required(false)
+                .value_parser(TEMPLATE_TYPE)
                 .help("Specify the type of data file used for improved messaging - ex: CFNTemplate"))
             .arg(Arg::new(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1)
                 .value_parser(OUTPUT_FORMAT_VALUE_TYPE)

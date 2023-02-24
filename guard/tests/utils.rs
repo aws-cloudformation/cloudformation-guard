@@ -65,7 +65,6 @@ pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
     fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
-        let test_app_name = String::from(GUARD_TEST_APP_NAME);
         let mut app = clap::Command::new(GUARD_TEST_APP_NAME);
 
         let args = self.build_args();
