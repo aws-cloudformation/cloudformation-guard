@@ -18,6 +18,8 @@ use cfn_guard::utils::writer::{WriteBuffer, Writer};
 #[non_exhaustive]
 pub struct StatusCode;
 
+const GUARD_TEST_APP_NAME: &str = "cfn-guard-test";
+
 impl StatusCode {
     pub const SUCCESS: i32 = 0;
     pub const INTERNAL_FAILURE: i32 = -1;
@@ -63,8 +65,8 @@ pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
     fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
-        let test_app_name = String::from("cfn-guard-test");
-        let mut app = clap::Command::new("cfn-guard-test");
+        let test_app_name = String::from(GUARD_TEST_APP_NAME);
+        let mut app = clap::Command::new(GUARD_TEST_APP_NAME);
 
         let args = self.build_args();
 
