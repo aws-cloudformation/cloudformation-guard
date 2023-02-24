@@ -51,7 +51,7 @@ jobs:
           path: cloudformation-guard
       - name: Build binary
         run: |
-          cd cloudformation-guard
+          cd cloudformation-guard/guard/
           cargo build --release
       - uses: actions/checkout@v3
         name: Checkout aws-guard-rules-registry
@@ -78,7 +78,7 @@ jobs:
           
           for rule in "${rules[@]}"
           do
-              cloudformation-guard/target/release/cfn-guard parse-tree \
+              ../../cloudformation-guard/target/release/cfn-guard parse-tree \
                   --rules $rule
               
               STATUS_CODE=$?
