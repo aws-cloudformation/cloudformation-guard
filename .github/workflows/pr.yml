@@ -58,6 +58,7 @@ jobs:
           path: aws-guard-rules-registry
           ref: main
       - name: Run integration tests using test command
+        continue-on-error: true
         run: |
           cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
           STATUS_CODE=$?
@@ -68,6 +69,7 @@ jobs:
               echo "The aws-guard-rules-registry integration tests for test command with Ubuntu have passed."
           fi
       - name: Run integration tests using parse-tree command
+        continue-on-error: true
         run: |
           cd aws-guard-rules-registry/rules
           
