@@ -69,10 +69,12 @@ pub trait CommandTestRunner {
 
         let args = self.build_args();
 
-        let mut command_options = args.iter().fold(vec![test_app_name], |mut res, arg| {
-            res.push(arg.to_string());
-            res
-        });
+        let mut command_options =
+            args.iter()
+                .fold(vec![String::from(GUARD_TEST_APP_NAME)], |mut res, arg| {
+                    res.push(arg.to_string());
+                    res
+                });
 
         let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
         commands.push(Box::new(Validate::new()));
