@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build
+    - name: Build & run unit tests
       run: cargo build --release --verbose
     - name: Run tests
       run: cargo test --verbose
@@ -31,7 +31,7 @@ jobs:
       run: shellcheck install-guard.sh
 
   formatting:
-    name: cargo fmt
+    name: Formatting check (cargo fmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -59,14 +59,45 @@ jobs:
           repository: aws-cloudformation/aws-guard-rules-registry
           path: aws-guard-rules-registry
           ref: main
-      - name: Run integration test
+      - name: Run integration tests using test command
         run: |
-          sed -i 's/"AWS::AccountId"/{"Ref":"AWS::AccountId"}/g' aws-guard-rules-registry/rules/aws/lambda/lambda_function_public_access_prohibited.guard
           cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
           STATUS_CODE=$?
           if [ $STATUS_CODE -ne 0 ]; then
-              echo "The aws-guard-rules-registry integration tests with Ubuntu have failed."
+              echo "The aws-guard-rules-registry integration tests for test command with Ubuntu have failed."
               exit 1
           else
-              echo "The aws-guard-rules-registry integration tests with Ubuntu have passed."
+              echo "The aws-guard-rules-registry integration tests for test command with Ubuntu have passed."
+          fi
+      - name: Run integration tests using parse-tree command
+        run: |
+          cd aws-guard-rules-registry/rules
+          
+          FAILED_RULES=()
+          rules=( $(find . -type f -name "*.guard") )
+          
+          for rule in "${rules[@]}"
+          do
+              cloudformation-guard/target/release/cfn-guard parse-tree \
+                  --rules $rule
+              
+              STATUS_CODE=$?
+              if [ $STATUS_CODE -ne 0 ]; then
+                  FAILED_RULES+=("$rule")
+              fi
+          done
+          
+          FAILED_RULE_COUNT=${#FAILED_RULES[@]}
+          
+          if [ $FAILED_RULE_COUNT -gt 0 ]; then
+              echo "The following $FAILED_RULE_COUNT rule(s) from aws-guard-rules-registry have failed the parse-tree 
+              integration tests on Ubuntu with a non-zero error code:"
+              for failed_rule in "${FAILED_RULES[@]}"
+              do
+                  echo $failed_rule
+              done
+              exit 1
+          else
+              echo "All the rules from aws-guard-rules-registry have succeeded the parse-tree integration tests 
+              on Ubuntu."
           fi
