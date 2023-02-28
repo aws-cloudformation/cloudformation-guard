@@ -56,7 +56,7 @@ fn main() -> Result<(), Error> {
                 let mut output_writer: Writer = if [PARSE_TREE, MIGRATE, RULEGEN]
                     .contains(&command.name())
                 {
-                    let writer: Writer = match app.value_of(OUTPUT.0) {
+                    let writer: Writer = match value.value_of(OUTPUT.0) {
                         Some(file) => {
                             Writer::new(WBFile(File::create(file)?), Stderr(std::io::stderr()))
                         }
