@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
+    branches: [ lambda_tests, main ]
   pull_request:
-    branches: [ main ]
+    branches: [ lambda_tests, main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,7 +48,6 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
           role-session-name: LambdaTestGitHubAction
-
 
       - name: Generate identifiers
         id: generate-identifiers
