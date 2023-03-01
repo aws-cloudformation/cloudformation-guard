@@ -1,3 +1,4 @@
+use fancy_regex::Regex;
 use std::convert::TryFrom;
 use std::fmt::Formatter;
 
@@ -260,7 +261,16 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
         }
 
         regex.push_str(fragment);
-        return Ok((remainder, Value::Regex(regex)));
+
+        let validate_regex = Regex::new(regex.as_str());
+        return match validate_regex {
+            Ok(valid_regex) => Ok((remainder, Value::Regex(regex))),
+            Err(e) => Err(nom::Err::Error(ParserError {
+                context: format!("Could not parse regular expression: {}", e.to_string()),
+                kind: ErrorKind::RegexpMatch,
+                span: input,
+            })),
+        };
     }
 }
 
@@ -619,21 +629,15 @@ fn is_string(input: Span) -> IResult<Span, CmpOperator> {
 }
 
 fn is_bool(input: Span) -> IResult<Span, CmpOperator> {
-    value( CmpOperator::IsBool, alt((
-        tag("IS_BOOL"),
-        tag("is_bool"),
-        )))(input)
+    value(CmpOperator::IsBool, alt((tag("IS_BOOL"), tag("is_bool"))))(input)
 }
 
 fn is_int(input: Span) -> IResult<Span, CmpOperator> {
-    value( CmpOperator::IsInt, alt((
-        tag("IS_INT"),
-        tag("is_int"),
-        )))(input)
+    value(CmpOperator::IsInt, alt((tag("IS_INT"), tag("is_int"))))(input)
 }
 
 fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
-    alt(( is_string, is_list, is_struct, is_bool, is_int))(input)
+    alt((is_string, is_list, is_struct, is_bool, is_int))(input)
 }
 
 pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {

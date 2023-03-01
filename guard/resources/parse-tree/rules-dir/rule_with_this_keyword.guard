@@ -1,0 +1,26 @@
+rule ensure_container_limits_are_enforced
+    when this.apiVersion == 'v1'
+         this.kind == 'Pod'
+{
+    this.spec.containers[*] {
+        this.resources.limits {
+            #
+            # Ensure that cpu attribute is set
+            #
+            this.cpu exists
+            <<
+                Id: K8S_REC_18
+                Description: CPU limit must be set for the container
+            >>
+
+            #
+            # Ensure that memory attribute is set
+            #
+            this.memory exists
+            <<
+                Id: K8S_REC_22
+                Description: Memory limit must be set for the container
+            >>
+        }
+    }
+}

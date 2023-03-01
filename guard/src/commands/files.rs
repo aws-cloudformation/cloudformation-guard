@@ -4,8 +4,8 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use walkdir::{WalkDir, DirEntry};
 use crate::rules::errors::Error;
+use walkdir::{DirEntry, WalkDir};
 
 pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     let mut file_content = String::new();
@@ -15,35 +15,41 @@ pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
 }
 
 pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
-    where F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static
+where
+    F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
 {
     let path = PathBuf::from_str(file)?;
     let input_file = File::open(file)?;
     let metadata = input_file.metadata()?;
     Ok(if metadata.is_file() {
         vec![path]
-    }
-    else {
+    } else {
         let result = get_files_with_filter(file, sort, |entry| {
-            entry.file_name().to_str()
-                .map(|name|
-                    !name.ends_with("/")
-                ).unwrap_or(false)
+            entry
+                .file_name()
+                .to_str()
+                .map(|name| !name.ends_with("/"))
+                .unwrap_or(false)
         })?;
         result
     })
 }
 
-pub(crate) fn get_files_with_filter<S, F>(file: &str, sort: S, filter: F) -> Result<Vec<PathBuf>, Error>
-    where S: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
-          F: Fn(&walkdir::DirEntry) -> bool
+pub(crate) fn get_files_with_filter<S, F>(
+    file: &str,
+    sort: S,
+    filter: F,
+) -> Result<Vec<PathBuf>, Error>
+where
+    S: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
+    F: Fn(&walkdir::DirEntry) -> bool,
 {
     let mut selected = Vec::with_capacity(10);
     let walker = WalkDir::new(file).sort_by(sort).into_iter();
     let dir_check = |entry: &DirEntry| {
         // select directories to traverse
         if entry.path().is_dir() {
-            return true
+            return true;
         }
         filter(entry)
     };
@@ -62,17 +68,19 @@ pub(crate) fn get_files_with_filter<S, F>(file: &str, sort: S, filter: F) -> Res
 
 #[derive(Debug)]
 pub(crate) struct Iter<'i, T, C>
-    where C: Fn(String, &PathBuf) -> Result<T, Error>
+where
+    C: Fn(String, &PathBuf) -> Result<T, Error>,
 {
-files: &'i [PathBuf],
+    files: &'i [PathBuf],
     index: usize,
     converter: C,
 }
 
 impl<'i, T, C> Iterator for Iter<'i, T, C>
-    where C: Fn(String, &PathBuf) -> Result<T, Error>
+where
+    C: Fn(String, &PathBuf) -> Result<T, Error>,
 {
-type Item = Result<T, Error>;
+    type Item = Result<T, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.files.len() {
@@ -93,14 +101,17 @@ type Item = Result<T, Error>;
 }
 
 pub(crate) fn iterate_over<T, C>(files: &[PathBuf], converter: C) -> Iter<T, C>
-    where C: Fn(String, &PathBuf) -> Result<T, Error>
+where
+    C: Fn(String, &PathBuf) -> Result<T, Error>,
 {
     Iter {
-        files, converter, index: 0
+        files,
+        converter,
+        index: 0,
     }
 }
 
-pub(crate) fn alpabetical(first : &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn alpabetical(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
     first.file_name().cmp(second.file_name())
 }
 
@@ -109,15 +120,17 @@ pub(crate) fn last_modified(first: &walkdir::DirEntry, second: &walkdir::DirEntr
         if let Ok(second) = second.metadata() {
             if let Ok(first) = first.modified() {
                 if let Ok(second) = second.modified() {
-                    return first.cmp(&second)
+                    return first.cmp(&second);
                 }
             }
         }
     }
-    return Ordering::Equal
+    return Ordering::Equal;
 }
 
-pub(crate) fn regular_ordering(_first: &walkdir::DirEntry, _second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn regular_ordering(
+    _first: &walkdir::DirEntry,
+    _second: &walkdir::DirEntry,
+) -> Ordering {
     Ordering::Equal
 }
-

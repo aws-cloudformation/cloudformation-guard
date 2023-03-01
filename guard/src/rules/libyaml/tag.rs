@@ -18,7 +18,7 @@ impl Tag {
     pub(crate) fn get_handle(&self) -> String {
         self.as_string()
             .chars()
-            .take_while(|c| c.to_owned() == '!')
+            .take_while(|c| *c == '!')
             .fold(String::new(), |mut handle, c| {
                 handle.push(c);
                 handle

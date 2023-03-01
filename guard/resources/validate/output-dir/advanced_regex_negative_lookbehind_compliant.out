@@ -1,0 +1,8 @@
+advanced_regex_negative_lookbehind_compliant.yaml Status = PASS
+PASS rules
+advanced_regex_negative_lookbehind_rule.guard/default    PASS
+---
+Evaluation of rules advanced_regex_negative_lookbehind_rule.guard against data advanced_regex_negative_lookbehind_compliant.yaml
+--
+Rule [advanced_regex_negative_lookbehind_rule.guard/default] is compliant for template [advanced_regex_negative_lookbehind_compliant.yaml]
+--

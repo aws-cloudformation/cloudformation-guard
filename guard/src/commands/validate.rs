@@ -1,3 +1,7 @@
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use colored::*;
+use enumflags2::BitFlags;
+use serde::Deserialize;
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt::Debug;
@@ -5,11 +9,6 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use colored::*;
-use enumflags2::BitFlags;
-use serde::Deserialize;
 
 use Type::CFNTemplate;
 
@@ -24,7 +23,7 @@ use crate::commands::{
     OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
     RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
 };
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
 use crate::rules::evaluate::RootScope;
@@ -33,6 +32,7 @@ use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::utils::writer::Writer;
 
 mod cfn;
 mod cfn_reporter;
@@ -104,6 +104,7 @@ pub(crate) struct Payload {
     list_of_data: Vec<String>,
 }
 
+#[allow(clippy::new_without_default)]
 impl Validate {
     pub fn new() -> Self {
         Validate {}
@@ -115,7 +116,7 @@ impl Command for Validate {
         VALIDATE
     }
 
-    fn command(&self) -> App<'static, 'static> {
+    fn command(&self) -> App<'static> {
         App::new(VALIDATE)
             .about(r#"Evaluates rules against the data files to determine success or failure.
 You can point rules flag to a rules directory and point data flag to a data directory.
@@ -137,16 +138,16 @@ or rules files.
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
                 .multiple(true).conflicts_with("payload"))
             .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
-                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
                            expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
                           \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                     .multiple(true))
+                .multiple(true))
             .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
                 .help("Specify the type of data file used for improved messaging"))
             .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary"])
+                .possible_values(&["json", "yaml", "single-line-summary"])
                 .default_value("single-line-summary")
                 .help("Specify the format in which the output should be displayed"))
             .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
@@ -172,7 +173,7 @@ or rules files.
                 .required(true))
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
         let cmp = if app.is_present(LAST_MODIFIED.0) {
             last_modified
         } else {
@@ -356,7 +357,7 @@ or rules files.
             for each_file_content in iterate_over(&rules, |content, file| {
                 Ok((
                     content,
-                    match file.strip_prefix(&file) {
+                    match file.strip_prefix(file) {
                         Ok(path) => {
                             if path == empty_path {
                                 file.file_name().unwrap().to_str().unwrap().to_string()
@@ -369,18 +370,16 @@ or rules files.
                 ))
             }) {
                 match each_file_content {
-                    Err(e) => println!("Unable read content from file {}", e),
+                    Err(e) => writer.write_err(format!("Unable read content from file {e}"))?,
                     Ok((file_content, rule_file_name)) => {
                         let span =
                             crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
                         match crate::rules::parser::rules_file(span) {
                             Err(e) => {
-                                println!(
-                                    "Parsing error handling rule file = {}, Error = {}",
+                                writer.write_err(format!(
+                                    "Parsing error handling rule file = {}, Error = {e}\n---",
                                     rule_file_name.underline(),
-                                    e
-                                );
-                                println!("---");
+                                ))?;
                                 exit_code = 5;
                                 continue;
                             }
@@ -398,6 +397,7 @@ or rules files.
                                     show_clause_failures,
                                     new_version_eval_engine,
                                     summary_type,
+                                    writer,
                                 )? {
                                     Status::SKIP | Status::PASS => continue,
                                     Status::FAIL => {
@@ -437,12 +437,10 @@ or rules files.
             for (each_rules, location) in rules_collection {
                 match parse_rules(&each_rules, &location) {
                     Err(e) => {
-                        println!(
-                            "Parsing error handling rules = {}, Error = {}",
+                        writer.write_err(format!(
+                            "Parsing error handling rules  = {}, Error = {e}\n---",
                             location.underline(),
-                            e
-                        );
-                        println!("---");
+                        ))?;
                         exit_code = 5;
                         continue;
                     }
@@ -460,6 +458,7 @@ or rules files.
                             show_clause_failures,
                             new_version_eval_engine,
                             summary_type,
+                            writer,
                         )? {
                             Status::SKIP | Status::PASS => continue,
                             Status::FAIL => {
@@ -477,14 +476,14 @@ or rules files.
 pub(crate) fn validate_path(base: &str) -> Result<()> {
     match Path::new(base).exists() {
         true => Ok(()),
-        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
+        false => Err(Error::FileNotFoundError(base.to_string())),
     }
 }
 
 pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
     let input_data = match serde_json::from_str::<serde_json::Value>(data) {
         Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => return Err(Error::ParseError(e.to_string())),
     };
 
     let span = crate::rules::parser::Span::new_extra(rules, "lambda");
@@ -501,14 +500,14 @@ pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
             }
             Err(e) => Err(e),
         },
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
@@ -517,7 +516,7 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub(crate) struct ConsoleReporter<'r> {
     root_context: StackTracker<'r>,
     reporters: &'r Vec<&'r dyn Reporter>,
@@ -526,36 +525,39 @@ pub(crate) struct ConsoleReporter<'r> {
     verbose: bool,
     print_json: bool,
     show_clause_failures: bool,
+    writer: &'r mut Writer,
 }
 
-fn indent_spaces(indent: usize) {
+fn indent_spaces(indent: usize, mut writer: &mut Writer) {
     for _idx in 0..indent {
-        print!("{}", INDENT)
+        write!(writer, "{INDENT}").expect("Unable to write to the output");
     }
 }
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool) {
+#[allow(clippy::uninlined_format_args)]
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, mut writer: &mut Writer) {
     let prefix_current = if last { "`- " } else { "|- " };
-    println!("{}{}{}", prefix, prefix_current, current);
+    writeln!(writer, "{}{}{}", prefix, prefix_current, current)
+        .expect("Unable to write to the output");
 
     let prefix_child = if last { "   " } else { "|  " };
     let prefix = prefix + prefix_child;
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child);
+            pprint_tree(child, prefix.clone(), i == last_child, &mut writer);
         }
     }
 }
 
-pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
-    pprint_tree(root, "".to_string(), true);
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, mut writer: &mut Writer) {
+    pprint_tree(root, "".to_string(), true, &mut writer);
 }
 
-pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
+pub(super) fn print_context(cxt: &StatusContext, depth: usize, mut writer: &mut Writer) {
     let header = format!(
         "{}({}, {})",
         cxt.eval_type,
@@ -565,45 +567,53 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
     .underline();
     //let depth = cxt.indent;
     let _sub_indent = depth + 1;
-    indent_spaces(depth - 1);
-    println!("{}", header);
+    indent_spaces(depth - 1, &mut writer);
+    writeln!(writer, "{header}").expect("Unable to write to the output");
     match &cxt.from {
         Some(v) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("From: {:?}", v);
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.to {
         Some(v) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("To: {:?}", v);
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
         }
         None => {}
     }
     match &cxt.msg {
         Some(message) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("Message: {}", message);
+            indent_spaces(depth, &mut writer);
+            write!(writer, "|  ").expect("Unable to write to the output");
+            writeln!(writer, "Message: {message}").expect("Unable to write to the output");
         }
         None => {}
     }
 
     for child in &cxt.children {
-        print_context(child, depth + 1)
+        print_context(child, depth + 1, &mut writer)
     }
 }
 
-fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
-    print!(
+#[allow(clippy::uninlined_format_args)]
+fn print_failing_clause(
+    rules_file_name: &str,
+    rule: &StatusContext,
+    longest: usize,
+    mut writer: &mut Writer,
+) {
+    write!(
+        writer,
         "{file}/{rule:<0$}",
         longest + 4,
         file = rules_file_name,
         rule = rule.context
-    );
+    )
+    .expect("Unable to write to the output");
     let longest = rules_file_name.len() + longest;
     let mut first = true;
     for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
@@ -615,35 +625,65 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
         )
         .underline();
         if !first {
-            print!("{space:>longest$}", space = " ", longest = longest + 4)
+            write!(
+                writer,
+                "{space:>longest$}",
+                space = " ",
+                longest = longest + 4
+            )
+            .expect("Unable to write to the output");
         }
         let clause = format!("Clause #{}", index + 1).bold();
-        println!("{header:<20}{content}", header = clause, content = header);
+        writeln!(
+            writer,
+            "{header:<20}{content}",
+            header = clause,
+            content = header
+        )
+        .expect("Unable to write to the output");
         match &matched.from {
             Some(from) => {
-                print!("{space:>longest$}", space = " ", longest = longest + 4);
+                write!(
+                    writer,
+                    "{space:>longest$}",
+                    space = " ",
+                    longest = longest + 4
+                )
+                .expect("Unable to write to the output");
                 let content = format!("Comparing {:?}", from);
-                print!("{header:<20}{content}", header = " ", content = content);
+                write!(
+                    writer,
+                    "{header:<20}{content}",
+                    header = " ",
+                    content = content
+                )
+                .expect("Unable to write to the output");
             }
             None => {}
         }
         match &matched.to {
             Some(to) => {
-                println!(" with {:?} failed", to);
+                writeln!(writer, " with {:?} failed", to).expect("Unable to write to the output");
             }
             None => {
-                println!()
+                writeln!(writer).expect("Unable to write to the output");
             }
         }
         match &matched.msg {
             Some(m) => {
                 for each in m.split('\n') {
-                    print!("{space:>longest$}", space = " ", longest = longest + 4 + 20);
-                    println!("{}", each);
+                    write!(
+                        writer,
+                        "{space:>longest$}",
+                        space = " ",
+                        longest = longest + 4 + 20
+                    )
+                    .expect("Unable to write to the output");
+                    writeln!(writer, "{}", each).expect("Unable to write to the output");
                 }
             }
             None => {
-                println!();
+                writeln!(writer).expect("Unable to write to the output");
             }
         }
         if first {
@@ -652,6 +692,7 @@ fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: us
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl<'r> ConsoleReporter<'r> {
     pub(crate) fn new(
         root: StackTracker<'r>,
@@ -661,7 +702,8 @@ impl<'r> ConsoleReporter<'r> {
         verbose: bool,
         print_json: bool,
         show_clause_failures: bool,
-    ) -> Self {
+        writer: &'r mut Writer,
+    ) -> ConsoleReporter<'r> {
         ConsoleReporter {
             root_context: root,
             reporters: renderers,
@@ -670,11 +712,13 @@ impl<'r> ConsoleReporter<'r> {
             verbose,
             print_json,
             show_clause_failures,
+            writer,
         }
     }
 
+    #[allow(dead_code)] // TODO: probably should jsut delete this...
     pub fn get_result_json(
-        self,
+        mut self,
         root: &PathAwareValue,
         output_format_type: OutputFormatType,
     ) -> Result<String> {
@@ -683,7 +727,7 @@ impl<'r> ConsoleReporter<'r> {
         if self.verbose {
             Ok(serde_json::to_string_pretty(&top.children).unwrap())
         } else {
-            let mut output = Vec::new();
+            let output = Vec::new();
             let longest = get_longest(top);
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
                 partition_failed_and_rest(top);
@@ -692,7 +736,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -706,19 +750,18 @@ impl<'r> ConsoleReporter<'r> {
 
             match String::from_utf8(output) {
                 Ok(s) => Ok(s),
-                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+                Err(e) => Err(Error::ParseError(e.to_string())),
             }
         }
     }
 
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
+    fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
         let stack = self.root_context.stack();
         let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
 
         if self.verbose && self.print_json {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
-            println!("{}", serialized_user);
+            writeln!(self.writer, "{serialized_user}").expect("Unable to write to the output");
         } else {
             let longest = get_longest(top);
 
@@ -729,7 +772,7 @@ impl<'r> ConsoleReporter<'r> {
 
             for each_reporter in self.reporters {
                 each_reporter.report(
-                    &mut output,
+                    &mut self.writer,
                     top.status,
                     &failed,
                     &rest,
@@ -742,16 +785,17 @@ impl<'r> ConsoleReporter<'r> {
             }
 
             if self.show_clause_failures {
-                println!("{}", "Clause Failure Summary".bold());
+                writeln!(self.writer, "{}", "Clause Failure Summary".bold())
+                    .expect("Unable to write to the output");
                 for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest);
+                    print_failing_clause(self.rules_file_name, each, longest, &mut self.writer);
                 }
             }
 
             if self.verbose {
-                println!("Evaluation Tree");
+                writeln!(self.writer, "Evaluation Tree").expect("Unable to write to the output");
                 for each in &top.children {
-                    print_context(each, 1);
+                    print_context(each, 1, &mut self.writer);
                 }
             }
         }
@@ -803,14 +847,15 @@ fn evaluate_against_data_input<'r>(
     show_clause_failures: bool,
     new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
+    mut write_output: &mut Writer,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> =
         Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> =
         Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
@@ -819,6 +864,7 @@ fn evaluate_against_data_input<'r>(
             cfn.as_ref(),
         )) as Box<dyn Reporter>
     };
+
     for file in data_files {
         if new_engine_version {
             let each = match &extra_data {
@@ -829,6 +875,7 @@ fn evaluate_against_data_input<'r>(
             let mut root_scope = root_scope(rules, &each)?;
             let status = eval_rules_file(rules, &mut root_scope)?;
             let root_record = root_scope.reset_recorder().extract();
+
             reporter.report_eval(
                 &mut write_output,
                 status,
@@ -839,12 +886,20 @@ fn evaluate_against_data_input<'r>(
                 &traversal,
                 output,
             )?;
+
             if verbose {
-                print_verbose_tree(&root_record);
+                print_verbose_tree(&root_record, &mut write_output);
             }
+
             if print_json {
-                println!("{}", serde_json::to_string_pretty(&root_record)?)
+                writeln!(
+                    write_output,
+                    "{}",
+                    serde_json::to_string_pretty(&root_record)?
+                )
+                .expect("Unable to write to the output");
             }
+
             if status == Status::FAIL {
                 overall = Status::FAIL
             }
@@ -853,6 +908,7 @@ fn evaluate_against_data_input<'r>(
             let root_context = RootScope::new(rules, each)?;
             let stacker = StackTracker::new(&root_context);
             let renderers = vec![reporter.as_ref()];
+
             let reporter = ConsoleReporter::new(
                 stacker,
                 &renderers,
@@ -861,7 +917,9 @@ fn evaluate_against_data_input<'r>(
                 verbose,
                 print_json,
                 show_clause_failures,
+                write_output,
             );
+
             let appender = MetadataAppender {
                 delegate: &reporter,
                 root_context: each,
@@ -878,16 +936,16 @@ fn evaluate_against_data_input<'r>(
 
 fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
     if content.trim().is_empty() {
-        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
+        Err(Error::ParseError("blank data".to_string()))
     } else {
         let path_value = match crate::rules::values::read_from(content) {
             Ok(value) => PathAwareValue::try_from(value)?,
             Err(_) => {
                 let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::new(ErrorKind::ParseError(format!(
+                return Err(Error::ParseError(format!(
                     "data beginning with \n{}\n ...",
                     &content[..str_len]
-                ))));
+                )));
             }
         };
         Ok(path_value)
@@ -901,13 +959,13 @@ fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
 fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
     top.children
         .iter()
-        .partition(|ctx| matches!((*ctx).status, Some(Status::FAIL)))
+        .partition(|ctx| matches!(ctx.status, Some(Status::FAIL)))
 }
 
 fn get_longest(top: &StatusContext) -> usize {
     top.children
         .iter()
-        .max_by(|f, s| (*f).context.len().cmp(&(*s).context.len()))
+        .max_by(|f, s| f.context.len().cmp(&s.context.len()))
         .map(|elem| elem.context.len())
         .unwrap_or(20)
 }

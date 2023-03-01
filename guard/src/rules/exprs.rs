@@ -1,10 +1,10 @@
 use crate::rules::values::*;
 
-use std::hash::Hash;
-use std::fmt::Formatter;
-use serde::{Serialize, Deserialize};
-use crate::rules::path_value::PathAwareValue;
 use crate::rules::display::ValueOnlyDisplay;
+use crate::rules::path_value::PathAwareValue;
+use serde::{Deserialize, Serialize};
+use std::fmt::Formatter;
+use std::hash::Hash;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
@@ -16,7 +16,10 @@ pub(crate) struct FileLocation<'loc> {
 
 impl<'loc> std::fmt::Display for FileLocation<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Location[file:{}, line:{}, column:{}]", self.file_name, self.line, self.column))?;
+        f.write_fmt(format_args!(
+            "Location[file:{}, line:{}, column:{}]",
+            self.file_name, self.line, self.column
+        ))?;
         Ok(())
     }
 }
@@ -78,7 +81,7 @@ impl<'loc> QueryPart<'loc> {
     pub(crate) fn variable(&self) -> Option<&str> {
         let name = match self {
             QueryPart::Key(name) => name,
-            _ => return None
+            _ => return None,
         };
         if name.starts_with('%') {
             name.strip_prefix('%')
@@ -93,7 +96,7 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
         match self {
             QueryPart::Key(s) => {
                 f.write_str(s.as_str())?;
-            },
+            }
 
             QueryPart::AllIndices(_name) => {
                 f.write_str("[*]")?;
@@ -101,19 +104,25 @@ impl<'loc> std::fmt::Display for QueryPart<'loc> {
 
             QueryPart::AllValues(_name) => {
                 f.write_str("*")?;
-            },
+            }
 
             QueryPart::Index(idx) => {
-                write!(f, "{}", idx.to_string())?;
-            },
+                write!(f, "{}", idx)?;
+            }
 
             QueryPart::Filter(name, _c) => {
-                f.write_fmt(format_args!("{} (filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
-            },
+                f.write_fmt(format_args!(
+                    "{} (filter-clauses)",
+                    name.as_ref().map_or("", String::as_str)
+                ))?;
+            }
 
             QueryPart::MapKeyFilter(name, _clause) => {
-                f.write_fmt(format_args!("{} (map-key-filter-clauses)", name.as_ref().map_or("", String::as_str)))?;
-            },
+                f.write_fmt(format_args!(
+                    "{} (map-key-filter-clauses)",
+                    name.as_ref().map_or("", String::as_str)
+                ))?;
+            }
 
             QueryPart::This => {
                 f.write_str("_")?;
@@ -151,10 +160,10 @@ impl<'loc> Default for AccessClause<'loc> {
             location: FileLocation {
                 file_name: "",
                 line: 0,
-                column: 0
+                column: 0,
             },
             compare_with: None,
-            comparator: (CmpOperator::Eq, false)
+            comparator: (CmpOperator::Eq, false),
         }
     }
 }
@@ -165,9 +174,8 @@ pub(crate) type Conjunctions<T> = Vec<Disjunctions<T>>;
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct GuardAccessClause<'loc> {
     pub(crate) access_clause: AccessClause<'loc>,
-    pub(crate) negation: bool
+    pub(crate) negation: bool,
 }
-
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct MapKeyFilterClause<'loc> {
@@ -180,7 +188,7 @@ pub(crate) struct GuardNamedRuleClause<'loc> {
     pub(crate) dependent_rule: String,
     pub(crate) negation: bool,
     pub(crate) custom_message: Option<String>,
-    pub(crate) location: FileLocation<'loc>
+    pub(crate) location: FileLocation<'loc>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
@@ -209,7 +217,6 @@ pub(crate) struct FunctionExpr<'loc> {
     pub(crate) name: String,
     pub(crate) location: FileLocation<'loc>,
 }
-
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum GuardClause<'loc> {
@@ -247,7 +254,7 @@ pub(crate) struct TypeBlock<'loc> {
 pub(crate) enum RuleClause<'loc> {
     Clause(GuardClause<'loc>),
     WhenBlock(WhenConditions<'loc>, Block<'loc, GuardClause<'loc>>),
-    TypeBlock(TypeBlock<'loc>)
+    TypeBlock(TypeBlock<'loc>),
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -265,8 +272,11 @@ pub(crate) struct ParameterizedRule<'loc> {
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RulesFile<'loc> {
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) assignments: Vec<LetExpr<'loc>>,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) guard_rules: Vec<Rule<'loc>>,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) parameterized_rules: Vec<ParameterizedRule<'loc>>,
 }
 
@@ -294,18 +304,19 @@ impl<'loc> std::fmt::Display for GuardClause<'loc> {
         match self {
             GuardClause::Clause(individual) => individual.fmt(f)?,
             GuardClause::BlockClause(block) => block.fmt(f)?,
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
         Ok(())
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 impl<'loc> std::fmt::Display for BlockGuardClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {{ ", self.query)?;
         for each in &self.block.conjunctions {
             let len = each.len();
-            for idx in 0..len-2 {
+            for idx in 0..len - 2 {
                 write!(f, "{} or ", each[idx])?;
             }
             write!(f, "{}; ", each[len])?;
@@ -317,7 +328,9 @@ impl<'loc> std::fmt::Display for BlockGuardClause<'loc> {
 
 impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}",
+        write!(
+            f,
+            "{} {}",
             if self.negation { "not" } else { "" },
             self.access_clause
         )?;
@@ -327,7 +340,9 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
 
 impl<'loc> std::fmt::Display for AccessClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} {}",
+        write!(
+            f,
+            "{} {} {}",
             self.query,
             display_comparator(self.comparator),
             match &self.compare_with {
@@ -374,5 +389,5 @@ impl<'loc> std::fmt::Display for LetValue<'loc> {
 
 pub(crate) fn display_comparator(cmp: (CmpOperator, bool)) -> String {
     let (op, not) = cmp;
-    format!("{}{} ", if not { "not "} else { "" }, op)
+    format!("{}{} ", if not { "not " } else { "" }, op)
 }

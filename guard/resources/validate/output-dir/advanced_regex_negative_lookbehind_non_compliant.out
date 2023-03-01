@@ -1,0 +1,9 @@
+advanced_regex_negative_lookbehind_non_compliant.yaml Status = FAIL
+FAILED rules
+advanced_regex_negative_lookbehind_rule.guard/default    FAIL
+---
+Evaluation of rules advanced_regex_negative_lookbehind_rule.guard against data advanced_regex_negative_lookbehind_non_compliant.yaml
+--
+Property [/NotAwsAccessKey] in data [advanced_regex_negative_lookbehind_non_compliant.yaml] is not compliant with [advanced_regex_negative_lookbehind_rule.guard/default] because provided value ["AKIAIOSFODNN7EXAMPLE"] did match expected value ["/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"]. Error Message []
+Property [/NotSecretAccessKey] in data [advanced_regex_negative_lookbehind_non_compliant.yaml] is not compliant with [advanced_regex_negative_lookbehind_rule.guard/default] because provided value ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] did match expected value ["/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. Error Message []
+--
