@@ -34,6 +34,10 @@ jobs:
 
     runs-on: ubuntu-latest
     environment: Production
+    env:
+      region: ${{ secrets.AWS_REGION }}
+      role: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
+      account_id: ${{ secrets.AWS_ACCOUNT_ID }}
     permissions:
       id-token: write
       contents: read
@@ -46,8 +50,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-region: ${{ secrets.AWS_REGION }}
-          role-to-assume: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
+          aws-region: ${{ env.region }}
+          role-to-assume: ${{ env.role }}
           role-session-name: LambdaTestGitHubAction
 
       - name: Generate identifiers
@@ -66,8 +70,8 @@ jobs:
 
       - name: Deploy cfn-guard-lambda
         env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ env.account_id }}
+          AWS_REGION: ${{ env.region }}
           LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
           ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
         run: |
