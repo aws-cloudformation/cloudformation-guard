@@ -33,6 +33,7 @@ jobs:
   test-lambda:
 
     runs-on: ubuntu-latest
+    environment: Production
     permissions:
       id-token: write
       contents: read
