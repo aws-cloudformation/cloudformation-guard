@@ -3,7 +3,7 @@ name: Rust
 on:
   push:
     branches: [ lambda_tests, main ]
-  pull_request_target:
+  pull_request:
     branches: [ lambda_tests, main ]
 
 env:
