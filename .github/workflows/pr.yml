@@ -41,8 +41,7 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
-  test-lambda:
-
+  cfn-lambda-integration-tests:
     runs-on: ubuntu-latest
     environment: Production
     env:
