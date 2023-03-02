@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development, rules-registry-integration-tests ]
+    branches: [ main, development ]
   pull_request:
-    branches: [ main, development, rules-registry-integration-tests ]
+    branches: [ main, development ]
 
 env:
   CARGO_TERM_COLOR: always
