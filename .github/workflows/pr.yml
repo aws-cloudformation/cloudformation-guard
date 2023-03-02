@@ -76,7 +76,7 @@ jobs:
           
           for rule in "${rules[@]}"
           do
-              if [ $(sed -e '/^[ \s]*#.*$/d' $rule |  sed -r '/^\s*$/d' | wc -l) == 0 ]; then
+              if [ $(sed -e '/^[ \s]*#.*$/d' $rule |  sed -r '/^\s*$/d' | wc -l) -eq 0 ]; then
                   SKIPPED_RULES+=("$rule")
               elif ../../cloudformation-guard/target/release/cfn-guard parse-tree --rules $rule; then
                   continue
