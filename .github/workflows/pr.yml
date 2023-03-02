@@ -87,10 +87,10 @@ jobs:
           
           SKIPPED_RULE_COUNT=${#SKIPPED_RULES[@]}
           if [ $SKIPPED_RULE_COUNT -gt 0 ]; then
-              echo "The following SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
+              echo "The following $SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
               for skipped_rule in "${SKIPPED_RULES[@]}"
               do
-                  echo $skipped_rule
+                  echo "\t$skipped_rule"
               done
           fi
           
@@ -100,7 +100,7 @@ jobs:
               echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
               for failed_rule in "${FAILED_RULES[@]}"
               do
-                  echo $failed_rule
+                  echo "\t$failed_rule"
               done
               exit 1
           else
