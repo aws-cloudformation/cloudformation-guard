@@ -90,7 +90,7 @@ jobs:
               echo "The following $SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
               for skipped_rule in "${SKIPPED_RULES[@]}"
               do
-                  echo "\t$skipped_rule"
+                  echo "$skipped_rule"
               done
           fi
           
@@ -100,11 +100,11 @@ jobs:
               echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
               for failed_rule in "${FAILED_RULES[@]}"
               do
-                  echo "\t$failed_rule"
+                  echo "$failed_rule"
               done
               exit 1
           else
-              echo "All the rules from aws-guard-rules-registry have succeeded the parse-tree integration tests on Ubuntu."
+              echo "All the rules have succeeded the parse-tree integration tests."
           fi
           
           
