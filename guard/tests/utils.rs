@@ -7,16 +7,18 @@ use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use clap::App;
-
 use cfn_guard::command::Command;
 use cfn_guard::commands::{
     migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
 };
+use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
+use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
 #[non_exhaustive]
 pub struct StatusCode;
+
+const GUARD_TEST_APP_NAME: &str = "cfn-guard-test";
 
 impl StatusCode {
     pub const SUCCESS: i32 = 0;
@@ -62,16 +64,17 @@ pub fn compare_write_buffer_with_string(expected_output: &str, actual_output_wri
 pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
-    fn run(&self, mut writer: &mut Writer) -> i32 {
-        let test_app_name = String::from("cfn-guard-test");
-        let mut app = App::new(&test_app_name);
+    fn run(&self, mut writer: &mut Writer, mut reader: &mut Reader) -> i32 {
+        let mut app = clap::Command::new(GUARD_TEST_APP_NAME);
 
         let args = self.build_args();
 
-        let mut command_options = args.iter().fold(vec![test_app_name], |mut res, arg| {
-            res.push(arg.to_string());
-            res
-        });
+        let mut command_options =
+            args.iter()
+                .fold(vec![String::from(GUARD_TEST_APP_NAME)], |mut res, arg| {
+                    res.push(arg.to_string());
+                    res
+                });
 
         let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
         commands.push(Box::new(Validate::new()));
@@ -97,7 +100,7 @@ pub trait CommandTestRunner {
         match app.subcommand() {
             Some((name, value)) => {
                 if let Some(command) = mappings.get(name) {
-                    match (*command).execute(value, &mut writer) {
+                    match (*command).execute(value, &mut writer, &mut reader) {
                         Err(e) => {
                             writer
                                 .write_err(format!("Error occurred {e}"))
@@ -132,4 +135,10 @@ macro_rules! assert_output_from_str_eq {
     ($expected_output: expr, $actual_output_writer: expr) => {
         crate::utils::compare_write_buffer_with_string($expected_output, $actual_output_writer)
     };
+}
+
+pub fn get_reader(path: &str) -> Reader {
+    let file = File::open(path).expect("failed to find mocked file");
+
+    Reader::new(ReadFile(file))
 }

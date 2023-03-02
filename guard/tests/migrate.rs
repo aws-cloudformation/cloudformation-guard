@@ -11,6 +11,8 @@ mod migrate_tests {
 
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{MIGRATE, OUTPUT, RULES};
+    use cfn_guard::utils::reader::ReadBuffer::Stdin;
+    use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
@@ -64,10 +66,11 @@ mod migrate_tests {
         #[case] expected_output_file_path: &str,
         #[case] expected_status_code: i32,
     ) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = MigrateTestRunner::default()
             .rules(rules_arg)
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
         assert_output_from_file_eq!(expected_output_file_path, writer)
@@ -75,12 +78,13 @@ mod migrate_tests {
 
     #[test]
     fn test_migrate_rule_with_invalid_file() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = MigrateTestRunner::default()
             .rules(Option::from(
                 "/Users/joshfri/repos/cloudformation-guard/target/debug/cfn-guard",
             ))
-            .run(&mut writer);
+            .run(&mut writer, &mut reader);
 
         assert_eq!(-1, status_code);
         println!("{}", writer.err_to_stripped().unwrap());

@@ -1,4 +1,4 @@
-use clap::{App, ArgMatches};
+use clap::ArgMatches;
 use std::collections::HashMap;
 use std::fs::File;
 mod command;
@@ -8,6 +8,7 @@ mod rules;
 mod utils;
 
 use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
+use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use command::Command;
@@ -18,15 +19,18 @@ use std::process::exit;
 use std::rc::Rc;
 
 fn main() -> Result<(), Error> {
-    let mut app = App::new(APP_NAME).version(APP_VERSION).about(
-        r#"
+    let mut app = clap::Command::new(APP_NAME)
+        .version(APP_VERSION)
+        .about(
+            r#"
   Guard is a general-purpose tool that provides a simple declarative syntax to define 
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
   Rules are composed of clauses expressed using Conjunctive Normal Form
   (fancy way of saying it is a logical AND of OR clauses). Guard has deep
   integration with CloudFormation templates for evaluation but is a general tool
   that equally works for any JSON- and YAML- data."#,
-    );
+        )
+        .arg_required_else_help(true);
 
     let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
     commands.push(Box::new(commands::parse_tree::ParseTree::new()));
@@ -67,7 +71,11 @@ fn main() -> Result<(), Error> {
                     Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr()))
                 };
 
-                match (*command).execute(value, &mut output_writer) {
+                match (*command).execute(
+                    value,
+                    &mut output_writer,
+                    &mut Reader::new(ReadBuffer::Stdin(std::io::stdin())),
+                ) {
                     Err(e) => {
                         output_writer
                             .write_err(format!("Error occurred {e}"))

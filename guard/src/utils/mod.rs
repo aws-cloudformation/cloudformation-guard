@@ -1,3 +1,4 @@
+pub mod reader;
 pub mod writer;
 
 #[derive(Debug, Clone)]
