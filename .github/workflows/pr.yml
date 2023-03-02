@@ -86,7 +86,7 @@ jobs:
           done
           
           SKIPPED_RULE_COUNT=${#SKIPPED_RULES[@]}
-          if [ SKIPPED_RULE_COUNT -gt 0 ]; then
+          if [ $SKIPPED_RULE_COUNT -gt 0 ]; then
               echo "The following SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
               for skipped_rule in "${SKIPPED_RULES[@]}"
               do
