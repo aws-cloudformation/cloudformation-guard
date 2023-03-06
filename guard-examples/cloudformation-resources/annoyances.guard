@@ -1,0 +1,4 @@
+# Describe should describe what the resource does, instead of describing the schema file.
+rule ensure_description_is_descriptive {
+    description != /^Resource Type definition for/
+}
