@@ -43,11 +43,11 @@ jobs:
 
   cfn-lambda-integration-tests:
     runs-on: ubuntu-latest
-    environment: Production
+    environment: Production # this environment needs manual approval for workflow to be deployed
     env:
-      region: ${{ secrets.AWS_REGION }}
-      role: ${{ secrets.LAMBDA_CREATION_ROLE_NAME }}
-      account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+      region: us-east-1
+      role: arn:aws:iam::711319330327:role/GitHubAction
+      account_id: 711319330327
     permissions:
       id-token: write
       contents: read
