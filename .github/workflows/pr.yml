@@ -75,6 +75,9 @@ jobs:
 
           echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
           echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
+          
+          echo "Lambda Function Name: ${LAMBDA_FUNCTION_NAME}"
+          echo "Role Name: ${ROLE_NAME}"
 
 
       - name: Deploy cfn-guard-lambda
