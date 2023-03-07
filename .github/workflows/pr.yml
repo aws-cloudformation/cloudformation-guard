@@ -67,11 +67,9 @@ jobs:
         id: generate-identifiers
         run: |
           LAMBDA_FUNCTION_PREFIX=GhCfnGrd
-          git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          git_branch=${GITHUB_REF#refs/heads/}
-          commit_hash=${git_branch}_${git_hash}
-          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${commit_hash}
-          ROLE_NAME="${LAMBDA_FUNCTION_NAME}Role"
+          LAMBDA_FUNCTION_SUFFIX=$(date +%s_%4N)
+          LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${LAMBDA_FUNCTION_SUFFIX}
+          ROLE_NAME="${LAMBDA_FUNCTION_NAME}_Role"
 
           echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
           echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
