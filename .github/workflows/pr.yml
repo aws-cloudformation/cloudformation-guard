@@ -50,8 +50,7 @@ jobs:
       account_id: 711319330327
     permissions:
       id-token: write
-      contents: write
-      packages: write
+      contents: read
 
     steps:
       - name: Check out code
