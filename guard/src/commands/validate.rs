@@ -449,7 +449,7 @@ or rules files.
                     print_json,
                     show_clause_failures,
                     new_version_eval_engine,
-                    &mut rules,
+                    &rules,
                 )?,
             };
         } else if app.contains_id(PAYLOAD.0) {
@@ -956,6 +956,7 @@ fn get_longest(top: &StatusContext) -> usize {
         .unwrap_or(20)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate(
     writer: &mut Writer,
     summary_type: BitFlags<SummaryType>,
@@ -967,10 +968,10 @@ fn evaluate(
     print_json: bool,
     show_clause_failures: bool,
     new_version_eval_engine: bool,
-    rules: &mut Vec<PathBuf>,
+    rules: &[PathBuf],
 ) -> Result<i32> {
     let mut exit_code = 0;
-    for each_file_content in iterate_over(&rules, |content, file| {
+    for each_file_content in iterate_over(rules, |content, file| {
         Ok((content, get_file_name(file, file)))
     }) {
         match each_file_content {
@@ -992,7 +993,7 @@ fn evaluate(
                             data_type,
                             output_type,
                             extra_data.clone(),
-                            &data_files,
+                            data_files,
                             &rules,
                             &rule_file_name,
                             verbose,
