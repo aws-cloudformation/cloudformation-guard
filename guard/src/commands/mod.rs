@@ -15,7 +15,7 @@ mod tracker;
 //
 // Application metadata
 pub const APP_NAME: &str = "cfn-guard";
-pub const APP_VERSION: &'static str = env!("CARGO_PKG_VERSION");
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Commands
 pub const MIGRATE: &str = "migrate";
 pub const PARSE_TREE: &str = "parse-tree";
@@ -52,7 +52,8 @@ pub(crate) const REQUIRED_FLAGS: &str = "required_flags";
 // Arg group for test
 pub const RULES_AND_TEST_FILE: &str = "rules-and-test-file";
 pub const DIRECTORY_ONLY: &str = "directory-only";
+pub const STRUCTURED: (&str, char) = ("structured", 'z');
 
-pub(crate) const DATA_FILE_SUPPORTED_EXTENSIONS: [&'static str; 5] =
+pub(crate) const DATA_FILE_SUPPORTED_EXTENSIONS: [&str; 5] =
     [".yaml", ".yml", ".json", ".jsn", ".template"];
-pub(crate) const RULE_FILE_SUPPORTED_EXTENSIONS: [&'static str; 2] = [".guard", ".ruleset"];
+pub(crate) const RULE_FILE_SUPPORTED_EXTENSIONS: [&str; 2] = [".guard", ".ruleset"];
