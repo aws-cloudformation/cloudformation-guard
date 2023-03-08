@@ -35,7 +35,7 @@ let resources = Resources.*[
 #
 # This rule will return 
 # 1) SKIP if there are no resources that were selected, protected by the guard clause !empty 
-# 2) FAIL is any one resource did have empty tags or did not have tags specified at all
+# 2) FAIL if any one resource did have empty tags or did not have tags specified at all
 # 3) PASS when ALL resource do have non-empty tags
 #
 rule assert_all_resources_have_non_empty_tags when %resources !empty {
