@@ -583,8 +583,9 @@ mod validate_tests {
 
     #[test]
     fn test_with_payload_flag_prev_engine_show_summary_all() {
-        let payload = COMPLIANT_PAYLOAD;
-        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
+            COMPLIANT_PAYLOAD.as_bytes(),
+        ))));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
@@ -743,6 +744,27 @@ mod validate_tests {
 
         assert_output_from_file_eq!("resources/validate/output-dir/structured.json", writer);
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
+    fn test_structured_output_payload() {
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
+            COMPLIANT_PAYLOAD.as_bytes(),
+        ))));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .show_summary(vec!["none"])
+            .output_format(Option::from("json"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/structured-payload.json",
+            writer
+        );
+        assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
     #[rstest::rstest]
