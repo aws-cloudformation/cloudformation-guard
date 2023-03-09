@@ -3,9 +3,9 @@ use crate::commands::{APP_NAME, APP_VERSION, COMPLETIONS};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use crate::{commands, rules};
-use clap::{Arg, ArgAction, ArgMatches, ValueEnum};
+use clap::{Arg, ArgAction, ArgMatches};
 
-#[derive(Copy, Clone, ValueEnum, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Shell {
     Bash,
     Zsh,

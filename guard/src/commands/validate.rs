@@ -6,7 +6,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueEnum, ValueHint};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use colored::*;
 use enumflags2::BitFlags;
 use serde::Deserialize;
@@ -68,7 +68,7 @@ impl From<&str> for Type {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum)]
+#[derive(Copy, Eq, Clone, Debug, PartialEq)]
 pub(crate) enum OutputFormatType {
     SingleLineSummary,
     JSON,
