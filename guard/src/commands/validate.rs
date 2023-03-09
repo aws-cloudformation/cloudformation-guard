@@ -190,7 +190,6 @@ or rules files.
             .arg(Arg::new(TYPE.0)
                 .long(TYPE.0)
                 .short(TYPE.1)
-                .action(ArgAction::Set)
                 .required(false)
                 .value_parser(TEMPLATE_TYPE)
                 .value_hint(ValueHint::Other)

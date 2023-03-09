@@ -1,4 +1,4 @@
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -54,16 +54,18 @@ or failure testing.
             .arg(Arg::new(RULES_FILE.0)
                 .long(RULES_FILE.0)
                 .short(RULES_FILE.1)
-                .action(ArgAction::Set)
+                .value_hint(ValueHint::FilePath)
                 .help("Provide a rules file"))
             .arg(Arg::new(TEST_DATA.0)
                 .long(TEST_DATA.0)
                 .short(TEST_DATA.1)
+                .value_hint(ValueHint::AnyPath)
                 .action(ArgAction::Set)
                 .help("Provide a file or dir for data files in JSON or YAML"))
             .arg(Arg::new(DIRECTORY.0)
                 .long(DIRECTORY.0)
                 .short(DIRECTORY.1)
+                .value_hint(ValueHint::DirPath)
                 .action(ArgAction::Set)
                 .help("Provide the root directory for rules"))
             .group(ArgGroup::new(RULES_AND_TEST_FILE)

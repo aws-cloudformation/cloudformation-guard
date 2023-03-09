@@ -1,4 +1,4 @@
-use clap::{Arg, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches, ValueHint};
 
 use crate::command::Command;
 use crate::commands::files::read_file_content;
@@ -43,6 +43,7 @@ impl Command for Migrate {
                     .long(RULES.0)
                     .short(RULES.1)
                     .help("Provide a rules file")
+                    .value_hint(ValueHint::FilePath)
                     .required(true),
             )
             .arg(
@@ -50,6 +51,7 @@ impl Command for Migrate {
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
                     .help("Write migrated rules to output file")
+                    .value_hint(ValueHint::FilePath)
                     .required(false),
             )
             .arg_required_else_help(true)
