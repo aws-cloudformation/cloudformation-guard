@@ -93,9 +93,9 @@ jobs:
           LAMBDA_FUNCTION_SUFFIX=$(date +%s_%4N)
           LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_PREFIX}_${LAMBDA_FUNCTION_SUFFIX}
           ROLE_NAME="${LAMBDA_FUNCTION_NAME}_Role"
-
-          echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_OUTPUT
-          echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_OUTPUT
+          
+          echo "LAMBDA_FUNCTION_NAME=${LAMBDA_FUNCTION_NAME}" >> $GITHUB_ENV
+          echo "ROLE_NAME=${ROLE_NAME}" >> $GITHUB_ENV
           
           echo "Lambda Function Name: ${LAMBDA_FUNCTION_NAME}"
           echo "Role Name: ${ROLE_NAME}"
@@ -105,8 +105,6 @@ jobs:
         env:
           AWS_ACCOUNT_ID: ${{ env.account_id }}
           AWS_REGION: ${{ env.region }}
-          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
-          ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
         run: |
           rustup target add x86_64-unknown-linux-musl
           cd guard-lambda
@@ -114,31 +112,29 @@ jobs:
           cp ./../target/x86_64-unknown-linux-musl/release/cfn-guard-lambda ./bootstrap && zip lambda.zip bootstrap && rm bootstrap
 
           aws iam create-role \
-            --role-name $ROLE_NAME \
+            --role-name "${{ env.ROLE_NAME }}" \
             --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
 
-          aws iam attach-role-policy --role-name $ROLE_NAME \
+          aws iam attach-role-policy --role-name "${{ env.ROLE_NAME }}" \
             --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
           sleep 10
 
           aws lambda create-function \
-            --function-name $LAMBDA_FUNCTION_NAME \
+            --function-name "${{ env.LAMBDA_FUNCTION_NAME }}" \
             --handler guard.handler \
             --zip-file fileb://./lambda.zip \
             --runtime provided \
-            --role "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}" \
+            --role "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${{ env.ROLE_NAME }}" \
             --environment Variables={RUST_BACKTRACE=1} \
             --tracing-config Mode=Active \
             --region $AWS_REGION
 
 
       - name: Invoke Lambda and test output
-        env:
-          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
         run: |
           aws lambda invoke \
-            --function-name $LAMBDA_FUNCTION_NAME \
+            --function-name "${{ env.LAMBDA_FUNCTION_NAME }}" \
             --payload '{"data":"{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":true,\"AvailabilityZone\":\"us-west-2c\"}}}}","rules":["let ec2_volumes = Resources.*[ Type == /EC2::Volume/ ]\nrule EC2_ENCRYPTION_BY_DEFAULT when %ec2_volumes !empty {\n    %ec2_volumes.Properties.Encrypted == true \n      <<\n            Violation: All EBS Volumes should be encryped \n            Fix: Set Encrypted property to true\n       >>\n}"],"verbose":false}' \
             --cli-binary-format raw-in-base64-out \
             output.json
@@ -165,12 +161,9 @@ jobs:
 
       - name: Clean up resources
         if: success() || failure()
-        env:
-          LAMBDA_FUNCTION_NAME: ${{ steps.generate-identifiers.outputs.LAMBDA_FUNCTION_NAME }}
-          ROLE_NAME: ${{ steps.generate-identifiers.outputs.ROLE_NAME }}
         run: |
-          aws lambda delete-function --function-name $LAMBDA_FUNCTION_NAME
+          aws lambda delete-function --function-name "${{ env.LAMBDA_FUNCTION_NAME }}"
           aws iam detach-role-policy \
-            --role-name $ROLE_NAME \
+            --role-name "${{ env.ROLE_NAME }}" \
             --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-          aws iam delete-role --role-name $ROLE_NAME
+          aws iam delete-role --role-name "${{ env.ROLE_NAME }}"
