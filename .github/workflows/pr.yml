@@ -86,6 +86,11 @@ jobs:
           role-to-assume: ${{ env.role }}
           role-session-name: LambdaTestGitHubAction
 
+      - name: Display change
+        run: |
+          pwd
+          cat README.md
+
       - name: Generate identifiers
         id: generate-identifiers
         run: |
