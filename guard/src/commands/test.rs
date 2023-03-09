@@ -71,7 +71,7 @@ or failure testing.
                 .requires_all([RULES_FILE.0, TEST_DATA.0])
                 .conflicts_with(DIRECTORY_ONLY))
             .group(ArgGroup::new(DIRECTORY_ONLY)
-                .args(["dir"])
+                .args([DIRECTORY.0])
                 .requires_all([DIRECTORY.0])
                 .conflicts_with(RULES_AND_TEST_FILE))
             .arg(Arg::new(PREVIOUS_ENGINE.0)
