@@ -30,11 +30,8 @@ impl<'eval> StructuredEvaluator<'eval> {
         })
     }
 
-    fn get_rules<'info>(
-        &mut self,
-        info: &'info [RuleFileInfo],
-    ) -> rules::Result<Vec<RulesFile<'info>>> {
-        let rules = info.iter().try_fold(
+    fn get_rules(&mut self) -> rules::Result<Vec<RulesFile<'eval>>> {
+        self.rule_info.iter().try_fold(
             vec![],
             |mut rules, RuleFileInfo { file_name, content }| -> rules::Result<Vec<RulesFile>> {
                 match parse_rules(content, file_name) {
@@ -49,13 +46,11 @@ impl<'eval> StructuredEvaluator<'eval> {
                 }
                 Ok(rules)
             },
-        )?;
-
-        Ok(rules)
+        )
     }
 
     pub(crate) fn evaluate(&mut self) -> rules::Result<i32> {
-        let rules = self.get_rules(self.rule_info)?;
+        let rules = self.get_rules()?;
         let merged_data = self.merge_input_params_with_data();
 
         let mut records = vec![];
