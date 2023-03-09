@@ -5,6 +5,7 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_tests {
+    use std::fmt::format;
     use std::fs::File;
     use std::io::{stderr, stdout, Cursor, Read};
 
@@ -16,10 +17,11 @@ mod validate_tests {
     use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD,
-        PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, VALIDATE, VERBOSE,
+        PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, STRUCTURED,
+        VALIDATE, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, File as ReadFile, Stdin};
-    use cfn_guard::utils::reader::Reader;
+    use cfn_guard::utils::reader::{ReadBuffer, Reader};
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
@@ -43,6 +45,7 @@ mod validate_tests {
         verbose: bool,
         print_json: bool,
         payload: bool,
+        structured: bool,
     }
 
     impl<'args> ValidateTestRunner<'args> {
@@ -111,6 +114,11 @@ mod validate_tests {
             self.print_json = true;
             self
         }
+
+        fn structured(&'args mut self) -> &'args mut ValidateTestRunner {
+            self.structured = true;
+            self
+        }
     }
 
     impl<'args> CommandTestRunner for ValidateTestRunner<'args> {
@@ -177,6 +185,10 @@ mod validate_tests {
 
             if self.payload {
                 args.push(format!("-{}", PAYLOAD.1));
+            }
+
+            if self.structured {
+                args.push(format!("-{}", STRUCTURED.1));
             }
 
             args
@@ -571,8 +583,9 @@ mod validate_tests {
 
     #[test]
     fn test_with_payload_flag_prev_engine_show_summary_all() {
-        let payload = COMPLIANT_PAYLOAD;
-        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
+            COMPLIANT_PAYLOAD.as_bytes(),
+        ))));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
@@ -712,5 +725,84 @@ mod validate_tests {
             writer
         );
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
+    fn test_structured_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("json"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_output_from_file_eq!("resources/validate/output-dir/structured.json", writer);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
+    fn test_structured_output_yaml() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("yaml"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_output_from_file_eq!("resources/validate/output-dir/structured.yaml", writer);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
+    fn test_structured_output_payload() {
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
+            COMPLIANT_PAYLOAD.as_bytes(),
+        ))));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .show_summary(vec!["none"])
+            .output_format(Option::from("json"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/structured-payload.json",
+            writer
+        );
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    #[rstest::rstest]
+    #[case("json", "all")]
+    #[case("single-line-summary", "none")]
+    fn test_structured_output_with_show_summary(#[case] output: &str, #[case] show_summary: &str) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec![show_summary])
+            .output_format(Option::from(output))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 }
