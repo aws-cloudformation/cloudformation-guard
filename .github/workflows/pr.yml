@@ -1,8 +1,8 @@
 name: Rust
 
 on:
-#  push:
-#    branches: [ lambda_tests, main ]
+  push:
+    branches: [ lambda_tests, main, development ]
 #  pull_request:
 #    branches: [ lambda_tests, main ]
   pull_request_target:
@@ -49,6 +49,22 @@ jobs:
 #      - name: Rustfmt Check
 #        uses: actions-rust-lang/rustfmt@v1
 
+  remove-label:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'run-tests')
+    steps:
+      - name: Remove run-tests label, if applicable
+        if: always() && github.event.label.name == 'run-tests'
+        uses: actions/github-script@0.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { issue: { number: issue_number }, repo: { owner, repo } } = context;
+            const label = 'run-tests';
+            github.issues.removeLabel({ owner, repo, issue_number, name: label });
+
   cfn-lambda-integration-tests:
     runs-on: ubuntu-latest
     environment: Production # this environment needs manual approval for workflow to be deployed
@@ -66,6 +82,11 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Display change
+        run: |
+          pwd
+          cat README.md
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
