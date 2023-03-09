@@ -3,7 +3,7 @@ use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_JSON_DEPRECATED, PRI
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{Arg, ArgAction, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches, ValueHint};
 use std::fs::File;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl Command for ParseTree {
                     .long(RULES.0)
                     .short(RULES.1)
                     .help("Provide a rules file")
-                    .action(ArgAction::Set)
+                    .value_hint(ValueHint::FilePath)
                     .required(false),
             )
             .arg(
@@ -37,7 +37,7 @@ impl Command for ParseTree {
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
                     .help("Write to output file")
-                    .action(ArgAction::Set)
+                    .value_hint(ValueHint::FilePath)
                     .required(false),
             )
             .arg(
