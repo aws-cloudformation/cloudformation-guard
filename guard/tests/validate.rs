@@ -747,6 +747,25 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_structured_output_yaml() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("yaml"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_output_from_file_eq!("resources/validate/output-dir/structured.yaml", writer);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+    }
+
+    #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),
