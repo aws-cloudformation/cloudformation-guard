@@ -42,6 +42,8 @@ pub enum Error {
     FileNotFoundError(String),
     #[error(transparent)]
     Errors(#[from] Errors),
+    #[error("{0}")]
+    IllegalArguments(String),
 }
 
 #[derive(Debug, Error)]

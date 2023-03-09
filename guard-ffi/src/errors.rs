@@ -28,6 +28,7 @@ fn get_code(e: &Error) -> ErrorCode {
         Error::RetrievalError(_err) => 15,
         Error::MissingValue(_err) => 16,
         Error::FileNotFoundError(_) => 17,
+        Error::IllegalArguments(_) => 18,
     };
     ErrorCode::new(code)
 }

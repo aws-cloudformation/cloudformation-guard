@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -26,6 +26,7 @@ use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
 use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
+use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -43,61 +44,78 @@ impl Command for Test {
         TEST
     }
 
-    fn command(&self) -> App<'static> {
-        App::new(TEST)
+    fn command(&self) -> clap::Command {
+        clap::Command::new(TEST)
             .about(r#"Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
 or failure testing.
 "#)
-            .arg(Arg::with_name(RULES_FILE.0)
+            .arg(Arg::new(RULES_FILE.0)
                 .long(RULES_FILE.0)
                 .short(RULES_FILE.1)
-                .takes_value(true)
+                .action(ArgAction::Set)
                 .help("Provide a rules file"))
-            .arg(Arg::with_name(TEST_DATA.0)
+            .arg(Arg::new(TEST_DATA.0)
                 .long(TEST_DATA.0)
                 .short(TEST_DATA.1)
-                .takes_value(true)
+                .action(ArgAction::Set)
                 .help("Provide a file or dir for data files in JSON or YAML"))
-            .arg(Arg::with_name(DIRECTORY.0)
+            .arg(Arg::new(DIRECTORY.0)
                 .long(DIRECTORY.0)
                 .short(DIRECTORY.1)
-                .takes_value(true)
+                .action(ArgAction::Set)
                 .help("Provide the root directory for rules"))
-            .group(ArgGroup::with_name(RULES_AND_TEST_FILE)
-                .requires_all(&[RULES_FILE.0, TEST_DATA.0]).conflicts_with(DIRECTORY_ONLY))
-            .group(ArgGroup::with_name(DIRECTORY_ONLY)
-                .args(&["dir"])
-                .requires_all(&[DIRECTORY.0])
+            .group(ArgGroup::new(RULES_AND_TEST_FILE)
+                .requires_all([RULES_FILE.0, TEST_DATA.0])
+                .conflicts_with(DIRECTORY_ONLY))
+            .group(ArgGroup::new(DIRECTORY_ONLY)
+                .args(["dir"])
+                .requires_all([DIRECTORY.0])
                 .conflicts_with(RULES_AND_TEST_FILE))
-            .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
+            .arg(Arg::new(PREVIOUS_ENGINE.0)
+                .long(PREVIOUS_ENGINE.0)
+                .short(PREVIOUS_ENGINE.1)
+                .action(ArgAction::SetTrue)
                 .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
-            .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).help("Sort alphabetically inside a directory").required(false))
-            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with(ALPHABETICAL.0)
+            .arg(Arg::new(ALPHABETICAL.0)
+                .long(ALPHABETICAL.0)
+                .short(ALPHABETICAL.1)
+                .action(ArgAction::SetTrue)
+                .help("Sort alphabetically inside a directory"))
+            .arg(Arg::new(LAST_MODIFIED.0)
+                .long(LAST_MODIFIED.0)
+                .short(LAST_MODIFIED.1)
+                .action(ArgAction::SetTrue)
+                .conflicts_with(ALPHABETICAL.0)
                 .help("Sort by last modified times within a directory"))
-            .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
+            .arg(Arg::new(VERBOSE.0)
+                .long(VERBOSE.0)
+                .short(VERBOSE.1)
+                .action(ArgAction::SetTrue)
                 .help("Verbose logging"))
+            .arg_required_else_help(true)
     }
 
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer) -> Result<i32> {
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let mut exit_code = 0;
-        let cmp = if let Some(_ignored) = app.value_of(ALPHABETICAL.0) {
+        let cmp = if app.get_flag(ALPHABETICAL.0) {
             alpabetical
-        } else if let Some(_ignored) = app.value_of(LAST_MODIFIED.0) {
+        } else if app.get_flag(LAST_MODIFIED.0) {
             last_modified
         } else {
             regular_ordering
         };
-        let verbose = app.is_present(VERBOSE.0);
-        let new_engine = !app.is_present(PREVIOUS_ENGINE.0);
 
-        if app.is_present(DIRECTORY_ONLY) {
+        let verbose = app.get_flag(VERBOSE.0);
+        let new_engine = !app.get_flag(PREVIOUS_ENGINE.0);
+
+        if app.contains_id(DIRECTORY_ONLY) {
             struct GuardFile {
                 prefix: String,
                 file: DirEntry,
                 test_files: Vec<DirEntry>,
             }
-            let dir = app.value_of(DIRECTORY.0).unwrap();
+            let dir = app.get_one::<String>(DIRECTORY.0).unwrap();
             validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let mut non_guard: Vec<DirEntry> = vec![];
@@ -213,8 +231,8 @@ or failure testing.
                 }
             }
         } else {
-            let file = app.value_of(RULES_FILE.0).unwrap();
-            let data = app.value_of(TEST_DATA.0).unwrap();
+            let file = app.get_one::<String>(RULES_FILE.0).unwrap();
+            let data = app.get_one::<String>(TEST_DATA.0).unwrap();
 
             validate_path(file)?;
             validate_path(data)?;
