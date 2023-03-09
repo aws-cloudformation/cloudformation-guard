@@ -69,9 +69,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production # this environment needs manual approval for workflow to be deployed
     env:
-      region: us-east-1
-      role: arn:aws:iam::711319330327:role/GitHubAction
-      account_id: 711319330327
+      region: ${{ secrets.LAMBDA_AWS_REGION }}
+      role: ${{ secrets.LAMBDA_GITHUB_ACTION_ROLE }}
+      account_id: ${{ secrets.LAMBDA_AWS_ACCOUNT }}
     permissions:
       pull-requests: write
       id-token: write
