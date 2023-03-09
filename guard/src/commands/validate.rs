@@ -355,6 +355,7 @@ or rules files.
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
+
                     for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
                         if file.path().is_file() {
                             let name = file
@@ -367,10 +368,7 @@ or rules files.
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let path_value = match get_path_aware_value_from_data(&content) {
-                                    Ok(t) => t,
-                                    Err(e) => return Err(e),
-                                };
+                                let path_value = get_path_aware_value_from_data(&content)?;
 
                                 primary_path_value = match primary_path_value {
                                     Some(current) => Some(current.merge(path_value)?),
@@ -397,6 +395,7 @@ or rules files.
         let new_version_eval_engine = !app.get_flag(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
+
         if app.contains_id(RULES.0) {
             let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();
             let mut rules = Vec::new();
@@ -425,101 +424,178 @@ or rules files.
                     }
                 }
             }
+
             exit_code = match structured {
                 true => {
+                    let rule_info = get_rule_info(&rules, writer)?;
                     let mut evaluator = StructuredEvaluator {
-                        rule_files: &rules,
+                        rule_info: &rule_info,
                         input_params: extra_data,
                         data: data_files,
                         output: output_type,
                         writer,
-                        status_code: 0,
+                        exit_code: 0,
                     };
                     evaluator.evaluate()?
                 }
 
-                false => evaluate(
-                    writer,
-                    summary_type,
-                    output_type,
-                    &data_files,
-                    extra_data,
-                    verbose,
-                    data_type,
-                    print_json,
-                    show_clause_failures,
-                    new_version_eval_engine,
-                    &rules,
-                )?,
+                false => {
+                    for each_file_content in iterate_over(&rules, |content, file| {
+                        Ok(RuleFileInfo {
+                            content,
+                            file_name: get_file_name(file, file),
+                        })
+                    }) {
+                        match each_file_content {
+                            Err(e) => {
+                                writer.write_err(format!("Unable read content from file {e}"))?
+                            }
+                            Ok(rule) => {
+                                let status = evaluate_rule(
+                                    data_type,
+                                    output_type,
+                                    &extra_data,
+                                    &data_files,
+                                    rule,
+                                    verbose,
+                                    print_json,
+                                    show_clause_failures,
+                                    new_version_eval_engine,
+                                    summary_type,
+                                    writer,
+                                )?;
+
+                                if status == 5 {
+                                    exit_code = 5
+                                }
+                            }
+                        }
+                    }
+                    exit_code
+                }
             };
         } else if app.contains_id(PAYLOAD.0) {
             let mut context = String::new();
             reader.read_to_string(&mut context)?;
             let payload = deserialize_payload(&context)?;
-            let mut data_collection: Vec<DataFile> = Vec::new();
 
-            for (i, data) in payload.list_of_data.iter().enumerate() {
-                let content = data.to_string();
+            let data_collection = payload.list_of_data.iter().enumerate().try_fold(
+                vec![],
+                |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
+                    let content = data.to_string();
+                    let path_value = get_path_aware_value_from_data(&content)?;
 
-                let path_value = match get_path_aware_value_from_data(&content) {
-                    Ok(t) => t,
-                    Err(e) => return Err(e),
-                };
+                    data_collection.push(DataFile {
+                        name: format!("DATA_STDIN[{}]", i + 1),
+                        path_value,
+                        content,
+                    });
 
-                data_collection.push(DataFile {
-                    name: format!("DATA_STDIN[{}]", i + 1),
-                    path_value,
-                    content,
-                });
-            }
+                    Ok(data_collection)
+                },
+            )?;
 
-            let rules_collection: Vec<(String, String)> = payload
+            let rule_info = payload
                 .list_of_rules
                 .iter()
                 .enumerate()
-                .map(|(i, rules)| (rules.to_string(), format!("RULES_STDIN[{}]", i + 1)))
-                .collect();
+                .map(|(i, rules)| RuleFileInfo {
+                    content: rules.to_string(),
+                    file_name: format!("RULES_STDIN[{}]", i + 1),
+                })
+                .collect::<Vec<_>>();
 
-            for (each_rules, location) in rules_collection {
-                match parse_rules(&each_rules, &location) {
-                    Err(e) => {
-                        writer.write_err(format!(
-                            "Parsing error handling rules  = {}, Error = {e}\n---",
-                            location.underline(),
-                        ))?;
-                        exit_code = 5;
-                        continue;
-                    }
-
-                    Ok(rules) => {
-                        match evaluate_against_data_input(
+            exit_code = match structured {
+                true => {
+                    let mut evaluator = StructuredEvaluator {
+                        rule_info: &rule_info,
+                        input_params: extra_data,
+                        data: data_collection,
+                        output: output_type,
+                        writer,
+                        exit_code: 0,
+                    };
+                    evaluator.evaluate()?
+                }
+                false => {
+                    for rule in rule_info {
+                        let status = evaluate_rule(
                             data_type,
                             output_type,
-                            None,
+                            &None,
                             &data_collection,
-                            &rules,
-                            &location,
+                            rule,
                             verbose,
                             print_json,
                             show_clause_failures,
                             new_version_eval_engine,
                             summary_type,
                             writer,
-                        )? {
-                            Status::SKIP | Status::PASS => continue,
-                            Status::FAIL => {
-                                exit_code = 5;
-                            }
+                        )?;
+
+                        if status == 5 {
+                            exit_code = 5;
                         }
                     }
+                    exit_code
                 }
-            }
+            };
         } else {
             unreachable!()
         }
 
         Ok(exit_code)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_rule(
+    data_type: Type,
+    output: OutputFormatType,
+    extra_data: &Option<PathAwareValue>,
+    data_files: &Vec<DataFile>,
+    rule: RuleFileInfo,
+    verbose: bool,
+    print_json: bool,
+    show_clause_failures: bool,
+    new_version_eval_engine: bool,
+    summary_type: BitFlags<SummaryType>,
+    writer: &mut Writer,
+) -> Result<i32> {
+    let RuleFileInfo { content, file_name } = &rule;
+    match parse_rules(content, file_name) {
+        Err(e) => {
+            writer.write_err(format!(
+                "Parsing error handling rule file = {}, Error = {e}\n---",
+                file_name.underline(),
+            ))?;
+
+            return Ok(5);
+        }
+
+        Ok(rule) => {
+            let status = evaluate_against_data_input(
+                data_type,
+                output,
+                extra_data,
+                data_files,
+                &rule,
+                file_name,
+                verbose,
+                print_json,
+                show_clause_failures,
+                new_version_eval_engine,
+                summary_type,
+                writer,
+            )?;
+
+            if status == Status::FAIL {
+                return Ok(5);
+            }
+        }
+    }
+
+    Ok(0)
 }
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
@@ -824,7 +900,7 @@ impl<'r> EvaluationContext for ConsoleReporter<'r> {
 fn evaluate_against_data_input<'r>(
     _data_type: Type,
     output: OutputFormatType,
-    extra_data: Option<PathAwareValue>,
+    extra_data: &Option<PathAwareValue>,
     data_files: &'r Vec<DataFile>,
     rules: &RulesFile<'_>,
     rules_file_name: &'r str,
@@ -956,67 +1032,6 @@ fn get_longest(top: &StatusContext) -> usize {
         .unwrap_or(20)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn evaluate(
-    writer: &mut Writer,
-    summary_type: BitFlags<SummaryType>,
-    output_type: OutputFormatType,
-    data_files: &Vec<DataFile>,
-    extra_data: Option<PathAwareValue>,
-    verbose: bool,
-    data_type: Type,
-    print_json: bool,
-    show_clause_failures: bool,
-    new_version_eval_engine: bool,
-    rules: &[PathBuf],
-) -> Result<i32> {
-    let mut exit_code = 0;
-    for each_file_content in iterate_over(rules, |content, file| {
-        Ok((content, get_file_name(file, file)))
-    }) {
-        match each_file_content {
-            Err(e) => writer.write_err(format!("Unable read content from file {e}"))?,
-            Ok((file_content, rule_file_name)) => {
-                let span = crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                match crate::rules::parser::rules_file(span) {
-                    Err(e) => {
-                        writer.write_err(format!(
-                            "Parsing error handling rule file = {}, Error = {e}\n---",
-                            rule_file_name.underline(),
-                        ))?;
-                        exit_code = 5;
-                        continue;
-                    }
-
-                    Ok(rules) => {
-                        match evaluate_against_data_input(
-                            data_type,
-                            output_type,
-                            extra_data.clone(),
-                            data_files,
-                            &rules,
-                            &rule_file_name,
-                            verbose,
-                            print_json,
-                            show_clause_failures,
-                            new_version_eval_engine,
-                            summary_type,
-                            writer,
-                        )? {
-                            Status::SKIP | Status::PASS => continue,
-                            Status::FAIL => {
-                                exit_code = 5;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(exit_code)
-}
-
 fn get_file_name(file: &Path, base: &Path) -> String {
     let empty_path = Path::new("");
     match file.strip_prefix(base) {
@@ -1029,6 +1044,29 @@ fn get_file_name(file: &Path, base: &Path) -> String {
         }
         Err(_) => format!("{}", file.display()),
     }
+}
+
+fn get_rule_info(rules: &[PathBuf], writer: &mut Writer) -> Result<Vec<RuleFileInfo>> {
+    iterate_over(rules, |content, file| {
+        Ok(RuleFileInfo {
+            content,
+            file_name: get_file_name(file, file),
+        })
+    })
+    .try_fold(vec![], |mut res, rule| -> Result<Vec<RuleFileInfo>> {
+        if let Err(e) = rule {
+            writer.write_err(format!("Unable to read content from file {e}"))?;
+            return Err(e);
+        }
+
+        res.push(rule?);
+        Ok(res)
+    })
+}
+
+pub(crate) struct RuleFileInfo {
+    pub(crate) content: String,
+    pub(crate) file_name: String,
 }
 
 #[cfg(test)]
