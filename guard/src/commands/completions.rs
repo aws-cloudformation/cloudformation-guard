@@ -10,8 +10,8 @@ pub enum Shell {
     Bash,
     Zsh,
     Fish,
-    PowerShell,
 }
+
 impl From<String> for Shell {
     fn from(value: String) -> Self {
         match value.as_str() {
@@ -27,7 +27,7 @@ impl From<String> for Shell {
 #[derive(Default, Debug)]
 pub struct Completions {}
 
-const SHELL_TYPES: [&str; 4] = ["bash", "zsh", "fish", "powershell"];
+const SHELL_TYPES: [&str; 3] = ["bash", "zsh", "fish"];
 const SHELL: (&str, char) = ("shell", 's');
 
 impl Command for Completions {
@@ -65,7 +65,6 @@ impl Command for Completions {
             "bash" => generate(clap_complete::shells::Bash, &mut app),
             "zsh" => generate(clap_complete::shells::Zsh, &mut app),
             "fish" => generate(clap_complete::shells::Fish, &mut app),
-            "powershell" => generate(clap_complete::shells::PowerShell, &mut app),
             _ => unreachable!(),
         }
 
