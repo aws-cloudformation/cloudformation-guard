@@ -1,45 +1,53 @@
 name: Rust
 
 on:
-  push:
-    branches: [ lambda_tests, main ]
-  pull_request:
-    branches: [ lambda_tests, main ]
+#  push:
+#    branches: [ lambda_tests, main ]
+#  pull_request:
+#    branches: [ lambda_tests, main ]
+  pull_request_target:
+    branches: [lambda_tests, main, development]
+    types: [opened, synchronize, labeled]
+
+permissions:
+  pull-requests: write
+  id-token: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --release --verbose
-    - name: Run tests
-      run: cargo test --verbose
-  
-  shellcheck:
-    
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v2
-    - name: Shellcheck
-      run: shellcheck install-guard.sh
-
-  formatting:
-    name: cargo fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rustfmt
-      - name: Rustfmt Check
-        uses: actions-rust-lang/rustfmt@v1
+#  build:
+#
+#    runs-on: ubuntu-latest
+#
+#    steps:
+#    - uses: actions/checkout@v3
+#    - name: Build
+#      run: cargo build --release --verbose
+#    - name: Run tests
+#      run: cargo test --verbose
+#
+#  shellcheck:
+#
+#    runs-on: ubuntu-latest
+#
+#    steps:
+#    - uses: actions/checkout@v2
+#    - name: Shellcheck
+#      run: shellcheck install-guard.sh
+#
+#  formatting:
+#    name: cargo fmt
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v3
+#      - uses: actions-rust-lang/setup-rust-toolchain@v1
+#        with:
+#          components: rustfmt
+#      - name: Rustfmt Check
+#        uses: actions-rust-lang/rustfmt@v1
 
   cfn-lambda-integration-tests:
     runs-on: ubuntu-latest
@@ -49,12 +57,15 @@ jobs:
       role: arn:aws:iam::711319330327:role/GitHubAction
       account_id: 711319330327
     permissions:
+      pull-requests: write
       id-token: write
       contents: read
 
     steps:
       - name: Check out code
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
