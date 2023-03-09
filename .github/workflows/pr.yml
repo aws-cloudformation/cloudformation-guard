@@ -1,8 +1,8 @@
 name: Rust
 
 on:
-  push:
-    branches: [ lambda_tests, main, development ]
+#  push:
+#    branches: [ lambda_tests, main, development ]
 #  pull_request:
 #    branches: [ lambda_tests, main ]
   pull_request_target:
@@ -72,21 +72,12 @@ jobs:
       region: ${{ secrets.LAMBDA_AWS_REGION }}
       role: ${{ secrets.LAMBDA_GITHUB_ACTION_ROLE }}
       account_id: ${{ secrets.LAMBDA_AWS_ACCOUNT }}
-    permissions:
-      pull-requests: write
-      id-token: write
-      contents: read
 
     steps:
       - name: Check out code
         uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Display change
-        run: |
-          pwd
-          cat README.md
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
