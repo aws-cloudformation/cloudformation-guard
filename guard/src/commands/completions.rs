@@ -18,7 +18,6 @@ impl From<String> for Shell {
             "bash" => Shell::Bash,
             "zsh" => Shell::Zsh,
             "fish" => Shell::Fish,
-            "powershell" => Shell::PowerShell,
             _ => unimplemented!(),
         }
     }
