@@ -2,7 +2,7 @@ name: Integration Tests
 
 on:
   pull_request_target:
-    branches: [lambda_tests, main, development]
+    branches: [main, development]
     types: [labeled, opened, synchronize]
 
 permissions:
@@ -15,6 +15,7 @@ env:
 
 jobs:
   remove-label:
+    name: Remove 'run-tests' label
     runs-on: ubuntu-latest
     if: |
       (github.event.pull_request.head.repo.full_name == github.repository) ||
@@ -31,6 +32,7 @@ jobs:
             github.issues.removeLabel({ owner, repo, issue_number, name: label });
 
   cfn-lambda-integration-tests:
+    name: Integration tests for cfn-guard-lambda
     needs: remove-label
     runs-on: ubuntu-latest
     environment: Production # this environment needs manual approval for workflow to be deployed
