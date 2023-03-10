@@ -76,11 +76,11 @@ impl<'r> EvaluationContext for StackTracker<'r> {
         if self.stack.borrow().len() == 1 {
             match self.stack.borrow_mut().get_mut(0) {
                 Some(top) => {
-                    top.status = status.clone();
-                    top.from = from.clone();
-                    top.to = to.clone();
-                    top.msg = Some(msg.clone());
-                    top.comparator = cmp.clone();
+                    top.status = status;
+                    top.from = from;
+                    top.to = to;
+                    top.msg = Some(msg);
+                    top.comparator = cmp;
                 }
                 None => unreachable!(),
             }
@@ -88,20 +88,17 @@ impl<'r> EvaluationContext for StackTracker<'r> {
         }
 
         let stack = self.stack.borrow_mut().pop();
-        match stack {
-            Some(mut stack) => {
-                stack.status = status.clone();
-                stack.from = from.clone();
-                stack.to = to.clone();
-                stack.msg = Some(msg.clone());
-                stack.comparator = cmp.clone();
+        if let Some(mut stack) = stack {
+            stack.status = status;
+            stack.from = from.clone();
+            stack.to = to.clone();
+            stack.msg = Some(msg.clone());
+            stack.comparator = cmp;
 
-                match self.stack.borrow_mut().last_mut() {
-                    Some(cxt) => cxt.children.push(stack),
-                    None => unreachable!(),
-                }
+            match self.stack.borrow_mut().last_mut() {
+                Some(cxt) => cxt.children.push(stack),
+                None => unreachable!(),
             }
-            None => {}
         }
         self.root_context
             .end_evaluation(eval_type, context, msg, from, to, status, cmp);

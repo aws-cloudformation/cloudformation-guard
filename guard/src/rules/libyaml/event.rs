@@ -17,6 +17,7 @@ pub(crate) enum Event<'input> {
     MappingEnd,
 }
 
+#[allow(clippy::ptr_arg)]
 pub(crate) unsafe fn convert_event<'input>(
     sys: &sys::yaml_event_t,
     input: &Cow<'input, [u8]>,

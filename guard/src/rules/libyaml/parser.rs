@@ -11,6 +11,7 @@ use crate::rules::{
 
 use std::{borrow::Cow, mem::MaybeUninit, ptr::addr_of_mut};
 
+#[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
 
 pub(crate) struct Parser<'input> {
@@ -28,10 +29,7 @@ impl<'input> Parser<'input> {
         let pin = unsafe {
             let parser = addr_of_mut!((*owned.ptr).sys);
             if sys::yaml_parser_initialize(parser).fail {
-                panic!(
-                    "malloc error: {}",
-                    Error::ParseError("error parsing file".to_string())
-                );
+                panic!("malloc error: {}", String::from("error parsing file"));
             }
             sys::yaml_parser_set_encoding(parser, sys::YAML_UTF8_ENCODING);
             sys::yaml_parser_set_input_string(parser, input.as_ptr(), input.len() as u64);
