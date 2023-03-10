@@ -15,35 +15,6 @@ const SAMPLE_SINGLE: &str = r#"{
             }
         }"#;
 
-const SAMPLE_MULTIPLE: &str = r#"{
-            "Resources": {
-                "vpc": {
-                    "Type": "AWS::EC2::VPC",
-                    "Properties": {
-                        "CidrBlock": "10.0.0.0/12"
-                    }
-                },
-                "routing": {
-                    "Type": "AWS::EC2::Route",
-                    "Properties": {
-                        "Acls": [
-                            {
-                                "From": 0,
-                                "To": 22,
-                                "Allow": false
-                            },
-                            {
-                                "From": 0,
-                                "To": 23,
-                                "Allow": false
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-        "#;
-
 #[test]
 fn path_value_equivalent() -> Result<(), Error> {
     let value = PathAwareValue::try_from(SAMPLE_SINGLE)?;
@@ -63,7 +34,7 @@ fn path_value_equivalent() -> Result<(), Error> {
         vpc_props.clone(),
         MapValue {
             keys: vec![PathAwareValue::String((
-                cidr_path.clone(),
+                cidr_path,
                 String::from("CidrBlock"),
             ))],
             values: vpc_properties,
@@ -79,8 +50,8 @@ fn path_value_equivalent() -> Result<(), Error> {
         vpc_path.clone(),
         MapValue {
             keys: vec![
-                PathAwareValue::String((vpc_type.clone(), String::from("Type"))),
-                PathAwareValue::String((vpc_props.clone(), String::from("Properties"))),
+                PathAwareValue::String((vpc_type, String::from("Type"))),
+                PathAwareValue::String((vpc_props, String::from("Properties"))),
             ],
             values: vpc_block,
         },
@@ -91,10 +62,7 @@ fn path_value_equivalent() -> Result<(), Error> {
     let resources = PathAwareValue::Map((
         resources_path.clone(),
         MapValue {
-            keys: vec![PathAwareValue::String((
-                vpc_path.clone(),
-                String::from("vpc"),
-            ))],
+            keys: vec![PathAwareValue::String((vpc_path, String::from("vpc")))],
             values: resources,
         },
     ));
@@ -105,7 +73,7 @@ fn path_value_equivalent() -> Result<(), Error> {
         Path::root(),
         MapValue {
             keys: vec![PathAwareValue::String((
-                resources_path.clone(),
+                resources_path,
                 "Resources".to_string(),
             ))],
             values: top,
@@ -221,7 +189,7 @@ fn path_value_queries() -> Result<(), Error> {
         &resources_with_sgs.query,
         &eval,
     )?;
-    assert_eq!(selected.is_empty(), true);
+    assert!(selected.is_empty());
 
     let resources_with_sgs =
         AccessQuery::try_from("Resources.*[ Properties.SecurityGroupIds EXISTS ]")?;
@@ -230,7 +198,7 @@ fn path_value_queries() -> Result<(), Error> {
         &resources_with_sgs.query,
         &eval,
     )?;
-    assert_eq!(selected.is_empty(), false);
+    assert!(!selected.is_empty());
 
     let get_att_refs = r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
@@ -390,16 +358,13 @@ fn merge_values_test() -> Result<(), Error> {
     )?)?;
 
     let resources = resources.merge(parameters)?;
-    assert_eq!(matches!(resources, PathAwareValue::Map(_)), true);
+    assert!(matches!(resources, PathAwareValue::Map(_)));
     let resources_map = match &resources {
         PathAwareValue::Map((_, map)) => map,
         _ => unreachable!(),
     };
     assert_eq!(resources_map.values.len(), 2);
-    assert_eq!(
-        matches!(resources_map.values.get("PARAMETERS"), Some(_)),
-        true
-    );
+    assert!(matches!(resources_map.values.get("PARAMETERS"), Some(_)));
 
     let parameters = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
         r#"
@@ -408,7 +373,7 @@ fn merge_values_test() -> Result<(), Error> {
         "#,
     )?)?;
     let resources = resources.merge(parameters);
-    assert_eq!(resources.is_err(), true);
+    assert!(resources.is_err());
 
     Ok(())
 }

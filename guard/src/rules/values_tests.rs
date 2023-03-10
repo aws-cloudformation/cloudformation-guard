@@ -136,7 +136,7 @@ fn test_query_on_value() -> Result<()> {
 
     struct DummyResolver<'a> {
         cache: HashMap<&'a str, Vec<&'a PathAwareValue>>,
-    };
+    }
     impl<'a> EvaluationContext for DummyResolver<'a> {
         fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
             if let Some(v) = self.cache.get(variable) {
@@ -177,7 +177,6 @@ fn test_query_on_value() -> Result<()> {
         if let PathAwareValue::Map(_index) = each {
             continue;
         }
-        assert!(false);
     }
 
     //
@@ -239,7 +238,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
     let content = read_to_string("assets/cfn-template.json")?;
     let value = PathAwareValue::try_from(content.as_str())?;
 
-    struct DummyResolver {};
+    struct DummyResolver {}
     impl EvaluationContext for DummyResolver {
         fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
@@ -386,12 +385,12 @@ fn test_yaml_json_mapping() -> Result<()> {
     }
     "###;
 
-    let value = super::read_from(resources)?;
+    let value = read_from(resources)?;
     println!("{:?}", value);
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
     println!("{:?}", path_value);
 
-    let value = super::read_from(resources_json)?;
+    let value = read_from(resources_json)?;
     println!("{:?}", value);
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
     println!("{:?}", path_value);
@@ -424,7 +423,7 @@ Resources:
       TestJoinWithRef: !Join [ ":", [ !Ref A, b, c ] ]
       "###;
 
-    let value = super::read_from(resources)?;
+    let value = read_from(resources)?;
     println!("{:?}", value);
     let path_value = PathAwareValue::try_from((value, super::super::path_value::Path::root()))?;
     let traversal = Traversal::from(&path_value);
@@ -433,12 +432,12 @@ Resources:
         "/Resources/s3/Properties/TestJoinWithRef/Fn::Join/1/0",
         root,
     )?;
-    assert_eq!(matches!(test_join, TraversalResult::Value(_)), true);
+    assert!(matches!(test_join, TraversalResult::Value(_)));
     let condition = traversal.at("/MyNotCondition/Fn::Not/0/Fn::Equals/0/Ref", root)?;
-    assert_eq!(matches!(condition, TraversalResult::Value(_)), true);
+    assert!(matches!(condition, TraversalResult::Value(_)));
     match condition {
         TraversalResult::Value(val) => {
-            assert_eq!(val.value().is_scalar(), true);
+            assert!(val.value().is_scalar());
             match val.value() {
                 PathAwareValue::String((_, v)) => {
                     assert_eq!(v, "EnvironmentType");

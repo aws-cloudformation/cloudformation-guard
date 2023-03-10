@@ -21,6 +21,7 @@ impl Writer {
         writeln!(self.err, "{s}")
     }
 
+    #[allow(dead_code)]
     pub fn err_to_stripped(self) -> Result<String, FromUtf8Error> {
         match self.err {
             WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(vec).unwrap()),
@@ -35,10 +36,12 @@ impl Writer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn into_string(self) -> Result<String, FromUtf8Error> {
         self.buffer.into_string()
     }
 
+    #[allow(dead_code)]
     pub fn stripped(self) -> Result<String, FromUtf8Error> {
         match self.buffer {
             WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(vec).unwrap()),
@@ -65,6 +68,7 @@ impl Write for Writer {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum WriteBuffer {
     Stdout(Stdout),
     Vec(Vec<u8>),

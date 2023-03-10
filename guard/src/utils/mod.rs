@@ -20,7 +20,7 @@ pub fn get_guard_commands() -> Vec<Box<dyn Command>> {
 }
 
 impl<'buffer> ReadCursor<'buffer> {
-    pub(crate) fn new<'b>(buffer: &'b str) -> ReadCursor<'b> {
+    pub(crate) fn new(buffer: &str) -> ReadCursor {
         ReadCursor {
             line_num: 0,
             line_buffer: buffer.lines(),
@@ -31,22 +31,24 @@ impl<'buffer> ReadCursor<'buffer> {
     pub(crate) fn next(&mut self) -> Option<(usize, &'buffer str)> {
         if self.line_num < self.previous_lines.len() {
             self.line_num += 1;
-            return Some(self.previous_lines[self.line_num - 1].clone());
+            return Some(self.previous_lines[self.line_num - 1]);
         }
+
         match self.line_buffer.next() {
             Some(line) => {
                 self.line_num += 1;
                 self.previous_lines.push((self.line_num, line));
-                return Some(self.previous_lines[self.line_num - 1].clone());
+                Some(self.previous_lines[self.line_num - 1])
             }
             None => None,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn prev(&mut self) -> Option<(usize, &'buffer str)> {
-        if self.line_num - 1 > 0 && self.previous_lines.len() > 0 {
+        if self.line_num - 1 > 0 && !self.previous_lines.is_empty() {
             self.line_num -= 1;
-            return Some(self.previous_lines[self.line_num].clone());
+            return Some(self.previous_lines[self.line_num]);
         }
         None
     }
@@ -54,7 +56,7 @@ impl<'buffer> ReadCursor<'buffer> {
     pub(crate) fn seek_line(&mut self, line: usize) -> Option<(usize, &'buffer str)> {
         if self.previous_lines.len() > line {
             self.line_num = line;
-            return Some(self.previous_lines[self.line_num - 1].clone());
+            return Some(self.previous_lines[self.line_num - 1]);
         }
 
         loop {
@@ -63,7 +65,7 @@ impl<'buffer> ReadCursor<'buffer> {
                     self.line_num += 1;
                     self.previous_lines.push((self.line_num, l));
                     if self.line_num == line {
-                        return Some(self.previous_lines[self.line_num - 1].clone());
+                        return Some(self.previous_lines[self.line_num - 1]);
                     }
                 }
                 None => return None,
@@ -91,17 +93,16 @@ mod tests {
                 Fn::Sub: "aws:arn:s3::${s3}""###;
 
         let mut cursor = ReadCursor::new(resources);
-        let mut line = 0;
         while let Some(line) = cursor.next() {
             println!("{}.{}", line.0, line.1);
         }
         let prev = cursor.prev();
-        assert_eq!(prev.is_some(), true);
+        assert!(prev.is_some());
         let prev = match prev {
             Some(p) => p,
             None => unreachable!(),
         };
-        assert_eq!(prev.1.contains("${s3}"), true);
+        assert!(prev.1.contains("${s3}"));
         let _ = cursor.next();
         let mut lines = Vec::with_capacity(cursor.previous_lines.len());
         while let Some((line, prev)) = cursor.prev() {

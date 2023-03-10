@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::rules::errors::Error;
 use walkdir::{DirEntry, WalkDir};
@@ -14,35 +13,14 @@ pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     Ok(file_content)
 }
 
-pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
-where
-    F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
-{
-    let path = PathBuf::from_str(file)?;
-    let input_file = File::open(file)?;
-    let metadata = input_file.metadata()?;
-    Ok(if metadata.is_file() {
-        vec![path]
-    } else {
-        let result = get_files_with_filter(file, sort, |entry| {
-            entry
-                .file_name()
-                .to_str()
-                .map(|name| !name.ends_with("/"))
-                .unwrap_or(false)
-        })?;
-        result
-    })
-}
-
 pub(crate) fn get_files_with_filter<S, F>(
     file: &str,
     sort: S,
     filter: F,
 ) -> Result<Vec<PathBuf>, Error>
 where
-    S: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
-    F: Fn(&walkdir::DirEntry) -> bool,
+    S: FnMut(&DirEntry, &DirEntry) -> Ordering + Send + Sync + 'static,
+    F: Fn(&DirEntry) -> bool,
 {
     let mut selected = Vec::with_capacity(10);
     let walker = WalkDir::new(file).sort_by(sort).into_iter();
@@ -53,16 +31,15 @@ where
         }
         filter(entry)
     };
-    for each in walker.filter_entry(dir_check) {
+    for entry in walker.filter_entry(dir_check).flatten() {
         //
         // We are ignoring errors here. TODO fix this later
         //
-        if let Ok(entry) = each {
-            if entry.path().is_file() {
-                selected.push(entry.into_path());
-            }
+        if entry.path().is_file() {
+            selected.push(entry.into_path());
         }
     }
+
     Ok(selected)
 }
 
@@ -111,11 +88,11 @@ where
     }
 }
 
-pub(crate) fn alpabetical(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn alpabetical(first: &DirEntry, second: &DirEntry) -> Ordering {
     first.file_name().cmp(second.file_name())
 }
 
-pub(crate) fn last_modified(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn last_modified(first: &DirEntry, second: &DirEntry) -> Ordering {
     if let Ok(first) = first.metadata() {
         if let Ok(second) = second.metadata() {
             if let Ok(first) = first.modified() {
@@ -125,12 +102,10 @@ pub(crate) fn last_modified(first: &walkdir::DirEntry, second: &walkdir::DirEntr
             }
         }
     }
-    return Ordering::Equal;
+
+    Ordering::Equal
 }
 
-pub(crate) fn regular_ordering(
-    _first: &walkdir::DirEntry,
-    _second: &walkdir::DirEntry,
-) -> Ordering {
+pub(crate) fn regular_ordering(_first: &DirEntry, _second: &DirEntry) -> Ordering {
     Ordering::Equal
 }

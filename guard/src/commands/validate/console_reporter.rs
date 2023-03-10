@@ -263,7 +263,7 @@ fn pprint_failed_sub_tree(
                                 to=to_result.map_or("NULL".to_string(), |t| format!("{}", t)),
                                 op_msg=match cmp {
                                     CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
-                                    CmpOperator::Le => if *not { "less than equal to" } else { "less than equal to" },
+                                    CmpOperator::Le => if *not { "less than equal to" } else { "not less than equal to" },
                                     CmpOperator::Lt => if *not { "less than" } else { "not less than" },
                                     CmpOperator::Ge => if *not { "greater than equal to" } else { "not greater than equal" },
                                     CmpOperator::Gt => if *not { "greater than" } else { "not greater than" },

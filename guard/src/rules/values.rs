@@ -35,20 +35,16 @@ pub enum CmpOperator {
 
 impl CmpOperator {
     pub(crate) fn is_unary(&self) -> bool {
-        match self {
+        matches!(
+            self,
             CmpOperator::Exists
-            | CmpOperator::Empty
-            | CmpOperator::IsString
-            | CmpOperator::IsBool
-            | CmpOperator::IsList
-            | CmpOperator::IsInt
-            | CmpOperator::IsMap => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_binary(&self) -> bool {
-        !self.is_unary()
+                | CmpOperator::Empty
+                | CmpOperator::IsString
+                | CmpOperator::IsBool
+                | CmpOperator::IsList
+                | CmpOperator::IsInt
+                | CmpOperator::IsMap
+        )
     }
 }
 
@@ -74,6 +70,7 @@ impl Display for CmpOperator {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum Value {
     Null,
     String(String),
@@ -83,7 +80,7 @@ pub enum Value {
     Float(f64),
     Char(char),
     List(Vec<Value>),
-    Map(indexmap::IndexMap<String, Value>),
+    Map(IndexMap<String, Value>),
     RangeInt(RangeType<i64>),
     RangeFloat(RangeType<f64>),
     RangeChar(RangeType<char>),
@@ -156,8 +153,7 @@ impl Display for Value {
             Value::Float(float) => write!(f, "{}", float),
             Value::Bool(bool) => write!(f, "{}", bool),
             Value::List(list) => {
-                let result: Vec<String> =
-                    list.into_iter().map(|item| format!("{}", item)).collect();
+                let result: Vec<String> = list.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", result.join(", "))
             }
             Value::Map(map) => {
@@ -386,6 +382,7 @@ impl<'a> TryFrom<&'a str> for Value {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) enum MarkedValue {
     Null(Location),
     BadValue(String, Location),
@@ -396,10 +393,7 @@ pub(crate) enum MarkedValue {
     Float(f64, Location),
     Char(char, Location),
     List(Vec<MarkedValue>, Location),
-    Map(
-        indexmap::IndexMap<(String, Location), MarkedValue>,
-        Location,
-    ),
+    Map(IndexMap<(String, Location), MarkedValue>, Location),
     RangeInt(RangeType<i64>, Location),
     RangeFloat(RangeType<f64>, Location),
     RangeChar(RangeType<char>, Location),
@@ -429,10 +423,11 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::ParseError(format!("{}", e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
+#[cfg(test)]
 pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
 where
     I: IntoIterator<Item = (&'a str, Value)>,
@@ -442,7 +437,7 @@ where
 
 fn handle_tagged_value(val: serde_yaml::Value, fn_ref: &str) -> crate::rules::Result<Value> {
     if SINGLE_VALUE_FUNC_REF.contains(fn_ref) || SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = IndexMap::new();
         let fn_ref = short_form_to_long(fn_ref);
         map.insert(fn_ref.to_string(), Value::try_from(val)?);
 

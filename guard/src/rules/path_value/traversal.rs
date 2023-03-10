@@ -35,6 +35,7 @@ pub(crate) enum TraversalResult<'a, 'b> {
     Key(&'a str),
 }
 
+#[cfg(test)]
 impl<'a, 'b> TraversalResult<'a, 'b> {
     pub(crate) fn as_value(&self) -> Option<&Node<'_>> {
         match self {
@@ -86,7 +87,7 @@ fn from_value<'value>(
             );
             let parent = Some(path.0.as_str());
             for (_key, each) in map.values.iter() {
-                from_value(each, parent.clone(), nodes);
+                from_value(each, parent, nodes);
             }
         }
 
@@ -100,7 +101,7 @@ fn from_value<'value>(
             );
             let parent = Some(path.0.as_str());
             for each in list.iter() {
-                from_value(each, parent.clone(), nodes);
+                from_value(each, parent, nodes);
             }
         }
     }
@@ -156,30 +157,28 @@ impl<'value> Traversal<'value> {
                 ancestor += 1;
             }
 
-            match captures.get(2) {
+            return match captures.get(2) {
                 Some(ch) => {
                     let p = ch.as_str();
                     if p == "#" {
                         return Ok(TraversalResult::Key(current.value.self_path().relative()));
                     }
                     let pointer = format!("{}{}", current.value.self_path().0, p);
-                    return self.at(&pointer, current);
+                    self.at(&pointer, current)
                 }
 
-                None => return Ok(TraversalResult::Value(current)),
-            }
+                None => Ok(TraversalResult::Value(current)),
+            };
         }
 
         match self.nodes.get(pointer) {
             Some(node) => Ok(TraversalResult::Value(node)),
-            None => {
-                return Err(Error::RetrievalError(format!(
-                    "Path {} did not yield value. Current Path {}, expected sub-paths {:?}",
-                    pointer,
-                    node.value().self_path().0,
-                    self.nodes.range(pointer..)
-                )))
-            }
+            None => Err(Error::RetrievalError(format!(
+                "Path {} did not yield value. Current Path {}, expected sub-paths {:?}",
+                pointer,
+                node.value().self_path().0,
+                self.nodes.range(pointer..)
+            ))),
         }
     }
 }

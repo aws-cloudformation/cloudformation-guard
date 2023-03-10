@@ -33,6 +33,7 @@ pub(crate) struct Location {
 }
 
 impl Location {
+    #[cfg(test)]
     pub(crate) fn new(line: usize, col: usize) -> Self {
         Location { line, col }
     }
@@ -48,6 +49,7 @@ impl std::fmt::Display for Location {
 pub(crate) struct Path(pub(crate) String, pub(crate) Location);
 
 impl Path {
+    #[cfg(test)]
     pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
         Path(path, Location::new(line, col))
     }
@@ -122,40 +124,21 @@ impl Path {
         copy.push_str(part);
         Path(copy, self.1.clone())
     }
+    //
+    // pub(crate) fn extend_str_with_location(&self, part: &str, loc: Location) -> Path {
+    //     let mut copy = self.0.clone();
+    //     copy.push('/');
+    //     copy.push_str(part);
+    //     Path(copy, loc)
+    // }
 
-    pub(crate) fn extend_str_with_location(&self, part: &str, loc: Location) -> Path {
-        let mut copy = self.0.clone();
-        copy.push('/');
-        copy.push_str(part);
-        Path(copy, loc)
-    }
-
-    pub(crate) fn extend_string(&self, part: &String) -> Path {
-        self.extend_str(part.as_str())
+    pub(crate) fn extend_string(&self, part: &str) -> Path {
+        self.extend_str(part)
     }
 
     pub(crate) fn extend_usize(&self, part: usize) -> Path {
         let as_str = part.to_string();
         self.extend_string(&as_str)
-    }
-
-    pub(crate) fn drop_last(&mut self) -> &mut Self {
-        let removed = match self.0.rfind('/') {
-            Some(idx) => self.0.as_str()[0..idx].to_string(),
-            None => return self,
-        };
-        self.0 = removed;
-        self
-    }
-
-    pub(crate) fn extend_with_value(&self, part: &Value) -> Result<Path, Error> {
-        match part {
-            Value::String(s) => Ok(self.extend_string(s)),
-            _ => Err(Error::IncompatibleError(format!(
-                "Value type is not String, Value = {:?}",
-                part
-            ))),
-        }
     }
 }
 
@@ -163,15 +146,6 @@ impl Path {
 pub(crate) struct MapValue {
     pub(crate) keys: Vec<PathAwareValue>,
     pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
-}
-
-impl MapValue {
-    pub(crate) fn new() -> MapValue {
-        MapValue {
-            keys: vec![],
-            values: indexmap::IndexMap::new(),
-        }
-    }
 }
 
 impl Serialize for MapValue {
@@ -215,57 +189,6 @@ pub(crate) enum PathAwareValue {
     RangeInt((Path, RangeType<i64>)),
     RangeFloat((Path, RangeType<f64>)),
     RangeChar((Path, RangeType<char>)),
-}
-
-impl PathAwareValue {
-    pub(crate) fn as_string(&self) -> Option<&str> {
-        match self {
-            PathAwareValue::String((_, v)) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_regex(&self) -> Option<&str> {
-        match self {
-            PathAwareValue::Regex((_, v)) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_bool(&self) -> Option<bool> {
-        match self {
-            PathAwareValue::Bool((_, v)) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_int(&self) -> Option<i64> {
-        match self {
-            PathAwareValue::Int((_, v)) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_float(&self) -> Option<f64> {
-        match self {
-            PathAwareValue::Float((_, v)) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_list(&self) -> Option<&Vec<PathAwareValue>> {
-        match self {
-            PathAwareValue::List((_, list)) => Some(list),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_map(&self) -> Option<&MapValue> {
-        match self {
-            PathAwareValue::Map((_, map)) => Some(map),
-            _ => None,
-        }
-    }
 }
 
 impl Hash for PathAwareValue {
@@ -367,10 +290,7 @@ impl PartialEq for PathAwareValue {
             }
 
             (rest, rest2) => match compare_values(rest, rest2) {
-                Ok(ordering) => match ordering {
-                    Ordering::Equal => true,
-                    _ => false,
-                },
+                Ok(ordering) => matches!(ordering, Ordering::Equal),
                 Err(_) => false,
             },
         }
@@ -526,14 +446,14 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             MarkedValue::Null(loc) => Ok(PathAwareValue::Null(path.with_location(loc))),
             MarkedValue::List(v, _) => {
                 let mut result: Vec<PathAwareValue> = Vec::with_capacity(v.len());
-                let mut idx = 0;
-                for each in v {
+
+                for (idx, each) in v.into_iter().enumerate() {
                     let sub_path = path.extend_usize(idx);
                     let loc = each.location().clone();
                     let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
                     result.push(value);
-                    idx += 1;
                 }
+
                 Ok(PathAwareValue::List((path, result)))
             }
 
@@ -556,12 +476,10 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 )))
             }
 
-            MarkedValue::BadValue(val, loc) => {
-                return Err(Error::ParseError(format!(
-                    "Bad Value encountered parsing incoming file Value = {}, Loc = {}",
-                    val, loc
-                )))
-            }
+            MarkedValue::BadValue(val, loc) => Err(Error::ParseError(format!(
+                "Bad Value encountered parsing incoming file Value = {}, Loc = {}",
+                val, loc
+            ))),
         }
     }
 }
@@ -1008,24 +926,15 @@ impl PathAwareValue {
     }
 
     pub(crate) fn is_list(&self) -> bool {
-        match self {
-            PathAwareValue::List((_, _)) => true,
-            _ => false,
-        }
+        matches!(self, PathAwareValue::List((_, _)))
     }
 
     pub(crate) fn is_map(&self) -> bool {
-        match self {
-            PathAwareValue::Map((_, _)) => true,
-            _ => false,
-        }
+        matches!(self, PathAwareValue::Map((_, _)))
     }
 
     pub(crate) fn is_null(&self) -> bool {
-        match self {
-            PathAwareValue::Null(_) => true,
-            _ => false,
-        }
+        matches!(self, PathAwareValue::Null(_))
     }
 
     fn map_error_or_empty(&self, all: bool, e: Error) -> Result<Vec<&PathAwareValue>, Error> {
@@ -1033,10 +942,10 @@ impl PathAwareValue {
             match e {
                 Error::IncompatibleRetrievalError(_) | Error::RetrievalError(_) => Ok(vec![]),
 
-                rest => return Err(rest),
+                rest => Err(rest),
             }
         } else {
-            return Err(e);
+            Err(e)
         }
     }
 
@@ -1059,33 +968,8 @@ impl PathAwareValue {
         !self.is_list() && !self.is_map()
     }
 
-    pub(crate) fn is_string(&self) -> bool {
-        if let PathAwareValue::String(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
     pub(crate) fn self_path(&self) -> &Path {
         self.self_value().0
-    }
-
-    pub(crate) fn self_path_mut(&mut self) -> &mut Path {
-        match self {
-            PathAwareValue::Null(path)
-            | PathAwareValue::String((path, _))
-            | PathAwareValue::Regex((path, _))
-            | PathAwareValue::Bool((path, _))
-            | PathAwareValue::Int((path, _))
-            | PathAwareValue::Float((path, _))
-            | PathAwareValue::Char((path, _))
-            | PathAwareValue::List((path, _))
-            | PathAwareValue::Map((path, _))
-            | PathAwareValue::RangeInt((path, _))
-            | PathAwareValue::RangeFloat((path, _))
-            | PathAwareValue::RangeChar((path, _)) => path,
-        }
     }
 
     pub(crate) fn self_value(&self) -> (&Path, &PathAwareValue) {
@@ -1190,6 +1074,7 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
     }
 }
 
+#[allow(clippy::never_loop)]
 pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
     let (reg, s) = match (first, second) {
         (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
@@ -1266,11 +1151,8 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
             }
         }
     };
-    let match_result = reg.is_match(s);
-    match match_result {
-        Ok(is_match) => Ok(is_match),
-        Err(error) => return Err(Error::from(error)),
-    }
+
+    Ok(reg.is_match(s)?)
 }
 
 pub(crate) fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {

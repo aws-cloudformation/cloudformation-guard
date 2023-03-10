@@ -21,6 +21,7 @@ impl Reader {
     }
 }
 
+#[allow(dead_code)]
 pub enum ReadBuffer {
     Stdin(Stdin),
     Cursor(Cursor<Vec<u8>>),

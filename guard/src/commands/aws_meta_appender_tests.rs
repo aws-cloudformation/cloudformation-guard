@@ -1,4 +1,3 @@
-use super::super::common_test_helpers::DummyEval;
 use super::*;
 
 #[test]
@@ -37,7 +36,7 @@ fn append_cdk_metadata_test() -> Result<()> {
     let query = AccessQuery::try_from(
         "Resources['table1F1EAFA30'].Properties.ProvisionedThroughput.ReadCapacityUnits",
     )?;
-    struct Capture {};
+    struct Capture {}
     impl EvaluationContext for Capture {
         fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
@@ -58,8 +57,8 @@ fn append_cdk_metadata_test() -> Result<()> {
             _cmp: Option<(CmpOperator, bool)>,
         ) {
             assert_ne!(msg.as_str(), "");
-            assert_eq!(msg.starts_with("FIRST PART"), true);
-            assert_eq!(msg.len() > "FIRST PART".len(), true);
+            assert!(msg.starts_with("FIRST PART"));
+            assert!(msg.len() > "FIRST PART".len());
             println!("{}", msg);
         }
 

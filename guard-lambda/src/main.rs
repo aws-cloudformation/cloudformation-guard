@@ -27,6 +27,7 @@ pub struct CustomOutput {
 }
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn main() -> Result<(), Error> {
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
@@ -48,13 +49,13 @@ pub async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput,
                 file_name: "lambda-payload",
             },
             ValidateInput {
-                content: &rule,
+                content: rule,
                 file_name: "lambda-rule",
             },
             e.verbose,
         ) {
             Ok(t) => t,
-            Err(e) => (e.to_string()),
+            Err(e) => e.to_string(),
         };
         let json_value: serde_json::Value = serde_json::from_str(&result)?;
         results_vec.push(json_value)
@@ -66,7 +67,8 @@ pub async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput,
 
 impl std::fmt::Display for CustomEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", serde_json::to_string_pretty(&self).unwrap());
+        write!(f, "{}", serde_json::to_string_pretty(&self).unwrap())
+            .expect("failed to write to output");
         Ok(())
     }
 }

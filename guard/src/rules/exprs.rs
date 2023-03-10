@@ -283,7 +283,7 @@ pub(crate) struct RulesFile<'loc> {
 
 pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
 impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let mut first = true;
         let mut query = String::new();
         for item in self.0 {

@@ -6,9 +6,10 @@ use indexmap::map::IndexMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::bytes::complete::{tag, take_till};
+use nom::character::complete;
 use nom::character::complete::{alpha1, newline, space1};
 use nom::character::complete::{anychar, digit1, one_of};
-use nom::character::complete::{char, multispace0, multispace1, space0};
+use nom::character::complete::{multispace0, multispace1, space0};
 use nom::combinator::{all_consuming, cut, peek};
 use nom::combinator::{map, value};
 use nom::combinator::{map_res, opt};
@@ -44,6 +45,7 @@ pub(crate) struct ParserError<'a> {
 
 pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
 
+#[cfg(test)]
 impl<'a> ParserError<'a> {
     pub(crate) fn context(&self) -> &str {
         &self.context
@@ -109,7 +111,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
-    delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
+    delimited(complete::char('#'), take_till(|c| c == '\n'), multispace0)(input)
 }
 //
 // This function extracts either white-space-CRLF or a comment
@@ -142,7 +144,7 @@ pub(in crate::rules) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span,
 }
 
 pub(in crate::rules) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
-    move |input: Span| preceded(zero_or_more_ws_or_comment, char(ch))(input)
+    move |input: Span| preceded(zero_or_more_ws_or_comment, complete::char(ch))(input)
 }
 
 pub(in crate::rules) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
@@ -178,7 +180,7 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
 fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
     move |input: Span| {
         let mut completed = String::new();
-        let (input, _begin) = char(ch)(input)?;
+        let (input, _begin) = complete::char(ch)(input)?;
         let mut span = input;
         loop {
             let (remainder, upto) = take_while(|c| c != ch)(span)?;
@@ -190,7 +192,7 @@ fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
                 continue;
             }
             completed.push_str(frag);
-            let (remainder, _end) = cut(char(ch))(remainder)?;
+            let (remainder, _end) = cut(complete::char(ch))(remainder)?;
             return Ok((remainder, Value::String(completed)));
         }
     }
@@ -201,13 +203,13 @@ pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
     //    map(
     //        alt((
     //            delimited(
-    //                char('"'),
+    //                complete::char('"'),
     //                take_while(|c| c != '"'),
-    //                char('"')),
+    //                complete::char('"')),
     //            delimited(
-    //                char('\''),
+    //                complete::char('\''),
     //                take_while(|c| c != '\''),
-    //                char('\'')),
+    //                complete::char('\'')),
     //        )),
     //        |s: Span| Value::String((*s.fragment()).to_string()),
     //    )(input)
@@ -221,7 +223,7 @@ fn parse_bool(input: Span) -> IResult<Span, Value> {
 
 fn parse_float(input: Span) -> IResult<Span, Value> {
     let whole = digit1(input)?;
-    let fraction = opt(preceded(char('.'), digit1))(whole.0)?;
+    let fraction = opt(preceded(complete::char('.'), digit1))(whole.0)?;
     let exponent = opt(tuple((one_of("eE"), one_of("+-"), digit1)))(fraction.0)?;
     if (fraction.1).is_some() || (exponent.1).is_some() {
         let r = double(input)?;
@@ -264,9 +266,9 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
         let validate_regex = Regex::new(regex.as_str());
         return match validate_regex {
-            Ok(valid_regex) => Ok((remainder, Value::Regex(regex))),
+            Ok(_) => Ok((remainder, Value::Regex(regex))),
             Err(e) => Err(nom::Err::Error(ParserError {
-                context: format!("Could not parse regular expression: {}", e.to_string()),
+                context: format!("Could not parse regular expression: {}", e),
                 kind: ErrorKind::RegexpMatch,
                 span: input,
             })),
@@ -275,7 +277,7 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 }
 
 fn parse_regex(input: Span) -> IResult<Span, Value> {
-    delimited(char('/'), parse_regex_inner, char('/'))(input)
+    delimited(complete::char('/'), parse_regex_inner, complete::char('/'))(input)
 }
 
 fn parse_char(input: Span) -> IResult<Span, Value> {
@@ -292,10 +294,10 @@ fn range_value(input: Span) -> IResult<Span, Value> {
 
 fn parse_range(input: Span) -> IResult<Span, Value> {
     let parsed = preceded(
-        char('r'),
+        complete::char('r'),
         tuple((
             one_of("(["),
-            separated_pair(range_value, char(','), range_value),
+            separated_pair(range_value, complete::char(','), range_value),
             one_of(")]"),
         )),
     )(input)?;
@@ -390,7 +392,7 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
 
 fn parse_map(input: Span) -> IResult<Span, Value> {
     let result = delimited(
-        char('{'),
+        complete::char('{'),
         separated_list(separated_by(','), key_value),
         followed_by('}'),
     )(input)?;
@@ -539,7 +541,7 @@ pub(crate) fn var_name(input: Span) -> IResult<Span, String> {
     let (remainder, first_part) = alpha1(input)?;
     let (remainder, next_part) = take_while(|c: char| c.is_alphanumeric() || c == '_')(remainder)?;
     let mut var_name = (*first_part.fragment()).to_string();
-    var_name.push_str(*next_part.fragment());
+    var_name.push_str(next_part.fragment());
     Ok((remainder, var_name))
 }
 
@@ -555,7 +557,7 @@ pub(crate) fn var_name(input: Span) -> IResult<Span, String> {
 //  see var_name for other error codes
 //
 pub(crate) fn var_name_access(input: Span) -> IResult<Span, String> {
-    preceded(char('%'), var_name)(input)
+    preceded(complete::char('%'), var_name)(input)
 }
 
 //
@@ -577,7 +579,7 @@ fn not(input: Span) -> IResult<Span, ()> {
         Ok((remainder, _not)) => Ok((remainder, ())),
 
         Err(nom::Err::Error(_)) => {
-            let (input, _bang_char) = char('!')(input)?;
+            let (input, _bang_char) = complete::char('!')(input)?;
             Ok((input, ()))
         }
 
@@ -663,8 +665,8 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
         eq,
         value((CmpOperator::Ge, false), tag(">=")),
         value((CmpOperator::Le, false), tag("<=")),
-        value((CmpOperator::Gt, false), char('>')),
-        value((CmpOperator::Lt, false), char('<')),
+        value((CmpOperator::Gt, false), complete::char('>')),
+        value((CmpOperator::Lt, false), complete::char('<')),
         //
         // Other operations
         //
@@ -697,7 +699,7 @@ pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
 
 fn variable_capture_in_map_or_index(input: Span) -> IResult<Span, String> {
     let (input, var) = preceded(zero_or_more_ws_or_comment, var_name)(input)?;
-    let (input, _pipe) = preceded(space0, char('|'))(input)?;
+    let (input, _pipe) = preceded(space0, complete::char('|'))(input)?;
     Ok((input, var))
 }
 
@@ -713,7 +715,7 @@ fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
     preceded(
         zero_or_more_ws_or_comment,
         preceded(
-            char('.'),
+            complete::char('.'),
             alt((
                 map(parse_int_value, |idx| {
                     let idx = match idx {
@@ -724,18 +726,24 @@ fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
                 }),
                 map(property_name, QueryPart::Key),
                 map(var_name_access_inclusive, QueryPart::Key),
-                value(QueryPart::AllValues(None), char('*')),
+                value(QueryPart::AllValues(None), complete::char('*')),
             )), // end alt
         ), // end preceded for char '.'
     )(input)
 }
 
 fn open_array(input: Span) -> IResult<Span, ()> {
-    value((), preceded(zero_or_more_ws_or_comment, char('[')))(input)
+    value(
+        (),
+        preceded(zero_or_more_ws_or_comment, complete::char('[')),
+    )(input)
 }
 
 fn close_array(input: Span) -> IResult<Span, ()> {
-    value((), preceded(zero_or_more_ws_or_comment, char(']')))(input)
+    value(
+        (),
+        preceded(zero_or_more_ws_or_comment, complete::char(']')),
+    )(input)
 }
 
 fn all_indices(input: Span) -> IResult<Span, QueryPart> {
@@ -743,7 +751,7 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
     let (input, query_part) = alt((
         value(
             QueryPart::AllIndices(None),
-            preceded(zero_or_more_ws_or_comment, char('*')),
+            preceded(zero_or_more_ws_or_comment, complete::char('*')),
         ),
         map(var_name, |name| QueryPart::AllIndices(Some(name))),
     ))(input)?;
@@ -1078,12 +1086,12 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
     tuple((
         var_name,
         delimited(
-            char('('),
+            complete::char('('),
             separated_nonempty_list(
-                char(','),
+                complete::char(','),
                 cut(delimited(multispace0, let_value, multispace0)),
             ),
-            cut(char(')')),
+            cut(complete::char(')')),
         ),
     ))(input)
 }
@@ -1192,7 +1200,7 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
             peek(alt((
                 preceded(space0, value((), newline)),
                 preceded(space0, value((), comment2)),
-                preceded(space0, value((), char('{'))),
+                preceded(space0, value((), complete::char('{'))),
                 value((), or_join),
             )))(remaining),
             Ok((_same, _ignored))
@@ -1463,7 +1471,8 @@ where
     T: Clone + 'loc,
 {
     move |input: Span| {
-        let (input, _start_block) = preceded(zero_or_more_ws_or_comment, char('{'))(input)?;
+        let (input, _start_block) =
+            preceded(zero_or_more_ws_or_comment, complete::char('{'))(input)?;
 
         let mut conjunctions: Conjunctions<T> = Conjunctions::new();
         let (input, results) = fold_many1(
@@ -1494,7 +1503,8 @@ where
             }
         }
 
-        let (input, _end_block) = cut(preceded(zero_or_more_ws_or_comment, char('}')))(input)?;
+        let (input, _end_block) =
+            cut(preceded(zero_or_more_ws_or_comment, complete::char('}')))(input)?;
 
         Ok((input, (assignments, conjunctions)))
     }
@@ -1691,15 +1701,15 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 //
 fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
     delimited(
-        char('('),
+        complete::char('('),
         map(
             separated_nonempty_list(
-                char(','),
+                complete::char(','),
                 cut(delimited(multispace0, var_name, multispace0)),
             ),
             |v| v.into_iter().collect::<indexmap::IndexSet<String>>(),
         ),
-        cut(char(')')),
+        cut(complete::char(')')),
     )(input)
 }
 
