@@ -38,22 +38,22 @@ fn append_cdk_metadata_test() -> Result<()> {
     )?;
     struct Capture {}
     impl EvaluationContext for Capture {
-        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        fn resolve_variable(&self, _: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _: &str) -> Result<Status> {
             unimplemented!()
         }
 
         fn end_evaluation(
             &self,
-            eval_type: EvaluationType,
-            context: &str,
+            _: EvaluationType,
+            _: &str,
             msg: String,
-            from: Option<PathAwareValue>,
-            to: Option<PathAwareValue>,
-            status: Option<Status>,
+            _: Option<PathAwareValue>,
+            _: Option<PathAwareValue>,
+            _: Option<Status>,
             _cmp: Option<(CmpOperator, bool)>,
         ) {
             assert_ne!(msg.as_str(), "");
@@ -62,7 +62,7 @@ fn append_cdk_metadata_test() -> Result<()> {
             println!("{}", msg);
         }
 
-        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        fn start_evaluation(&self, _: EvaluationType, _: &str) {
             unimplemented!()
         }
     }

@@ -5,15 +5,10 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod parse_tree_tests {
-    use std::io::stdout;
 
-    use rstest::rstest;
-
-    use cfn_guard;
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
-    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};

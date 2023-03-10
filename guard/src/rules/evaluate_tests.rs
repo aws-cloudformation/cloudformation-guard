@@ -88,10 +88,9 @@ fn guard_access_clause_tests() -> Result<()> {
                      Principal.Service EXISTS
                      Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#,
     )?;
-    match clause.evaluate(&root, &dummy) {
-        Ok(Status::FAIL) => {}
-        _rest => assert!(false),
-    }
+
+    assert_eq!(clause.evaluate(&root, &dummy).unwrap(), Status::FAIL);
+
     Ok(())
 }
 
@@ -559,7 +558,7 @@ rule deny_egress when %sgs NOT EMPTY {
         let root_context = RootScope::new(&rules_file, each)?;
         let reporter = Reporter(&root_context);
         let status = rules_file.evaluate(each, &reporter)?;
-        println!("{}", format!("Status {} = {}", index, status));
+        println!("Status {} = {}", index, status);
     }
 
     let sample = r#"{ "Resources": {} }"#;
@@ -1216,7 +1215,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     assert_eq!(status, Status::FAIL);
 
     let r = clause_some.evaluate(&values, &dummy);
-    assert_eq!(r.is_err(), false);
+    assert!(r.is_ok());
     assert_eq!(r.unwrap(), Status::FAIL);
 
     //
@@ -1394,7 +1393,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
         PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
     ];
     let rhs = [PathAwareValue::Regex((
-        root.clone(),
+        root,
         "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string(),
     ))];
 
@@ -1411,7 +1410,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
         false,
         false,
     )?;
-    assert_eq!(result, false);
+    assert!(!result);
 
     //
     // match any one rhs = false, at-least-one = true
@@ -1423,7 +1422,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
         false,
         true,
     )?;
-    assert_eq!(result, true);
+    assert!(result);
 
     //
     // match any one rhs = true, at-least-one = false
@@ -1435,7 +1434,7 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
         true,
         false,
     )?;
-    assert_eq!(result, false);
+    assert!(!result);
 
     Ok(())
 }
@@ -1448,7 +1447,7 @@ fn test_compare_loop_all() -> Result<()> {
         PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
     ];
     let rhs = [PathAwareValue::Regex((
-        root.clone(),
+        root,
         "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string(),
     ))];
 
@@ -1461,12 +1460,12 @@ fn test_compare_loop_all() -> Result<()> {
     //
     assert_eq!(results.1.len(), 2);
     let (outcome, from, to) = &results.1[0];
-    assert_eq!(*outcome, false);
+    assert!(!(*outcome));
     assert_eq!(from, &Some(lhs[0].clone()));
     assert_eq!(to, &Some(rhs[0].clone()));
 
     let (outcome, from, to) = &results.1[1];
-    assert_eq!(*outcome, true);
+    assert!(*outcome);
     assert_eq!(from, &None);
     assert_eq!(to, &None);
 
@@ -1480,7 +1479,7 @@ fn test_compare_lists() -> Result<()> {
         root.clone(),
         vec![
             PathAwareValue::Int((root.clone(), 1)),
-            PathAwareValue::Int((root.clone(), 2)),
+            PathAwareValue::Int((root, 2)),
         ],
     ));
     let lhs = vec![&value];
@@ -1853,7 +1852,7 @@ impl<'a> EvaluationContext for Tracker<'a> {
         cmp: Option<(CmpOperator, bool)>,
     ) {
         self.root
-            .end_evaluation(eval_type, context, msg, from, to, status.clone(), cmp);
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
         if eval_type == EvaluationType::Rule {
             match self.expected.get(context) {
                 Some(e) => {
@@ -2168,19 +2167,16 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
-                        assert_eq!(from.is_some(), true);
-                        assert_eq!(to.is_some(), true);
+                        assert!(from.is_some());
+                        assert!(to.is_some());
                         let path_val = from.unwrap();
                         let path = path_val.self_path();
-                        assert_eq!(
-                            path.0.contains("/second") || path.0.contains("/failed"),
-                            true
-                        );
+                        assert!(path.0.contains("/second") || path.0.contains("/failed"),);
                     }
                     Some(Status::PASS) => {
                         assert_eq!(from, None);
                         assert_eq!(to, None);
-                        assert_eq!(msg.contains("DEFAULT"), true);
+                        assert!(msg.contains("DEFAULT"));
                     }
                     _ => {}
                 }
@@ -2247,19 +2243,16 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
-                        assert_eq!(from.is_some(), true);
-                        assert_eq!(to.is_some(), true);
+                        assert!(from.is_some());
+                        assert!(to.is_some());
                         let path_val = from.as_ref().unwrap();
                         let path = path_val.self_path();
-                        assert_eq!(
-                            path.0.contains("/second") || path.0.contains("/failed"),
-                            true
-                        );
+                        assert!(path.0.contains("/second") || path.0.contains("/failed"),);
                     }
                     Some(Status::PASS) => {
                         assert_eq!(from, None);
                         assert_eq!(to, None);
-                        assert_eq!(msg.contains("DEFAULT"), true);
+                        assert!(msg.contains("DEFAULT"));
                     }
                     _ => {}
                 }

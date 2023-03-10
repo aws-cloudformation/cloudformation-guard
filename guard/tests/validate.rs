@@ -5,29 +5,20 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_tests {
-    use std::fmt::format;
     use std::fs::File;
-    use std::io::{stderr, stdout, Cursor, Read};
+    use std::io::{stderr, stdout, Cursor};
 
-    use indoc::indoc;
-    use rstest::rstest;
-    use strip_ansi_escapes;
-
-    use cfn_guard;
-    use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
         RULES, SHOW_SUMMARY, STRUCTURED, VALIDATE, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, File as ReadFile, Stdin};
-    use cfn_guard::utils::reader::{ReadBuffer, Reader};
+    use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
+    use indoc::indoc;
 
-    use crate::utils::{
-        compare_write_buffer_with_file, compare_write_buffer_with_string,
-        get_full_path_for_resource_file, CommandTestRunner, StatusCode,
-    };
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
 
     #[derive(Default)]
