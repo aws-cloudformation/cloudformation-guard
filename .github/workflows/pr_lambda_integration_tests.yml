@@ -2,7 +2,7 @@ name: Integration Tests
 
 on:
   pull_request_target:
-    branches: [main, development, lambda_tests] # for testing
+    branches: [main, development]
     types: [labeled, opened, synchronize]
 
 permissions:
