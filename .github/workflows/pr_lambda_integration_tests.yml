@@ -2,7 +2,7 @@ name: Integration Tests
 
 on:
   pull_request_target:
-    branches: [main, development]
+    branches: [main, development, lambda_tests] # for testing
     types: [labeled, opened, synchronize]
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-region: ${{ env.region }}
           role-to-assume: ${{ env.role }}
