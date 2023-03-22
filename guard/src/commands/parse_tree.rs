@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES, PRINT_JSON_DEPRECATED};
+use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_JSON_DEPRECATED, PRINT_YAML, RULES};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
