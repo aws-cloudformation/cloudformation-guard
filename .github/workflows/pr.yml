@@ -39,12 +39,12 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
-  aws-guard-rules-registry-ubuntu-integration-tests:
+  aws-guard-rules-registry-integration-tests:
     name: Integration tests against aws-guard-rules-registry on Ubuntu
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-      runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
