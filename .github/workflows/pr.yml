@@ -40,22 +40,24 @@ jobs:
         uses: actions-rust-lang/rustfmt@v1
 
   aws-guard-rules-registry-integration-tests:
-    name: Integration tests against aws-guard-rules-registry on Ubuntu
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
+    name: Integration tests against aws-guard-rules-registry
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
       - name: Build binary
+        shell: bash
         run: |
           cd cloudformation-guard/guard/
           cargo build --release
       - uses: actions/checkout@v3
         name: Checkout aws-guard-rules-registry
+        shell: bash
         with:
           repository: aws-cloudformation/aws-guard-rules-registry
           path: aws-guard-rules-registry
@@ -70,6 +72,7 @@ jobs:
           fi
 
       - name: Run integration tests using parse-tree command
+        shell: bash
         run: |
           cd aws-guard-rules-registry/rules
           
