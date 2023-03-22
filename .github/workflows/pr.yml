@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development ]
+    branches: [ main, development, add-instances-to-rules-integration-tests ]
   pull_request:
-    branches: [ main, development ]
+    branches: [ main, development, add-instances-to-rules-integration-tests ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,7 +41,10 @@ jobs:
 
   aws-guard-rules-registry-ubuntu-integration-tests:
     name: Integration tests against aws-guard-rules-registry on Ubuntu
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+      runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
