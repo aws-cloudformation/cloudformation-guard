@@ -31,6 +31,7 @@ pub const INPUT_PARAMETERS: (&str, char) = ("input-parameters", 'i');
 pub const PAYLOAD: (&str, char) = ("payload", 'P');
 pub const PREVIOUS_ENGINE: (&str, char) = ("previous-engine", 'E');
 pub const PRINT_JSON: (&str, char) = ("print-json", 'p');
+pub const PRINT_JSON_DEPRECATED: char = 'j';
 pub const SHOW_CLAUSE_FAILURES: (&str, char) = ("show-clause-failures", 's');
 pub const SHOW_SUMMARY: (&str, char) = ("show-summary", 'S');
 pub const TYPE: (&str, char) = ("type", 't');
