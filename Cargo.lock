@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-lambda"
-version = "3.0.0-alphgh"
+version = "3.0.0-alpha"
 dependencies = [
  "cfn-guard",
  "lambda_runtime",
