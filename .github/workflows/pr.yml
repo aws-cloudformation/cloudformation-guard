@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development ]
+    branches: [ main, development, rogue_one]
   pull_request:
-    branches: [ main, development ]
+    branches: [ main, development, rogue_one]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,7 +19,7 @@ jobs:
       run: cargo build --release --verbose
     - name: Run unit tests
       run: cargo test --verbose
-  
+
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest
@@ -69,11 +69,11 @@ jobs:
       - name: Run integration tests using parse-tree command
         run: |
           cd aws-guard-rules-registry/rules
-          
+
           FAILED_RULES=()
           SKIPPED_RULES=()
           rules=( $(find . -type f -name "*.guard") )
-          
+
           for rule in "${rules[@]}"
           do
               if [ $(sed -e '/^[ \s]*#.*$/d' $rule |  sed -r '/^\s*$/d' | wc -l) -eq 0 ]; then
@@ -84,7 +84,7 @@ jobs:
                   FAILED_RULES+=("$rule")
               fi
           done
-          
+
           SKIPPED_RULE_COUNT=${#SKIPPED_RULES[@]}
           if [ $SKIPPED_RULE_COUNT -gt 0 ]; then
               echo "The following $SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
@@ -93,9 +93,9 @@ jobs:
                   echo "$skipped_rule"
               done
           fi
-          
+
           FAILED_RULE_COUNT=${#FAILED_RULES[@]}
-          
+
           if [ $FAILED_RULE_COUNT -gt 0 ]; then
               echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
               for failed_rule in "${FAILED_RULES[@]}"
@@ -106,5 +106,3 @@ jobs:
           else
               echo "All the rules have succeeded the parse-tree integration tests."
           fi
-          
-          
