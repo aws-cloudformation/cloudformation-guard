@@ -46,7 +46,7 @@ impl Command for ParseTree {
                     .short(PRINT_JSON.1)
                     .short_alias(PRINT_JSON_DEPRECATED)
                     .action(ArgAction::SetTrue)
-                    .help("Print output in JSON format"),
+                    .help("Print output in JSON format. Use -p going forward, as the short flag -j is on deprecation path."),
             )
             .arg(
                 Arg::new(PRINT_YAML.0)
