@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_JSON_DEPRECATED, PRINT_YAML, RULES};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
@@ -44,8 +44,9 @@ impl Command for ParseTree {
                 Arg::new(PRINT_JSON.0)
                     .long(PRINT_JSON.0)
                     .short(PRINT_JSON.1)
+                    .short_alias(PRINT_JSON_DEPRECATED)
                     .action(ArgAction::SetTrue)
-                    .help("Print output in JSON format"),
+                    .help("Print output in JSON format. Use -p going forward, as the short flag -j is on deprecation path."),
             )
             .arg(
                 Arg::new(PRINT_YAML.0)
