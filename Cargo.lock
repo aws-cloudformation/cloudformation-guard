@@ -124,7 +124,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfn-guard"
-version = "2.1.3"
+version = "3.0.0-alpha"
 dependencies = [
  "Inflector",
  "clap",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-ffi"
-version = "2.1.3"
+version = "3.0.0-alpha"
 dependencies = [
  "cfn-guard",
  "ffi-support",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-lambda"
-version = "2.1.3"
+version = "3.0.0-alphgh"
 dependencies = [
  "cfn-guard",
  "lambda_runtime",
