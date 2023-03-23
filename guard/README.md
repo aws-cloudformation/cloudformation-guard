@@ -1,6 +1,6 @@
 # AWS CloudFormation Guard 2.0's Modes of Operation
 
-AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies. 
+AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 
 As an example of how to use AWS CloudFormation Guard (cfn-guard), given a CloudFormation template (template.json):
 
@@ -34,7 +34,7 @@ And a rules file (rules.guard):
 
 ```
 # Create a variable named 'aws_ec2_volume_resources' that selects all resources of type "AWS::EC2::Volume"
-# in the input resource template 
+# in the input resource template
 let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
 
 # Create a rule named aws_template_parameters for validation in the "Parameters" section of the template
@@ -42,7 +42,7 @@ rule aws_template_parameters {
     Parameters.InstanceName == "TestInstance"
 }
 
-# Create a rule named aws_ec2_volume that filters on "AWS::EC2::Volume" type being present in the template 
+# Create a rule named aws_ec2_volume that filters on "AWS::EC2::Volume" type being present in the template
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
     %aws_ec2_volume_resources.Properties.Encrypted == true
     %aws_ec2_volume_resources.Properties.Size IN [50, 500]
@@ -61,7 +61,7 @@ aws_template_parameters FAIL
 aws_ec2_volume FAIL
 ```
 
-We designed `cfn-guard` to be plugged into your build processes. 
+We designed `cfn-guard` to be plugged into your build processes.
 
 If CloudFormation Guard validates the templates successfully, it gives you an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a status report of the rules that failed.
 Use the verbose flag `-v` to see the detailed evaluation tree that shows how CloudFormation Guard evaluated each rule.
@@ -77,12 +77,12 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 
 ```bash
 cfn-guard-validate
-Evaluates rules against the data files to determine success or failure. 
-You can point rules flag to a rules directory and point data flag to a data directory. 
-When pointed to a directory it will read all rules in the directory file and evaluate 
+Evaluates rules against the data files to determine success or failure.
+You can point rules flag to a rules directory and point data flag to a data directory.
+When pointed to a directory it will read all rules in the directory file and evaluate
 them against the data files found in the directory. The command can also point to a
 single file and it would work as well.
-Note - When pointing the command to a directory, the directory may not contain a mix of 
+Note - When pointing the command to a directory, the directory may not contain a mix of
 rules and data files. The directory being pointed to must contain only data files,
 or rules files.
 
@@ -126,7 +126,7 @@ OPTIONS:
 For example, using the same template (template.json) from the above example:
 
 ```bash
-$ cfn-guard rulegen --data template.json 
+$ cfn-guard rulegen --data template.json
 let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
     %aws_ec2_volume_resources.Properties.Size IN [500, 100]
@@ -146,7 +146,7 @@ cfn-guard rulegen --data template.json --output rules.guard
 `migrate` command generates rules in the new AWS Cloudformation Guard 2.0 syntax from rules written using 1.0 language.
 
 ```bash
-cfn-guard-migrate 
+cfn-guard-migrate
 Migrates 1.0 rules to 2.0 compatible rules.
 
 USAGE:
@@ -176,9 +176,9 @@ The equivalent rules in the 2.0 language can be generated using the migrate comm
 $ cfn-guard migrate --rules example.ruleset
 rule migrated_rules {
     let aws_ec2_volume = Resources.*[ Type == "AWS::EC2::Volume" ]
- 
+
     let encryption_flag = true
- 
+
     %aws_ec2_volume.Properties.Encrypted == %encryption_flag
     %aws_ec2_volume.Properties.Size <= 100
 }
@@ -189,7 +189,7 @@ rule migrated_rules {
 `parse-tree` command generates a parse tree for the rules defined in a rules file. Use the `--output` flag to write the generated tree to a file.
 
 ```bash
-cfn-guard-parse-tree 
+cfn-guard-parse-tree
 Prints out the parse tree for the rules defined in the file.
 
 USAGE:
@@ -237,7 +237,7 @@ For example, given a rules file (rules.guard) as:
 
 ```bash
 rule assert_all_resources_have_non_empty_tags {
-    when Resources.* !empty { 
+    when Resources.* !empty {
         Resources.*.Properties.Tags !empty
     }
 }
@@ -251,10 +251,10 @@ You can write a YAML-formatted unit test file (test.yml) as:
     Resources: {}
    expectations:
    rules:
-     assert_all_resources_have_non_empty_tags: SKIP 
+     assert_all_resources_have_non_empty_tags: SKIP
 - input:
   Resources:
-    nonCompliant: 
+    nonCompliant:
       Type: Consoto::Network::VPC
       Properties: {}
   expectations:
@@ -265,6 +265,6 @@ You can write a YAML-formatted unit test file (test.yml) as:
 You can then test your rules file using the `test` command as:
 
 ```bash
-$ cfn-guard test -r rules.guard -t test.yml 
+$ cfn-guard test -r rules.guard -t test.yml
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = SKIP, Got Status = SKIP
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = FAIL, Got Status = FAIL

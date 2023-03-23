@@ -41,6 +41,7 @@ mod cfn_reporter;
 mod common;
 mod console_reporter;
 pub(crate) mod generic_summary;
+pub mod junit;
 mod structured;
 mod summary_table;
 mod tf;
