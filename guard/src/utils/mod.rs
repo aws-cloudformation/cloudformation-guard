@@ -1,3 +1,5 @@
+use crate::{command::Command, commands};
+
 pub mod reader;
 pub mod writer;
 
@@ -6,6 +8,16 @@ pub(crate) struct ReadCursor<'buffer> {
     line_num: usize,
     line_buffer: std::str::Lines<'buffer>,
     previous_lines: Vec<(usize, &'buffer str)>,
+}
+
+pub fn get_guard_commands() -> Vec<Box<dyn Command>> {
+    vec![
+        Box::new(commands::parse_tree::ParseTree::new()),
+        Box::new(commands::test::Test::new()),
+        Box::new(commands::validate::Validate::new()),
+        Box::new(commands::rulegen::Rulegen::new()),
+        Box::new(commands::migrate::Migrate::new()),
+    ]
 }
 
 impl<'buffer> ReadCursor<'buffer> {

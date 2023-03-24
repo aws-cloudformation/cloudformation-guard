@@ -401,7 +401,7 @@ mod validate_tests {
     #[case(
         vec!["db_resource.yaml"],
         vec!["db_param_port_rule.guard"],
-        vec!["input-parameters-dir/db_params.yaml"], 
+        vec!["input-parameters-dir/db_params.yaml"],
         StatusCode::PARSING_ERROR
     )]
     #[case(

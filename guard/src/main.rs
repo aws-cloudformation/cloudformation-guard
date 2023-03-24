@@ -32,12 +32,7 @@ fn main() -> Result<(), Error> {
         )
         .arg_required_else_help(true);
 
-    let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(5);
-    commands.push(Box::new(commands::parse_tree::ParseTree::new()));
-    commands.push(Box::new(commands::test::Test::new()));
-    commands.push(Box::new(commands::validate::Validate::new()));
-    commands.push(Box::new(commands::rulegen::Rulegen::new()));
-    commands.push(Box::new(commands::migrate::Migrate::new()));
+    let mut commands = utils::get_guard_commands();
     commands.push(Box::new(commands::completions::Completions::default()));
 
     let mappings = commands.iter().map(|s| (s.name(), s)).fold(

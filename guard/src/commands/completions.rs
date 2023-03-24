@@ -2,7 +2,7 @@ use crate::command::Command;
 use crate::commands::{APP_NAME, APP_VERSION, COMPLETIONS};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use crate::{commands, rules};
+use crate::{commands, rules, utils};
 use clap::{Arg, ArgAction, ArgMatches};
 
 #[derive(Copy, Clone, Debug)]
@@ -48,13 +48,7 @@ impl Command for Completions {
     fn execute(&self, args: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {
         let mut app = clap::Command::new(APP_NAME).version(APP_VERSION);
 
-        let commands: Vec<Box<dyn Command>> = vec![
-            Box::new(commands::parse_tree::ParseTree::new()),
-            Box::new(commands::test::Test::new()),
-            Box::new(commands::validate::Validate::new()),
-            Box::new(commands::rulegen::Rulegen::new()),
-            Box::new(commands::migrate::Migrate::new()),
-        ];
+        let commands = utils::get_guard_commands();
 
         for each in &commands {
             app = app.subcommand(each.command());
