@@ -7,10 +7,6 @@ use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use cfn_guard::command::Command;
-use cfn_guard::commands::{
-    migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
-};
 use cfn_guard::utils;
 use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;

@@ -2,7 +2,7 @@ use crate::command::Command;
 use crate::commands::{APP_NAME, APP_VERSION, COMPLETIONS};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use crate::{commands, rules, utils};
+use crate::{rules, utils};
 use clap::{Arg, ArgAction, ArgMatches};
 
 #[derive(Copy, Clone, Debug)]

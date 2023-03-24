@@ -11,7 +11,6 @@ use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
 use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
-use command::Command;
 use commands::{APP_NAME, APP_VERSION};
 use rules::errors::Error;
 use std::io::Write;
