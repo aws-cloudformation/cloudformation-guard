@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development, add-instances-to-rules-integration-tests ]
+    branches: [ main, development, rogue_one ]
   pull_request:
-    branches: [ main, development, add-instances-to-rules-integration-tests ]
+    branches: [ main, development, rogue_one ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -112,7 +112,7 @@ jobs:
 
   aws-guard-rules-registry-integration-tests-windows:
     runs-on: windows-latest
-    name: Integration tests against aws-guard-rules-registry
+    name: Integration tests against aws-guard-rules-registry for Windows
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
