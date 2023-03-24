@@ -81,8 +81,7 @@ fn main() -> Result<(), Error> {
                     Ok(code) => exit(code),
                 }
             } else {
-                println!("{}", name);
-                // println!("{}", help);
+                println!("{}", help);
             }
         }
         None => {
