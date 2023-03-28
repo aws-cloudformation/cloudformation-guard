@@ -4,7 +4,7 @@
 
 AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 
-The Guard 3.0 release introduces support for advanced regular expressions, improved handling of intrinsic functions for the test command, as well as the --structured flag to the validate command to emit JSON/YAML parseable output.  Note that previously written tests may have to be reviewed due to the with the corrected behavior of instrinisic function handling.  Please see the release notes for full details and examples.
+The Guard 3.0 release introduces support for advanced regular expressions, improved handling of intrinsic functions for the test command, as well as the --structured flag to the validate command to emit JSON/YAML parseable output.  Note that previously written tests may have to be reviewed due to the corrected behavior of instrinisic function handling.  Please see the release notes for full details and examples.
 
 Guard can be used for the following domains:
 
