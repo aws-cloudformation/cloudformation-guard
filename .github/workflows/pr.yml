@@ -141,10 +141,10 @@ jobs:
       - name: Run integration tests using parse-tree command
         run: |
           cd aws-guard-rules-registry/rules
-          
+
           $FAILED_RULES = @()
           $SKIPPED_RULES = @()
-          
+
           $rules  = @(Get-ChildItem -Path .\ -Filter *.guard -Recurse -File)
 
           Foreach ($rule in $rules) {
@@ -158,15 +158,15 @@ jobs:
               $FAILED_RULES += "$rule"
             }
           }
-          
+
           $SKIPPED_RULE_COUNT = $SKIPPED_RULES.Length
           if ($SKIPPED_RULE_COUNT -gt 0) {
               echo "The following `$SKIPPED_RULE_COUNT.Length` rule(s) were skipped because they contained only comments:"
               echo $SKIPPED_RULES
           }
-          
+
           $FAILED_RULE_COUNT = $FAILED_RULES.Length
-  
+
           if ($FAILED_RULE_COUNT -gt 0) {
               echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
               echo $FAILED_RULES
@@ -174,3 +174,19 @@ jobs:
           } else {
               echo "All the rules have succeeded the parse-tree integration tests."
           }
+
+  linting:
+    name: Linting check (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          args: -- -D warnings
