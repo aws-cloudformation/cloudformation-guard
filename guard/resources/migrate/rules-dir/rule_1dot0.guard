@@ -1,0 +1,4 @@
+let encryption_flag = true
+
+AWS::EC2::Volume Encrypted == %encryption_flag
+AWS::EC2::Volume Size <= 100

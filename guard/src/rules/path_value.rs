@@ -1,41 +1,78 @@
+pub(crate) mod traversal;
+
 use std::cmp::Ordering;
 use std::convert::{TryFrom, TryInto};
 //
 // Std Libraries
 //
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt::Formatter;
-use std::fmt::Write;
-use serde::Serialize;
 
-
-use crate::rules::evaluate::{AutoReport, resolve_query};
+use crate::rules::evaluate::{resolve_query, AutoReport};
 use crate::rules::EvaluationType;
 
-use super::{Evaluate, EvaluationContext, Status};
-use super::errors::{Error, ErrorKind};
+use super::errors::Error;
 use super::exprs::{QueryPart, SliceDisplay};
+use super::{Evaluate, EvaluationContext, Status};
 //
 // Local mod
 //
 use super::values::*;
 use crate::rules::exprs::LetValue;
+use fancy_regex::Regex;
+use serde::ser::{SerializeMap, SerializeStruct};
+use std::hash::{Hash, Hasher};
 
 //
 // crate level
 //
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub(crate) struct Location {
+    pub(crate) line: usize,
+    pub(crate) col: usize,
+}
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
-pub(crate) struct Path(pub(crate) String);
+impl Location {
+    pub(crate) fn new(line: usize, col: usize) -> Self {
+        Location { line, col }
+    }
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("L:{},C:{}", self.line, self.col))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct Path(pub(crate) String, pub(crate) Location);
+
+impl Path {
+    pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
+        Path(path, Location::new(line, col))
+    }
+
+    pub(crate) fn with_location(&self, loc: Location) -> Self {
+        Path(self.0.clone(), loc)
+    }
+}
 
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        f.write_fmt(format_args!("{}[{}]", self.0, self.1))
     }
 }
 
 impl Path {
-    pub fn root() -> Self {
-        Path("".to_string())
+    pub(crate) fn root() -> Self {
+        Path("".to_string(), Location::default())
+    }
+
+    pub(crate) fn relative(&self) -> &str {
+        match self.0.rfind('/') {
+            Some(pos) => &self.0[pos + 1..],
+            None => &self.0,
+        }
     }
 }
 
@@ -43,7 +80,7 @@ impl TryFrom<&str> for Path {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Ok(Path(value.to_string()))
+        Ok(Path(value.to_string(), Location::default()))
     }
 }
 
@@ -51,15 +88,21 @@ impl TryFrom<&[&str]> for Path {
     type Error = Error;
 
     fn try_from(value: &[&str]) -> Result<Self, Self::Error> {
-        Ok(Path(value.iter().map(|s| (*s).to_string())
-            .fold(String::from(""), |mut acc, part| {
-                if acc.is_empty() {
-                    acc.push_str(part.as_str());
-                } else {
-                    acc.push('/'); acc.push_str(part.as_str());
-                }
-                acc
-            })))
+        Ok(Path(
+            value
+                .iter()
+                .map(|s| (*s).to_string())
+                .fold(String::from(""), |mut acc, part| {
+                    if acc.is_empty() {
+                        acc.push_str(part.as_str());
+                    } else {
+                        acc.push('/');
+                        acc.push_str(part.as_str());
+                    }
+                    acc
+                }),
+            Location::default(),
+        ))
     }
 }
 
@@ -77,7 +120,14 @@ impl Path {
         let mut copy = self.0.clone();
         copy.push('/');
         copy.push_str(part);
-        Path(copy)
+        Path(copy, self.1.clone())
+    }
+
+    pub(crate) fn extend_str_with_location(&self, part: &str, loc: Location) -> Path {
+        let mut copy = self.0.clone();
+        copy.push('/');
+        copy.push_str(part);
+        Path(copy, loc)
     }
 
     pub(crate) fn extend_string(&self, part: &String) -> Path {
@@ -92,7 +142,7 @@ impl Path {
     pub(crate) fn drop_last(&mut self) -> &mut Self {
         let removed = match self.0.rfind('/') {
             Some(idx) => self.0.as_str()[0..idx].to_string(),
-            None => return self
+            None => return self,
         };
         self.0 = removed;
         self
@@ -101,17 +151,40 @@ impl Path {
     pub(crate) fn extend_with_value(&self, part: &Value) -> Result<Path, Error> {
         match part {
             Value::String(s) => Ok(self.extend_string(s)),
-            _ => Err(Error::new(ErrorKind::IncompatibleError(
-                format!("Value type is not String, Value = {:?}", part)
-            )))
+            _ => Err(Error::IncompatibleError(format!(
+                "Value type is not String, Value = {:?}",
+                part
+            ))),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct MapValue {
-    keys: Vec<PathAwareValue>,
-    values: indexmap::IndexMap<String, PathAwareValue>,
+    pub(crate) keys: Vec<PathAwareValue>,
+    pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
+}
+
+impl MapValue {
+    pub(crate) fn new() -> MapValue {
+        MapValue {
+            keys: vec![],
+            values: indexmap::IndexMap::new(),
+        }
+    }
+}
+
+impl Serialize for MapValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        for (key, value) in self.values.iter() {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
 }
 
 impl PartialEq for MapValue {
@@ -120,14 +193,15 @@ impl PartialEq for MapValue {
     }
 }
 
+impl Eq for MapValue {}
+
 impl MapValue {
     pub(crate) fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 }
 
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) enum PathAwareValue {
     Null(Path),
     String((Path, String)),
@@ -143,6 +217,115 @@ pub(crate) enum PathAwareValue {
     RangeChar((Path, RangeType<char>)),
 }
 
+impl PathAwareValue {
+    pub(crate) fn as_string(&self) -> Option<&str> {
+        match self {
+            PathAwareValue::String((_, v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_regex(&self) -> Option<&str> {
+        match self {
+            PathAwareValue::Regex((_, v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_bool(&self) -> Option<bool> {
+        match self {
+            PathAwareValue::Bool((_, v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_int(&self) -> Option<i64> {
+        match self {
+            PathAwareValue::Int((_, v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_float(&self) -> Option<f64> {
+        match self {
+            PathAwareValue::Float((_, v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_list(&self) -> Option<&Vec<PathAwareValue>> {
+        match self {
+            PathAwareValue::List((_, list)) => Some(list),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_map(&self) -> Option<&MapValue> {
+        match self {
+            PathAwareValue::Map((_, map)) => Some(map),
+            _ => None,
+        }
+    }
+}
+
+impl Hash for PathAwareValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            PathAwareValue::String((_, s)) | PathAwareValue::Regex((_, s)) => {
+                s.hash(state);
+            }
+
+            PathAwareValue::Char((_, c)) => {
+                c.hash(state);
+            }
+            PathAwareValue::Int((_, i)) => {
+                i.hash(state);
+            }
+            PathAwareValue::Null(_) => {
+                "NULL".hash(state);
+            }
+            PathAwareValue::Float((_, f)) => {
+                (*f as u64).hash(state);
+            }
+
+            PathAwareValue::RangeChar((_, r)) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            }
+
+            PathAwareValue::RangeInt((_, r)) => {
+                r.lower.hash(state);
+                r.upper.hash(state);
+                r.inclusive.hash(state);
+            }
+
+            PathAwareValue::RangeFloat((_, r)) => {
+                (r.lower as u64).hash(state);
+                (r.upper as u64).hash(state);
+                r.inclusive.hash(state);
+            }
+
+            PathAwareValue::Bool((_, b)) => {
+                b.hash(state);
+            }
+
+            PathAwareValue::List((_, l)) => {
+                for each in l {
+                    each.hash(state);
+                }
+            }
+
+            PathAwareValue::Map((_, map)) => {
+                for (key, value) in map.values.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            }
+        }
+    }
+}
+
 impl PartialEq for PathAwareValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -153,19 +336,19 @@ impl PartialEq for PathAwareValue {
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
 
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-                if let Ok(regex) = regex::Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str())
+                if let Ok(regex) = Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
                 } else {
                     false
                 }
-            },
-            (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) =>  {
-                if let Ok(regex) = regex::Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str())
+            }
+            (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
+                if let Ok(regex) = Regex::new(r.as_str()) {
+                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
                 } else {
                     false
                 }
-            },
+            }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
 
             //
@@ -173,26 +356,28 @@ impl PartialEq for PathAwareValue {
             //
             (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
                 value.is_within(r)
-            },
+            }
 
             (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
                 value.is_within(r)
-            },
+            }
 
             (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
                 value.is_within(r)
-            },
+            }
 
             (rest, rest2) => match compare_values(rest, rest2) {
-                    Ok(ordering) => match ordering {
-                        Ordering::Equal => true,
-                        _ => false
-                    },
-                    Err(_) => false
-                }
+                Ok(ordering) => match ordering {
+                    Ordering::Equal => true,
+                    _ => false,
+                },
+                Err(_) => false,
+            },
         }
     }
 }
+
+impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
     type Error = Error;
@@ -223,10 +408,29 @@ impl TryFrom<(&serde_json::Value, Path)> for PathAwareValue {
     }
 }
 
+impl TryFrom<(&serde_yaml::Value, Path)> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(incoming: (&serde_yaml::Value, Path)) -> Result<Self, Self::Error> {
+        let root = incoming.0;
+        let path = incoming.1;
+        let value = Value::try_from(root)?;
+        PathAwareValue::try_from((&value, path))
+    }
+}
+
 impl TryFrom<Value> for PathAwareValue {
     type Error = Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        PathAwareValue::try_from((&value, Path::root()))
+    }
+}
+
+impl TryFrom<serde_yaml::Value> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
         PathAwareValue::try_from((&value, Path::root()))
     }
 }
@@ -265,7 +469,7 @@ impl TryFrom<(&Value, Path)> for PathAwareValue {
                     result.push(value);
                 }
                 Ok(PathAwareValue::List((path, result)))
-            },
+            }
 
             Value::Map(map) => {
                 let mut keys = Vec::with_capacity(map.len());
@@ -281,7 +485,82 @@ impl TryFrom<(&Value, Path)> for PathAwareValue {
                     let value = PathAwareValue::try_from((each_value, sub_path))?;
                     values.insert(each_key.to_owned(), value);
                 }
-                Ok(PathAwareValue::Map((path, MapValue{keys, values})))
+                Ok(PathAwareValue::Map((path, MapValue { keys, values })))
+            }
+        }
+    }
+}
+
+impl TryFrom<MarkedValue> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(value: MarkedValue) -> Result<Self, Self::Error> {
+        Self::try_from((value, Path::root()))
+    }
+}
+impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
+    type Error = Error;
+
+    fn try_from(incoming: (MarkedValue, Path)) -> Result<Self, Self::Error> {
+        let root = incoming.0;
+        let path = incoming.1;
+
+        match root {
+            MarkedValue::String(s, loc) => Ok(PathAwareValue::String((path.with_location(loc), s))),
+            MarkedValue::Int(num, loc) => Ok(PathAwareValue::Int((path.with_location(loc), num))),
+            MarkedValue::Float(flt, loc) => {
+                Ok(PathAwareValue::Float((path.with_location(loc), flt)))
+            }
+            MarkedValue::Regex(s, loc) => Ok(PathAwareValue::Regex((path.with_location(loc), s))),
+            MarkedValue::Char(c, loc) => Ok(PathAwareValue::Char((path.with_location(loc), c))),
+            MarkedValue::RangeChar(r, loc) => {
+                Ok(PathAwareValue::RangeChar((path.with_location(loc), r)))
+            }
+            MarkedValue::RangeInt(r, loc) => {
+                Ok(PathAwareValue::RangeInt((path.with_location(loc), r)))
+            }
+            MarkedValue::RangeFloat(r, loc) => {
+                Ok(PathAwareValue::RangeFloat((path.with_location(loc), r)))
+            }
+            MarkedValue::Bool(b, loc) => Ok(PathAwareValue::Bool((path.with_location(loc), b))),
+            MarkedValue::Null(loc) => Ok(PathAwareValue::Null(path.with_location(loc))),
+            MarkedValue::List(v, _) => {
+                let mut result: Vec<PathAwareValue> = Vec::with_capacity(v.len());
+                let mut idx = 0;
+                for each in v {
+                    let sub_path = path.extend_usize(idx);
+                    let loc = each.location().clone();
+                    let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
+                    result.push(value);
+                    idx += 1;
+                }
+                Ok(PathAwareValue::List((path, result)))
+            }
+
+            MarkedValue::Map(map, loc) => {
+                let mut keys = Vec::with_capacity(map.len());
+                let mut values = indexmap::IndexMap::with_capacity(map.len());
+                for ((each_key, loc), each_value) in map {
+                    let sub_path = path.extend_string(&each_key);
+                    let sub_path = sub_path.with_location(each_value.location().clone());
+                    let value = PathAwareValue::try_from((each_value, sub_path))?;
+                    values.insert(each_key.to_owned(), value);
+                    keys.push(PathAwareValue::String((
+                        path.with_location(loc.clone()),
+                        each_key.to_string(),
+                    )));
+                }
+                Ok(PathAwareValue::Map((
+                    path.with_location(loc),
+                    MapValue { keys, values },
+                )))
+            }
+
+            MarkedValue::BadValue(val, loc) => {
+                return Err(Error::ParseError(format!(
+                    "Bad Value encountered parsing incoming file Value = {}, Loc = {}",
+                    val, loc
+                )))
             }
         }
     }
@@ -290,22 +569,34 @@ impl TryFrom<(&Value, Path)> for PathAwareValue {
 impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
     type Error = Error;
 
-    fn try_into(self) -> std::result::Result<(String, serde_json::Value), Self::Error> {
+    fn try_into(self) -> Result<(String, serde_json::Value), Self::Error> {
         let top = self.self_path().0.clone();
         match self {
             PathAwareValue::Null(_) => Ok((top, serde_json::Value::Null)),
             PathAwareValue::String((_, s)) => Ok((top, serde_json::Value::String(s.clone()))),
-            PathAwareValue::Regex((_, r)) => Ok((top, serde_json::Value::String(format!("/{}/", r)))),
+            PathAwareValue::Regex((_, r)) => {
+                Ok((top, serde_json::Value::String(format!("/{}/", r))))
+            }
             PathAwareValue::Bool((_, bool_)) => Ok((top, serde_json::Value::Bool(*bool_))),
-            PathAwareValue::Int((_, i64_)) => Ok((top, serde_json::Value::Number(serde_json::Number::from(*i64_)))),
-            PathAwareValue::Float((_, f64_)) => Ok((top, serde_json::Value::Number(
-                match serde_json::Number::from_f64(*f64_) {
+            PathAwareValue::Int((_, i64_)) => Ok((
+                top,
+                serde_json::Value::Number(serde_json::Number::from(*i64_)),
+            )),
+            PathAwareValue::Float((_, f64_)) => Ok((
+                top,
+                serde_json::Value::Number(match serde_json::Number::from_f64(*f64_) {
                     Some(num) => num,
-                    None => return Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Could not convert float {} to serde::Value::Number", *f64_)
-                    )))
-                }))),
-            PathAwareValue::Char((_, char_)) => Ok((top, serde_json::Value::String(char_.to_string()))),
+                    None => {
+                        return Err(Error::IncompatibleError(format!(
+                            "Could not convert float {} to serde::Value::Number",
+                            *f64_
+                        )))
+                    }
+                }),
+            )),
+            PathAwareValue::Char((_, char_)) => {
+                Ok((top, serde_json::Value::String(char_.to_string())))
+            }
 
             PathAwareValue::List((_, list)) => {
                 let mut values = Vec::with_capacity(list.len());
@@ -314,7 +605,7 @@ impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
                     values.push(val);
                 }
                 Ok((top, serde_json::Value::Array(values)))
-            },
+            }
 
             PathAwareValue::Map((_, map)) => {
                 let mut values = serde_json::Map::new();
@@ -323,65 +614,102 @@ impl<'a> TryInto<(String, serde_json::Value)> for &'a PathAwareValue {
                     values.insert(key.clone(), val);
                 }
                 Ok((top, serde_json::Value::Object(values)))
-            },
+            }
 
             PathAwareValue::RangeFloat((_, range_)) => {
-                let range_encoding = format!("{}{},{}{}",
-                                             if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
-                                             range_.lower, range_.upper,
-                                             if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                let range_encoding = format!(
+                    "{}{},{}{}",
+                    if range_.inclusive & LOWER_INCLUSIVE > 0 {
+                        "["
+                    } else {
+                        "("
+                    },
+                    range_.lower,
+                    range_.upper,
+                    if range_.inclusive & UPPER_INCLUSIVE > 0 {
+                        "]"
+                    } else {
+                        ")"
+                    },
                 );
                 Ok((top, serde_json::Value::String(range_encoding)))
-            },
+            }
 
             PathAwareValue::RangeChar((_, range_)) => {
-                let range_encoding = format!("{}{},{}{}",
-                                             if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
-                                             range_.lower, range_.upper,
-                                             if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                let range_encoding = format!(
+                    "{}{},{}{}",
+                    if range_.inclusive & LOWER_INCLUSIVE > 0 {
+                        "["
+                    } else {
+                        "("
+                    },
+                    range_.lower,
+                    range_.upper,
+                    if range_.inclusive & UPPER_INCLUSIVE > 0 {
+                        "]"
+                    } else {
+                        ")"
+                    },
                 );
                 Ok((top, serde_json::Value::String(range_encoding)))
-            },
+            }
 
             PathAwareValue::RangeInt((_, range_)) => {
-                let range_encoding = format!("{}{},{}{}",
-                           if range_.inclusive & LOWER_INCLUSIVE > 0 { "[" } else { "(" },
-                           range_.lower, range_.upper,
-                           if range_.inclusive & UPPER_INCLUSIVE > 0{ "]" } else { ")" },
+                let range_encoding = format!(
+                    "{}{},{}{}",
+                    if range_.inclusive & LOWER_INCLUSIVE > 0 {
+                        "["
+                    } else {
+                        "("
+                    },
+                    range_.lower,
+                    range_.upper,
+                    if range_.inclusive & UPPER_INCLUSIVE > 0 {
+                        "]"
+                    } else {
+                        ")"
+                    },
                 );
                 Ok((top, serde_json::Value::String(range_encoding)))
-            },
+            }
         }
     }
 }
 
 pub(crate) trait QueryResolver {
-    fn select(&self, all: bool, query: &[QueryPart<'_>], eval: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error>;
+    fn select(
+        &self,
+        all: bool,
+        query: &[QueryPart<'_>],
+        eval: &dyn EvaluationContext,
+    ) -> Result<Vec<&PathAwareValue>, Error>;
 }
 
 impl QueryResolver for PathAwareValue {
-    fn select(&self, all: bool, query: &[QueryPart<'_>], resolver: &dyn EvaluationContext) -> Result<Vec<&PathAwareValue>, Error> {
+    fn select(
+        &self,
+        all: bool,
+        query: &[QueryPart<'_>],
+        resolver: &dyn EvaluationContext,
+    ) -> Result<Vec<&PathAwareValue>, Error> {
         if query.is_empty() {
-            return Ok(vec![self])
+            return Ok(vec![self]);
         }
 
         match &query[0] {
-            QueryPart::This => {
-                self.select(all, &query[1..], resolver)
-            }
+            QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
                 match key.parse::<i32>() {
-                    Ok(index) => {
-                        match self {
-                            PathAwareValue::List((_, list)) => {
-                                PathAwareValue::retrieve_index(self, index, list, query)
-                                    .map_or_else(|e| self.map_error_or_empty(all, e),
-                                                 |val| val.select(all, &query[1..], resolver))
-                            }
-
-                            _ => self.map_some_or_error_all(all, query)
+                    Ok(index) => match self {
+                        PathAwareValue::List((_, list)) => {
+                            PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
+                                |e| self.map_error_or_empty(all, e),
+                                |val| val.select(all, &query[1..], resolver),
+                            )
                         }
+
+                        _ => self.map_some_or_error_all(all, query),
                     },
 
                     Err(_) => match self {
@@ -395,7 +723,7 @@ impl QueryResolver for PathAwareValue {
                                 let mut acc = Vec::with_capacity(keys.len());
                                 let keys = if query.len() > 1 {
                                     match query[1] {
-                                        QueryPart::AllIndices | QueryPart::Key(_) => keys,
+                                        QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
                                             let check = if index >= 0 { index } else { -index } as usize;
                                             if check < keys.len() {
@@ -405,9 +733,9 @@ impl QueryResolver for PathAwareValue {
                                             }
                                         },
 
-                                        _ => return Err(Error::new(ErrorKind::IncompatibleError(
+                                        _ => return Err(Error::IncompatibleError(
                                             format!("THIS type of variable interpolation is not supported {}, {}", self.type_info(), SliceDisplay(query))
-                                        )))
+                                        ))
                                     }
                                 } else {
                                     keys
@@ -415,223 +743,269 @@ impl QueryResolver for PathAwareValue {
                                 for each_key in keys {
                                     if let PathAwareValue::String((_, k)) = each_key {
                                         if let Some(next) = map.values.get(k) {
-                                            acc.extend(
-                                                next.select(all, &query[1..], resolver)?);
-                                        }
-                                        else if all {
-                                            return Err(Error::new(
-                                                ErrorKind::RetrievalError(
+                                            acc.extend(next.select(all, &query[1..], resolver)?);
+                                        } else if all {
+                                            return Err(Error::
+                                                RetrievalError(
                                                     format!("Could not locate key = {} inside object/map = {:?}, Path = {}, remaining query = {}",
                                                             key, self, path, SliceDisplay(query))
-                                                )))
+                                                ));
                                         }
-                                    }
-                                    else {
-                                       return Err(Error::new(
-                                           ErrorKind::NotComparable(
-                                               format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
-                                                   SliceDisplay(query),
-                                                   each_key.type_info(),
-                                                   each_key.self_value()
+                                    } else {
+                                        return Err(Error
+                                            ::NotComparable(
+                                                format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
+                                                        SliceDisplay(query),
+                                                        each_key.type_info(),
+                                                        each_key.self_value()
                                                )
-                                           )
-                                       ))
+
+                                        ));
                                     }
                                 }
                                 Ok(acc)
-                            }
-                            else if let Some(next) = map.values.get(key) {
+                            } else if let Some(next) = map.values.get(key) {
                                 next.select(all, &query[1..], resolver)
                             } else {
                                 self.map_some_or_error_all(all, query)
                             }
-                        },
+                        }
 
-                        _ => self.map_some_or_error_all(all, query)
-                    }
-                }
-            },
-
-            QueryPart::Index(array_idx) => {
-                match self {
-                    PathAwareValue::List((_path, vec)) => {
-                        PathAwareValue::retrieve_index(self, *array_idx, vec, query)
-                            .map_or_else(|e| self.map_error_or_empty(all, e),
-                                         |val| val.select(all, &query[1..], resolver))
-
+                        _ => self.map_some_or_error_all(all, query),
                     },
-
-                    _ => self.map_some_or_error_all(all, query)
                 }
+            }
+
+            QueryPart::Index(array_idx) => match self {
+                PathAwareValue::List((_path, vec)) => {
+                    PathAwareValue::retrieve_index(self, *array_idx, vec, query).map_or_else(
+                        |e| self.map_error_or_empty(all, e),
+                        |val| val.select(all, &query[1..], resolver),
+                    )
+                }
+
+                _ => self.map_some_or_error_all(all, query),
             },
 
-            QueryPart::AllIndices => {
+            QueryPart::AllIndices(_name) => {
                 match self {
                     PathAwareValue::List((_path, elements)) => {
                         PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
-                    },
+                    }
 
                     //
                     // Often in the place where a list of values is accepted
                     // single values often are accepted. So proceed to the next
                     // part of your query
                     //
-                    rest => {
-                        rest.select(all, &query[1..], resolver)
-                    }
+                    rest => rest.select(all, &query[1..], resolver),
                 }
             }
 
-            QueryPart::AllValues => {
+            QueryPart::AllValues(_name) => {
                 match self {
                     //
                     // Supporting old format
                     //
                     PathAwareValue::List((_path, elements)) => {
                         PathAwareValue::accumulate(self, all, &query[1..], elements, resolver)
-                    },
+                    }
 
                     PathAwareValue::Map((_path, map)) => {
                         let values: Vec<&PathAwareValue> = map.values.values().collect();
                         let mut resolved = Vec::with_capacity(values.len());
                         for each in values {
-                            resolved.extend(
-                                each.select(all, &query[1..], resolver)?);
+                            resolved.extend(each.select(all, &query[1..], resolver)?);
                         }
                         Ok(resolved)
-                    },
+                    }
 
                     //
                     // Often in the place where a list of values is accepted
                     // single values often are accepted. So proceed to the next
                     // part of your query
                     //
-                    rest => {
-                        rest.select(all, &query[1..], resolver)
-                    }
+                    rest => rest.select(all, &query[1..], resolver),
                 }
-            },
+            }
 
-            QueryPart::MapKeyFilter(filter) => {
-                match self {
-                    PathAwareValue::Map((path, map)) => {
-                        let mut selected = Vec::with_capacity(map.values.len());
-                        match &filter.compare_with {
-                            LetValue::AccessClause(query) => {
-                                let values = resolve_query(false, &query.query, self, resolver)?;
-                                for key in map.keys.iter() {
-                                    if values.contains(&key) {
-                                        match key {
-                                            PathAwareValue::String((_, v)) => {
-                                                selected.push(map.values.get(v).unwrap());
-                                            },
-                                            _ => unreachable!()
+            QueryPart::MapKeyFilter(_name, filter) => match self {
+                PathAwareValue::Map((_, map)) => {
+                    let mut selected = Vec::with_capacity(map.values.len());
+                    match &filter.compare_with {
+                        LetValue::AccessClause(query) => {
+                            let values = resolve_query(false, &query.query, self, resolver)?;
+                            for key in map.keys.iter() {
+                                if values.contains(&key) {
+                                    match key {
+                                        PathAwareValue::String((_, v)) => {
+                                            selected.push(map.values.get(v).unwrap());
                                         }
+                                        _ => unreachable!(),
                                     }
                                 }
-                            },
-
-                            LetValue::Value(v) => {
-                                let path_value = PathAwareValue::try_from((v, path.clone()))?;
-                                for key in map.keys.iter() {
-                                    if key == &path_value {
-                                        match key {
-                                            PathAwareValue::String((_, v)) => {
-                                                selected.push(map.values.get(v).unwrap());
-                                            },
-                                            _ => unreachable!()
-                                        }
-                                    }
-                                }
-                            },
-                        };
-                        if query.len() > 1 {
-                            let mut acc = Vec::with_capacity(selected.len());
-                            for each in selected {
-                                acc.extend(each.select(all, &query[1..], resolver)?)
                             }
-                            Ok(acc)
-                        } else {
-                            Ok(selected)
                         }
 
-                    },
+                        LetValue::Value(path_value) => {
+                            for key in map.keys.iter() {
+                                if key == path_value {
+                                    match key {
+                                        PathAwareValue::String((_, v)) => {
+                                            selected.push(map.values.get(v).unwrap());
+                                        }
+                                        _ => unreachable!(),
+                                    }
+                                }
+                            }
+                        }
 
-                    _ => self.map_some_or_error_all(all, query)
+                        LetValue::FunctionCall(_) => unreachable!(),
+                    };
+                    if query.len() > 1 {
+                        let mut acc = Vec::with_capacity(selected.len());
+                        for each in selected {
+                            acc.extend(each.select(all, &query[1..], resolver)?)
+                        }
+                        Ok(acc)
+                    } else {
+                        Ok(selected)
+                    }
                 }
+
+                _ => self.map_some_or_error_all(all, query),
             },
 
-            QueryPart::Filter(conjunctions) => {
+            QueryPart::Filter(_name, conjunctions) => {
                 match self {
                     PathAwareValue::List((path, vec)) => {
                         let mut selected = Vec::with_capacity(vec.len());
                         let context = format!("Path={},Type=Array", path);
                         for each in vec {
-                            let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
+                            let mut filter =
+                                AutoReport::new(EvaluationType::Filter, resolver, &context);
                             match conjunctions.evaluate(each, resolver) {
-                                Err(Error(ErrorKind::RetrievalError(e))) => {
+                                Err(Error::RetrievalError(e)) => {
                                     if all {
-                                        return Err(Error::new(ErrorKind::RetrievalError(e)))
+                                        return Err(Error::RetrievalError(e));
                                     }
                                     // Else treat is like a filter
-                                },
-                                Err(Error(ErrorKind::IncompatibleRetrievalError(e))) => {
-                                    if all {
-                                        return Err(Error::new(ErrorKind::IncompatibleRetrievalError(e)))
-                                    }
-                                    // Else treat is like a filter
-                                },
-                                Err(e) => return Err(e),
-                                Ok(status) => {
-                                    match status {
-                                        Status::PASS => {
-                                            filter.status(Status::PASS);
-                                            let index: usize = if query.len() > 1 {
-                                                match &query[1] {
-                                                    QueryPart::AllIndices => 2,
-                                                    _ => 1
-                                                }
-                                            } else { 1 };
-                                            selected.extend(each.select(all, &query[index..], resolver)?);
-                                        },
-                                        rest => { filter.status(rest); }
-                                    }
                                 }
+                                Err(Error::IncompatibleRetrievalError(e)) => {
+                                    if all {
+                                        return Err(Error::IncompatibleRetrievalError(e));
+                                    }
+                                    // Else treat is like a filter
+                                }
+                                Err(e) => return Err(e),
+                                Ok(status) => match status {
+                                    Status::PASS => {
+                                        filter.status(Status::PASS);
+                                        let index: usize = if query.len() > 1 {
+                                            match &query[1] {
+                                                QueryPart::AllIndices(_) => 2,
+                                                _ => 1,
+                                            }
+                                        } else {
+                                            1
+                                        };
+                                        selected.extend(each.select(
+                                            all,
+                                            &query[index..],
+                                            resolver,
+                                        )?);
+                                    }
+                                    rest => {
+                                        filter.status(rest);
+                                    }
+                                },
                             }
                         }
                         Ok(selected)
-                    },
+                    }
 
                     PathAwareValue::Map((path, _map)) => {
                         let context = format!("Path={},Type=MapElement", path);
-                        let mut filter = AutoReport::new(EvaluationType::Filter, resolver, &context);
-                        conjunctions.evaluate(self, resolver)
-                            .map_or_else(
-                                |e| self.map_error_or_empty(all, e),
-                                |status| {
-                                    match status {
-                                        Status::PASS => {
-                                            filter.status(Status::PASS);
-                                            self.select(all, &query[1..], resolver)
-                                        },
-                                        rest => {
-                                            filter.status(rest);
-                                            Ok(vec![])
-                                        }
-
-                                    }
+                        let mut filter =
+                            AutoReport::new(EvaluationType::Filter, resolver, &context);
+                        conjunctions.evaluate(self, resolver).map_or_else(
+                            |e| self.map_error_or_empty(all, e),
+                            |status| match status {
+                                Status::PASS => {
+                                    filter.status(Status::PASS);
+                                    self.select(all, &query[1..], resolver)
                                 }
-                            )
+                                rest => {
+                                    filter.status(rest);
+                                    Ok(vec![])
+                                }
+                            },
+                        )
                     }
 
-                    _ => self.map_some_or_error_all(all, query)
+                    _ => self.map_some_or_error_all(all, query),
                 }
-            },
+            }
         }
     }
 }
 
+impl Serialize for PathAwareValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let result: crate::rules::Result<(String, serde_json::Value)> = self.try_into();
+        match result {
+            Ok((path, value)) => {
+                let mut struct_ser = serializer.serialize_struct("PathAwareValue", 2)?;
+                struct_ser.serialize_field("path", &path)?;
+                struct_ser.serialize_field("value", &value)?;
+                struct_ser.end()
+            }
+            Err(e) => Err(serde::ser::Error::custom(e)),
+        }
+    }
+}
+
+impl PartialOrd for PathAwareValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.self_path().0.partial_cmp(&other.self_path().0)
+    }
+}
+
 impl PathAwareValue {
+    pub(crate) fn merge(mut self, other: PathAwareValue) -> crate::rules::Result<PathAwareValue> {
+        match (&mut self, other) {
+            (PathAwareValue::List((_path, vec)), PathAwareValue::List((_p2, other_vec))) => {
+                vec.extend(other_vec)
+            }
+
+            (PathAwareValue::Map((_, map)), PathAwareValue::Map((path, other_map))) => {
+                for (key, value) in other_map.values {
+                    if map.values.contains_key(&key) {
+                        return Err(Error::MultipleValues(format!(
+                            "Key {}, already exists in map",
+                            key
+                        )));
+                    }
+
+                    map.values.insert(key.clone(), value);
+                    map.keys
+                        .push(PathAwareValue::String((path.extend_str(&key), key)));
+                }
+            }
+
+            (this, that) => {
+                return Err(Error::IncompatibleError(format!(
+                    "Types are not compatible for merges {}, {}",
+                    this.type_info(),
+                    that.type_info()
+                )))
+            }
+        }
+        Ok(self)
+    }
 
     pub(crate) fn is_list(&self) -> bool {
         match self {
@@ -643,95 +1017,141 @@ impl PathAwareValue {
     pub(crate) fn is_map(&self) -> bool {
         match self {
             PathAwareValue::Map((_, _)) => true,
-            _ => false
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_null(&self) -> bool {
+        match self {
+            PathAwareValue::Null(_) => true,
+            _ => false,
         }
     }
 
     fn map_error_or_empty(&self, all: bool, e: Error) -> Result<Vec<&PathAwareValue>, Error> {
         if !all {
             match e {
-                Error(ErrorKind::IncompatibleRetrievalError(_)) |
-                Error(ErrorKind::RetrievalError(_)) => Ok(vec![]),
+                Error::IncompatibleRetrievalError(_) | Error::RetrievalError(_) => Ok(vec![]),
 
-                rest => return Err(rest)
+                rest => return Err(rest),
             }
-        }
-        else {
-            return Err(e)
+        } else {
+            return Err(e);
         }
     }
 
-    fn map_some_or_error_all(&self, all: bool, query: &[QueryPart<'_>]) -> Result<Vec<&PathAwareValue>, Error> {
+    fn map_some_or_error_all(
+        &self,
+        all: bool,
+        query: &[QueryPart<'_>],
+    ) -> Result<Vec<&PathAwareValue>, Error> {
         if all {
-            Err(Error::new(ErrorKind::IncompatibleRetrievalError(
+            Err(Error::IncompatibleRetrievalError(
                 format!("Attempting to retrieve array index or key from map at path = {} , Type was not an array/object {}, Remaining Query = {}",
                         self.self_value().0, self.type_info(), SliceDisplay(query))
-            )))
+            ))
         } else {
             Ok(vec![])
         }
     }
 
     pub(crate) fn is_scalar(&self) -> bool {
-        !self.is_list() || !self.is_map()
+        !self.is_list() && !self.is_map()
+    }
+
+    pub(crate) fn is_string(&self) -> bool {
+        if let PathAwareValue::String(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn self_path(&self) -> &Path {
         self.self_value().0
     }
 
+    pub(crate) fn self_path_mut(&mut self) -> &mut Path {
+        match self {
+            PathAwareValue::Null(path)
+            | PathAwareValue::String((path, _))
+            | PathAwareValue::Regex((path, _))
+            | PathAwareValue::Bool((path, _))
+            | PathAwareValue::Int((path, _))
+            | PathAwareValue::Float((path, _))
+            | PathAwareValue::Char((path, _))
+            | PathAwareValue::List((path, _))
+            | PathAwareValue::Map((path, _))
+            | PathAwareValue::RangeInt((path, _))
+            | PathAwareValue::RangeFloat((path, _))
+            | PathAwareValue::RangeChar((path, _)) => path,
+        }
+    }
+
     pub(crate) fn self_value(&self) -> (&Path, &PathAwareValue) {
         match self {
-            PathAwareValue::Null(path)              => (path, self),
-            PathAwareValue::String((path, _))       => (path, self),
-            PathAwareValue::Regex((path, _))        => (path, self),
-            PathAwareValue::Bool((path, _))         => (path, self),
-            PathAwareValue::Int((path, _))          => (path, self),
-            PathAwareValue::Float((path, _))        => (path, self),
-            PathAwareValue::Char((path, _))         => (path, self),
-            PathAwareValue::List((path, _))         => (path, self),
-            PathAwareValue::Map((path, _))          => (path, self),
-            PathAwareValue::RangeInt((path, _))     => (path, self),
-            PathAwareValue::RangeFloat((path, _))   => (path, self),
-            PathAwareValue::RangeChar((path, _))    => (path, self),
+            PathAwareValue::Null(path) => (path, self),
+            PathAwareValue::String((path, _)) => (path, self),
+            PathAwareValue::Regex((path, _)) => (path, self),
+            PathAwareValue::Bool((path, _)) => (path, self),
+            PathAwareValue::Int((path, _)) => (path, self),
+            PathAwareValue::Float((path, _)) => (path, self),
+            PathAwareValue::Char((path, _)) => (path, self),
+            PathAwareValue::List((path, _)) => (path, self),
+            PathAwareValue::Map((path, _)) => (path, self),
+            PathAwareValue::RangeInt((path, _)) => (path, self),
+            PathAwareValue::RangeFloat((path, _)) => (path, self),
+            PathAwareValue::RangeChar((path, _)) => (path, self),
         }
     }
 
     pub(crate) fn type_info(&self) -> &'static str {
         match self {
-            PathAwareValue::Null(_path)              => "null",
-            PathAwareValue::String((_path, _))       => "String",
-            PathAwareValue::Regex((_path, _))        => "Regex",
-            PathAwareValue::Bool((_path, _))         => "bool",
-            PathAwareValue::Int((_path, _))          => "int",
-            PathAwareValue::Float((_path, _))        => "float",
-            PathAwareValue::Char((_path, _))         => "char",
-            PathAwareValue::List((_path, _))         => "array",
-            PathAwareValue::Map((_path, _))          => "map",
-            PathAwareValue::RangeInt((_path, _))     => "range(int, int)",
-            PathAwareValue::RangeFloat((_path, _))   => "range(float, float)",
-            PathAwareValue::RangeChar((_path, _))    => "range(char, char)",
+            PathAwareValue::Null(_path) => "null",
+            PathAwareValue::String((_path, _)) => "String",
+            PathAwareValue::Regex((_path, _)) => "Regex",
+            PathAwareValue::Bool((_path, _)) => "bool",
+            PathAwareValue::Int((_path, _)) => "int",
+            PathAwareValue::Float((_path, _)) => "float",
+            PathAwareValue::Char((_path, _)) => "char",
+            PathAwareValue::List((_path, _)) => "array",
+            PathAwareValue::Map((_path, _)) => "map",
+            PathAwareValue::RangeInt((_path, _)) => "range(int, int)",
+            PathAwareValue::RangeFloat((_path, _)) => "range(float, float)",
+            PathAwareValue::RangeChar((_path, _)) => "range(char, char)",
         }
     }
 
-    pub(crate) fn retrieve_index<'v>(parent: &PathAwareValue, index: i32, list: &'v Vec<PathAwareValue>, query: &[QueryPart<'_>]) -> Result<&'v PathAwareValue, Error> {
+    pub(crate) fn retrieve_index<'v>(
+        parent: &PathAwareValue,
+        index: i32,
+        list: &'v Vec<PathAwareValue>,
+        query: &[QueryPart<'_>],
+    ) -> Result<&'v PathAwareValue, Error> {
         let check = if index >= 0 { index } else { -index } as usize;
         if check < list.len() {
             Ok(&list[check])
         } else {
-            Err(Error::new(
-                ErrorKind::RetrievalError(
+            Err(Error::
+                RetrievalError(
                     format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
-                           parent.self_path(), index, list, SliceDisplay(query))
-                )))
+                            parent.self_path(), index, list, SliceDisplay(query))
+                ))
         }
-
     }
 
-    pub(crate) fn accumulate<'v>(parent: &PathAwareValue, all: bool, query: &[QueryPart<'_>], elements: &'v Vec<PathAwareValue>, resolver: &dyn EvaluationContext) -> Result<Vec<&'v PathAwareValue>, Error>{
+    pub(crate) fn accumulate<'v>(
+        parent: &PathAwareValue,
+        all: bool,
+        query: &[QueryPart<'_>],
+        elements: &'v Vec<PathAwareValue>,
+        resolver: &dyn EvaluationContext,
+    ) -> Result<Vec<&'v PathAwareValue>, Error> {
         if elements.is_empty() && !query.is_empty() && all {
-            return Err(Error::new(ErrorKind::RetrievalError(
-                format!("No entries for path = {} . Remaining Query {}", parent.self_path(), SliceDisplay(query))
+            return Err(Error::RetrievalError(format!(
+                "No entries for path = {} . Remaining Query {}",
+                parent.self_path(),
+                SliceDisplay(query)
             )));
         }
 
@@ -739,13 +1159,11 @@ impl PathAwareValue {
         for each in elements {
             if !query.is_empty() {
                 accumulated.extend(each.select(all, query, resolver)?);
-            }
-            else {
+            } else {
                 accumulated.push(each);
             }
         }
         Ok(accumulated)
-
     }
 }
 
@@ -759,30 +1177,109 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         (PathAwareValue::String((_, s)), PathAwareValue::String((_, o))) => Ok(s.cmp(o)),
         (PathAwareValue::Float((_, f)), PathAwareValue::Float((_, s))) => match f.partial_cmp(s) {
             Some(o) => Ok(o),
-            None => Err(Error::new(ErrorKind::NotComparable("Float values are not comparable".to_owned())))
+            None => Err(Error::NotComparable(
+                "Float values are not comparable".to_owned(),
+            )),
         },
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
-        (_, _) => Err(Error::new(ErrorKind::NotComparable(
-            format!("PathAwareValues are not comparable {}, {}", first.type_info(), other.type_info()))))
+        (_, _) => Err(Error::NotComparable(format!(
+            "PathAwareValues are not comparable {}, {}",
+            first.type_info(),
+            other.type_info()
+        ))),
     }
 }
 
 pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
     let (reg, s) = match (first, second) {
-        (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => (regex::Regex::new(r.as_str())?, s.as_str()),
-        (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => (regex::Regex::new(r.as_str())?, s.as_str()),
-        (_,_) => return Ok(first == second),
+        (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
+            (Regex::new(r.as_str())?, s.as_str())
+        }
+        (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
+            (Regex::new(r.as_str())?, s.as_str())
+        }
+
+        (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => return Ok(s1 == s2),
+
+        (PathAwareValue::Map((_, map)), PathAwareValue::Map((_, map2))) => {
+            return Ok('result: loop {
+                if map.values.len() == map2.values.len() {
+                    for (key, value) in map.values.iter() {
+                        match map2.values.get(key) {
+                            Some(value2) => {
+                                if !compare_eq(value, value2)? {
+                                    break 'result false;
+                                }
+                            }
+
+                            None => {
+                                break 'result false;
+                            }
+                        }
+                    }
+                    break 'result true;
+                }
+                break 'result false;
+            })
+        }
+
+        (PathAwareValue::List((_, list)), PathAwareValue::List((_, list2))) => {
+            return Ok('result: loop {
+                //
+                // Order does matter
+                //
+                if list.len() == list2.len() {
+                    for (left, right) in list.iter().zip(list2.iter()) {
+                        if !compare_eq(left, right)? {
+                            break 'result false;
+                        }
+                    }
+                    break 'result true;
+                }
+                break 'result false;
+            });
+        }
+
+        (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => return Ok(b1 == b2),
+
+        (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => return Ok(r == s),
+
+        //
+        // Range checks
+        //
+        (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
+            return Ok(value.is_within(r))
+        }
+
+        (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
+            return Ok(value.is_within(r))
+        }
+
+        (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
+            return Ok(value.is_within(r))
+        }
+
+        (_, _) => {
+            return match compare_values(first, second)? {
+                Ordering::Equal => Ok(true),
+                _ => Ok(false),
+            }
+        }
     };
-    Ok(reg.is_match(s))
+    let match_result = reg.is_match(s);
+    match match_result {
+        Ok(is_match) => Ok(is_match),
+        Err(error) => return Err(Error::from(error)),
+    }
 }
 
 pub(crate) fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Equal | Ordering::Greater => Ok(false),
-            Ordering::Less => Ok(true)
+            Ordering::Less => Ok(true),
         },
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
@@ -790,9 +1287,9 @@ pub(crate) fn compare_le(first: &PathAwareValue, other: &PathAwareValue) -> Resu
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(false),
-            Ordering::Equal | Ordering::Less => Ok(true)
+            Ordering::Equal | Ordering::Less => Ok(true),
         },
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
@@ -800,9 +1297,9 @@ pub(crate) fn compare_gt(first: &PathAwareValue, other: &PathAwareValue) -> Resu
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(true),
-            Ordering::Less | Ordering::Equal => Ok(false)
+            Ordering::Less | Ordering::Equal => Ok(false),
         },
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
@@ -810,13 +1307,12 @@ pub(crate) fn compare_ge(first: &PathAwareValue, other: &PathAwareValue) -> Resu
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater | Ordering::Equal => Ok(true),
-            Ordering::Less => Ok(false)
+            Ordering::Less => Ok(false),
         },
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
 #[cfg(test)]
 #[path = "path_value_tests.rs"]
 mod path_value_tests;
-

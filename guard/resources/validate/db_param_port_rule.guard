@@ -1,0 +1,31 @@
+let redshift_clusters = Resources.*[ Type == 'AWS::Redshift::Cluster']
+
+rule DB_PORT_COMPLIANT when %redshift_clusters !empty {
+	Parameters.DBPort exists 
+	Parameters.DBPort.Default exists
+	Parameters.DBPort.Default == 3306
+  <<
+    Violation: DB Port Default should be 3306.
+    Fix: Set Default DB Port to 3306
+  >>
+}
+
+rule DB_NAME_COMPLIANT when %redshift_clusters !empty {
+  %redshift_clusters.Properties.DBName exists 
+  %redshift_clusters.Properties.DBName == "mydb"
+  <<
+    Violation: DB Port Name should be "mydb".
+    Fix: Set DBName to "mydb"
+  >>
+}
+
+rule DB_METADATA_EXISTS when %redshift_clusters !empty {
+  Metadata.Instances exists 
+  Metadata.Instances.Description exists
+  Metadata.Databases exists 
+  Metadata.Databases.Description exists
+  <<
+    Violation: DB Metadata is incomplete. Need description for instances and databases.
+    Fix: Add metadata properties for description of Instances and Databases.
+  >>
+}

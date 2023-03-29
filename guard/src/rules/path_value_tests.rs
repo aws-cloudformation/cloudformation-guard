@@ -1,7 +1,6 @@
-
-
-use crate::rules::exprs::{AccessClause, AccessQuery, FileLocation, GuardAccessClause, GuardClause, LetExpr, LetValue};
-
+use crate::rules::exprs::{
+    AccessClause, AccessQuery, FileLocation, GuardAccessClause, GuardClause, LetExpr, LetValue,
+};
 
 use super::*;
 
@@ -16,8 +15,7 @@ const SAMPLE_SINGLE: &str = r#"{
             }
         }"#;
 
-
-const SAMPLE_MULTIPLE : &str = r#"{
+const SAMPLE_MULTIPLE: &str = r#"{
             "Resources": {
                 "vpc": {
                     "Type": "AWS::EC2::VPC",
@@ -48,27 +46,29 @@ const SAMPLE_MULTIPLE : &str = r#"{
 
 #[test]
 fn path_value_equivalent() -> Result<(), Error> {
-    let value = PathAwareValue::try_from(
-        SAMPLE_SINGLE
-    )?;
+    let value = PathAwareValue::try_from(SAMPLE_SINGLE)?;
 
-    let resources_path  = Path::try_from("/Resources")?;
-    let vpc_path        = resources_path.extend_str("vpc");
-    let vpc_type        = vpc_path.extend_str("Type");
-    let vpc_props       = vpc_path.extend_str("Properties");
-    let cidr_path       = vpc_props.extend_str("CidrBlock");
+    let resources_path = Path::try_from("/Resources")?;
+    let vpc_path = resources_path.extend_str("vpc");
+    let vpc_type = vpc_path.extend_str("Type");
+    let vpc_props = vpc_path.extend_str("Properties");
+    let cidr_path = vpc_props.extend_str("CidrBlock");
 
     let mut vpc_properties = indexmap::IndexMap::new();
     vpc_properties.insert(
         String::from("CidrBlock"),
-        PathAwareValue::String((cidr_path.clone(), String::from("10.0.0.0/12")))
+        PathAwareValue::String((cidr_path.clone(), String::from("10.0.0.0/12"))),
     );
-    let vpc_properties = PathAwareValue::Map((vpc_props.clone(), MapValue {
-        keys: vec![
-            PathAwareValue::String(( cidr_path.clone(), String::from("CidrBlock")))
-        ],
-        values: vpc_properties
-    }));
+    let vpc_properties = PathAwareValue::Map((
+        vpc_props.clone(),
+        MapValue {
+            keys: vec![PathAwareValue::String((
+                cidr_path.clone(),
+                String::from("CidrBlock"),
+            ))],
+            values: vpc_properties,
+        },
+    ));
     let vpc_type_prop = PathAwareValue::String((vpc_type.clone(), String::from("AWS::EC2::VPC")));
 
     let mut vpc_block = indexmap::IndexMap::new();
@@ -82,36 +82,41 @@ fn path_value_equivalent() -> Result<(), Error> {
                 PathAwareValue::String((vpc_type.clone(), String::from("Type"))),
                 PathAwareValue::String((vpc_props.clone(), String::from("Properties"))),
             ],
-            values: vpc_block
-        }));
+            values: vpc_block,
+        },
+    ));
 
     let mut resources = indexmap::IndexMap::new();
     resources.insert(String::from("vpc"), vpc);
     let resources = PathAwareValue::Map((
         resources_path.clone(),
         MapValue {
-            keys: vec![
-                PathAwareValue::String((vpc_path.clone(), String::from("vpc")))
-            ],
-            values: resources
-        }));
+            keys: vec![PathAwareValue::String((
+                vpc_path.clone(),
+                String::from("vpc"),
+            ))],
+            values: resources,
+        },
+    ));
 
     let mut top = indexmap::IndexMap::new();
     top.insert("Resources".to_string(), resources);
     let top = PathAwareValue::Map((
         Path::root(),
         MapValue {
-            keys: vec![
-                PathAwareValue::String((resources_path.clone(), "Resources".to_string()))
-            ],
-            values: top
-        }));
+            keys: vec![PathAwareValue::String((
+                resources_path.clone(),
+                "Resources".to_string(),
+            ))],
+            values: top,
+        },
+    ));
 
     assert_eq!(top, value);
     Ok(())
 }
 
-struct DummyEval{}
+struct DummyEval {}
 impl EvaluationContext for DummyEval {
     fn resolve_variable(&self, _variable: &str) -> crate::rules::Result<Vec<&PathAwareValue>> {
         unimplemented!()
@@ -121,11 +126,19 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+    fn end_evaluation(
+        &self,
+        _eval_type: EvaluationType,
+        _context: &str,
+        _msg: String,
+        _from: Option<PathAwareValue>,
+        _to: Option<PathAwareValue>,
+        _status: Option<Status>,
+        _cmp: Option<(CmpOperator, bool)>,
+    ) {
     }
 
-    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
-    }
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
 }
 
 #[test]
@@ -197,30 +210,44 @@ fn path_value_queries() -> Result<(), Error> {
     "#;
 
     let incoming = PathAwareValue::try_from(resources)?;
-    let eval = DummyEval{};
+    let eval = DummyEval {};
     //
     // Select all resources that have security groups present as a property
     //
-    let resources_with_sgs = AccessQuery::try_from(
-        "Resources.*[ Properties.SecurityGroups EXISTS ]")?;
-    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
+    let resources_with_sgs =
+        AccessQuery::try_from("Resources.*[ Properties.SecurityGroups EXISTS ]")?;
+    let selected = incoming.select(
+        resources_with_sgs.match_all,
+        &resources_with_sgs.query,
+        &eval,
+    )?;
     assert_eq!(selected.is_empty(), true);
 
-    let resources_with_sgs = AccessQuery::try_from(
-        "Resources.*[ Properties.SecurityGroupIds EXISTS ]")?;
-    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
+    let resources_with_sgs =
+        AccessQuery::try_from("Resources.*[ Properties.SecurityGroupIds EXISTS ]")?;
+    let selected = incoming.select(
+        resources_with_sgs.match_all,
+        &resources_with_sgs.query,
+        &eval,
+    )?;
     assert_eq!(selected.is_empty(), false);
 
-    let get_att_refs =
-        r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
+    let get_att_refs = r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
-    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
+    let selected = incoming.select(
+        resources_with_sgs.match_all,
+        &resources_with_sgs.query,
+        &eval,
+    )?;
     assert_eq!(selected.len(), 2);
 
-    let get_att_refs =
-        r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let get_att_refs = r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
     let resources_with_sgs = AccessQuery::try_from(get_att_refs)?;
-    let selected = incoming.select(resources_with_sgs.match_all, &resources_with_sgs.query, &eval)?;
+    let selected = incoming.select(
+        resources_with_sgs.match_all,
+        &resources_with_sgs.query,
+        &eval,
+    )?;
     assert_eq!(selected.len(), 2);
     println!("{:?}", selected);
 
@@ -234,38 +261,35 @@ fn path_value_queries() -> Result<(), Error> {
     //
     // Clauses
     //
-    let clause = "SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
+    let clause =
+        "SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
     let clause_statement = GuardClause::try_from(clause)?;
     println!("{:?}", clause_statement);
-    let expected = GuardClause::Clause(
-        GuardAccessClause {
-            negation: false,
-            access_clause: AccessClause {
-                query: AccessQuery {
-                    query: vec![
-                        QueryPart::Key(String::from("Resources")),
-                        QueryPart::AllValues,
-                        QueryPart::Key("Properties".to_string()),
-                        QueryPart::Key("SecurityGroupIds".to_string()),
-                        QueryPart::AllIndices,
-                        QueryPart::Key("Fn::GetAtt".to_string()),
-                        QueryPart::AllValues
-                    ],
-                    match_all: false
-                },
-                compare_with: Some(LetValue::Value(
-                    Value::try_from("[/aa/, /bb/]")?
-                )),
-                location: FileLocation {
-                    line: 1,
-                    column: 1,
-                    file_name: ""
-                },
-                comparator: (CmpOperator::In, false),
-                custom_message: None
-            }
-        }
-    );
+    let expected = GuardClause::Clause(GuardAccessClause {
+        negation: false,
+        access_clause: AccessClause {
+            query: AccessQuery {
+                query: vec![
+                    QueryPart::Key(String::from("Resources")),
+                    QueryPart::AllValues(None),
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("SecurityGroupIds".to_string()),
+                    QueryPart::AllIndices(None),
+                    QueryPart::Key("Fn::GetAtt".to_string()),
+                    QueryPart::AllValues(None),
+                ],
+                match_all: false,
+            },
+            compare_with: Some(LetValue::Value(PathAwareValue::try_from("[/aa/, /bb/]")?)),
+            location: FileLocation {
+                line: 1,
+                column: 1,
+                file_name: "",
+            },
+            comparator: (CmpOperator::In, false),
+            custom_message: None,
+        },
+    });
     assert_eq!(expected, clause_statement);
 
     Ok(())
@@ -290,9 +314,8 @@ fn some_filter_tests() -> Result<(), Error> {
     }"#;
     let query = AccessQuery::try_from(query_str)?;
     let resources = PathAwareValue::try_from(resources_str)?;
-    let dummy = DummyEval{};
-    let selected = resources.select(
-        query.match_all, &query.query, &dummy)?;
+    let dummy = DummyEval {};
+    let selected = resources.select(query.match_all, &query.query, &dummy)?;
     assert_eq!(selected.len(), 1);
     Ok(())
 }
@@ -308,15 +331,15 @@ fn it_support_evaluation_tests() -> Result<(), Error> {
         ]
     }"#;
     let parsed_values = PathAwareValue::try_from(values)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let selected = parsed_values.select(parsed_tags.match_all, &parsed_tags.query, &dummy)?;
     println!("Selected = {:?}", selected);
     assert_eq!(selected.len(), 1);
     match selected[0] {
         PathAwareValue::Map((p, _map)) => {
             assert_eq!(p, &Path::try_from("/Tags/0")?);
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
     Ok(())
 }
@@ -332,7 +355,7 @@ fn map_keys_filter_test() -> Result<(), Error> {
     let value = PathAwareValue::try_from(condition_str)?;
     let selection_str = r#"Condition[ keys == /aws:[Ss]ource(Vpc|VPC|VpcE|VPCE)/ ]"#;
     let access = AccessQuery::try_from(selection_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let selected = value.select(access.match_all, &access.query, &dummy)?;
     println!("Selected = {:?}", selected);
     assert_eq!(selected.len(), 1);
@@ -346,5 +369,46 @@ fn map_keys_filter_test() -> Result<(), Error> {
             assert_eq!(v, "vpc-123454");
         }
     }
+    Ok(())
+}
+
+#[test]
+fn merge_values_test() -> Result<(), Error> {
+    let resources = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+        "#,
+    )?)?;
+
+    let parameters = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        PARAMETERS:
+            ORG_IDS: ["o-2324/"]
+        "#,
+    )?)?;
+
+    let resources = resources.merge(parameters)?;
+    assert_eq!(matches!(resources, PathAwareValue::Map(_)), true);
+    let resources_map = match &resources {
+        PathAwareValue::Map((_, map)) => map,
+        _ => unreachable!(),
+    };
+    assert_eq!(resources_map.values.len(), 2);
+    assert_eq!(
+        matches!(resources_map.values.get("PARAMETERS"), Some(_)),
+        true
+    );
+
+    let parameters = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        PARAMETERS:
+            ORG_IDS: ["o-2324/"]
+        "#,
+    )?)?;
+    let resources = resources.merge(parameters);
+    assert_eq!(resources.is_err(), true);
+
     Ok(())
 }

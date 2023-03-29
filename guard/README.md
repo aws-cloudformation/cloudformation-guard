@@ -1,6 +1,6 @@
 # AWS CloudFormation Guard 2.0's Modes of Operation
 
-AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies. 
+AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 
 As an example of how to use AWS CloudFormation Guard (cfn-guard), given a CloudFormation template (template.json):
 
@@ -34,7 +34,7 @@ And a rules file (rules.guard):
 
 ```
 # Create a variable named 'aws_ec2_volume_resources' that selects all resources of type "AWS::EC2::Volume"
-# in the input resource template 
+# in the input resource template
 let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
 
 # Create a rule named aws_template_parameters for validation in the "Parameters" section of the template
@@ -42,7 +42,7 @@ rule aws_template_parameters {
     Parameters.InstanceName == "TestInstance"
 }
 
-# Create a rule named aws_ec2_volume that filters on "AWS::EC2::Volume" type being present in the template 
+# Create a rule named aws_ec2_volume that filters on "AWS::EC2::Volume" type being present in the template
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
     %aws_ec2_volume_resources.Properties.Encrypted == true
     %aws_ec2_volume_resources.Properties.Size IN [50, 500]
@@ -61,7 +61,7 @@ aws_template_parameters FAIL
 aws_ec2_volume FAIL
 ```
 
-We designed `cfn-guard` to be plugged into your build processes. 
+We designed `cfn-guard` to be plugged into your build processes.
 
 If CloudFormation Guard validates the templates successfully, it gives you an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a status report of the rules that failed.
 Use the verbose flag `-v` to see the detailed evaluation tree that shows how CloudFormation Guard evaluated each rule.
@@ -76,33 +76,57 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 `validate` (like the example above) validates data against rules.
 
 ```bash
-cfn-guard-validate
-Evaluates rules against the data files to determine success or failure. 
-You can point rules flag to a rules directory and point data flag to a data directory. 
-When pointed to a directory it will read all rules in the directory file and evaluate 
-them against the data files found in the directory. The command can also point to a
-single file and it would work as well.
-Note - When pointing the command to a directory, the directory may not contain a mix of 
-rules and data files. The directory being pointed to must contain only data files,
-or rules files.
+Usage: cfn-guard validate [OPTIONS] <--rules [<rules>...]|--payload>
 
-USAGE:
-    cfn-guard validate [FLAGS] [OPTIONS] --rules <rules>
-
-FLAGS:
-    -a, --alphabetical            Validate files in a directory ordered alphabetically
-    -h, --help                    Prints help information
-    -m, --last-modified           Validate files in a directory ordered by last modified times
-    -p, --print-json              Print output in json format
-    -s, --show-clause-failures    Show clause failure along with summary
-    -V, --version                 Prints version information
-    -v, --verbose                 Verbose logging
-
-OPTIONS:
-    -d, --data <data>      Provide a file or dir for data files in JSON or YAML
-    -r, --rules <rules>    Provide a rules file or a directory of rules files
-
-```
+Options:
+  -r, --rules [<rules>...]
+          Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.
+          Example:
+           --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard
+          For directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset
+  -d, --data [<data>...]
+          Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.
+          Example:
+           --data template1.yaml --data ./data-dir1 --data template2.yaml
+          For directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template
+  -i, --input-parameters [<input-parameters>...]
+          Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.
+          Example:
+           --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml
+          For directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template
+  -t, --type <type>
+          Specify the type of data file used for improved messaging - ex: CFNTemplate [possible values: CFNTemplate]
+  -o, --output-format <output-format>
+          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary]
+  -E, --previous-engine
+          Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating
+  -S, --show-summary <show-summary>
+          Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip) [default: fail] [possible values: none, all, pass, fail, skip]
+  -s, --show-clause-failures
+          Show clause failure along with summary
+  -a, --alphabetical
+          Validate files in a directory ordered alphabetically
+  -m, --last-modified
+          Validate files in a directory ordered by last modified times
+  -v, --verbose
+          Verbose logging
+  -p, --print-json
+          Print output in json format
+  -P, --payload
+          Provide rules and data in the following JSON format via STDIN,
+          {"rules":["<rules 1>", "<rules 2>", ...], "data":["<data 1>", "<data 2>", ...]}, where,
+          - "rules" takes a list of string version of rules files as its value and
+          - "data" takes a list of string version of data files as it value.
+          When --payload is specified --rules and --data cannot be specified.
+  -z, --structured
+          Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments:
+          verbose
+           print-json
+           previous-engine
+           show-summary: all/fail/pass/skip
+          output-format: single-line-summary
+  -h, --help
+          Print help```
 
 ### Rulegen
 
@@ -126,7 +150,7 @@ OPTIONS:
 For example, using the same template (template.json) from the above example:
 
 ```bash
-$ cfn-guard rulegen --data template.json 
+$ cfn-guard rulegen --data template.json
 let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
     %aws_ec2_volume_resources.Properties.Size IN [500, 100]
@@ -146,7 +170,7 @@ cfn-guard rulegen --data template.json --output rules.guard
 `migrate` command generates rules in the new AWS Cloudformation Guard 2.0 syntax from rules written using 1.0 language.
 
 ```bash
-cfn-guard-migrate 
+cfn-guard-migrate
 Migrates 1.0 rules to 2.0 compatible rules.
 
 USAGE:
@@ -176,9 +200,9 @@ The equivalent rules in the 2.0 language can be generated using the migrate comm
 $ cfn-guard migrate --rules example.ruleset
 rule migrated_rules {
     let aws_ec2_volume = Resources.*[ Type == "AWS::EC2::Volume" ]
- 
+
     let encryption_flag = true
- 
+
     %aws_ec2_volume.Properties.Encrypted == %encryption_flag
     %aws_ec2_volume.Properties.Size <= 100
 }
@@ -189,21 +213,17 @@ rule migrated_rules {
 `parse-tree` command generates a parse tree for the rules defined in a rules file. Use the `--output` flag to write the generated tree to a file.
 
 ```bash
-cfn-guard-parse-tree 
+cfn-guard-parse-tree
 Prints out the parse tree for the rules defined in the file.
 
-USAGE:
-    cfn-guard parse-tree [FLAGS] [OPTIONS]
+Usage: cfn-guard parse-tree [OPTIONS]
 
-FLAGS:
-    -h, --help          Prints help information
-    -j, --print-json    Print output in json format
-    -y, --print-yaml    Print output in json format
-    -V, --version       Prints version information
-
-OPTIONS:
-    -o, --output <output>    Write to output file
-    -r, --rules <rules>      Provide a rules file
+Options:
+  -r, --rules <rules>    Provide a rules file
+  -o, --output <output>  Write to output file
+  -p, --print-json       Print output in JSON format. Use -p going forward, as the short flag -j is on deprecation path.
+  -y, --print-yaml       Print output in YAML format
+  -h, --help             Print help
 ```
 
 ### Test
@@ -216,28 +236,24 @@ Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
 or failure testing.
 
-USAGE:
-    cfn-guard test [FLAGS] --rules-file <rules-file> --test-data <test-data> [alphabetical]
+Usage: cfn-guard test [OPTIONS]
 
-FLAGS:
-    -h, --help             Prints help information
-    -m, --last-modified    Sort by last modified times within a directory
-    -V, --version          Prints version information
-    -v, --verbose          Verbose logging
-
-OPTIONS:
-    -r, --rules-file <rules-file>    Provide a rules file
-    -t, --test-data <test-data>      Provide a file or dir for data files in JSON or YAML
-
-ARGS:
-    <alphabetical>    Sort alphabetically inside a directory
+Options:
+  -r, --rules-file <rules-file>  Provide a rules file
+  -t, --test-data <test-data>    Provide a file or dir for data files in JSON or YAML
+  -d, --dir <dir>                Provide the root directory for rules
+  -E, --previous-engine          Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating
+  -a, --alphabetical             Sort alphabetically inside a directory
+  -m, --last-modified            Sort by last modified times within a directory
+  -v, --verbose                  Verbose logging
+  -h, --help                     Print help
 ```
 
 For example, given a rules file (rules.guard) as:
 
 ```bash
 rule assert_all_resources_have_non_empty_tags {
-    when Resources.* !empty { 
+    when Resources.* !empty {
         Resources.*.Properties.Tags !empty
     }
 }
@@ -251,10 +267,10 @@ You can write a YAML-formatted unit test file (test.yml) as:
     Resources: {}
    expectations:
    rules:
-     assert_all_resources_have_non_empty_tags: SKIP 
+     assert_all_resources_have_non_empty_tags: SKIP
 - input:
   Resources:
-    nonCompliant: 
+    nonCompliant:
       Type: Consoto::Network::VPC
       Properties: {}
   expectations:
@@ -265,6 +281,6 @@ You can write a YAML-formatted unit test file (test.yml) as:
 You can then test your rules file using the `test` command as:
 
 ```bash
-$ cfn-guard test -r rules.guard -t test.yml 
+$ cfn-guard test -r rules.guard -t test.yml
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = SKIP, Got Status = SKIP
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = FAIL, Got Status = FAIL

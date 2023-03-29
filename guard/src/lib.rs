@@ -1,14 +1,14 @@
-// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-mod rules;
-mod commands;
-mod command;
-mod migrate;
+/* require return types marked as must_use to be used (such as Result types) */
+#![deny(unused_must_use)]
 
-pub extern "C" fn run_checks(
-    data: &str,
-    rules: &str,
-) -> crate::rules::Result<String> {
-    return  crate::commands::helper::validate_and_return_json(&data, &rules);
-}
+pub mod command;
+pub mod commands;
+mod migrate;
+mod rules;
+pub mod utils;
+
+pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
+pub use crate::rules::errors::Error;

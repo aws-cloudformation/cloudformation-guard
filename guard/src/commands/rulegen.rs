@@ -1,76 +1,93 @@
 use std::fs;
-use std::fs::{File};
 use std::process;
 
-use std::collections::{HashMap, HashSet};
-use clap::{App, Arg, ArgMatches};
 use crate::command::Command;
+use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
+use crate::rules::errors::Error;
 use crate::rules::Result;
-use serde_json::Value;
+use crate::utils::reader::Reader;
+use crate::utils::writer::Writer;
+use clap::{Arg, ArgMatches};
 use itertools::Itertools;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use string_builder::Builder;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct Rulegen {}
+pub struct Rulegen {}
 
+#[allow(clippy::new_without_default)]
 impl Rulegen {
-    pub(crate) fn new() -> Self {
-        Rulegen{}
+    pub fn new() -> Self {
+        Rulegen {}
     }
 }
 
 impl Command for Rulegen {
     fn name(&self) -> &'static str {
-        "rulegen"
+        RULEGEN
     }
 
-
-    fn command(&self) -> App<'static, 'static> {
-        App::new("rulegen")
-            .about(r#"Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
-"#)
-            .arg(Arg::with_name("template").long("template").short("t").takes_value(true).help("Provide path to a CloudFormation template file in JSON or YAML").required(true))
-            .arg(Arg::with_name("output").long("output").short("o").takes_value(true).help("Write to output file").required(false))
+    fn command(&self) -> clap::Command {
+        clap::Command::new(RULEGEN)
+            .about("Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)")
+            .arg(Arg::new(TEMPLATE.0)
+                .long(TEMPLATE.0)
+                .short(TEMPLATE.1)
+                .help("Provide path to a CloudFormation template file in JSON or YAML")
+                .required(true))
+            .arg(Arg::new(OUTPUT.0)
+                .long(OUTPUT.0)
+                .short(OUTPUT.1)
+                .help("Write to output file")
+                .required(false))
+            .arg_required_else_help(true)
     }
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let file = app.value_of("template").unwrap();
+    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
+        let file = app.get_one::<String>(TEMPLATE.0).unwrap(); // safe because this is a required arg
         let template_contents = fs::read_to_string(file)?;
 
-        let out = match app.value_of("output") {
-            Some(file) => Box::new(File::create(file)?) as Box<dyn std::io::Write>,
-            None => Box::new(std::io::stdout()) as Box<dyn std::io::Write>
-        };
+        let result = parse_template_and_call_gen(&template_contents, writer);
+        print_rules(result, writer)?;
 
-        let result = parse_template_and_call_gen(&template_contents);
-        print_rules(result, out);
-
-        Ok(0 as i32)
+        Ok(0_i32)
     }
 }
 
-pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, HashMap<String, HashSet<String>>>{
+pub fn parse_template_and_call_gen(
+    template_contents: &str,
+    writer: &mut Writer,
+) -> HashMap<String, HashMap<String, HashSet<String>>> {
     let cfn_template: HashMap<String, Value> = match serde_yaml::from_str(template_contents) {
         Ok(s) => s,
         Err(e) => {
-            println!("Parsing error handling template file, Error = {}", e);
+            writer
+                .write_err(format!("Parsing error handling template file, Error = {e}"))
+                .expect("failed to write to stderr");
             process::exit(1);
-        },
+        }
     };
 
     let cfn_resources_clone = match cfn_template.get("Resources") {
         Some(y) => y.clone(),
         None => {
-            println!("Template lacks a Resources section");
+            writer
+                .write_err(String::from("Template lacks a Resources section"))
+                .expect("failed to write to stderr");
             process::exit(1);
         }
     };
 
-
     let cfn_resources: HashMap<String, Value> = match serde_json::from_value(cfn_resources_clone) {
         Ok(y) => y,
         Err(e) => {
-            println!("Template Resources section has an invalid structure: {}", e);
+            writer
+                .write_err(format!(
+                    "Template Resources section has an invalid structure: {e}"
+                ))
+                .expect("failed to write to stderr");
             process::exit(1);
         }
     };
@@ -78,7 +95,9 @@ pub fn parse_template_and_call_gen(template_contents: &str) -> HashMap<String, H
     gen_rules(cfn_resources)
 }
 
-fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<String, HashSet<String>>> {
+fn gen_rules(
+    cfn_resources: HashMap<String, Value>,
+) -> HashMap<String, HashMap<String, HashSet<String>>> {
     // Create hashmap of resource name, property name and property values
     // For example, the following template:
     //
@@ -129,7 +148,7 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 
             // Preserve double quotes for strings.
             if prop_val.is_string() {
-                let test_str = format!("{}{}{}", "\"" , no_newline_stripped_val, "\"");
+                let test_str = format!("{}{}{}", "\"", no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
             let resource_name = format!("{}", &cfn_resource["Type"].as_str().unwrap());
@@ -169,21 +188,40 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> HashMap<String, HashMap<S
 //          %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
 //          %aws_ec2_volume_resources.Properties.Encrypted == false
 //     }
-fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut writer : Box<dyn std::io::Write>) {
+fn print_rules(
+    rule_map: HashMap<String, HashMap<String, HashSet<String>>>,
+    writer: &mut Writer,
+) -> Result<()> {
     let mut str = Builder::default();
 
     for (resource, properties) in &rule_map {
         let resource_name_underscore = resource.replace("::", "_").to_lowercase();
         let variable_name = format!("{}_resources", resource_name_underscore);
 
-        str.append(format!("let {} = Resources.*[ Type == '{}' ]\n", variable_name, resource));
-        str.append(format!("rule {} when %{} !empty {{\n", resource_name_underscore, variable_name));
+        str.append(format!(
+            "let {} = Resources.*[ Type == '{}' ]\n",
+            variable_name, resource
+        ));
+        str.append(format!(
+            "rule {} when %{} !empty {{\n",
+            resource_name_underscore, variable_name
+        ));
 
         for (property, values) in properties {
             if values.len() > 1 {
-                str.append(format!("  %{}.Properties.{} IN [{}]\n", variable_name, property, values.iter().join(", ")));
+                str.append(format!(
+                    "  %{}.Properties.{} IN [{}]\n",
+                    variable_name,
+                    property,
+                    values.iter().join(", ")
+                ));
             } else {
-                str.append(format!("  %{}.Properties.{} == {}\n", variable_name, property, values.iter().next().unwrap()));
+                str.append(format!(
+                    "  %{}.Properties.{} == {}\n",
+                    variable_name,
+                    property,
+                    values.iter().next().unwrap()
+                ));
             }
         }
 
@@ -199,13 +237,15 @@ fn print_rules(rule_map : HashMap<String, HashMap<String, HashSet<String>>>, mut
             //
             // TODO fix with Error return
             //
-            write!(writer,"{}", generated_rules);
-        },
+            write!(writer, "{}", generated_rules)?;
+        }
         Err(e) => {
-            println!("Parsing error with generated rules file, Error = {}", e);
-        },
-
+            writer.write_err(format!(
+                "Parsing error with generated rules file, Error = {e}"
+            ))?;
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]

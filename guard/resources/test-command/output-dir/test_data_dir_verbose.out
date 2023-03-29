@@ -1,0 +1,176 @@
+Testing Guard File resources/test-command/dir/s3_bucket_logging_enabled.guard
+Test Case #1
+Name: Empty, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_LOGGING_ENABLED, Status=SKIP)[Context=S3_BUCKET_LOGGING_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_LOGGING_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled not EMPTY  ]
+            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=[L:0,C:0] Value={}))[Context= %s3_buckets_bucket_logging_enabled not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
+
+Test Case #2
+Name: No resources, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_LOGGING_ENABLED, Status=SKIP)[Context=S3_BUCKET_LOGGING_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_LOGGING_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled not EMPTY  ]
+            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=/Resources[L:0,C:0] Value={}))[Context= %s3_buckets_bucket_logging_enabled not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
+
+Test Case #3
+Name: S3 Bucket with Logging Configuration present in resource, PASS
+`- File(, Status=PASS)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_LOGGING_ENABLED, Status=PASS)[Context=S3_BUCKET_LOGGING_ENABLED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_LOGGING_ENABLED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
+      |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+      |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_bucket_logging_enabled not EMPTY  ]
+      `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  ]
+         `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  ]
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = PASS
+
+Test Case #4
+Name: S3 Bucket with Logging Configuration missing, FAIL
+`- File(, Status=FAIL)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_LOGGING_ENABLED, Status=FAIL)[Context=S3_BUCKET_LOGGING_ENABLED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_LOGGING_ENABLED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
+      |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+      |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_bucket_logging_enabled not EMPTY  ]
+      `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  ]
+         `- GuardClauseUnaryCheck(Status=FAIL, Comparison= EXISTS, Value-At=(unresolved, Path=/Resources/ExampleS3/Properties[L:0,C:0] Value={"BucketName":"my-bucket"}))[Context= %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  ]
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = FAIL
+
+Test Case #5
+Name: S3 Bucket with Logging Configuration missing with suppression, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_LOGGING_ENABLED, Status=SKIP)[Context=S3_BUCKET_LOGGING_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_LOGGING_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_bucket_logging_enabled not EMPTY  ]
+            |- Filter/ConjunctionsBlock(Status=FAIL)[Context=Filter/Map#2]
+            |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+            |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+            |  `- Disjunction(Status = FAIL)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+            |     |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+            |     |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EXISTS, Value-At=(resolved, Path=/Resources/ExampleS3/Metadata/guard/SuppressedRules[L:0,C:0] Value=["S3_BUCKET_LOGGING_ENABLED"]))[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+            |     `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules.* not EQUALS  "S3_BUCKET_LOGGING_ENABLED"]
+            |        `- GuardClauseBinaryCheck(Status=FAIL, Comparison=not EQUALS, from=(resolved, Path=/Resources/ExampleS3/Metadata/guard/SuppressedRules/0[L:0,C:0] Value="S3_BUCKET_LOGGING_ENABLED"), to=(resolved, Path=[L:0,C:0] Value="S3_BUCKET_LOGGING_ENABLED"))[Context= Metadata.guard.SuppressedRules.* not EQUALS  "S3_BUCKET_LOGGING_ENABLED"]
+            `- GuardClause(Status=FAIL, Empty, )[Context= %s3_buckets_bucket_logging_enabled not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
+
+---
+Testing Guard File resources/test-command/dir/s3_bucket_server_side_encryption_enabled.guard
+Test Case #1
+Name: Empty, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=SKIP)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=[L:0,C:0] Value={}))[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+
+Test Case #2
+Name: No resources, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=SKIP)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=/Resources[L:0,C:0] Value={}))[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+
+Test Case #3
+Name: S3 Bucket Encryption set to SSE AES 256, PASS
+`- File(, Status=PASS)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=PASS)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
+      |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+      |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+      |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      |  `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+         `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = PASS
+
+Test Case #4
+Name: S3 Bucket Encryption set to SSE AWS KMS key, PASS
+`- File(, Status=PASS)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=PASS)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
+      |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+      |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+      |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      |  `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+         `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = PASS
+
+Test Case #5
+Name: S3 Bucket Encryption not set, FAIL
+`- File(, Status=FAIL)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=FAIL)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
+      |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+      |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+      |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison= EXISTS, Value-At=(unresolved, Path=/Resources/ExampleS3/Properties[L:0,C:0] Value={"BucketName":"my-bucket"}))[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
+      `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+         `- GuardClauseBinaryCheck(Status=FAIL, Comparison= IN, from=(unresolved, Path=/Resources/ExampleS3/Properties[L:0,C:0] Value={"BucketName":"my-bucket"}), to=)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = FAIL
+
+Test Case #6
+Name: S3 Bucket Encryption not set but rule is suppressed, SKIP
+`- File(, Status=SKIP)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=SKIP)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
+      `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
+         `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
+            |- Filter/ConjunctionsBlock(Status=FAIL)[Context=Filter/Map#2]
+            |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+            |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+            |  `- Disjunction(Status = FAIL)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+            |     |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
+            |     |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EXISTS, Value-At=(resolved, Path=/Resources/ExampleS3/Metadata/guard/SuppressedRules[L:0,C:0] Value=["S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"]))[Context= Metadata.guard.SuppressedRules not EXISTS  ]
+            |     `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules.* not EQUALS  "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"]
+            |        `- GuardClauseBinaryCheck(Status=FAIL, Comparison=not EQUALS, from=(resolved, Path=/Resources/ExampleS3/Metadata/guard/SuppressedRules/0[L:0,C:0] Value="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"), to=(resolved, Path=[L:0,C:0] Value="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"))[Context= Metadata.guard.SuppressedRules.* not EQUALS  "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"]
+            `- GuardClause(Status=FAIL, Empty, )[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+  PASS Rules:
+    S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
+
+---

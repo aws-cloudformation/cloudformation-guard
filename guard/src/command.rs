@@ -1,9 +1,16 @@
-use clap::{App, ArgMatches};
+use clap::ArgMatches;
 
 use crate::rules::errors::Error;
+use crate::utils::reader::Reader;
+use crate::utils::writer::Writer;
 
-pub(crate) trait Command {
+pub trait Command {
     fn name(&self) -> &'static str;
-    fn command(&self) -> App<'static, 'static>;
-    fn execute(&self, args: &ArgMatches) -> Result<i32, Error>;
+    fn command(&self) -> clap::Command;
+    fn execute(
+        &self,
+        args: &ArgMatches,
+        writer: &mut Writer,
+        reader: &mut Reader,
+    ) -> Result<i32, Error>;
 }
