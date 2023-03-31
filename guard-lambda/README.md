@@ -1,17 +1,16 @@
 # AWS CloudFormation Guard as a Lambda
 
-The Lambda version of the tool is a lightweight wrapper around the core [cfn-guard](../guard) code that can simply be invoked as a Lambda.
+The Lambda version of the tool is a lightweight wrapper around the core [cfn-guard](../guard) code that can simply be invoked as a Lambda. We currently support 2 methods for deploying the Lambda. 
 
 ## Table of Contents
 
-* [Installation](#installation)
-* [Build and run post-install](#to-build-and-run-post-install)
-* [Calling the Lambda Function](#calling-the-lambda-function)
+
+* [Method 1: Installation using SAM CLI](#method-1-installation-using-sam-cli)
+* [Method 2: Installation using AWS CLI](#method-2-installation-using-aws-cli)
+* [Calling the AWS Lambda Function](#calling-the-aws-lambda-function)
 * [FAQs](#faqs)
 
-## Installation
-
-## Method 1: Using SAM CLI
+## Method 1: Installation using SAM CLI
 
 ### Dependencies
 
@@ -24,8 +23,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
 2. Run `sam deploy --guided` to deploy the template with CloudFormation (after successfully deploying, you can use `sam deploy` without `--guided` for updates).
 3. The name of the function will be shown in the `GuardFunctionName` output
 
-
-## Method 2: Using AWS CLI
+## Method 2: Installation using AWS CLI
 
 ### Dependencies
 
@@ -88,7 +86,7 @@ The payload JSON to `cfn-guard-lambda` requires the following two fields:
 
 ## Invoking `cfn-guard-lambda`
 
-To invoke the submitted `cfn-guard` as an AWS Lambda function run:
+Initialize the variable `LAMBDA_FUNCTION_NAME` to the name of the deployed AWS Lambda Function, and invoke it using the following syntax:
 
 ```bash
 aws lambda invoke \

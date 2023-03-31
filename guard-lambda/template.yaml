@@ -1,7 +1,7 @@
 Transform: AWS::Serverless-2016-10-31
 
 Resources:
-  GuardFunction:
+  CloudFormationGuardLambda:
     Type: AWS::Serverless::Function
     Properties:
       Runtime: provided.al2
@@ -16,5 +16,5 @@ Resources:
       BuildMethod: makefile
 
 Outputs:
-  GuardFunctionName:
-    Value: !Ref GuardFunction
+  CloudFormationGuardLambdaFunctionName:
+    Value: !Ref CloudFormationGuardLambda

@@ -1,4 +1,4 @@
-build-GuardFunction:
+build-CloudFormationGuardLambda:
 # installing rust every time you build is not great, but it's better than having
 # to install a toolchain yourself. In most cases builds will be infrequent.
 	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
