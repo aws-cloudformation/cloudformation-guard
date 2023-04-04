@@ -1,0 +1,20 @@
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  CloudFormationGuardLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: provided.al2
+      Handler: guard.handler
+      # We need to point to the parent directory, so we can use ../guard/*
+      CodeUri: ..
+      Environment:
+        Variables:
+          RUST_BACKTRACE: "1"
+      Tracing: Active
+    Metadata:
+      BuildMethod: makefile
+
+Outputs:
+  CloudFormationGuardLambdaFunctionName:
+    Value: !Ref CloudFormationGuardLambda

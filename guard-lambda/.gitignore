@@ -1,4 +1,6 @@
 /target
+.aws-sam/
+samconfig.toml
 **/*.rs.bk
 lambda.zip
 output.json
