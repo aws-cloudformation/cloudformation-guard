@@ -1,4 +1,4 @@
-- name: ''
+- name: s3-public-read-prohibited-template-non-compliant.yaml
   metadata: {}
   status: FAIL
   not_compliant:
@@ -65,7 +65,7 @@
                 - true
   not_applicable: []
   compliant: []
-- name: ''
+- name: s3-public-read-prohibited-template-non-compliant.yaml
   metadata: {}
   status: FAIL
   not_compliant:
@@ -101,7 +101,7 @@
                 - false
   not_applicable: []
   compliant: []
-- name: ''
+- name: s3-public-read-prohibited-template-non-compliant.yaml
   metadata: {}
   status: FAIL
   not_compliant:
@@ -229,7 +229,7 @@
                 - false
   not_applicable: []
   compliant: []
-- name: ''
+- name: s3-public-read-prohibited-template-non-compliant.yaml
   metadata: {}
   status: PASS
   not_compliant: []

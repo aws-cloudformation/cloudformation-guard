@@ -892,7 +892,7 @@ Resources:
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let mut root = root_scope(&rules, &value)?;
     //let mut tracker = RecordTracker::new(&mut root);
-    let status = eval_rules_file(&rules, &mut root)?;
+    let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
     Ok(())
 }
@@ -1211,7 +1211,7 @@ fn variable_projections() -> Result<()> {
     "#,
     )?;
     let mut root_scope = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &mut root_scope)?;
+    let status = eval_rules_file(&rules_file, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1251,7 +1251,7 @@ fn variable_projections_failures() -> Result<()> {
     "#,
     )?;
     let mut root_scope = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &mut root_scope)?;
+    let status = eval_rules_file(&rules_file, &mut root_scope, None)?;
     assert_eq!(status, Status::FAIL); // for s3_bucket_policy_2.Properties.Bucket == ""
 
     let top = root_scope.reset_recorder().extract();
@@ -1336,7 +1336,7 @@ fn query_cross_joins() -> Result<()> {
     "#,
     )?;
     let mut root_scope = root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &mut root_scope)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
     let rules_files = RulesFile::try_from(
@@ -1350,7 +1350,7 @@ fn query_cross_joins() -> Result<()> {
     "#,
     )?;
     let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &mut root_scope)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::SKIP);
 
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
@@ -1384,7 +1384,7 @@ fn query_cross_joins() -> Result<()> {
     "#,
     )?;
     let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &mut root_scope)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::FAIL);
 
     //
@@ -1402,7 +1402,7 @@ fn query_cross_joins() -> Result<()> {
     "#,
     )?;
     let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &mut root_scope)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
     //
@@ -1420,7 +1420,7 @@ fn query_cross_joins() -> Result<()> {
     "#,
     )?;
     let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
-    let status = eval_rules_file(&rules_files, &mut root_scope)?;
+    let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1463,7 +1463,7 @@ fn cross_rule_clause_when_checks() -> Result<()> {
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
     let mut root = root_scope(&rules, &resources)?;
-    let status = eval_rules_file(&rules, &mut root)?;
+    let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
     let mut expectations = HashMap::with_capacity(4);
     expectations.insert("skipped".to_string(), Status::SKIP);
@@ -1497,7 +1497,7 @@ fn cross_rule_clause_when_checks() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let mut root = root_scope(&rules, &resources)?;
-    let status = eval_rules_file(&rules, &mut root)?;
+    let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
     expectations.clear();
     expectations.insert("skipped".to_string(), Status::PASS);
@@ -1853,7 +1853,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
 
     let rules = RulesFile::try_from(rule)?;
     let mut root = root_scope(&rules, &values)?;
-    let status = eval_rules_file(&rules, &mut root)?;
+    let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1906,7 +1906,7 @@ fn test_in_comparison_operator_for_list_of_lists(
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let mut context = root_scope(&rule_eval, &value)?;
-    let status = eval_rules_file(&rule_eval, &mut context)?;
+    let status = eval_rules_file(&rule_eval, &mut context, None)?;
     assert_eq!(status, status_arg);
 
     Ok(())
@@ -1940,7 +1940,7 @@ fn test_type_conversions(#[case] ttl_arg: &str, #[case] status_arg: Status) -> R
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let mut context = root_scope(&rule_eval, &value)?;
-    let status = eval_rules_file(&rule_eval, &mut context)?;
+    let status = eval_rules_file(&rule_eval, &mut context, None)?;
     assert_eq!(status, status_arg);
 
     Ok(())
@@ -1964,7 +1964,7 @@ fn is_bool() -> Result<()> {
     let rules_file = RulesFile::try_from(rule_str)?;
     println!("{:?}", rules_file);
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
     let resources_str = r###"
@@ -1974,7 +1974,7 @@ fn is_bool() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1998,7 +1998,7 @@ fn is_int() -> Result<()> {
     let rules_file = RulesFile::try_from(rule_str)?;
     println!("{:?}", rules_file);
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
     let resources_str = r###"
@@ -2008,7 +2008,7 @@ fn is_int() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -2070,7 +2070,7 @@ fn double_projection_tests() -> Result<()> {
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
     let resources_str = r###"
@@ -2087,7 +2087,7 @@ fn double_projection_tests() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -2295,7 +2295,7 @@ rule check_rest_api_is_private_and_has_access {
 }"#;
     let rule = RulesFile::try_from(rule_str)?;
     let mut root = root_scope(&rule, &value)?;
-    let status = eval_rules_file(&rule, &mut root)?;
+    let status = eval_rules_file(&rule, &mut root, None)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"
@@ -2316,7 +2316,7 @@ rule check_rest_api_is_private_and_has_access {
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let mut root = root_scope(&rule, &value)?;
-    let status = eval_rules_file(&rule, &mut root)?;
+    let status = eval_rules_file(&rule, &mut root, None)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2528,7 +2528,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     let top = eval.reset_recorder().extract();
@@ -2581,7 +2581,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2607,7 +2607,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = eval.reset_root(&path_value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2638,7 +2638,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     //
     // Let us track failures and assert on what must be observed
     //
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     let top = eval.reset_recorder().extract();
@@ -2707,7 +2707,7 @@ fn filter_based_with_join_pass_use_cases() -> Result<()> {
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let rules_file = RulesFile::try_from(rules)?;
     let mut eval = root_scope(&rules_file, &path_value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2746,7 +2746,7 @@ fn rule_clause_tests() -> Result<()> {
 
     let value = PathAwareValue::try_from(v)?;
     let mut eval = root_scope(&rule, &value)?;
-    let status = eval_rules_file(&rule, &mut eval)?;
+    let status = eval_rules_file(&rule, &mut eval, None)?;
     assert_eq!(Status::PASS, status);
 
     //
@@ -2768,7 +2768,7 @@ fn rule_clause_tests() -> Result<()> {
 
     let value = PathAwareValue::try_from(v)?;
     let mut eval = eval.reset_root(&value)?;
-    let status = eval_rules_file(&rule, &mut eval)?;
+    let status = eval_rules_file(&rule, &mut eval, None)?;
     assert_eq!(Status::FAIL, status);
 
     Ok(())
@@ -2829,7 +2829,7 @@ fn rule_test_type_blocks() -> Result<()> {
     let root = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let rules_file = RulesFile::try_from(r)?;
     let mut root_context = root_scope(&rules_file, &root)?;
-    let status = eval_rules_file(&rules_file, &mut root_context)?;
+    let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
 
     let top = root_context.reset_recorder().extract();
@@ -2922,7 +2922,7 @@ rule iam_basic_checks when iam_resources_exists {
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
     let mut root_context = root_scope(&rules_file, &root)?;
-    let status = eval_rules_file(&rules_file, &mut root_context)?;
+    let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::PASS, status);
 
     Ok(())
@@ -2991,7 +2991,7 @@ rule iam_basic_checks {
     let rules_file = RulesFile::try_from(file)?;
     let mut root_context = root_scope(&rules_file, &root)?;
 
-    let status = eval_rules_file(&rules_file, &mut root_context)?;
+    let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
 
     let top = root_context.reset_recorder().extract();
@@ -3058,7 +3058,7 @@ rule iam_basic_checks {
 
     let root = PathAwareValue::try_from(value)?;
     let mut root_context = root_context.reset_root(&root)?;
-    let status = eval_rules_file(&rules_file, &mut root_context)?;
+    let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
 
     let top = root_context.reset_recorder().extract();
@@ -3471,7 +3471,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
     let mut eval = root_scope(&rules_file, &value)?;
-    let status = eval_rules_file(&rules_file, &mut eval)?;
+    let status = eval_rules_file(&rules_file, &mut eval, None)?;
 
     println!("{}", status);
     Ok(())
@@ -3588,7 +3588,7 @@ rule deny_egress when %sgs NOT EMPTY {
 
     for (index, each) in samples.iter().enumerate() {
         let mut root_context = root_scope(&rules_file, each)?;
-        let status = eval_rules_file(&rules_file, &mut root_context)?;
+        let status = eval_rules_file(&rules_file, &mut root_context, None)?;
         println!("{}", format!("Status {} = {}", index, status).underline());
     }
 
@@ -3788,7 +3788,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
     for (idx, each) in parsed_values.iter().enumerate() {
         let mut root_scope = root_scope(&s3_rule, each)?;
-        let status = eval_rules_file(&s3_rule, &mut root_scope)?;
+        let status = eval_rules_file(&s3_rule, &mut root_scope, None)?;
         assert_eq!(status, expectations[idx]);
     }
     Ok(())
@@ -3862,7 +3862,7 @@ fn parameterized_evaluations() -> Result<()> {
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template_value)?)?;
 
     let mut eval = root_scope(&rules_files, &template)?;
-    let status = eval_rules_file(&rules_files, &mut eval)?;
+    let status = eval_rules_file(&rules_files, &mut eval, None)?;
     let top = eval.reset_recorder().extract();
     let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
     crate::commands::validate::print_verbose_tree(&top, &mut writer);
@@ -3883,7 +3883,7 @@ fn parameterized_evaluations() -> Result<()> {
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(aws_config_value)?)?;
 
     let mut eval = root_scope(&rules_files, &config_value)?;
-    let status = eval_rules_file(&rules_files, &mut eval)?;
+    let status = eval_rules_file(&rules_files, &mut eval, None)?;
     let top = eval.reset_recorder().extract();
     crate::commands::validate::print_verbose_tree(&top, &mut writer);
     assert_eq!(status, Status::PASS);
@@ -3923,7 +3923,7 @@ fn using_resource_names_for_assessment() -> Result<()> {
 
     let rules = RulesFile::try_from(rules_file)?;
     let mut eval = root_scope(&rules, &value)?;
-    let status = eval_rules_file(&rules, &mut eval)?;
+    let status = eval_rules_file(&rules, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -3959,7 +3959,7 @@ fn test_string_in_comparison() -> Result<()> {
 
     let rules_files = RulesFile::try_from(rules)?;
     let mut eval = root_scope(&rules_files, &value)?;
-    let status = eval_rules_file(&rules_files, &mut eval)?;
+    let status = eval_rules_file(&rules_files, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())

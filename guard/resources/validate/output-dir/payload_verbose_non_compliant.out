@@ -85,7 +85,7 @@ Resource = MyBucket {
     }
   }
 }
-`- File(, Status=FAIL)[Context=File(rules=1)]
+`- File(STDIN, Status=FAIL)[Context=File(rules=1)]
    `- Rule(S3_BUCKET_PUBLIC_READ_PROHIBITED, Status=FAIL)[Context=S3_BUCKET_PUBLIC_READ_PROHIBITED]
       |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_PUBLIC_READ_PROHIBITED/When]
       |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited not EMPTY  ]

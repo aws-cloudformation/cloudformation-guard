@@ -350,7 +350,7 @@ fn test_with_data(
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
                         let mut root_scope = crate::rules::eval_context::root_scope(rules, &root)?;
-                        eval_rules_file(rules, &mut root_scope)?;
+                        eval_rules_file(rules, &mut root_scope, None)?; // we never use data file name in the output
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules = top.children.iter().fold(HashMap::new(), |mut acc, rule| {
