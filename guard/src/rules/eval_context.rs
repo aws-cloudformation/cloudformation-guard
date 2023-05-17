@@ -1291,6 +1291,19 @@ pub(crate) struct FileReport<'value> {
     pub(crate) compliant: HashSet<String>,
 }
 
+impl FileReport<'_> {
+    pub(crate) fn combine<'value, 'b: 'value>(&'value mut self, report: FileReport<'b>) {
+        if report.name != self.name {
+            panic!("Incompatible to merge")
+        }
+        self.status = self.status.and(report.status);
+        self.metadata.extend(report.metadata);
+        self.not_compliant.extend(report.not_compliant);
+        self.compliant.extend(report.compliant);
+        self.not_applicable.extend(report.not_applicable);
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 pub(crate) struct RuleReport<'value> {
     pub(crate) name: &'value str,

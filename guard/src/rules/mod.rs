@@ -122,6 +122,20 @@ impl TryFrom<&str> for Status {
         }
     }
 }
+impl Status {
+    fn and(&self, status: Status) -> Status {
+        match self {
+            self::Status::FAIL => Status::FAIL,
+            self::Status::PASS => {
+                return match status {
+                    Status::FAIL => Status::FAIL,
+                    _ => Status::PASS,
+                };
+            }
+            _ => Status::SKIP,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 pub(crate) enum EvaluationType {

@@ -2,7 +2,7 @@ use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFil
 use crate::rules;
 use crate::rules::errors::Error;
 use crate::rules::eval::{eval_rules_file, FileData};
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root};
+use crate::rules::eval_context::{root_scope, simplifed_json_from_root, FileReport};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status;
@@ -60,30 +60,32 @@ impl<'eval> StructuredEvaluator<'eval> {
         let merged_data = self.merge_input_params_with_data();
 
         let mut records = vec![];
-        for rule in &rules {
-            for each in &merged_data {
-                match &each.path_aware_value {
-                    Ok(path_aware_value) => {
-                        let mut root_scope = root_scope(rule, path_aware_value)?;
 
+        for each in &merged_data {
+            match &each.path_aware_value {
+                Ok(path_aware_value) => {
+                    let mut file_report: FileReport = FileReport::default();
+                    file_report.name = &each.file_name;
+                    for rule in &rules {
+                        let mut root_scope = root_scope(rule, path_aware_value)?;
+                        let root_record = root_scope.reset_recorder().extract();
                         if let Status::FAIL =
                             eval_rules_file(rule, &mut root_scope, Some(&each.file_name))?
                         {
                             self.exit_code = 5;
                         }
-
-                        let root_record = root_scope.reset_recorder().extract();
-
                         let report = simplifed_json_from_root(&root_record)?;
-                        records.push(report)
+                        file_report.combine(report);
                     }
-                    Err(e) => {
-                        return Err(Error::ParseError(format!(
-                            "Unable to process data in file {}, Error {},",
-                            each.file_name, e
-                        )))
-                    }
-                };
+
+                    records.push(file_report);
+                }
+                Err(e) => {
+                    return Err(Error::ParseError(format!(
+                        "Unable to process data in file {}, Error {},",
+                        each.file_name, e
+                    )))
+                }
             }
         }
 
