@@ -1,7 +1,7 @@
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
 use crate::rules;
 use crate::rules::errors::Error;
-use crate::rules::eval::{eval_rules_file, FileData};
+use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
@@ -19,16 +19,17 @@ pub struct StructuredEvaluator<'eval> {
 }
 
 impl<'eval> StructuredEvaluator<'eval> {
-    fn merge_input_params_with_data(&mut self) -> Vec<FileData> {
+    fn merge_input_params_with_data(&mut self) -> Vec<DataFile> {
         self.data.iter().fold(vec![], |mut res, file| {
             let each = match &self.input_params {
                 Some(data) => data.clone().merge(file.path_value.clone()).unwrap(),
                 None => file.path_value.clone(),
             };
 
-            let merged_file_data = FileData {
-                path_aware_value: Ok(each),
-                file_name: file.name.to_owned(),
+            let merged_file_data = DataFile {
+                path_value: each,
+                name: file.name.to_owned(),
+                content: "".to_string(), // not used later on
             };
 
             res.push(merged_file_data);
@@ -62,28 +63,16 @@ impl<'eval> StructuredEvaluator<'eval> {
         let mut records = vec![];
         for rule in &rules {
             for each in &merged_data {
-                match &each.path_aware_value {
-                    Ok(path_aware_value) => {
-                        let mut root_scope = root_scope(rule, path_aware_value)?;
+                let mut root_scope = root_scope(rule, &each.path_value)?;
 
-                        if let Status::FAIL =
-                            eval_rules_file(rule, &mut root_scope, Some(&each.file_name))?
-                        {
-                            self.exit_code = 5;
-                        }
+                if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
+                    self.exit_code = 5;
+                }
 
-                        let root_record = root_scope.reset_recorder().extract();
+                let root_record = root_scope.reset_recorder().extract();
 
-                        let report = simplifed_json_from_root(&root_record)?;
-                        records.push(report)
-                    }
-                    Err(e) => {
-                        return Err(Error::ParseError(format!(
-                            "Unable to process data in file {}, Error {},",
-                            each.file_name, e
-                        )))
-                    }
-                };
+                let report = simplifed_json_from_root(&root_record)?;
+                records.push(report)
             }
         }
 

@@ -407,11 +407,6 @@ struct UnResolvedRhs<'r> {
     lhs: &'r PathAwareValue,
 }
 
-pub(crate) struct FileData {
-    pub(crate) path_aware_value: Result<PathAwareValue>,
-    pub(crate) file_name: String,
-}
-
 fn each_lhs_compare<'r, 'value: 'r, C>(
     cmp: C,
     lhs: &'value PathAwareValue,
