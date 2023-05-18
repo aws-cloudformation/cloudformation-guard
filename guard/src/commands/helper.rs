@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commands::validate::generic_summary::GenericSummary;
-use crate::commands::validate::{OutputFormatType, Reporter};
+use crate::commands::validate::{DataFile, OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 use crate::rules::eval::{eval_rules_file, FileData};
 use crate::rules::eval_context::root_scope;
@@ -22,31 +22,37 @@ pub fn validate_and_return_json(
     rules: ValidateInput,
     verbose: bool,
 ) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data.content) {
-        Ok(value) => FileData {
-            path_aware_value: PathAwareValue::try_from(value),
-            file_name: data.file_name.to_owned(),
-        },
+    let path_value = match serde_json::from_str::<serde_json::Value>(&data.content) {
+        Ok(value) => PathAwareValue::try_from(value),
         Err(_) => {
             let value = serde_yaml::from_str::<serde_yaml::Value>(&data.content)?;
-            FileData {
-                path_aware_value: PathAwareValue::try_from(value),
-                file_name: data.file_name.to_owned(),
-            }
+            PathAwareValue::try_from(value)
         }
+    }
+    .map_err(|e| {
+        Error::ParseError(format!(
+            "Unable to process data in file {}, Error {e},",
+            data.file_name,
+        ))
+    })?;
+
+    let input_data = DataFile {
+        content: "".to_string(), // not used later
+        path_value,
+        name: data.file_name.to_owned(),
     };
 
     let span = crate::rules::parser::Span::new_extra(&rules.content, rules.file_name);
 
     let rules_file_name = rules.file_name;
     match crate::rules::parser::rules_file(span) {
-        Ok(rules) => match input_data.path_aware_value {
+        Ok(rules) => match input_data.path_value {
             Ok(root) => {
                 let mut write_output = BufWriter::new(Vec::new());
 
                 let traversal = Traversal::from(&root);
                 let mut root_scope = root_scope(&rules, &root)?;
-                let status = eval_rules_file(&rules, &mut root_scope, Some(&input_data.file_name))?;
+                let status = eval_rules_file(&rules, &mut root_scope, Some(&input_data.name))?;
                 let root_record = root_scope.reset_recorder().extract();
 
                 if verbose {

@@ -47,9 +47,9 @@ mod tf;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
-    content: String,
-    path_value: PathAwareValue,
-    name: String,
+    pub(crate) content: String,
+    pub(crate) path_value: PathAwareValue,
+    pub(crate) name: String,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
