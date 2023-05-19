@@ -126,10 +126,10 @@ impl Status {
         match self {
             Status::FAIL => Status::FAIL,
             Status::PASS => match status {
-                Status::FAIL => Status::FAIL,
+                Status::FAIL => status,
                 _ => Status::PASS,
             },
-            _ => Status::SKIP,
+            Status::SKIP => status,
         }
     }
 }

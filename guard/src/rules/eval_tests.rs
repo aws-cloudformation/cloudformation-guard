@@ -3999,3 +3999,22 @@ fn test_searcher() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn status_combinator() {
+    let skip: Status = Status::SKIP;
+    let pass: Status = Status::PASS;
+    let fail: Status = Status::FAIL;
+
+    assert_eq!(skip.and(skip), Status::SKIP);
+
+    assert_eq!(skip.and(pass), Status::PASS);
+    assert_eq!(pass.and(skip), Status::PASS);
+    assert_eq!(pass.and(pass), Status::PASS);
+
+    assert_eq!(fail.and(fail), Status::FAIL);
+    assert_eq!(fail.and(skip), Status::FAIL);
+    assert_eq!(skip.and(fail), Status::FAIL);
+    assert_eq!(pass.and(fail), Status::FAIL);
+    assert_eq!(fail.and(pass), Status::FAIL);
+}
