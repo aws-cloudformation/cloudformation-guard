@@ -2,7 +2,7 @@ name: Deploy to ECR Public Gallery
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, rogue_one ]
 
 jobs:
 
@@ -42,13 +42,15 @@ jobs:
         commit_hash=${git_branch}.${git_hash}
         
         prefix=$REGISTRY/$REGISTRY_ALIAS/$REPOSITORY
-        latest_image_tag=$prefix:latest
         commit_hash_image_tag=$prefix:$commit_hash
-        
-        docker build -t $latest_image_tag -t $commit_hash_image_tag .
-        docker push $commit_hash_image_tag
         
         if [ ${git_branch} == 'main' ]
         then
+          latest_image_tag=$prefix:latest
+          docker build -t $latest_image_tag -t $commit_hash_image_tag .
+          docker push $commit_hash_image_tag
           docker push $latest_image_tag
+        else
+          docker build -t $commit_hash_image_tag .
+          docker push $commit_hash_image_tag
         fi
