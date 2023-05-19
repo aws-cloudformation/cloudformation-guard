@@ -297,19 +297,19 @@ Autocompletions are only something available for version >= 3.0
 #### zsh
 
 ```sh
-    cfn-guard --completions --shell='zsh' > usr/local/share/zsh/site-functions/_cfn-guard && compinnit
+    cfn-guard completions --shell='zsh' > usr/local/share/zsh/site-functions/_cfn-guard && compinnit
 ```
 
 #### bash
 
 ```bash
-    cfn-guard --completions --shell='bash' > ~/cfn-guard.bash && source ~/cfn-guard.bash
+    cfn-guard completions --shell='bash' > ~/cfn-guard.bash && source ~/cfn-guard.bash
 ```
 
 #### fish
 
 ```sh
-    cfn-guard --completions --shell='fish' > ~/cfn-guard.fish
+    cfn-guard completions --shell='fish' > ~/cfn-guard.fish
     cd ~
     ./ ./cfn-guard.fish
 ```
