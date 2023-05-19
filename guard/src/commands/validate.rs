@@ -47,9 +47,9 @@ mod tf;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
-    content: String,
-    path_value: PathAwareValue,
-    name: String,
+    pub(crate) content: String,
+    pub(crate) path_value: PathAwareValue,
+    pub(crate) name: String,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
@@ -935,7 +935,8 @@ fn evaluate_against_data_input<'r>(
             };
             let traversal = Traversal::from(&each);
             let mut root_scope = root_scope(rules, &each)?;
-            let status = eval_rules_file(rules, &mut root_scope)?;
+            let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
+
             let root_record = root_scope.reset_recorder().extract();
 
             reporter.report_eval(

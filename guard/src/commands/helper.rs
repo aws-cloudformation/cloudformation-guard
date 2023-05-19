@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commands::validate::generic_summary::GenericSummary;
-use crate::commands::validate::{OutputFormatType, Reporter};
+use crate::commands::validate::{DataFile, OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::root_scope;
@@ -22,51 +22,60 @@ pub fn validate_and_return_json(
     rules: ValidateInput,
     verbose: bool,
 ) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(&data.content) {
+    let path_value = match serde_json::from_str::<serde_json::Value>(&data.content) {
         Ok(value) => PathAwareValue::try_from(value),
         Err(_) => {
             let value = serde_yaml::from_str::<serde_yaml::Value>(&data.content)?;
             PathAwareValue::try_from(value)
         }
+    }
+    .map_err(|e| {
+        Error::ParseError(format!(
+            "Unable to process data in file {}, Error {e},",
+            data.file_name,
+        ))
+    })?;
+
+    let input_data = DataFile {
+        content: "".to_string(), // not used later
+        path_value,
+        name: data.file_name.to_owned(),
     };
 
     let span = crate::rules::parser::Span::new_extra(&rules.content, rules.file_name);
 
     let rules_file_name = rules.file_name;
-    match crate::rules::parser::rules_file(span) {
-        Ok(rules) => match input_data {
-            Ok(root) => {
-                let mut write_output = BufWriter::new(Vec::new());
+    return match crate::rules::parser::rules_file(span) {
+        Ok(rules) => {
+            let mut write_output = BufWriter::new(Vec::new());
+            let root = input_data.path_value;
+            let traversal = Traversal::from(&root);
+            let mut root_scope = root_scope(&rules, &root)?;
+            let status = eval_rules_file(&rules, &mut root_scope, Some(&input_data.name))?;
+            let root_record = root_scope.reset_recorder().extract();
 
-                let traversal = Traversal::from(&root);
-                let mut root_scope = root_scope(&rules, &root)?;
-                let status = eval_rules_file(&rules, &mut root_scope)?;
-                let root_record = root_scope.reset_recorder().extract();
-
-                if verbose {
-                    return Ok(serde_json::to_string_pretty(&root_record)?);
-                }
-
-                let reporter = &GenericSummary::new() as &dyn Reporter;
-
-                reporter.report_eval(
-                    &mut write_output,
-                    status,
-                    &root_record,
-                    rules_file_name,
-                    data.file_name,
-                    data.content,
-                    &traversal,
-                    OutputFormatType::JSON,
-                )?;
-
-                match String::from_utf8(write_output.buffer().to_vec()) {
-                    Ok(val) => return Ok(val),
-                    Err(e) => return Err(Error::ParseError(e.to_string())),
-                }
+            if verbose {
+                return Ok(serde_json::to_string_pretty(&root_record)?);
             }
-            Err(e) => return Err(e),
-        },
-        Err(e) => return Err(Error::ParseError(e.to_string())),
-    }
+
+            let reporter = &GenericSummary::new() as &dyn Reporter;
+
+            reporter.report_eval(
+                &mut write_output,
+                status,
+                &root_record,
+                rules_file_name,
+                data.file_name,
+                data.content,
+                &traversal,
+                OutputFormatType::JSON,
+            )?;
+
+            match String::from_utf8(write_output.buffer().to_vec()) {
+                Ok(val) => Ok(val),
+                Err(e) => Err(Error::ParseError(e.to_string())),
+            }
+        }
+        Err(e) => Err(Error::ParseError(e.to_string())),
+    };
 }

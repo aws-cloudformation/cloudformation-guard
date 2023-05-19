@@ -29,7 +29,7 @@ mod functional_tests {
                   "context": "File(rules=1)",
                   "container": {
                     "FileCheck": {
-                      "name": "",
+                      "name": "functional_test.json",
                       "status": "FAIL",
                       "message": null
                     }

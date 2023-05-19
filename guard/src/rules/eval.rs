@@ -1906,6 +1906,7 @@ impl<'loc> std::fmt::Display for RulesFile<'loc> {
 pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     rule: &'value RulesFile<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    data_file_name: Option<&'value str>,
 ) -> Result<Status> {
     let context = format!("{}", rule);
     resolver.start_record(&context)?;
@@ -1949,7 +1950,10 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
         &context,
         RecordType::FileCheck(NamedStatus {
             status: overall,
-            name: "",
+            name: match data_file_name {
+                Some(file_name) => file_name,
+                None => "",
+            },
             ..Default::default()
         }),
     )?;

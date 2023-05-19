@@ -1,6 +1,6 @@
 [
   {
-    "name": "",
+    "name": "s3-public-read-prohibited-template-non-compliant.yaml",
     "metadata": {},
     "status": "FAIL",
     "not_compliant": [
@@ -115,7 +115,7 @@
     "compliant": []
   },
   {
-    "name": "",
+    "name": "s3-public-read-prohibited-template-non-compliant.yaml",
     "metadata": {},
     "status": "FAIL",
     "not_compliant": [
@@ -176,7 +176,7 @@
     "compliant": []
   },
   {
-    "name": "",
+    "name": "s3-public-read-prohibited-template-non-compliant.yaml",
     "metadata": {},
     "status": "FAIL",
     "not_compliant": [
@@ -397,7 +397,7 @@
     "compliant": []
   },
   {
-    "name": "",
+    "name": "s3-public-read-prohibited-template-non-compliant.yaml",
     "metadata": {},
     "status": "PASS",
     "not_compliant": [],

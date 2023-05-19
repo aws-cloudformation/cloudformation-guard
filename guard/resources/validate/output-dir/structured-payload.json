@@ -1,6 +1,6 @@
 [
   {
-    "name": "",
+    "name": "DATA_STDIN[1]",
     "metadata": {},
     "status": "PASS",
     "not_compliant": [],
@@ -10,7 +10,7 @@
     ]
   },
   {
-    "name": "",
+    "name": "DATA_STDIN[2]",
     "metadata": {},
     "status": "PASS",
     "not_compliant": [],
@@ -20,7 +20,7 @@
     ]
   },
   {
-    "name": "",
+    "name": "DATA_STDIN[1]",
     "metadata": {},
     "status": "PASS",
     "not_compliant": [],
@@ -30,7 +30,7 @@
     ]
   },
   {
-    "name": "",
+    "name": "DATA_STDIN[2]",
     "metadata": {},
     "status": "PASS",
     "not_compliant": [],
