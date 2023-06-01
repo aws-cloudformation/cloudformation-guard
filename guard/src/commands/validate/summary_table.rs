@@ -2,6 +2,7 @@ use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::colored_string;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::EventRecord;
+use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::RecordType;
 use crate::rules::{NamedStatus, Status};
@@ -46,7 +47,7 @@ fn print_partition(
             "{filename}/{context:<0$}{status}",
             longest + 4,
             filename = rules_file_name,
-            context = container.context,
+            context = get_child_rule_name(rules_file_name, &container.context),
             status = super::common::colored_string(container.status)
         )?;
     }
@@ -65,7 +66,7 @@ fn print_summary(
             "{filename}/{context:<0$}{status}",
             longest + 4,
             filename = rules_file_name,
-            context = rule_name,
+            context = get_child_rule_name(rules_file_name, rule_name),
             status = super::common::colored_string(Some(*status))
         )?;
     }

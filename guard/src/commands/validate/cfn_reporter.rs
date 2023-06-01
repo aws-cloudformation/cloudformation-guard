@@ -14,6 +14,7 @@ use crate::rules::errors::Error;
 
 use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
+use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::Status;
 
@@ -210,7 +211,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                info.path,
                                data_file_name,
                                rules_file_name,
-                               info.rule,
+                               get_child_rule_name(rules_file_name, info.rule),
                                info.message.replace("\n", ";")
                     ))
                 },
@@ -222,7 +223,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                op_msg=op_msg,
                                template=data_file_name,
                                rules=rules_file_name,
-                               rule=info.rule,
+                               rule=get_child_rule_name(rules_file_name, info.rule),
                                msg=info.message.replace("\n", ";")
                     ))
                 },
@@ -235,7 +236,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,
                                rules=rules_file_name,
-                               rule=info.rule,
+                               rule=get_child_rule_name(rules_file_name, info.rule),
                                msg=info.message.replace("\n", ";")
                     ))
                 },

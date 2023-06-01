@@ -9,6 +9,7 @@ use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
 use crate::rules::eval_context::EventRecord;
+use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 
@@ -150,13 +151,15 @@ fn retrieval_error_message(
     data_file: &str,
     info: &NameInfo<'_>,
 ) -> crate::rules::Result<String> {
-    Ok(format!("Property traversed until [{path}] in data [{data}] is not compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
-       data=data_file,
-       rules=rules_file,
-       rule=info.rule,
-       path=info.path,
-       msg=info.error.as_ref().map_or("", |s| s)
-    ))
+    Ok(
+        format!("Property traversed until [{path}] in data [{data}] is not compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
+           data=data_file,
+           rules=rules_file,
+           rule=get_child_rule_name(rules_file, info.rule),
+           path=info.path,
+           msg=info.error.as_ref().map_or("", |s| s)
+        ),
+    )
 }
 
 fn unary_error_message(
@@ -171,7 +174,7 @@ fn unary_error_message(
         op_msg=op_msg,
         data=data_file,
         rules=rules_file,
-        rule=info.rule,
+        rule=get_child_rule_name(rules_file, info.rule),
         msg=info.message.replace("\n", ";"),
     ))
 }
@@ -194,7 +197,7 @@ fn binary_error_message(
         op_msg = op_msg,
         data = data_file,
         rules = rules_file,
-        rule = info.rule,
+        rule = get_child_rule_name(rules_file, info.rule),
         msg = info.message.replace("\n", ";"),
         expected = info
             .expected

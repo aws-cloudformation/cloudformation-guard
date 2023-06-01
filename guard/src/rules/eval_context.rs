@@ -15,7 +15,7 @@ use crate::rules::{
 use inflector::cases::*;
 use lazy_static::lazy_static;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: &'value PathAwareValue,
@@ -1287,8 +1287,8 @@ pub(crate) struct FileReport<'value> {
     pub(crate) status: Status,
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) not_compliant: Vec<ClauseReport<'value>>,
-    pub(crate) not_applicable: HashSet<String>,
-    pub(crate) compliant: HashSet<String>,
+    pub(crate) not_applicable: BTreeSet<String>,
+    pub(crate) compliant: BTreeSet<String>,
 }
 
 impl<'value> FileReport<'value> {
@@ -2061,8 +2061,8 @@ pub(crate) fn simplifed_json_from_root<'value>(
                 status,
                 message,
             }) => {
-                let mut pass = HashSet::with_capacity(root.children.len());
-                let mut skip = HashSet::with_capacity(root.children.len());
+                let mut pass: BTreeSet<String> = BTreeSet::new();
+                let mut skip: BTreeSet<String> = BTreeSet::new();
                 for each in &root.children {
                     if let Some(rule) = &each.container {
                         if let RecordType::RuleCheck(NamedStatus {

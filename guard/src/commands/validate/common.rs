@@ -9,6 +9,7 @@ use crate::rules::eval_context::{
     GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
     ValueUnResolved,
 };
+use crate::rules::parser::get_child_rule_name;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
     ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
@@ -385,7 +386,7 @@ pub(super) fn report_from_events(
     rules_file_name: &str,
     renderer: &dyn GenericReporter,
 ) -> crate::rules::Result<()> {
-    let mut longest_rule_name = 0;
+    let mut longest_rule_length = 0;
     let mut failed = HashMap::new();
     let mut skipped = HashSet::new();
     let mut success = HashSet::new();
@@ -396,8 +397,8 @@ pub(super) fn report_from_events(
             message,
         })) = &each_rule.container
         {
-            if name.len() > longest_rule_name {
-                longest_rule_name = name.len();
+            if name.len() > longest_rule_length {
+                longest_rule_length = name.len();
             }
             match status {
                 Status::FAIL => {
@@ -426,7 +427,7 @@ pub(super) fn report_from_events(
         failed,
         success,
         skipped,
-        longest_rule_name,
+        longest_rule_length,
     )?;
     Ok(())
 }
@@ -548,7 +549,9 @@ pub(super) fn print_compliant_skipped_info(
         writeln!(
             writer,
             "Rule [{}/{}] is compliant for template [{}]",
-            rules_file_name, pass, data_file_name
+            rules_file_name,
+            get_child_rule_name(rules_file_name, pass),
+            data_file_name
         )?;
     }
     if !skipped.is_empty() {
@@ -558,7 +561,9 @@ pub(super) fn print_compliant_skipped_info(
         writeln!(
             writer,
             "Rule [{}/{}] is not applicable for template [{}]",
-            rules_file_name, skip, data_file_name
+            rules_file_name,
+            get_child_rule_name(rules_file_name, skip),
+            data_file_name
         )?;
     }
     Ok(())
@@ -604,7 +609,7 @@ where
                         writeln!(writer, "Parameterized Rule {rules}/{rule_name} failed for {data}. Reason {msg}",
                                  rules=rules_file_name,
                                  data=data_file_name,
-                                 rule_name=each.rule,
+                                 rule_name=get_child_rule_name(rules_file_name,each.rule),
                                  msg=each.message.replace('\n', "; ")
                         )?;
                         continue;

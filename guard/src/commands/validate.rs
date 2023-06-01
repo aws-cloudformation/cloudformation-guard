@@ -29,6 +29,7 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
+use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
@@ -712,7 +713,7 @@ fn print_failing_clause(
         "{file}/{rule:<0$}",
         longest + 4,
         file = rules_file_name,
-        rule = rule.context
+        rule = get_child_rule_name(rules_file_name, &rule.context)
     )
     .expect("Unable to write to the output");
     let longest = rules_file_name.len() + longest;
