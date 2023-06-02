@@ -4543,3 +4543,19 @@ fn test_parse_value_when_strings_are_randomly_generated() {
         assert!(parse_value(cmp).is_err())
     }
 }
+
+#[test]
+fn test_get_rule_name() {
+    let rule_clause_name1 = "harry";
+    let rule_file_name = "lily.guard";
+    let rule_clause_name2 = "lily.guard/harry";
+
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name1),
+        rule_clause_name1
+    );
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name2),
+        rule_clause_name1
+    );
+}

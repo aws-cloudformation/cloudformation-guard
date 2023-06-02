@@ -9,7 +9,7 @@ use crate::rules::eval_context::{
     GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
     ValueUnResolved,
 };
-use crate::rules::parser::get_child_rule_name;
+
 use crate::rules::values::CmpOperator;
 use crate::rules::{
     ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
@@ -548,10 +548,8 @@ pub(super) fn print_compliant_skipped_info(
     for pass in passed {
         writeln!(
             writer,
-            "Rule [{}/{}] is compliant for template [{}]",
-            rules_file_name,
-            get_child_rule_name(rules_file_name, pass),
-            data_file_name
+            "Rule [{}] is compliant for template [{}]",
+            pass, data_file_name
         )?;
     }
     if !skipped.is_empty() {
@@ -560,10 +558,8 @@ pub(super) fn print_compliant_skipped_info(
     for skip in skipped {
         writeln!(
             writer,
-            "Rule [{}/{}] is not applicable for template [{}]",
-            rules_file_name,
-            get_child_rule_name(rules_file_name, skip),
-            data_file_name
+            "Rule [{}] is not applicable for template [{}]",
+            skip, data_file_name
         )?;
     }
     Ok(())
@@ -606,11 +602,12 @@ where
                 let (cmp, not) = match &each.comparison {
                     Some(cmp) => (cmp.operator, cmp.not_operator_exists),
                     None => {
-                        writeln!(writer, "Parameterized Rule {rules}/{rule_name} failed for {data}. Reason {msg}",
-                                 rules=rules_file_name,
-                                 data=data_file_name,
-                                 rule_name=get_child_rule_name(rules_file_name,each.rule),
-                                 msg=each.message.replace('\n', "; ")
+                        writeln!(
+                            writer,
+                            "Parameterized Rule {rule_name} failed for {data}. Reason {msg}",
+                            data = data_file_name,
+                            rule_name = each.rule,
+                            msg = each.message.replace('\n', "; ")
                         )?;
                         continue;
                     }

@@ -6,7 +6,7 @@
     "not_compliant": [
       {
         "Rule": {
-          "name": "default",
+          "name": "advanced_regex_negative_lookbehind_rule.guard/default",
           "metadata": {},
           "messages": {
             "custom_message": null,

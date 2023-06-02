@@ -1,10 +1,10 @@
 Evaluation Tree
-Rule(RULES_STDIN[1], PASS)
+Rule(RULES_STDIN[1]/default, PASS)
     |  Message: DEFAULT MESSAGE(PASS)
     Clause( Parameters.InstanceName EQUALS  "TestInstance", PASS)
         |  Message: DEFAULT MESSAGE(PASS)
 Evaluation Tree
-Rule(RULES_STDIN[1], PASS)
+Rule(RULES_STDIN[1]/default, PASS)
     |  Message: DEFAULT MESSAGE(PASS)
     Clause( Parameters.InstanceName EQUALS  "TestInstance", PASS)
         |  Message: DEFAULT MESSAGE(PASS)
@@ -13,7 +13,7 @@ FAILED rules
 RULES_STDIN[2]/default    FAIL
 ---
 Evaluation Tree
-Rule(RULES_STDIN[2], FAIL)
+Rule(RULES_STDIN[2]/default, FAIL)
     |  Message: DEFAULT MESSAGE(FAIL)
     Clause( Parameters.InstanceName EQUALS  "SomeRandomString", FAIL)
         |  From: String((Path("/Parameters/InstanceName", Location { line: 0, col: 276 }), "TestInstance"))
@@ -24,7 +24,7 @@ FAILED rules
 RULES_STDIN[2]/default    FAIL
 ---
 Evaluation Tree
-Rule(RULES_STDIN[2], FAIL)
+Rule(RULES_STDIN[2]/default, FAIL)
     |  Message: DEFAULT MESSAGE(FAIL)
     Clause( Parameters.InstanceName EQUALS  "SomeRandomString", FAIL)
         |  From: String((Path("/Parameters/InstanceName", Location { line: 0, col: 276 }), "TestInstance"))

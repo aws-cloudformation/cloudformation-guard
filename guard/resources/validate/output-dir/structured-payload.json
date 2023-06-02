@@ -6,7 +6,8 @@
     "not_compliant": [],
     "not_applicable": [],
     "compliant": [
-      "default"
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
     ]
   },
   {
@@ -16,7 +17,8 @@
     "not_compliant": [],
     "not_applicable": [],
     "compliant": [
-      "default"
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
     ]
   }
 ]

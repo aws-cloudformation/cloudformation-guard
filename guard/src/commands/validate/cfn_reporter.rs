@@ -14,7 +14,6 @@ use crate::rules::errors::Error;
 
 use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
-use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::Status;
 
@@ -206,37 +205,34 @@ impl super::common::GenericReporter for SingleLineReporter {
                 rules_file_name,
                 data_file_name,
                 |_, _, info| {
-                    Ok(format!("Resource [{}] traversed until [{}] for template [{}] wasn't compliant with [{}/{}] due to retrieval error. Error Message [{}]",
+                    Ok(format!("Resource [{}] traversed until [{}] for template [{}] wasn't compliant with [{}] due to retrieval error. Error Message [{}]",
                                resource,
                                info.path,
                                data_file_name,
-                               rules_file_name,
-                               get_child_rule_name(rules_file_name, info.rule),
+                               info.rule,
                                info.message.replace("\n", ";")
                     ))
                 },
                 |_, _, op_msg, info| {
-                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because needed value at [{provided}] {op_msg}. Error message [{msg}]",
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because needed value at [{provided}] {op_msg}. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
                                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                op_msg=op_msg,
                                template=data_file_name,
-                               rules=rules_file_name,
-                               rule=get_child_rule_name(rules_file_name, info.rule),
+                               rule= info.rule,
                                msg=info.message.replace("\n", ";")
                     ))
                 },
                 |_, _, msg, info| {
-                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rules}/{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
                                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                op_msg=msg,
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,
-                               rules=rules_file_name,
-                               rule=get_child_rule_name(rules_file_name, info.rule),
+                               rule=info.rule,
                                msg=info.message.replace("\n", ";")
                     ))
                 },

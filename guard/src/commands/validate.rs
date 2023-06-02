@@ -29,7 +29,7 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::parser::get_child_rule_name;
+use crate::rules::parser::get_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
@@ -713,7 +713,7 @@ fn print_failing_clause(
         "{file}/{rule:<0$}",
         longest + 4,
         file = rules_file_name,
-        rule = get_child_rule_name(rules_file_name, &rule.context)
+        rule = get_rule_name(rules_file_name, &rule.context)
     )
     .expect("Unable to write to the output");
     let longest = rules_file_name.len() + longest;
@@ -826,7 +826,7 @@ impl<'r> ConsoleReporter<'r> {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             writeln!(self.writer, "{serialized_user}").expect("Unable to write to the output");
         } else {
-            let longest = get_longest(top);
+            let longest = get_longest(top, self.rules_file_name);
 
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
                 partition_failed_and_rest(top);
@@ -1026,11 +1026,15 @@ fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&
         .partition(|ctx| matches!(ctx.status, Some(Status::FAIL)))
 }
 
-fn get_longest(top: &StatusContext) -> usize {
+fn get_longest(top: &StatusContext, rule_file_name: &str) -> usize {
     top.children
         .iter()
-        .max_by(|f, s| f.context.len().cmp(&s.context.len()))
-        .map(|elem| elem.context.len())
+        .max_by(|f, s| {
+            get_rule_name(rule_file_name, &f.context)
+                .len()
+                .cmp(&get_rule_name(rule_file_name, &s.context).len())
+        })
+        .map(|elem| get_rule_name(rule_file_name, &elem.context).len())
         .unwrap_or(20)
 }
 

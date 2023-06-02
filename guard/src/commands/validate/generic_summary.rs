@@ -9,7 +9,6 @@ use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
 use crate::rules::eval_context::EventRecord;
-use crate::rules::parser::get_child_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 
@@ -152,12 +151,11 @@ fn retrieval_error_message(
     info: &NameInfo<'_>,
 ) -> crate::rules::Result<String> {
     Ok(
-        format!("Property traversed until [{path}] in data [{data}] is not compliant with [{rules}/{rule}] due to retrieval error. Error Message [{msg}]",
-           data=data_file,
-           rules=rules_file,
-           rule=get_child_rule_name(rules_file, info.rule),
-           path=info.path,
-           msg=info.error.as_ref().map_or("", |s| s)
+        format!("Property traversed until [{path}] in data [{data}] is not compliant with [{rule}] due to retrieval error. Error Message [{msg}]",
+                data=data_file,
+                rule=info.rule,
+                path=info.path,
+                msg=info.error.as_ref().map_or("", |s| s)
         ),
     )
 }
@@ -168,14 +166,13 @@ fn unary_error_message(
     op_msg: &str,
     info: &NameInfo<'_>,
 ) -> crate::rules::Result<String> {
-    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because needed value at [{provided}] {op_msg}. Error Message [{msg}]",
-        path=info.path,
-        provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
-        op_msg=op_msg,
-        data=data_file,
-        rules=rules_file,
-        rule=get_child_rule_name(rules_file, info.rule),
-        msg=info.message.replace("\n", ";"),
+    Ok(format!("Property [{path}] in data [{data}] is not compliant with [{rule}] because needed value at [{provided}] {op_msg}. Error Message [{msg}]",
+               path=info.path,
+               provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
+               op_msg=op_msg,
+               data=data_file,
+               rule=info.rule,
+               msg=info.message.replace("\n", ";"),
     ))
 }
 
@@ -186,7 +183,7 @@ fn binary_error_message(
     info: &NameInfo<'_>,
 ) -> crate::rules::Result<String> {
     Ok(format!(
-        "Property [{path}] in data [{data}] is not compliant with [{rules}/{rule}] because \
+        "Property [{path}] in data [{data}] is not compliant with [{rule}] because \
      provided value [{provided}] {op_msg} {cmp_msg} [{expected}]. Error \
      Message [{msg}]",
         path = info.path,
@@ -196,8 +193,7 @@ fn binary_error_message(
             .map_or(&serde_json::Value::Null, std::convert::identity),
         op_msg = op_msg,
         data = data_file,
-        rules = rules_file,
-        rule = get_child_rule_name(rules_file, info.rule),
+        rule = info.rule,
         msg = info.message.replace("\n", ";"),
         expected = info
             .expected
