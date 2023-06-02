@@ -119,7 +119,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
 fn binary_err_msg(
     writer: &mut dyn Write,
     _clause: &ClauseReport<'_>,
-    bc: &BinaryComparison<'_>,
+    bc: &BinaryComparison,
     prefix: &str,
 ) -> rules::Result<usize> {
     let width = "PropertyPath".len() + 4;
@@ -133,9 +133,9 @@ fn binary_err_msg(
         cw = "ComparedWith",
         prefix = prefix,
         path = bc.from.self_path(),
-        value = ValueOnlyDisplay(bc.from),
+        value = ValueOnlyDisplay(Rc::clone(&bc.from)),
         cmp = rules::eval_context::cmp_str(bc.comparison),
-        with = ValueOnlyDisplay(bc.to)
+        with = ValueOnlyDisplay(Rc::clone(&bc.to))
     )?;
     Ok(width)
 }
@@ -143,7 +143,7 @@ fn binary_err_msg(
 fn unary_err_msg(
     writer: &mut dyn Write,
     _clause: &ClauseReport<'_>,
-    re: &UnaryComparison<'_>,
+    re: &UnaryComparison,
     prefix: &str,
 ) -> rules::Result<usize> {
     let width = "PropertyPath".len() + 4;
@@ -183,7 +183,7 @@ fn single_line(
 
     let root = data.root().unwrap();
     let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range("/Resources"..) {
+    for (key, value) in path_tree.range(String::from("/Resources")..) {
         let matches = key.matches("/").count();
         let mut count = 1;
 
@@ -192,7 +192,7 @@ fn single_line(
                 if matches - count == 0 {
                     unreachable!()
                 }
-                let resource_name = get_resource_name(key, count, matches);
+                let resource_name = get_resource_name(&key, count, matches);
 
                 match handle_resource_aggr(data, root, resource_name, &mut by_resources, value) {
                     Some(_) => break,
@@ -200,7 +200,7 @@ fn single_line(
                 };
             }
         } else {
-            let resource_name = match CFN_RESOURCES.captures(*key) {
+            let resource_name = match CFN_RESOURCES.captures(&key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
                     writeln!(writer, "key: {}", key)?;
@@ -274,7 +274,7 @@ fn single_line(
                         &mut self,
                         writer: &mut dyn Write,
                         _cr: &ClauseReport<'_>,
-                        bc: Option<&UnResolved<'_>>,
+                        bc: Option<&UnResolved>,
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         if let Some(bc) = bc {
@@ -286,8 +286,8 @@ fn single_line(
                     fn binary_error_msg(
                         &mut self,
                         writer: &mut dyn Write,
-                        cr: &ClauseReport<'_>,
-                        bc: &BinaryComparison<'_>,
+                        _: &ClauseReport<'_>,
+                        bc: &BinaryComparison,
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         let width = "PropertyPath".len() + 4;
@@ -301,9 +301,9 @@ fn single_line(
                             cw = "ComparedWith",
                             prefix = prefix,
                             path = bc.from.self_path(),
-                            value = ValueOnlyDisplay(bc.from),
+                            value = ValueOnlyDisplay(Rc::clone(&bc.from)),
                             cmp = rules::eval_context::cmp_str(bc.comparison),
-                            with = ValueOnlyDisplay(bc.to)
+                            with = ValueOnlyDisplay(Rc::clone(&bc.to))
                         )?;
                         self.emit_code(writer, bc.from.self_path().1.line, prefix)?;
                         Ok(width)
@@ -312,14 +312,14 @@ fn single_line(
                     fn binary_error_in_msg(
                         &mut self,
                         writer: &mut dyn Write,
-                        cr: &ClauseReport<'_>,
-                        bc: &InComparison<'_>,
+                        _: &ClauseReport<'_>,
+                        bc: &InComparison,
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         let cut_off = max(bc.to.len(), 5);
                         let mut collected = Vec::with_capacity(10);
                         for (idx, each) in bc.to.iter().enumerate() {
-                            collected.push(ValueOnlyDisplay(*each));
+                            collected.push(ValueOnlyDisplay(Rc::clone(each)));
                             if idx >= cut_off {
                                 break;
                             }
@@ -337,7 +337,7 @@ fn single_line(
                                 cw = "ComparedWith",
                                 prefix = prefix,
                                 path = bc.from.self_path(),
-                                value = ValueOnlyDisplay(bc.from),
+                                value = ValueOnlyDisplay(Rc::clone(&bc.from)),
                                 cmp = rules::eval_context::cmp_str(bc.comparison),
                                 with = collected
                             )?;
@@ -353,7 +353,7 @@ fn single_line(
                                 cw = "ComparedWith",
                                 prefix = prefix,
                                 path = bc.from.self_path(),
-                                value = ValueOnlyDisplay(bc.from),
+                                value = ValueOnlyDisplay(Rc::clone(&bc.from)),
                                 cmp = rules::eval_context::cmp_str(bc.comparison),
                                 total = bc.to.len(),
                                 with = collected
@@ -367,7 +367,7 @@ fn single_line(
                         &mut self,
                         writer: &mut dyn Write,
                         cr: &ClauseReport<'_>,
-                        re: &UnaryComparison<'_>,
+                        re: &UnaryComparison,
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         let width = unary_err_msg(writer, cr, re, prefix)?;
@@ -442,7 +442,7 @@ fn single_line(
 ///
 /// returns: String
 /// ```
-fn get_resource_name(key: &&str, count: usize, matches: usize) -> String {
+fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
     let c = &char::from_u32(0xC).unwrap().to_string();
     // count = 2; key = "/Resources/foo/bar/baz -> placeholder = "\fResources\ffoo\fbar/baz"
     let mut placeholder = str::replacen(key, "/", c, matches - count);

@@ -805,4 +805,26 @@ mod validate_tests {
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
+
+    #[rstest::rstest]
+    #[case("regex_replace.guard")]
+    #[case("substring.guard")]
+    #[case("json_parse.guard")]
+    #[case("string_manip.guard")]
+    #[case("url_decode.guard")]
+    #[case("join.guard")]
+    #[case("count.guard")]
+    fn test_validate_with_fn_expr_success(#[case] rule: &str) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec![&format!("/functions/rules/{rule}")])
+            .data(vec!["/functions/data/template.yaml"])
+            .verbose()
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
 }

@@ -7,16 +7,16 @@ use std::collections::HashMap;
 
 mod operators;
 
-fn exists_operation(value: &QueryResult<'_>) -> Result<bool> {
+fn exists_operation(value: &QueryResult) -> Result<bool> {
     Ok(match value {
         QueryResult::Resolved(_) | QueryResult::Literal(_) => true,
         QueryResult::UnResolved(_) => false,
     })
 }
 
-fn element_empty_operation(value: &QueryResult<'_>) -> Result<bool> {
+fn element_empty_operation(value: &QueryResult) -> Result<bool> {
     let result = match value {
-        QueryResult::Literal(value) | QueryResult::Resolved(value) => match value {
+        QueryResult::Literal(value) | QueryResult::Resolved(value) => match &**value {
             PathAwareValue::List((_, list)) => list.is_empty(),
             PathAwareValue::Map((_, map)) => map.is_empty(),
             PathAwareValue::String((_, string)) => string.is_empty(),
@@ -40,15 +40,14 @@ fn element_empty_operation(value: &QueryResult<'_>) -> Result<bool> {
 
 macro_rules! is_type_fn {
     ($name: ident, $type_: pat) => {
-        fn $name(value: &QueryResult<'_>) -> Result<bool> {
+        fn $name(value: &QueryResult) -> Result<bool> {
             Ok(match value {
                 QueryResult::Literal(resolved) | QueryResult::Resolved(resolved) => {
-                    match resolved {
+                    match **resolved {
                         $type_ => true,
                         _ => false,
                     }
                 }
-
                 QueryResult::UnResolved(_) => false,
             })
         }
@@ -65,11 +64,11 @@ is_type_fn!(is_char_range_operation, PathAwareValue::RangeChar(_));
 is_type_fn!(is_int_range_operation, PathAwareValue::RangeInt(_));
 is_type_fn!(is_float_range_operation, PathAwareValue::RangeFloat(_));
 
-fn not_operation<O>(operation: O) -> impl Fn(&QueryResult<'_>) -> Result<bool>
+fn not_operation<O>(operation: O) -> impl Fn(&QueryResult) -> Result<bool>
 where
-    O: Fn(&QueryResult<'_>) -> Result<bool>,
+    O: Fn(&QueryResult) -> Result<bool>,
 {
-    move |value: &QueryResult<'_>| {
+    move |value: &QueryResult| {
         Ok(match operation(value)? {
             true => false,
             false => true,
@@ -77,11 +76,11 @@ where
     }
 }
 
-fn inverse_operation<O>(operation: O, inverse: bool) -> impl Fn(&QueryResult<'_>) -> Result<bool>
+fn inverse_operation<O>(operation: O, inverse: bool) -> impl Fn(&QueryResult) -> Result<bool>
 where
-    O: Fn(&QueryResult<'_>) -> Result<bool>,
+    O: Fn(&QueryResult) -> Result<bool>,
 {
-    move |value: &QueryResult<'_>| {
+    move |value: &QueryResult| {
         Ok(match inverse {
             true => !operation(value)?,
             false => operation(value)?,
@@ -95,11 +94,11 @@ fn record_unary_clause<'eval, 'value, 'loc: 'value, O>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'eval mut dyn EvalContext<'value, 'loc>,
-) -> Box<dyn FnMut(&QueryResult<'value>) -> Result<bool> + 'eval>
+) -> Box<dyn FnMut(&QueryResult) -> Result<bool> + 'eval>
 where
-    O: Fn(&QueryResult<'value>) -> Result<bool> + 'eval,
+    O: Fn(&QueryResult) -> Result<bool> + 'eval,
 {
-    Box::new(move |value: &QueryResult<'value>| {
+    Box::new(move |value: &QueryResult| {
         eval_context.start_record(&context)?;
         let mut check = ValueCheck {
             custom_message: custom_message.clone(),
@@ -161,9 +160,9 @@ macro_rules! box_create_func {
     }};
 }
 
-pub(super) enum EvaluationResult<'value> {
+pub(super) enum EvaluationResult {
     EmptyQueryResult(Status),
-    QueryValueResult(Vec<(QueryResult<'value>, Status)>),
+    QueryValueResult(Vec<(QueryResult, Status)>),
 }
 
 fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
@@ -173,7 +172,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'l, 'loc>,
-) -> Result<EvaluationResult<'l>> {
+) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
 
     //
@@ -300,7 +299,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     }
 
     use CmpOperator::*;
-    let mut operation: Box<dyn FnMut(&QueryResult<'l>) -> Result<bool>> = match cmp {
+    let mut operation: Box<dyn FnMut(&QueryResult) -> Result<bool>> = match cmp {
         (CmpOperator::Exists, not_exists) => box_create_func!(
             exists_operation,
             not_exists,
@@ -381,37 +380,37 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     Ok(EvaluationResult::QueryValueResult(status))
 }
 
-enum ComparisonResult<'r> {
-    Comparable(ComparisonWithRhs<'r>),
-    NotComparable(NotComparableWithRhs<'r>),
-    UnResolvedRhs(UnResolvedRhs<'r>),
+enum ComparisonResult {
+    Comparable(ComparisonWithRhs),
+    NotComparable(NotComparableWithRhs),
+    UnResolvedRhs(UnResolvedRhs),
 }
 
-struct LhsRhsPair<'value> {
-    lhs: &'value PathAwareValue,
-    rhs: &'value PathAwareValue,
+struct LhsRhsPair {
+    lhs: Rc<PathAwareValue>,
+    rhs: Rc<PathAwareValue>,
 }
 
-struct ComparisonWithRhs<'r> {
+struct ComparisonWithRhs {
     outcome: bool,
-    pair: LhsRhsPair<'r>,
+    pair: LhsRhsPair,
 }
 
-struct NotComparableWithRhs<'r> {
+struct NotComparableWithRhs {
     reason: String,
-    pair: LhsRhsPair<'r>,
+    pair: LhsRhsPair,
 }
 
-struct UnResolvedRhs<'r> {
-    rhs: QueryResult<'r>,
-    lhs: &'r PathAwareValue,
+struct UnResolvedRhs {
+    rhs: QueryResult,
+    lhs: Rc<PathAwareValue>,
 }
 
-fn each_lhs_compare<'r, 'value: 'r, C>(
+fn each_lhs_compare<'r, C>(
     cmp: C,
-    lhs: &'value PathAwareValue,
-    rhs: &'r [QueryResult<'value>],
-) -> Result<Vec<ComparisonResult<'value>>>
+    lhs: Rc<PathAwareValue>,
+    rhs: &'r [QueryResult],
+) -> Result<Vec<ComparisonResult>>
 where
     C: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>,
 {
@@ -419,13 +418,13 @@ where
     for each_rhs in rhs {
         match each_rhs {
             QueryResult::Literal(each_rhs_resolved) | QueryResult::Resolved(each_rhs_resolved) => {
-                match cmp(lhs, *each_rhs_resolved) {
+                match cmp(&lhs, each_rhs_resolved) {
                     Ok(outcome) => {
                         statues.push(ComparisonResult::Comparable(ComparisonWithRhs {
                             outcome,
                             pair: LhsRhsPair {
-                                lhs,
-                                rhs: *each_rhs_resolved,
+                                lhs: Rc::clone(&lhs),
+                                rhs: Rc::clone(each_rhs_resolved),
                             },
                         }));
                     }
@@ -433,16 +432,16 @@ where
                     Err(Error::NotComparable(reason)) => {
                         if lhs.is_list() {
                             // && each_rhs_resolved.is_scalar() {
-                            if let PathAwareValue::List((_, inner)) = lhs {
+                            if let PathAwareValue::List((_, inner)) = &*lhs {
                                 for each in inner {
-                                    match cmp(each, *each_rhs_resolved) {
+                                    match cmp(&each, each_rhs_resolved) {
                                         Ok(outcome) => {
                                             statues.push(ComparisonResult::Comparable(
                                                 ComparisonWithRhs {
                                                     outcome,
                                                     pair: LhsRhsPair {
-                                                        lhs: each,
-                                                        rhs: *each_rhs_resolved,
+                                                        lhs: Rc::new(each.clone()),
+                                                        rhs: Rc::clone(each_rhs_resolved),
                                                     },
                                                 },
                                             ));
@@ -453,8 +452,8 @@ where
                                                 NotComparableWithRhs {
                                                     reason,
                                                     pair: LhsRhsPair {
-                                                        lhs: each,
-                                                        rhs: *each_rhs_resolved,
+                                                        lhs: Rc::new(each.clone()),
+                                                        rhs: Rc::clone(each_rhs_resolved),
                                                     },
                                                 },
                                             ));
@@ -469,17 +468,19 @@ where
 
                         if lhs.is_scalar() {
                             if let QueryResult::Literal(_) = each_rhs {
-                                if let PathAwareValue::List((_, rhs)) = each_rhs_resolved {
+                                if let PathAwareValue::List((_, rhs)) = &**each_rhs_resolved {
                                     if rhs.len() == 1 {
                                         let rhs_inner_single_element = &rhs[0];
-                                        match cmp(lhs, rhs_inner_single_element) {
+                                        match cmp(&lhs, rhs_inner_single_element) {
                                             Ok(outcome) => {
                                                 statues.push(ComparisonResult::Comparable(
                                                     ComparisonWithRhs {
                                                         outcome,
                                                         pair: LhsRhsPair {
-                                                            lhs,
-                                                            rhs: rhs_inner_single_element,
+                                                            lhs: Rc::clone(&lhs),
+                                                            rhs: Rc::new(
+                                                                rhs_inner_single_element.clone(),
+                                                            ),
                                                         },
                                                     },
                                                 ));
@@ -490,8 +491,10 @@ where
                                                     NotComparableWithRhs {
                                                         reason,
                                                         pair: LhsRhsPair {
-                                                            lhs,
-                                                            rhs: rhs_inner_single_element,
+                                                            lhs: Rc::clone(&lhs),
+                                                            rhs: Rc::new(
+                                                                rhs_inner_single_element.clone(),
+                                                            ),
                                                         },
                                                     },
                                                 ));
@@ -508,8 +511,8 @@ where
                         statues.push(ComparisonResult::NotComparable(NotComparableWithRhs {
                             reason,
                             pair: LhsRhsPair {
-                                lhs,
-                                rhs: *each_rhs_resolved,
+                                lhs: Rc::clone(&lhs),
+                                rhs: Rc::clone(each_rhs_resolved),
                             },
                         }));
                     }
@@ -521,7 +524,7 @@ where
             QueryResult::UnResolved(_ur) => {
                 statues.push(ComparisonResult::UnResolvedRhs(UnResolvedRhs {
                     rhs: each_rhs.clone(),
-                    lhs,
+                    lhs: Rc::clone(&lhs),
                 }));
             }
         }
@@ -579,12 +582,12 @@ fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<b
 }
 
 fn report_value<'r, 'value: 'r, 'loc: 'value>(
-    each_res: &ComparisonResult<'value>,
+    each_res: &ComparisonResult,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<(QueryResult<'value>, Status)> {
+) -> Result<(QueryResult, Status)> {
     let (lhs_value, rhs_value, outcome, reason) = match each_res {
         ComparisonResult::Comparable(ComparisonWithRhs {
             outcome,
@@ -593,66 +596,36 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                     lhs: lhs_value,
                     rhs: rhs_value,
                 },
-        }) =>
-        //            if is_lhs_rhs_swapped {
-        //                (QueryResult::Resolved(rhs_value),
-        //                 Some(QueryResult::Resolved(lhs_value)),
-        //                 *outcome,
-        //                 None)
-        //            }
-        //            else {
-        {
-            (
-                QueryResult::Resolved(lhs_value),
-                Some(QueryResult::Resolved(rhs_value)),
-                *outcome,
-                None,
-            )
-        }
+        }) => (
+            QueryResult::Resolved(Rc::clone(lhs_value)),
+            Some(QueryResult::Resolved(Rc::clone(&rhs_value))),
+            *outcome,
+            None,
+        ),
         //},
         ComparisonResult::NotComparable(NotComparableWithRhs {
-            reason,
             pair:
                 LhsRhsPair {
                     rhs: rhs_value,
                     lhs: lhs_value,
                 },
-        }) =>
-        //            if is_lhs_rhs_swapped {
-        //                (QueryResult::Resolved(rhs_value),
-        //                 Some(QueryResult::Resolved(lhs_value)),
-        //                 false,
-        //                 None)
-        //            }
-        //            else {
-        {
-            (
-                QueryResult::Resolved(lhs_value),
-                Some(QueryResult::Resolved(rhs_value)),
-                false,
-                None,
-            )
-        }
+            ..
+        }) => (
+            QueryResult::Resolved(Rc::clone(lhs_value)),
+            Some(QueryResult::Resolved(Rc::clone(rhs_value))),
+            false,
+            None,
+        ),
         //            },
         ComparisonResult::UnResolvedRhs(UnResolvedRhs {
             lhs: lhs_value,
             rhs: rhs_query_result,
-        }) =>
-        //            if is_lhs_rhs_swapped {
-        //                (rhs_query_result.clone(),
-        //                 Some(QueryResult::Resolved(lhs_value)),
-        //                 false,
-        //                 None)
-        //            }
-        //            else {
-        {
-            (
-                QueryResult::Resolved(lhs_value),
-                Some(rhs_query_result.clone()),
-                false,
-                None,
-            )
-        } //            }
+        }) => (
+            QueryResult::Resolved(Rc::clone(lhs_value)),
+            Some(rhs_query_result.clone()),
+            false,
+            None,
+        ), //            }
     };
 
     Ok(if outcome {
@@ -677,12 +650,12 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
 }
 
 fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
-    comparisons: Vec<ComparisonResult<'value>>,
+    comparisons: Vec<ComparisonResult>,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<Vec<(QueryResult<'value>, Status)>> {
+) -> Result<Vec<(QueryResult, Status)>> {
     let mut status = Vec::with_capacity(comparisons.len());
     for each_res in comparisons {
         status.push(report_value(
@@ -697,12 +670,12 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
 }
 
 fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
-    rhs_comparisons: Vec<ComparisonResult<'value>>,
+    rhs_comparisons: Vec<ComparisonResult>,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<Vec<(QueryResult<'value>, Status)>> {
+) -> Result<Vec<(QueryResult, Status)>> {
     let mut statues = Vec::with_capacity(rhs_comparisons.len());
     let mut by_lhs_value = HashMap::new();
     for each in &rhs_comparisons {
@@ -712,9 +685,9 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 ..
             }) => {
                 by_lhs_value
-                    .entry(*lhs)
+                    .entry(lhs)
                     .or_insert(vec![])
-                    .push((each, QueryResult::Resolved(*rhs)));
+                    .push((each, QueryResult::Resolved(Rc::clone(rhs))));
             }
 
             ComparisonResult::NotComparable(NotComparableWithRhs {
@@ -722,15 +695,15 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 ..
             }) => {
                 by_lhs_value
-                    .entry(*lhs)
+                    .entry(lhs)
                     .or_insert(vec![])
-                    .push((each, QueryResult::Resolved(*rhs)));
+                    .push((each, QueryResult::Resolved(Rc::clone(rhs))));
             }
 
             ComparisonResult::UnResolvedRhs(UnResolvedRhs { rhs, lhs }) => {
-                if let QueryResult::UnResolved(ur) = rhs {
+                if let QueryResult::UnResolved(..) = rhs {
                     by_lhs_value
-                        .entry(*lhs)
+                        .entry(lhs)
                         .or_insert(vec![])
                         .push((each, rhs.clone()));
                 }
@@ -748,18 +721,20 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 eval_context.start_record(&context)?;
                 eval_context
                     .end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
-                statues.push((QueryResult::Resolved(*lhs), Status::PASS))
+                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::PASS))
             }
             None => {
                 eval_context.start_record(&context)?;
+
                 let to_collected = results
                     .iter()
-                    .map(|(cr, rhs)| rhs.clone())
-                    .collect::<Vec<QueryResult<'_>>>();
+                    .map(|(_, rhs)| rhs.clone())
+                    .collect::<Vec<QueryResult>>();
+
                 eval_context.end_record(
                     &context,
                     RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
-                        from: QueryResult::Resolved(*lhs),
+                        from: QueryResult::Resolved(Rc::clone(lhs)),
                         to: to_collected,
                         message: None,
                         custom_message: custom_message.clone(),
@@ -767,7 +742,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                         comparison: cmp,
                     })),
                 )?;
-                statues.push((QueryResult::Resolved(*lhs), Status::FAIL))
+                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::FAIL))
             }
         }
     }
@@ -786,18 +761,18 @@ where
 
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
-    rhs: &[QueryResult<'value>],
+    rhs: &[QueryResult],
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<EvaluationResult<'value>> {
+) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
     match results {
         operators::EvalResult::Skip => return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
         operators::EvalResult::Result(results) => {
-            let mut statues: Vec<(QueryResult<'_>, Status)> = Vec::with_capacity(lhs.len());
+            let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
             for each in results {
                 match each {
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
@@ -830,12 +805,12 @@ fn binary_operation<'value, 'loc: 'value>(
                                     message: None,
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
-                                    from: QueryResult::Resolved(lhs),
+                                    from: QueryResult::Resolved(Rc::clone(&lhs)),
                                     to: Some(QueryResult::UnResolved(urhs)),
                                 },
                             )),
                         )?;
-                        statues.push((QueryResult::Resolved(lhs), Status::FAIL));
+                        statues.push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
@@ -850,7 +825,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     message: Some(nc.reason),
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
-                                    from: QueryResult::Resolved(nc.pair.lhs),
+                                    from: QueryResult::Resolved(Rc::clone(&nc.pair.lhs)),
                                     to: Some(QueryResult::Resolved(nc.pair.rhs)),
                                 },
                             )),
@@ -913,12 +888,13 @@ fn binary_operation<'value, 'loc: 'value>(
                                         message: None,
                                         custom_message: custom_message.clone(),
                                         comparison: cmp,
-                                        from: QueryResult::Resolved(pair.lhs),
+                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
                                         to: Some(QueryResult::Resolved(pair.rhs)),
                                     },
                                 )),
                             )?;
-                            statues.push((QueryResult::Resolved(pair.lhs), Status::FAIL));
+                            statues
+                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
                         }
 
                         operators::Compare::ValueIn(pair) => {
@@ -931,12 +907,13 @@ fn binary_operation<'value, 'loc: 'value>(
                                         message: None,
                                         custom_message: custom_message.clone(),
                                         comparison: cmp,
-                                        from: QueryResult::Resolved(pair.lhs),
+                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
                                         to: vec![QueryResult::Resolved(pair.rhs)],
                                     },
                                 )),
                             )?;
-                            statues.push((QueryResult::Resolved(pair.lhs), Status::FAIL));
+                            statues
+                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
                         }
 
                         operators::Compare::ListIn(lin) => {
@@ -949,20 +926,23 @@ fn binary_operation<'value, 'loc: 'value>(
                                         message: None,
                                         custom_message: custom_message.clone(),
                                         comparison: cmp,
-                                        from: QueryResult::Resolved(lin.lhs),
+                                        from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
                                         to: vec![QueryResult::Resolved(lin.rhs)],
                                     },
                                 )),
                             )?;
-                            statues.push((QueryResult::Resolved(lin.lhs), Status::FAIL));
+                            statues
+                                .push((QueryResult::Resolved(Rc::clone(&lin.lhs)), Status::FAIL));
                         }
 
                         operators::Compare::QueryIn(qin) => {
                             let rhs = qin
                                 .rhs
                                 .iter()
-                                .map(|e| QueryResult::Resolved(*e))
+                                .cloned()
+                                .map(|e| QueryResult::Resolved(e))
                                 .collect::<Vec<_>>();
+
                             for lhs in qin.diff {
                                 eval_context.start_record(&context)?;
                                 eval_context.end_record(
@@ -973,12 +953,13 @@ fn binary_operation<'value, 'loc: 'value>(
                                             message: None,
                                             custom_message: custom_message.clone(),
                                             comparison: cmp,
-                                            from: QueryResult::Resolved(lhs),
+                                            from: QueryResult::Resolved(Rc::clone(&lhs)),
                                             to: rhs.clone(),
                                         },
                                     )),
                                 )?;
-                                statues.push((QueryResult::Resolved(lhs), Status::FAIL));
+                                statues
+                                    .push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
                             }
                         }
                     },
@@ -989,36 +970,25 @@ fn binary_operation<'value, 'loc: 'value>(
             Ok(EvaluationResult::QueryValueResult(statues))
         }
     }
-
-    //    if lhs.is_empty() || rhs.is_empty() {
-    //        return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
-    //    }
-    //    real_binary_operation(
-    //        &lhs,
-    //        rhs,
-    //        cmp,
-    //        context,
-    //        custom_message,
-    //        eval_context
-    //    )
 }
 
 pub(super) fn real_binary_operation<'value, 'loc: 'value>(
-    lhs: &[QueryResult<'value>],
-    rhs: &[QueryResult<'value>],
+    lhs: &[QueryResult],
+    rhs: &[QueryResult],
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<EvaluationResult<'value>> {
-    let mut statues: Vec<(QueryResult<'_>, Status)> = Vec::with_capacity(lhs.len());
-    let original = cmp;
+) -> Result<EvaluationResult> {
+    let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+
     let cmp = if cmp.0 == CmpOperator::Eq && rhs.len() > 1 {
         (CmpOperator::In, cmp.1)
     } else {
         cmp
     };
-    for (idx, each) in lhs.iter().enumerate() {
+
+    for each in lhs.iter() {
         match each {
             QueryResult::UnResolved(_ur) => {
                 eval_context.start_record(&context)?;
@@ -1040,35 +1010,37 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                 let r = match cmp {
                     (CmpOperator::Eq, is_not) => each_lhs_compare(
                         not_compare(crate::rules::path_value::compare_eq, is_not),
-                        *l,
+                        Rc::clone(l),
                         rhs,
                     )?,
 
                     (CmpOperator::Ge, is_not) => each_lhs_compare(
                         not_compare(crate::rules::path_value::compare_ge, is_not),
-                        *l,
+                        Rc::clone(l),
                         rhs,
                     )?,
 
                     (CmpOperator::Gt, is_not) => each_lhs_compare(
                         not_compare(crate::rules::path_value::compare_gt, is_not),
-                        *l,
+                        Rc::clone(l),
                         rhs,
                     )?,
 
                     (CmpOperator::Lt, is_not) => each_lhs_compare(
                         not_compare(crate::rules::path_value::compare_lt, is_not),
-                        *l,
+                        Rc::clone(l),
                         rhs,
                     )?,
 
                     (CmpOperator::Le, is_not) => each_lhs_compare(
                         not_compare(crate::rules::path_value::compare_le, is_not),
-                        *l,
+                        Rc::clone(l),
                         rhs,
                     )?,
 
-                    (CmpOperator::In, is_not) => each_lhs_compare(in_cmp(is_not), *l, rhs)?,
+                    (CmpOperator::In, is_not) => {
+                        each_lhs_compare(in_cmp(is_not), Rc::clone(l), rhs)?
+                    }
 
                     _ => unreachable!(),
                 };
@@ -1101,6 +1073,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     Ok(EvaluationResult::QueryValueResult(statues))
 }
 
+#[allow(clippy::never_loop)]
 pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -1119,9 +1092,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             resolver,
         )
     } else {
-        let (rhs, is_literal) = match &gac.access_clause.compare_with {
+        let (rhs, _) = match &gac.access_clause.compare_with {
             Some(val) => match val {
-                LetValue::Value(rhs_val) => (vec![QueryResult::Literal(rhs_val)], true),
+                LetValue::Value(rhs_val) => {
+                    (vec![QueryResult::Literal(Rc::new(rhs_val.clone()))], true)
+                }
                 LetValue::AccessClause(acc_querty) => match resolver.query(&acc_querty.query) {
                     Ok(result) => (result, false),
                     Err(e) => {
@@ -1415,14 +1390,12 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
         } else {
             Status::SKIP
         }
+    } else if passes > 0 {
+        Status::PASS
+    } else if fails > 0 {
+        Status::FAIL
     } else {
-        if passes > 0 {
-            Status::PASS
-        } else if fails > 0 {
-            Status::FAIL
-        } else {
-            Status::SKIP
-        }
+        Status::SKIP
     };
     resolver.end_record(
         &context,
@@ -1513,14 +1486,14 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
 
 struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
     call_rule: &'value ParameterizedNamedRuleClause<'loc>,
-    resolved_parameters: HashMap<&'value str, Vec<QueryResult<'value>>>,
+    resolved_parameters: HashMap<&'value str, Vec<QueryResult>>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
 impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     for ResolvedParameterContext<'eval, 'value, 'loc>
 {
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         self.parent.query(query)
     }
 
@@ -1531,7 +1504,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.find_parameterized_rule(rule_name)
     }
 
-    fn root(&mut self) -> &'value PathAwareValue {
+    fn root(&mut self) -> Rc<PathAwareValue> {
         self.parent.root()
     }
 
@@ -1539,7 +1512,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.rule_status(rule_name)
     }
 
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
         match self.resolved_parameters.get(variable_name) {
             Some(res) => Ok(res.clone()),
             None => self.parent.resolve_variable(variable_name),
@@ -1549,7 +1522,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
-        key: &'value PathAwareValue,
+        key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
     }
@@ -1600,15 +1573,13 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     for (idx, each) in call_rule.parameters.iter().enumerate() {
         match each {
             LetValue::Value(val) => {
-                //resolved_parameters.insert((&param_rule.parameter_names[idx]).as_str(), vec![QueryResult::Resolved(val)]);
                 resolved_parameters.insert(
                     (&param_rule.parameter_names[idx]).as_str(),
-                    vec![QueryResult::Resolved(val)],
+                    vec![QueryResult::Resolved(Rc::new(val.clone()))],
                 );
             }
             LetValue::AccessClause(query) => {
                 resolved_parameters.insert(
-                    // (&param_rule.parameter_names[idx]).as_ref(),
                     (&param_rule.parameter_names[idx]).as_str(),
                     resolver.query(&query.query)?,
                 );
@@ -1747,10 +1718,12 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
             QueryResult::Literal(rv) | QueryResult::Resolved(rv) => {
                 let block_context = format!("{}/{}", context, idx);
                 resolver.start_record(&block_context)?;
+
                 let mut val_resolver = ValueScope {
-                    root: *rv,
+                    root: Rc::clone(rv),
                     parent: resolver,
                 };
+
                 match eval_general_block_clause(block, &mut val_resolver, eval_guard_clause) {
                     Ok(status) => {
                         match status {
@@ -1960,6 +1933,7 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     Ok(overall)
 }
 
+#[allow(clippy::never_loop)]
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,

@@ -5,15 +5,14 @@ use crate::rules::errors::Error;
 use fancy_regex::Regex;
 use nom::Slice;
 use std::convert::TryFrom;
-use urlencoding;
 
 pub(crate) fn url_decode(
-    args: &[QueryResult<'_>],
+    args: &[QueryResult],
 ) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
-            QueryResult::Literal(val) | QueryResult::Resolved(val) => match *val {
+            QueryResult::Literal(val) | QueryResult::Resolved(val) => match &**val {
                 PathAwareValue::String((path, val)) => {
                     if let Ok(aggr_str) = urlencoding::decode(val.as_str()) {
                         aggr.push(Some(PathAwareValue::String((
@@ -37,13 +36,13 @@ pub(crate) fn url_decode(
 }
 
 pub(crate) fn json_parse(
-    args: &[QueryResult<'_>],
+    args: &[QueryResult],
 ) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((path, val)) = v {
+                if let PathAwareValue::String((path, val)) = &**v {
                     let value = serde_yaml::from_str::<serde_yaml::Value>(val)?;
                     aggr.push(Some(PathAwareValue::try_from((&value, path.clone()))?));
                 } else {
@@ -57,7 +56,7 @@ pub(crate) fn json_parse(
 }
 
 pub(crate) fn regex_replace(
-    args: &[QueryResult<'_>],
+    args: &[QueryResult],
     extract_expr: &str,
     replace_expr: &str,
 ) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
@@ -65,7 +64,7 @@ pub(crate) fn regex_replace(
     for entry in args.iter() {
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((path, val)) = v {
+                if let PathAwareValue::String((path, val)) = &**v {
                     let regex = Regex::new(extract_expr)?;
                     let mut replaced = String::with_capacity(replace_expr.len() * 2);
                     for cap in regex.captures_iter(val) {
@@ -85,7 +84,7 @@ pub(crate) fn regex_replace(
 }
 
 pub(crate) fn substring(
-    args: &[QueryResult<'_>],
+    args: &[QueryResult],
     from: usize,
     to: usize,
 ) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
@@ -93,7 +92,7 @@ pub(crate) fn substring(
     for entry in args.iter() {
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((path, val)) = v {
+                if let PathAwareValue::String((path, val)) = &**v {
                     if !val.is_empty() && from < to && from <= val.len() && to <= val.len() {
                         let sub = val.as_str().slice(from..to).to_string();
                         aggr.push(Some(PathAwareValue::String((path.clone(), sub))));
@@ -112,14 +111,12 @@ pub(crate) fn substring(
     Ok(aggr)
 }
 
-pub(crate) fn to_upper(
-    args: &[QueryResult<'_>],
-) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn to_upper(args: &[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((path, val)) = v {
+                if let PathAwareValue::String((path, val)) = &**v {
                     aggr.push(Some(PathAwareValue::String((
                         path.clone(),
                         val.to_uppercase(),
@@ -136,14 +133,12 @@ pub(crate) fn to_upper(
     Ok(aggr)
 }
 
-pub(crate) fn to_lower(
-    args: &[QueryResult<'_>],
-) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn to_lower(args: &[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((path, val)) = v {
+                if let PathAwareValue::String((path, val)) = &**v {
                     aggr.push(Some(PathAwareValue::String((
                         path.clone(),
                         val.to_lowercase(),
@@ -160,17 +155,19 @@ pub(crate) fn to_lower(
     Ok(aggr)
 }
 
-pub(crate) fn join(
-    args: &[QueryResult<'_>],
-    delimiter: &str,
-) -> crate::rules::Result<PathAwareValue> {
+pub(crate) fn join(args: &[QueryResult], delimiter: &str) -> crate::rules::Result<PathAwareValue> {
     let mut aggr = String::with_capacity(512);
-    for entry in args.iter() {
+    let total = args.len();
+
+    for (index, entry) in args.iter().enumerate() {
         match entry {
-            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
-                if let PathAwareValue::String((_, val)) = v {
-                    aggr.push_str(delimiter);
+            QueryResult::Resolved(v) | QueryResult::Literal(v) => {
+                if let PathAwareValue::String((_, val)) = &**v {
                     aggr.push_str(val);
+
+                    if total - 1 > index {
+                        aggr.push_str(delimiter);
+                    }
                 } else {
                     return Err(Error::IncompatibleError(format!(
                         "Joining non string values {}",

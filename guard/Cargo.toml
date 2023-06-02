@@ -22,7 +22,7 @@ nom_locate = "2.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 clap = "4.1.4"
 strip-ansi-escapes = "0.1.1"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_yaml = "0.9.10"
 walkdir = "2.3.1"
 colored = "2.0.0"

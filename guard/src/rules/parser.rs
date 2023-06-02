@@ -1393,17 +1393,28 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
         Err(nom::Err::Error(_)) => {
             //
             // if we did not succeed in parsing a value object, then
-            // if must be an access pattern, else it is a failure
-            //
-            let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))(input)?;
+            // if must be an access pattern, or function call  else it is a failure
+            // TODO: do we still need to parse for a fn expr first?
+            match cut(preceded(zero_or_more_ws_or_comment, function_expr))(input) {
+                Ok((input, function)) => Ok((
+                    input,
+                    LetExpr {
+                        var: var_name,
+                        value: LetValue::FunctionCall(function),
+                    },
+                )),
+                Err(_) => {
+                    let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))(input)?;
 
-            Ok((
-                input,
-                LetExpr {
-                    var: var_name,
-                    value: LetValue::AccessClause(access),
-                },
-            ))
+                    Ok((
+                        input,
+                        LetExpr {
+                            var: var_name,
+                            value: LetValue::AccessClause(access),
+                        },
+                    ))
+                }
+            }
         }
 
         Err(e) => Err(e),

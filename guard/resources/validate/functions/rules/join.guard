@@ -1,0 +1,12 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+rule SOME_RULE when %template !empty {
+    %template.Properties.Arn exists
+    %template.Properties.Encoded exists
+
+    let encoded = %template.Properties.Encoded
+    let arn = %template.Properties.Arn
+
+    let res = join(%arn, %encoded, ",")
+    %res == "arn:aws:newservice:us-west-2:123456789012:Table/extracted,This%20string%20will%20be%20URL%20encoded"
+}
