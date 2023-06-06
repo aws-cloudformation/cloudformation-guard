@@ -25,7 +25,7 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query =
@@ -36,11 +36,11 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let json = json_parse(&results)?;
     assert_eq!(json.len(), 1);
     let path_value = json[0].as_ref().unwrap();
-    assert_eq!(matches!(path_value, PathAwareValue::Map(_)), true);
+    assert!(matches!(path_value, PathAwareValue::Map(_)));
     if let PathAwareValue::Map((_, map)) = path_value {
         assert_eq!(map.values.len(), 2);
-        assert_eq!(map.values.contains_key("Principal"), true);
-        assert_eq!(map.values.contains_key("Actions"), true);
+        assert!(map.values.contains_key("Principal"));
+        assert!(map.values.contains_key("Actions"));
     }
 
     Ok(())
@@ -65,7 +65,7 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query =
@@ -107,7 +107,7 @@ fn test_substring() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query =

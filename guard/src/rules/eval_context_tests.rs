@@ -28,11 +28,7 @@ fn extraction_test() -> Result<()> {
             .rules
             .get("aws_route53_recordset")
             .map(|s| s.get(0))
-            .map(|s| match s {
-                Some(r) => Some(*r),
-                None => None,
-            })
-            .flatten(),
+            .and_then(|s| s.copied()),
         rules.guard_rules.get(0)
     );
 
@@ -93,7 +89,7 @@ fn no_query_return_root() -> Result<()> {
         recorder: None,
     };
     let query_results = eval.query(&[])?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 1);
     let path_ref = match &query_results[0] {
         QueryResult::Resolved(r) => r,
@@ -112,7 +108,7 @@ fn empty_value_return_unresolved() -> Result<()> {
     };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 1);
     let path_ref = match &query_results[0] {
         QueryResult::UnResolved(ur) => &ur.traversed_to,
@@ -138,15 +134,15 @@ fn non_empty_value_return_results() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
-        assert_eq!(matches!(each, QueryResult::Resolved(_)), true);
+        assert!(matches!(each, QueryResult::Resolved(_)));
     }
 
     let paths = [
@@ -155,14 +151,14 @@ fn non_empty_value_return_results() -> Result<()> {
     ];
     let query = AccessQuery::try_from("Resources.*.Properties.Tags")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
             QueryResult::UnResolved(ur) => {
                 let path = ur.traversed_to.self_path();
                 println!("{}", path);
-                assert_eq!(paths.contains(path), true);
+                assert!(paths.contains(path));
             }
 
             _ => unreachable!(),
@@ -191,18 +187,18 @@ fn non_empty_value_mixed_results() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
             QueryResult::Literal(_) => unreachable!(),
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3/Properties/Tags");
-                assert_eq!(res.is_list(), true);
+                assert!(res.is_list());
             }
 
             QueryResult::UnResolved(ur) => {
@@ -235,12 +231,12 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
@@ -250,7 +246,7 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
                     res.self_path().0.as_str(),
                     "/Resources/s3/Properties/Tags/0/Value"
                 );
-                assert_eq!(res.is_scalar(), true);
+                assert!(res.is_scalar());
             }
 
             QueryResult::UnResolved(ur) => {
@@ -284,12 +280,12 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
@@ -299,7 +295,7 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
                     res.self_path().0.as_str(),
                     "/Resources/s3/Properties/Tags/0/Value"
                 );
-                assert_eq!(res.is_scalar(), true);
+                assert!(res.is_scalar());
             }
 
             QueryResult::UnResolved(ur) => {
@@ -333,18 +329,18 @@ fn map_filter_keys() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query = AccessQuery::try_from("Resources[ keys == /s3/ ]")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 1); // 2 resources
     for each in query_results {
         match each {
             QueryResult::Resolved(res) => {
                 assert_eq!(res.self_path().0.as_str(), "/Resources/s3Bucket");
-                assert_eq!(res.is_map(), true);
+                assert!(res.is_map());
             }
 
             _ => unreachable!(),
@@ -361,11 +357,8 @@ fn map_filter_keys() -> Result<()> {
         match each {
             QueryResult::Resolved(res) => {
                 let path = res.self_path().0.as_str();
-                assert_eq!(
-                    path == "/Resources/s3Bucket" || path == "/Resources/ec2",
-                    true
-                );
-                assert_eq!(res.is_map(), true);
+                assert!(path == "/Resources/s3Bucket" || path == "/Resources/ec2",);
+                assert!(res.is_map());
             }
 
             _ => unreachable!(),
@@ -382,8 +375,8 @@ fn map_filter_keys() -> Result<()> {
         match each {
             QueryResult::Resolved(res) => {
                 let path = res.self_path().0.as_str();
-                assert_eq!(path == "/Resources/s3Bucket", true);
-                assert_eq!(res.is_map(), true);
+                assert!(path == "/Resources/s3Bucket");
+                assert!(res.is_map());
             }
 
             _ => unreachable!(),
@@ -400,8 +393,8 @@ fn map_filter_keys() -> Result<()> {
         match each {
             QueryResult::Resolved(res) => {
                 let path = res.self_path().0.as_str();
-                assert_eq!(path == "/Resources/s3Bucket", true);
-                assert_eq!(res.is_map(), true);
+                assert!(path == "/Resources/s3Bucket");
+                assert!(res.is_map());
             }
 
             _ => unreachable!(),
@@ -430,12 +423,12 @@ fn test_with_converter() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(path_value.clone()),
+        root: Rc::new(path_value),
         recorder: None,
     };
     let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
     let query_results = eval.query(&query)?;
-    assert_eq!(query_results.is_empty(), false);
+    assert!(!query_results.is_empty());
     assert_eq!(query_results.len(), 2); // 2 resources
     for each in query_results {
         match each {
@@ -445,7 +438,7 @@ fn test_with_converter() -> Result<()> {
                     res.self_path().0.as_str(),
                     "/Resources/s3/Properties/Tags/0/Value"
                 );
-                assert_eq!(res.is_scalar(), true);
+                assert!(res.is_scalar());
             }
 
             QueryResult::UnResolved(ur) => {
@@ -456,6 +449,215 @@ fn test_with_converter() -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_function_call() -> Result<()> {
+    let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+             Properties:
+               Tags:
+                 - Key: 1
+                   Value: 1
+           ec2:
+             Type: AWS::EC2::Instance
+             Properties:
+               Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
+               ImageId: ami-123456789012
+               Tags: []
+               Policy: |
+                {
+                   "Principal": "*",
+                   "Actions": ["s3*", "ec2*"]
+                }
+        "#,
+    )?)?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(path_value),
+        recorder: None,
+    };
+    let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
+    let query_results = eval.query(&query)?;
+    assert!(!query_results.is_empty());
+    assert_eq!(query_results.len(), 2); // 2 resources
+
+    // regex_replace
+    let query = AccessQuery::try_from("resources.ec2.properties.Arn")?.query;
+    let query_results = eval.query(&query)?;
+    let path = Path::new("Literal".to_string(), 0, 0);
+
+    let extracted_expr = PathAwareValue::String((
+        path.clone(),
+        "^arn:(\\w+):(\\w+):([\\w0-9-]+):(\\d+):(.+)$".to_string(),
+    ));
+    let extracted = QueryResult::Literal(Rc::new(extracted_expr));
+
+    let replaced_expr =
+        PathAwareValue::String((path.clone(), "${1}/${4}/${3}/${2}-${5}".to_string()));
+    let replaced = QueryResult::Literal(Rc::new(replaced_expr));
+
+    let args = vec![
+        query_results[0].clone(),
+        extracted.clone(),
+        replaced.clone(),
+    ];
+
+    let res = try_handle_function_call("regex_replace", &args)?;
+    let path_value = res[0].as_ref().unwrap();
+    if let PathAwareValue::String((_, val)) = path_value {
+        assert_eq!("aws/123456789012/us-west-2/newservice-Table/extracted", val);
+    }
+
+    // too few args
+    let res = try_handle_function_call("regex_replace", &args[0..=1]);
+    assert!(res.is_err());
+    assert!(matches!(res.unwrap_err(), Error::ParseError(_)));
+
+    // extracted expr is invalid
+    let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
+    let query_results2 = eval.query(&not_a_string)?;
+    let args = vec![
+        query_results[0].clone(),
+        query_results2[0].clone(),
+        replaced.clone(),
+    ];
+    let res = try_handle_function_call("regex_replace", &args);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(
+        err.to_string(),
+        String::from("Parser Error when parsing `regex_replace function requires the second argument to be a string`")
+    );
+
+    // extracted expr is invalid
+    let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
+    let query_results2 = eval.query(&not_a_string)?;
+    let args = vec![
+        query_results[0].clone(),
+        extracted.clone(),
+        query_results2[0].clone(),
+    ];
+    let res = try_handle_function_call("regex_replace", &args);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(
+        err.to_string(),
+        String::from("Parser Error when parsing `regex_replace function requires the third argument to be a string`")
+    );
+
+    // first argument is not a string type so res is an Ok(None)
+    let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
+    let query_results2 = eval.query(&not_a_string)?;
+    let args = vec![query_results2[0].clone(), extracted.clone(), replaced];
+    let res = try_handle_function_call("regex_replace", &args)?;
+    assert_eq!(res.len(), 1);
+    assert!(res[0].is_none());
+
+    let from_query = PathAwareValue::Int((path.clone(), 0));
+    let from = QueryResult::Literal(Rc::new(from_query));
+
+    let to_query = PathAwareValue::Int((path.clone(), 3));
+    let to = QueryResult::Literal(Rc::new(to_query));
+
+    // substring - happy path
+    let args = vec![query_results[0].clone(), from.clone(), to.clone()];
+    let res = try_handle_function_call("substring", &args)?;
+
+    let path_value = res[0].as_ref().unwrap();
+    if let PathAwareValue::String((_, val)) = path_value {
+        assert_eq!("arn", val);
+    }
+
+    // first argument is not a string type so res is an Ok(None)
+    let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
+    let query_results2 = eval.query(&not_a_string)?;
+    let args = vec![query_results2[0].clone(), from.clone(), to.clone()];
+    let res = try_handle_function_call("substring", &args)?;
+    assert_eq!(res.len(), 1);
+    assert!(res[0].is_none());
+
+    // second argument is not a number
+    let args = vec![query_results[0].clone(), extracted.clone(), to];
+    let res = try_handle_function_call("substring", &args);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(
+        err.to_string(),
+        String::from("Parser Error when parsing `substring function requires the second argument to be a number`")
+    );
+
+    // third argument is not a number
+    let args = vec![query_results[0].clone(), from.clone(), extracted];
+    let res = try_handle_function_call("substring", &args);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(
+        err.to_string(),
+        String::from("Parser Error when parsing `substring function requires the third argument to be a number`")
+    );
+
+    // invalid fn name
+    let res = try_handle_function_call("fn", &query_results);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(
+        err.to_string(),
+        String::from("Parser Error when parsing `No function named fn`")
+    );
+
+    // join happy path
+    let image_id_query = AccessQuery::try_from("resources.ec2.properties.Arn")?.query;
+    let image_id_result = eval.query(&image_id_query)?;
+
+    let char_delim_query = PathAwareValue::Char((path.clone(), ','));
+    let char_delim = QueryResult::Literal(Rc::new(char_delim_query));
+    let string_delim_query = PathAwareValue::Char((path, ','));
+    let string_delim = QueryResult::Literal(Rc::new(string_delim_query));
+
+    let args = vec![
+        query_results[0].clone(),
+        image_id_result[0].clone(),
+        char_delim,
+    ];
+    let res = try_handle_function_call("join", &args)?;
+    let path_value = res[0].as_ref().unwrap();
+    if let PathAwareValue::String((_, val)) = path_value {
+        assert_eq!(
+            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,arn:aws:newservice:us-west-2:123456789012:Table/extracted",
+            val
+        );
+    }
+
+    let args = vec![
+        query_results[0].clone(),
+        image_id_result[0].clone(),
+        string_delim,
+    ];
+    let res = try_handle_function_call("join", &args)?;
+    let path_value = res[0].as_ref().unwrap();
+    if let PathAwareValue::String((_, val)) = path_value {
+        assert_eq!(
+            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,arn:aws:newservice:us-west-2:123456789012:Table/extracted",
+            val
+        );
+    }
+
+    let args = vec![query_results[0].clone(), image_id_result[0].clone(), from];
+    let res = try_handle_function_call("join", &args);
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(matches!(err, Error::ParseError(_)));
+    assert_eq!(err.to_string(), "Parser Error when parsing `join function requires the final argument to be either a char or string`", );
 
     Ok(())
 }

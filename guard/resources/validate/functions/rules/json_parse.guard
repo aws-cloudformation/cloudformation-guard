@@ -13,4 +13,17 @@ rule SOME_RULE when %template !empty {
 
     %res !empty
     %res == %expected
+
+    %template.BucketPolicy exists
+    %template.BucketPolicy.PolicyText exists
+
+    let policy_text = %template.BucketPolicy.PolicyText
+    let res2 = json_parse(%policy_text)
+
+    %res2.Statement[*] 
+    {
+            Effect == "Deny"
+            Resource == "arn:aws:s3:::s3-test-123/*"
+    }
 }
+

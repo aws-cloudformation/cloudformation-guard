@@ -12,7 +12,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
@@ -24,7 +24,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
 
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
@@ -41,7 +41,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: Rc::new(value.clone()),
+        root: Rc::new(value),
         recorder: None,
     };
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::S3::Bucket' ]"#)?;

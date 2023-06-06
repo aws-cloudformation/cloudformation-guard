@@ -10,3 +10,12 @@ rule SOME_RULE when %template !empty {
     let res = join(%arn, %encoded, ",")
     %res == "arn:aws:newservice:us-west-2:123456789012:Table/extracted,This%20string%20will%20be%20URL%20encoded"
 }
+
+
+let buckets = Resources[ Type == 'AWS::S3::Bucket' ]
+
+rule SOME_BUCKET_RULE when %buckets !empty {
+    let res = join(%buckets.Type, '-')
+
+    %res == "AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket"
+}
