@@ -3,6 +3,7 @@ let template = Resources.*[ Type == 'AWS::New::Service']
 rule SOME_RULE when %template !empty {
     %template.Properties.Arn exists
     let arn = %template.Properties.Arn
+    let encoded = %template.Properties.Encoded
 
     let res = substring(%arn, 0, 3)
 

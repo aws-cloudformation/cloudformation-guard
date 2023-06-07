@@ -1149,18 +1149,19 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
+            validate_function_call(name, parameters.len())?;
             let args = parameters.iter().try_fold(
                 vec![],
-                |mut args, param| -> Result<Vec<QueryResult>> {
+                |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
                     match param {
                         LetValue::Value(value) => {
-                            args.push(QueryResult::Literal(Rc::new(value.clone())))
+                            args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
                         }
                         LetValue::AccessClause(clause) => {
                             let resolved_query = self.query(&clause.query)?;
-                            args.extend(resolved_query);
+                            args.push(resolved_query);
                         }
-                        // TODO: do we want to allow for function expressions to be params?
+                        // TODO: when we add inline function call support
                         _ => todo!(),
                     }
 
@@ -1223,117 +1224,131 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
+pub(crate) fn validate_function_call(name: &str, num_args: usize) -> Result<()> {
+    match name {
+        "join" => {
+            if num_args != 2 {
+                return Err(Error::ParseError(format!(
+                    "join function requires 2 arguments be passed, but received {num_args}"
+                )));
+            }
+        }
+        "substring" | "regex_replace" => {
+            println!("FJDKSJFLDSJFLKDJSKLFJKLDSJKLFJSDKLJFKLDSJLKFJDSKLJ");
+            if num_args != 3 {
+                return Err(Error::ParseError(format!(
+                    "{name} function requires 3 arguments to be passed, but received {num_args}"
+                )));
+            }
+        }
+        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => {
+            if num_args != 1 {
+                return Err(Error::ParseError(format!(
+                    "{name} function requires 1 argument to be passed, but received {num_args}"
+                )));
+            }
+        }
+        _ => {
+            return Err(Error::ParseError(format!(
+                "no such function named {name} exists"
+            )))
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn try_handle_function_call(
     fn_name: &str,
-    args: &[QueryResult],
+    args: &[Vec<QueryResult>],
 ) -> Result<Vec<Option<PathAwareValue>>> {
     let value = match fn_name {
         "count" => vec![Some(PathAwareValue::Int((
             Path::root(),
-            count(args) as i64,
+            count(&args[0]) as i64,
         )))],
-        "json_parse" => json_parse(args)?,
-        "regex_replace" => match args.len() {
-            0..=2 => {
-                return Err(Error::ParseError(String::from(
-                    "regex_replace function requires at least 3 arguments",
-                )))
-            }
-            num => {
-                let substring_err_msg = |index| {
-                    let arg = match index {
-                        2 => "second",
-                        3 => "third",
-                        _ => unreachable!(),
-                    };
-
-                    format!("regex_replace function requires the {arg} argument to be a string")
+        "json_parse" => json_parse(&args[0])?,
+        "regex_replace" => {
+            let substring_err_msg = |index| {
+                let arg = match index {
+                    2 => "second",
+                    3 => "third",
+                    _ => unreachable!(),
                 };
 
-                let extracted_expr = match &args[num - 2] {
-                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                        PathAwareValue::String((_, s)) => s,
-                        _ => return Err(Error::ParseError(substring_err_msg(2))),
-                    },
+                format!("regex_replace function requires the {arg} argument to be a string")
+            };
+
+            let extracted_expr = match &args[1][0] {
+                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                    PathAwareValue::String((_, s)) => s,
                     _ => return Err(Error::ParseError(substring_err_msg(2))),
-                };
+                },
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            };
 
-                let replaced_expr = match &args[num - 1] {
-                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                        PathAwareValue::String((_, s)) => s,
-                        _ => return Err(Error::ParseError(substring_err_msg(3))),
-                    },
+            let replaced_expr = match &args[2][0] {
+                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                    PathAwareValue::String((_, s)) => s,
                     _ => return Err(Error::ParseError(substring_err_msg(3))),
+                },
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            };
+
+            regex_replace(&args[0], extracted_expr, replaced_expr)?
+        }
+        "substring" => {
+            let substring_err_msg = |index| {
+                let arg = match index {
+                    2 => "second",
+                    3 => "third",
+                    _ => unreachable!(),
                 };
 
-                regex_replace(&args[0..num - 2], extracted_expr, replaced_expr)?
-            }
-        },
-        "substring" => match args.len() {
-            0..=2 => {
-                return Err(Error::ParseError(String::from(
-                    "substring function requires at least 3 arguments",
-                )))
-            }
+                format!("substring function requires the {arg} argument to be a number")
+            };
 
-            num => {
-                let substring_err_msg = |index| {
-                    let arg = match index {
-                        2 => "second",
-                        3 => "third",
-                        _ => unreachable!(),
-                    };
-
-                    format!("substring function requires the {arg} argument to be a number")
-                };
-
-                let from = match &args[num - 2] {
-                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                        _ => return Err(Error::ParseError(substring_err_msg(2))),
-                    },
+            let from = match &args[1][0] {
+                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
                     _ => return Err(Error::ParseError(substring_err_msg(2))),
-                };
+                },
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            };
 
-                let to = match &args[num - 1] {
-                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                        _ => return Err(Error::ParseError(substring_err_msg(3))),
-                    },
+            let to = match &args[2][0] {
+                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
                     _ => return Err(Error::ParseError(substring_err_msg(3))),
-                };
+                },
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            };
 
-                substring(&args[0..num - 2], from, to)?
-            }
-        },
-        "to_upper" => to_upper(args)?,
-        "to_lower" => to_lower(args)?,
-        "join" => match args.len() {
-            0..=1 => {
-                return Err(Error::ParseError(String::from(
-                    "join function requires at least 2 arguments",
-                )));
-            }
-            num => {
-                let res = match &args[num - 1] {
-                        QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                            PathAwareValue::String((_, s)) => join(&args[0..num - 1], s),
-                            PathAwareValue::Char((_, c)) => join(&args[0..num - 1], &c.to_string()),
-                            _ => return Err(Error::ParseError(String::from(
-                                "join function requires the final argument to be either a char or string",
-                            ))),
-                        },
-                        _ => return Err(Error::ParseError(String::from(
-                            "join function requires the fianl argument to be either a char or string",
-                        ))),
-                    }?;
+            substring(&args[0], from, to)?
+        }
+        "to_upper" => to_upper(&args[0])?,
+        "to_lower" => to_lower(&args[0])?,
+        "join" => {
+            let res = match &args[1][0] {
+                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                    PathAwareValue::String((_, s)) => join(&args[0], s),
+                    PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
+                    _ => return Err(Error::ParseError(String::from(
+                        "join function requires the second argument to be either a char or string",
+                    ))),
+                },
+                _ => {
+                    return Err(Error::ParseError(String::from(
+                        "join function requires the second argument to be either a char or string",
+                    )))
+                }
+            }?;
 
-                vec![Some(res)]
-            }
-        },
-        "url_decode" => url_decode(args)?,
+            vec![Some(res)]
+        }
+        "url_decode" => url_decode(&args[0])?,
 
         function => return Err(Error::ParseError(format!("No function named {function}"))),
     };
@@ -1427,16 +1442,17 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
+            validate_function_call(name, parameters.len())?;
             let args = parameters.iter().try_fold(
                 vec![],
-                |mut args, param| -> Result<Vec<QueryResult>> {
+                |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
                     match param {
                         LetValue::Value(value) => {
-                            args.push(QueryResult::Literal(Rc::new(value.clone())))
+                            args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
                         }
                         LetValue::AccessClause(clause) => {
                             let resolved_query = self.query(&clause.query)?;
-                            args.extend(resolved_query);
+                            args.push(resolved_query);
                         }
                         // TODO: when we add inline function call support
                         _ => todo!(),

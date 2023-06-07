@@ -469,6 +469,9 @@ fn test_handle_function_call() -> Result<()> {
              Properties:
                Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
                ImageId: ami-123456789012
+               Strings:
+                   Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
+                   ImageId: ami-123456789012
                Tags: []
                Policy: |
                 {
@@ -481,11 +484,6 @@ fn test_handle_function_call() -> Result<()> {
         root: Rc::new(path_value),
         recorder: None,
     };
-    let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
-    let query_results = eval.query(&query)?;
-    assert!(!query_results.is_empty());
-    assert_eq!(query_results.len(), 2); // 2 resources
-
     // regex_replace
     let query = AccessQuery::try_from("resources.ec2.properties.Arn")?.query;
     let query_results = eval.query(&query)?;
@@ -502,9 +500,9 @@ fn test_handle_function_call() -> Result<()> {
     let replaced = QueryResult::Literal(Rc::new(replaced_expr));
 
     let args = vec![
-        query_results[0].clone(),
-        extracted.clone(),
-        replaced.clone(),
+        query_results.clone(),
+        vec![extracted.clone()],
+        vec![replaced.clone()],
     ];
 
     let res = try_handle_function_call("regex_replace", &args)?;
@@ -513,18 +511,13 @@ fn test_handle_function_call() -> Result<()> {
         assert_eq!("aws/123456789012/us-west-2/newservice-Table/extracted", val);
     }
 
-    // too few args
-    let res = try_handle_function_call("regex_replace", &args[0..=1]);
-    assert!(res.is_err());
-    assert!(matches!(res.unwrap_err(), Error::ParseError(_)));
-
     // extracted expr is invalid
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
     let args = vec![
-        query_results[0].clone(),
-        query_results2[0].clone(),
-        replaced.clone(),
+        query_results.clone(),
+        query_results2,
+        vec![replaced.clone()],
     ];
     let res = try_handle_function_call("regex_replace", &args);
     assert!(res.is_err());
@@ -539,9 +532,9 @@ fn test_handle_function_call() -> Result<()> {
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
     let args = vec![
-        query_results[0].clone(),
-        extracted.clone(),
-        query_results2[0].clone(),
+        query_results.clone(),
+        vec![extracted.clone()],
+        query_results2,
     ];
     let res = try_handle_function_call("regex_replace", &args);
     assert!(res.is_err());
@@ -555,7 +548,7 @@ fn test_handle_function_call() -> Result<()> {
     // first argument is not a string type so res is an Ok(None)
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
-    let args = vec![query_results2[0].clone(), extracted.clone(), replaced];
+    let args = vec![query_results2, vec![extracted.clone()], vec![replaced]];
     let res = try_handle_function_call("regex_replace", &args)?;
     assert_eq!(res.len(), 1);
     assert!(res[0].is_none());
@@ -567,7 +560,7 @@ fn test_handle_function_call() -> Result<()> {
     let to = QueryResult::Literal(Rc::new(to_query));
 
     // substring - happy path
-    let args = vec![query_results[0].clone(), from.clone(), to.clone()];
+    let args = vec![query_results.clone(), vec![from.clone()], vec![to.clone()]];
     let res = try_handle_function_call("substring", &args)?;
 
     let path_value = res[0].as_ref().unwrap();
@@ -578,13 +571,13 @@ fn test_handle_function_call() -> Result<()> {
     // first argument is not a string type so res is an Ok(None)
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
-    let args = vec![query_results2[0].clone(), from.clone(), to.clone()];
+    let args = vec![query_results2, vec![from.clone()], vec![to.clone()]];
     let res = try_handle_function_call("substring", &args)?;
     assert_eq!(res.len(), 1);
     assert!(res[0].is_none());
 
     // second argument is not a number
-    let args = vec![query_results[0].clone(), extracted.clone(), to];
+    let args = vec![query_results.clone(), vec![extracted.clone()], vec![to]];
     let res = try_handle_function_call("substring", &args);
     assert!(res.is_err());
     let err = res.unwrap_err();
@@ -595,7 +588,7 @@ fn test_handle_function_call() -> Result<()> {
     );
 
     // third argument is not a number
-    let args = vec![query_results[0].clone(), from.clone(), extracted];
+    let args = vec![query_results.clone(), vec![from.clone()], vec![extracted]];
     let res = try_handle_function_call("substring", &args);
     assert!(res.is_err());
     let err = res.unwrap_err();
@@ -606,7 +599,7 @@ fn test_handle_function_call() -> Result<()> {
     );
 
     // invalid fn name
-    let res = try_handle_function_call("fn", &query_results);
+    let res = try_handle_function_call("fn", &[query_results.clone()]);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
@@ -616,7 +609,7 @@ fn test_handle_function_call() -> Result<()> {
     );
 
     // join happy path
-    let image_id_query = AccessQuery::try_from("resources.ec2.properties.Arn")?.query;
+    let image_id_query = AccessQuery::try_from("resources.ec2.properties.strings.*")?.query;
     let image_id_result = eval.query(&image_id_query)?;
 
     let char_delim_query = PathAwareValue::Char((path.clone(), ','));
@@ -624,40 +617,32 @@ fn test_handle_function_call() -> Result<()> {
     let string_delim_query = PathAwareValue::Char((path, ','));
     let string_delim = QueryResult::Literal(Rc::new(string_delim_query));
 
-    let args = vec![
-        query_results[0].clone(),
-        image_id_result[0].clone(),
-        char_delim,
-    ];
+    let args = vec![image_id_result.clone(), vec![char_delim]];
     let res = try_handle_function_call("join", &args)?;
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!(
-            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,arn:aws:newservice:us-west-2:123456789012:Table/extracted",
+            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,ami-123456789012",
             val
         );
     }
 
-    let args = vec![
-        query_results[0].clone(),
-        image_id_result[0].clone(),
-        string_delim,
-    ];
+    let args = vec![image_id_result.clone(), vec![string_delim]];
     let res = try_handle_function_call("join", &args)?;
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!(
-            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,arn:aws:newservice:us-west-2:123456789012:Table/extracted",
+            "arn:aws:newservice:us-west-2:123456789012:Table/extracted,ami-123456789012",
             val
         );
     }
 
-    let args = vec![query_results[0].clone(), image_id_result[0].clone(), from];
+    let args = vec![image_id_result, vec![from]];
     let res = try_handle_function_call("join", &args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
-    assert_eq!(err.to_string(), "Parser Error when parsing `join function requires the final argument to be either a char or string`", );
+    assert_eq!(err.to_string(), "Parser Error when parsing `join function requires the second argument to be either a char or string`", );
 
     Ok(())
 }
