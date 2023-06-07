@@ -1,6 +1,6 @@
 use fancy_regex::Regex;
 use std::convert::TryFrom;
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
@@ -23,7 +23,6 @@ use nom::sequence::{separated_pair, tuple};
 use nom::{FindSubstring, InputTake, Slice};
 use nom_locate::LocatedSpan;
 
-use crate::migrate::parser::TypeName;
 use crate::rules::errors::Error;
 use crate::rules::exprs::*;
 use crate::rules::path_value::{Path, PathAwareValue};
@@ -1982,6 +1981,16 @@ impl<'a> TryFrom<&'a str> for RulesFile<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
         rules_file(span)
+    }
+}
+
+#[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Clone, Hash)]
+pub(crate) struct TypeName {
+    pub type_name: String,
+}
+impl Display for TypeName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.type_name.to_lowercase().replace("::", "_"))
     }
 }
 

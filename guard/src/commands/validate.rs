@@ -21,9 +21,8 @@ use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE,
-    VERBOSE,
+    OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
+    SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
@@ -200,9 +199,6 @@ or rules files.
                 .action(ArgAction::Set)
                 .value_hint(ValueHint::Other)
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::new(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1)
-                .action(ArgAction::SetTrue)
-                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::new(SHOW_SUMMARY.0)
                 .long(SHOW_SUMMARY.0)
                 .short(SHOW_SUMMARY.1)
@@ -212,11 +208,6 @@ or rules files.
                 .default_value("fail")
                 .value_hint(ValueHint::Other)
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::new(SHOW_CLAUSE_FAILURES.0)
-                .long(SHOW_CLAUSE_FAILURES.0)
-                .short(SHOW_CLAUSE_FAILURES.1)
-                .action(ArgAction::SetTrue)
-                .help("Show clause failure along with summary"))
             .arg(Arg::new(ALPHABETICAL.0)
                 .long(ALPHABETICAL.0)
                 .short(ALPHABETICAL.1)
@@ -248,8 +239,8 @@ or rules files.
             .arg(Arg::new(STRUCTURED.0)
                 .long(STRUCTURED.0)
                 .short(STRUCTURED.1)
-                .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n previous-engine \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
-                .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0, PREVIOUS_ENGINE.0])
+                .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
+                .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0])
                 .action(ArgAction::SetTrue))
             .group(ArgGroup::new(REQUIRED_FLAGS)
                 .args([RULES.0, PAYLOAD.0])
@@ -399,8 +390,6 @@ or rules files.
         };
 
         let print_json = app.get_flag(PRINT_JSON.0);
-        let show_clause_failures = app.get_flag(SHOW_CLAUSE_FAILURES.0);
-        let new_version_eval_engine = !app.get_flag(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
 
@@ -467,8 +456,6 @@ or rules files.
                                     rule,
                                     verbose,
                                     print_json,
-                                    show_clause_failures,
-                                    new_version_eval_engine,
                                     summary_type,
                                     writer,
                                 )?;
@@ -535,8 +522,6 @@ or rules files.
                             rule,
                             verbose,
                             print_json,
-                            show_clause_failures,
-                            new_version_eval_engine,
                             summary_type,
                             writer,
                         )?;
@@ -565,8 +550,6 @@ fn evaluate_rule(
     rule: RuleFileInfo,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
-    new_version_eval_engine: bool,
     summary_type: BitFlags<SummaryType>,
     writer: &mut Writer,
 ) -> Result<i32> {
@@ -591,8 +574,6 @@ fn evaluate_rule(
                 file_name,
                 verbose,
                 print_json,
-                show_clause_failures,
-                new_version_eval_engine,
                 summary_type,
                 writer,
             )?;
@@ -633,7 +614,6 @@ pub(crate) struct ConsoleReporter<'r> {
     data_file_name: &'r str,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
     writer: &'r mut Writer,
 }
 
@@ -708,99 +688,6 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, writer: &mut Writ
     }
 }
 
-#[allow(clippy::uninlined_format_args)]
-fn print_failing_clause(
-    rules_file_name: &str,
-    rule: &StatusContext,
-    longest: usize,
-    writer: &mut Writer,
-) {
-    write!(
-        writer,
-        "{file}/{rule:<0$}",
-        longest + 4,
-        file = rules_file_name,
-        rule = get_rule_name(rules_file_name, &rule.context)
-    )
-    .expect("Unable to write to the output");
-    let longest = rules_file_name.len() + longest;
-    let mut first = true;
-    for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
-        let matched = *matched;
-        let header = format!(
-            "{}({})",
-            common::colored_string(matched.status),
-            matched.context
-        )
-        .underline();
-        if !first {
-            write!(
-                writer,
-                "{space:>longest$}",
-                space = " ",
-                longest = longest + 4
-            )
-            .expect("Unable to write to the output");
-        }
-        let clause = format!("Clause #{}", index + 1).bold();
-        writeln!(
-            writer,
-            "{header:<20}{content}",
-            header = clause,
-            content = header
-        )
-        .expect("Unable to write to the output");
-        match &matched.from {
-            Some(from) => {
-                write!(
-                    writer,
-                    "{space:>longest$}",
-                    space = " ",
-                    longest = longest + 4
-                )
-                .expect("Unable to write to the output");
-                let content = format!("Comparing {:?}", from);
-                write!(
-                    writer,
-                    "{header:<20}{content}",
-                    header = " ",
-                    content = content
-                )
-                .expect("Unable to write to the output");
-            }
-            None => {}
-        }
-        match &matched.to {
-            Some(to) => {
-                writeln!(writer, " with {:?} failed", to).expect("Unable to write to the output");
-            }
-            None => {
-                writeln!(writer).expect("Unable to write to the output");
-            }
-        }
-        match &matched.msg {
-            Some(m) => {
-                for each in m.split('\n') {
-                    write!(
-                        writer,
-                        "{space:>longest$}",
-                        space = " ",
-                        longest = longest + 4 + 20
-                    )
-                    .expect("Unable to write to the output");
-                    writeln!(writer, "{}", each).expect("Unable to write to the output");
-                }
-            }
-            None => {
-                writeln!(writer).expect("Unable to write to the output");
-            }
-        }
-        if first {
-            first = false;
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 impl<'r> ConsoleReporter<'r> {
     pub(crate) fn new(
@@ -810,7 +697,6 @@ impl<'r> ConsoleReporter<'r> {
         data_file_name: &'r str,
         verbose: bool,
         print_json: bool,
-        show_clause_failures: bool,
         writer: &'r mut Writer,
     ) -> ConsoleReporter<'r> {
         ConsoleReporter {
@@ -820,7 +706,6 @@ impl<'r> ConsoleReporter<'r> {
             data_file_name,
             verbose,
             print_json,
-            show_clause_failures,
             writer,
         }
     }
@@ -852,14 +737,6 @@ impl<'r> ConsoleReporter<'r> {
                     &traversal,
                     output_format_type,
                 )?;
-            }
-
-            if self.show_clause_failures {
-                writeln!(self.writer, "{}", "Clause Failure Summary".bold())
-                    .expect("Unable to write to the output");
-                for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest, self.writer);
-                }
             }
 
             if self.verbose {
@@ -914,8 +791,6 @@ fn evaluate_against_data_input<'r>(
     rules_file_name: &'r str,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
-    new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
     mut write_output: &mut Writer,
 ) -> Result<Status> {
@@ -936,70 +811,42 @@ fn evaluate_against_data_input<'r>(
     };
 
     for file in data_files {
-        if new_engine_version {
-            let each = match &extra_data {
-                Some(data) => data.clone().merge(file.path_value.clone())?,
-                None => file.path_value.clone(),
-            };
-            let traversal = Traversal::from(&each);
-            let mut root_scope = root_scope(rules, Rc::new(each.clone()))?;
-            let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
+        let each = match &extra_data {
+            Some(data) => data.clone().merge(file.path_value.clone())?,
+            None => file.path_value.clone(),
+        };
+        let traversal = Traversal::from(&each);
+        let mut root_scope = root_scope(rules, &each)?;
+        let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
 
-            let root_record = root_scope.reset_recorder().extract();
+        let root_record = root_scope.reset_recorder().extract();
 
-            reporter.report_eval(
-                &mut write_output,
-                status,
-                &root_record,
-                rules_file_name,
-                &file.name,
-                &file.content,
-                &traversal,
-                output,
-            )?;
+        reporter.report_eval(
+            &mut write_output,
+            status,
+            &root_record,
+            rules_file_name,
+            &file.name,
+            &file.content,
+            &traversal,
+            output,
+        )?;
 
-            if verbose {
-                print_verbose_tree(&root_record, write_output);
-            }
+        if verbose {
+            print_verbose_tree(&root_record, write_output);
+        }
 
-            if print_json {
-                writeln!(
-                    write_output,
-                    "{}",
-                    serde_json::to_string_pretty(&root_record)?
-                )
-                .expect("Unable to write to the output");
-            }
-
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
-        } else {
-            let each = &file.path_value;
-            let root_context = RootScope::new(rules, each)?;
-            let stacker = StackTracker::new(&root_context);
-            let renderers = vec![reporter.as_ref()];
-
-            let reporter = ConsoleReporter::new(
-                stacker,
-                &renderers,
-                rules_file_name,
-                &file.name,
-                verbose,
-                print_json,
-                show_clause_failures,
+        if print_json {
+            writeln!(
                 write_output,
-            );
+                "{}",
+                serde_json::to_string_pretty(&root_record)?
+            )
+            .expect("Unable to write to the output");
+        }
 
-            let appender = MetadataAppender {
-                delegate: &reporter,
-                root_context: each,
-            };
-            let status = rules.evaluate(each, &appender)?;
-            reporter.report(each, output)?;
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
+        if status == Status::FAIL {
+            overall = Status::FAIL
         }
     }
     Ok(overall)

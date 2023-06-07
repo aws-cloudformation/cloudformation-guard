@@ -16,9 +16,8 @@ mod validate_tests {
     use cfn_guard;
     use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{
-        ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD,
-        PREVIOUS_ENGINE, PRINT_JSON, RULES, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, STRUCTURED,
-        VALIDATE, VERBOSE,
+        ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
+        RULES, SHOW_SUMMARY, STRUCTURED, VALIDATE, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, File as ReadFile, Stdin};
     use cfn_guard::utils::reader::{ReadBuffer, Reader};
@@ -38,8 +37,6 @@ mod validate_tests {
         show_summary: Vec<&'args str>,
         input_parameters: Vec<&'args str>,
         output_format: Option<&'args str>,
-        previous_engine: bool,
-        show_clause_failures: bool,
         alphabetical: bool,
         last_modified: bool,
         verbose: bool,
@@ -82,16 +79,6 @@ mod validate_tests {
 
         fn payload(&'args mut self) -> &'args mut ValidateTestRunner {
             self.payload = true;
-            self
-        }
-
-        fn previous_engine(&'args mut self) -> &'args mut ValidateTestRunner {
-            self.previous_engine = true;
-            self
-        }
-
-        fn show_clause_failures(&'args mut self) -> &'args mut ValidateTestRunner {
-            self.show_clause_failures = true;
             self
         }
 
@@ -159,14 +146,6 @@ mod validate_tests {
                 args.push(String::from(output_format));
             }
 
-            if self.previous_engine {
-                args.push(format!("-{}", PREVIOUS_ENGINE.1));
-            }
-
-            if self.show_clause_failures {
-                args.push(format!("-{}", SHOW_CLAUSE_FAILURES.1));
-            }
-
             if self.alphabetical {
                 args.push(format!("-{}", ALPHABETICAL.1));
             }
@@ -194,6 +173,8 @@ mod validate_tests {
             args
         }
     }
+
+    const COMPLIANT_PAYLOAD: &str = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
 
     fn get_path_for_resource_file(file: &str) -> String {
         get_full_path_for_resource_file(&format!("resources/validate/{}", file))
@@ -501,26 +482,6 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_rules_with_data_from_stdin_verbose_previous_engine_json_fail() {
-        let mut reader = utils::get_reader(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = ValidateTestRunner::default()
-            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .verbose()
-            .previous_engine()
-            .print_json()
-            .run(&mut writer, &mut reader);
-
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
-        assert_output_from_file_eq!(
-            "resources/validate/output-dir/payload_verbose_json_non_compliant.out",
-            writer
-        )
-    }
-
-    #[test]
     fn test_payload_verbose_yaml_compliant() {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
@@ -540,34 +501,6 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_rules_with_data_from_stdin_prev_engine_fail() {
-        let file = File::open(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        )
-        .expect("failed to find mocked file ");
-        let mut reader = Reader::new(ReadFile(file));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = ValidateTestRunner::default()
-            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .previous_engine()
-            .print_json()
-            .run(&mut writer, &mut reader);
-
-        let expected = indoc! {"
-        STDIN Status = FAIL
-        FAILED rules
-        s3_bucket_public_read_prohibited.guard/S3_BUCKET_PUBLIC_READ_PROHIBITED    FAIL
-        ---
-        "
-        };
-
-        let result = writer.stripped().unwrap();
-
-        assert_eq!(expected, result);
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
-    }
-
-    #[test]
     fn test_with_payload_flag() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
@@ -576,83 +509,6 @@ mod validate_tests {
             .payload()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::SUCCESS, status_code);
-    }
-
-    const COMPLIANT_PAYLOAD: &str = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
-
-    #[test]
-    fn test_with_payload_flag_prev_engine_show_summary_all() {
-        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
-            COMPLIANT_PAYLOAD.as_bytes(),
-        ))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = ValidateTestRunner::default()
-            .payload()
-            .previous_engine()
-            .show_summary(vec!["all"])
-            .run(&mut writer, &mut reader);
-
-        let result = writer.stripped().unwrap();
-        let expected = indoc! {
-            r#"
-            DATA_STDIN[1] Status = PASS
-            PASS rules
-            RULES_STDIN[1]/default    PASS
-            ---
-            DATA_STDIN[2] Status = PASS
-            PASS rules
-            RULES_STDIN[1]/default    PASS
-            ---
-            DATA_STDIN[1] Status = PASS
-            PASS rules
-            RULES_STDIN[2]/default    PASS
-            ---
-            DATA_STDIN[2] Status = PASS
-            PASS rules
-            RULES_STDIN[2]/default    PASS
-            ---
-            "#
-        };
-
-        assert_eq!(expected, result);
-        assert_eq!(StatusCode::SUCCESS, status_code);
-    }
-
-    #[test]
-    fn test_with_payload_flag_show_summary_all() {
-        let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
-        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = ValidateTestRunner::default()
-            .payload()
-            .previous_engine()
-            .show_summary(vec!["all"])
-            .run(&mut writer, &mut reader);
-
-        let result = writer.stripped().unwrap();
-        let expected = indoc! {
-            r#"
-            DATA_STDIN[1] Status = PASS
-            PASS rules
-            RULES_STDIN[1]/default    PASS
-            ---
-            DATA_STDIN[2] Status = PASS
-            PASS rules
-            RULES_STDIN[1]/default    PASS
-            ---
-            DATA_STDIN[1] Status = PASS
-            PASS rules
-            RULES_STDIN[2]/default    PASS
-            ---
-            DATA_STDIN[2] Status = PASS
-            PASS rules
-            RULES_STDIN[2]/default    PASS
-            ---
-            "#
-        };
-
-        assert_eq!(expected, result);
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
@@ -685,46 +541,6 @@ mod validate_tests {
 
         assert_eq!(StatusCode::PARSING_ERROR, status_code);
         assert_eq!(expected, result);
-    }
-
-    #[test]
-    fn test_with_payload_flag_fail_verbose_prev_engine() {
-        let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"SomeRandomString\"" ]}"#;
-        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = ValidateTestRunner::default()
-            .payload()
-            .previous_engine()
-            .verbose()
-            .run(&mut writer, &mut reader);
-
-        assert_output_from_file_eq!(
-            "resources/validate/output-dir/payload_flag_fail_verbose_prev_engine.out",
-            writer
-        );
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
-    }
-
-    #[test]
-    fn test_rules_with_data_from_stdin_fail_prev_engine_show_clause_failures() {
-        let mut reader = utils::get_reader(
-            "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-        );
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-
-        let status_code = ValidateTestRunner::default()
-            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
-            .show_summary(vec!["none", "all", "pass", "fail", "skip"])
-            .verbose()
-            .previous_engine()
-            .show_clause_failures()
-            .run(&mut writer, &mut reader);
-
-        assert_output_from_file_eq!(
-            "resources/validate/output-dir/payload_verbose_show_failure.out",
-            writer
-        );
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     #[test]
