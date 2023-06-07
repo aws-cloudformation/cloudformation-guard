@@ -297,7 +297,7 @@ Autocompletions are only something available for version >= 3.0
 #### zsh
 
 ```sh
-    cfn-guard completions --shell='zsh' > /usr/local/share/zsh/site-functions/_cfn-guard && compinnit
+    cfn-guard completions --shell='zsh' > /usr/local/share/zsh/site-functions/_cfn-guard && compinit
 ```
 
 #### bash
