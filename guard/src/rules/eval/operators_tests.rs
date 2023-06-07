@@ -386,9 +386,6 @@ fn test_operator_in_list_literal_to_query_ok() -> crate::rules::Result<()> {
             }
 
             ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(nc)) => {
-                // TODO: verify this is okay...i dont see why it wouldnt. It only fails now cause
-                // of clones we call on the underlying PathAwareValue...but theyre not mutable so
-                // while it may not be the most efficient, it shouldnt be dangerous / buggy?
                 assert_eq!(*nc.pair.lhs, list_literal_value);
                 assert_eq!(&*nc.pair.rhs, &scalar_query_value);
             }

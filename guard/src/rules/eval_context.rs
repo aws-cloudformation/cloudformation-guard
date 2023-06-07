@@ -1149,7 +1149,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
-            validate_function_call(name, parameters.len())?;
+            validate_number_of_params(name, parameters.len())?;
             let args = parameters.iter().try_fold(
                 vec![],
                 |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
@@ -1162,7 +1162,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                             args.push(resolved_query);
                         }
                         // TODO: when we add inline function call support
-                        _ => todo!(),
+                        _ => unimplemented!(),
                     }
 
                     Ok(args)
@@ -1224,7 +1224,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
-pub(crate) fn validate_function_call(name: &str, num_args: usize) -> Result<()> {
+pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
     match name {
         "join" => {
             if num_args != 2 {
@@ -1234,7 +1234,6 @@ pub(crate) fn validate_function_call(name: &str, num_args: usize) -> Result<()> 
             }
         }
         "substring" | "regex_replace" => {
-            println!("FJDKSJFLDSJFLKDJSKLFJKLDSJKLFJSDKLJFKLDSJLKFJDSKLJ");
             if num_args != 3 {
                 return Err(Error::ParseError(format!(
                     "{name} function requires 3 arguments to be passed, but received {num_args}"
@@ -1442,7 +1441,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
-            validate_function_call(name, parameters.len())?;
+            validate_number_of_params(name, parameters.len())?;
             let args = parameters.iter().try_fold(
                 vec![],
                 |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
@@ -1455,7 +1454,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
                             args.push(resolved_query);
                         }
                         // TODO: when we add inline function call support
-                        _ => todo!(),
+                        _ => unimplemented!(),
                     }
 
                     Ok(args)

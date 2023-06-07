@@ -1584,7 +1584,8 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
                     resolver.query(&query.query)?,
                 );
             }
-            LetValue::FunctionCall(_) => todo!(),
+            // TODO: when we add inline function support
+            LetValue::FunctionCall(_) => unimplemented!(),
         }
     }
     let mut eval = ResolvedParameterContext {
