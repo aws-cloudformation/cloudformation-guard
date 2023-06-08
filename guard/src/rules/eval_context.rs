@@ -1190,33 +1190,21 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 }
 
 pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
-    match name {
-        "join" => {
-            if num_args != 2 {
-                return Err(Error::ParseError(format!(
-                    "join function requires 2 arguments be passed, but received {num_args}"
-                )));
-            }
-        }
-        "substring" | "regex_replace" => {
-            if num_args != 3 {
-                return Err(Error::ParseError(format!(
-                    "{name} function requires 3 arguments to be passed, but received {num_args}"
-                )));
-            }
-        }
-        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => {
-            if num_args != 1 {
-                return Err(Error::ParseError(format!(
-                    "{name} function requires 1 argument to be passed, but received {num_args}"
-                )));
-            }
-        }
+    let expected_num_args = match name {
+        "join" => 2,
+        "substring" | "regex_replace" => 3,
+        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => 4,
         _ => {
             return Err(Error::ParseError(format!(
                 "no such function named {name} exists"
             )))
         }
+    };
+
+    if expected_num_args != num_args {
+        return Err(Error::ParseError(format!(
+            "{name} function requires {expected_num_args} arguments be passed, but received {num_args}"
+        )));
     }
 
     Ok(())
