@@ -6,7 +6,8 @@
     "not_compliant": [],
     "not_applicable": [],
     "compliant": [
-      "default"
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
     ]
   },
   {
@@ -16,27 +17,8 @@
     "not_compliant": [],
     "not_applicable": [],
     "compliant": [
-      "default"
-    ]
-  },
-  {
-    "name": "DATA_STDIN[1]",
-    "metadata": {},
-    "status": "PASS",
-    "not_compliant": [],
-    "not_applicable": [],
-    "compliant": [
-      "default"
-    ]
-  },
-  {
-    "name": "DATA_STDIN[2]",
-    "metadata": {},
-    "status": "PASS",
-    "not_compliant": [],
-    "not_applicable": [],
-    "compliant": [
-      "default"
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
     ]
   }
 ]

@@ -19,7 +19,7 @@ use crate::rules::{
 use inflector::cases::*;
 use lazy_static::lazy_static;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
@@ -1486,8 +1486,21 @@ pub(crate) struct FileReport<'value> {
     pub(crate) status: Status,
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) not_compliant: Vec<ClauseReport<'value>>,
-    pub(crate) not_applicable: HashSet<String>,
-    pub(crate) compliant: HashSet<String>,
+    pub(crate) not_applicable: BTreeSet<String>,
+    pub(crate) compliant: BTreeSet<String>,
+}
+
+impl<'value> FileReport<'value> {
+    pub(crate) fn combine(&mut self, report: FileReport<'value>) {
+        if report.name != self.name {
+            panic!("Incompatible to merge")
+        }
+        self.status = self.status.and(report.status);
+        self.metadata.extend(report.metadata);
+        self.not_compliant.extend(report.not_compliant);
+        self.compliant.extend(report.compliant);
+        self.not_applicable.extend(report.not_applicable);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -2176,8 +2189,8 @@ pub(crate) fn simplifed_json_from_root<'value>(
 ) -> Result<FileReport<'value>> {
     Ok(match &root.container {
         Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
-            let mut pass = HashSet::with_capacity(root.children.len());
-            let mut skip = HashSet::with_capacity(root.children.len());
+            let mut pass: BTreeSet<String> = BTreeSet::new();
+            let mut skip: BTreeSet<String> = BTreeSet::new();
             for each in &root.children {
                 if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) =
                     &each.container

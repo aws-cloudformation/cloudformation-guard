@@ -4585,3 +4585,19 @@ fn test_parse_assignment_with_function_call2() {
         assert!(matches!(function.parameters[0], LetValue::AccessClause(_)));
     }
 }
+
+#[test]
+fn test_get_rule_name() {
+    let rule_clause_name1 = "harry";
+    let rule_file_name = "lily.guard";
+    let rule_clause_name2 = "lily.guard/harry";
+
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name1),
+        rule_clause_name1
+    );
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name2),
+        rule_clause_name1
+    );
+}
