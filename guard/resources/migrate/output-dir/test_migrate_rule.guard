@@ -1,9 +1,0 @@
-let encryption_flag = true
-let aws_ec2_volume = Resources.*[ Type == "AWS::EC2::Volume" ]
-rule aws_ec2_volume_checks WHEN %aws_ec2_volume NOT EMPTY {
-    %aws_ec2_volume {
-        Properties.Encrypted == %encryption_flag
-        Properties.Size <= 100
-    }
-}
-

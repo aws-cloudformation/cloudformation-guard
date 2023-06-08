@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use std::fs::File;
 mod command;
 mod commands;
-mod migrate;
 mod rules;
 mod utils;
 
-use crate::commands::{MIGRATE, OUTPUT, PARSE_TREE, RULEGEN};
+use crate::commands::{OUTPUT, PARSE_TREE, RULEGEN};
 use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
@@ -52,9 +51,7 @@ fn main() -> Result<(), Error> {
     match app.subcommand() {
         Some((name, value)) => {
             if let Some(command) = mappings.get(name) {
-                let mut output_writer: Writer = if [PARSE_TREE, MIGRATE, RULEGEN]
-                    .contains(&command.name())
-                {
+                let mut output_writer: Writer = if [PARSE_TREE, RULEGEN].contains(&command.name()) {
                     let writer: Writer = match value.get_one::<String>(OUTPUT.0) {
                         Some(file) => {
                             Writer::new(WBFile(File::create(file)?), Stderr(std::io::stderr()))

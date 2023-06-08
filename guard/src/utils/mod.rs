@@ -16,7 +16,6 @@ pub fn get_guard_commands() -> Vec<Box<dyn Command>> {
         Box::new(commands::test::Test::new()),
         Box::new(commands::validate::Validate::new()),
         Box::new(commands::rulegen::Rulegen::new()),
-        Box::new(commands::migrate::Migrate::new()),
     ]
 }
 
