@@ -1210,7 +1210,7 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
     Ok(())
 }
 
-// TODO: look into the possibility of abstracting functions into structs that all implement a trait
+// TODO: look into the possibility of abstracting functions into structs that all implement
 pub(crate) fn try_handle_function_call(
     fn_name: &str,
     args: &[Vec<QueryResult>],
@@ -1672,9 +1672,9 @@ pub(crate) fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
         match cmp {
             CmpOperator::Exists => {
                 if not {
-                    "NOT EISTS"
+                    "NOT EXISTS"
                 } else {
-                    "EISTS"
+                    "EXISTS"
                 }
             }
             CmpOperator::Empty => {
