@@ -3,7 +3,7 @@
   status: FAIL
   not_compliant:
   - Rule:
-      name: default
+      name: advanced_regex_negative_lookbehind_rule.guard/default
       metadata: {}
       messages:
         custom_message: null
@@ -63,12 +63,6 @@
                 comparison:
                 - Eq
                 - true
-  not_applicable: []
-  compliant: []
-- name: s3-public-read-prohibited-template-non-compliant.yaml
-  metadata: {}
-  status: FAIL
-  not_compliant:
   - Rule:
       name: S3_BUCKET_LOGGING_ENABLED
       metadata: {}
@@ -99,12 +93,6 @@
                 comparison:
                 - Exists
                 - false
-  not_applicable: []
-  compliant: []
-- name: s3-public-read-prohibited-template-non-compliant.yaml
-  metadata: {}
-  status: FAIL
-  not_compliant:
   - Rule:
       name: S3_BUCKET_PUBLIC_READ_PROHIBITED
       metadata: {}
@@ -227,12 +215,6 @@
                 comparison:
                 - Eq
                 - false
-  not_applicable: []
-  compliant: []
-- name: s3-public-read-prohibited-template-non-compliant.yaml
-  metadata: {}
-  status: PASS
-  not_compliant: []
   not_applicable: []
   compliant:
   - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED

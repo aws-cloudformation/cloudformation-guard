@@ -36,10 +36,10 @@ mod functional_tests {
                   },
                   "children": [
                     {
-                      "context": "default",
+                      "context": "functional_test.rule/default",
                       "container": {
                         "RuleCheck": {
-                          "name": "default",
+                          "name": "functional_test.rule/default",
                           "status": "FAIL",
                           "message": null
                         }

@@ -30,6 +30,7 @@ use crate::rules::path_value::{Path, PathAwareValue};
 use crate::rules::values::*;
 
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
+const DEFAULT_RULE_NAME: &str = "default";
 
 pub(crate) fn from_str2(in_str: &str) -> Span {
     Span::new_extra(in_str, "")
@@ -1772,6 +1773,15 @@ enum Exprs<'loc> {
     ParameterizedRule(ParameterizedRule<'loc>),
 }
 
+pub(crate) fn get_rule_name<'b>(rule_file_name: &str, rule_name: &'b str) -> &'b str {
+    let prefix = format!("{file_name}/", file_name = rule_file_name);
+    if rule_name.starts_with(&prefix) {
+        &rule_name[prefix.len()..]
+    } else {
+        rule_name
+    }
+}
+
 //
 // Rules File
 //
@@ -1830,9 +1840,19 @@ pub(crate) fn rules_file(input: Span) -> Result<RulesFile, Error> {
     }
 
     if !default_rule_clauses.is_empty() {
+        let default_rule_name: String = if input.extra.to_string().trim().is_empty() {
+            DEFAULT_RULE_NAME.to_string()
+        } else {
+            format!(
+                "{rule_file_name}/{rule_name}",
+                rule_file_name = input.extra.to_string(),
+                rule_name = DEFAULT_RULE_NAME.to_string()
+            )
+        };
+
         let default_rule = Rule {
             conditions: None,
-            rule_name: "default".to_string(),
+            rule_name: default_rule_name,
             block: Block {
                 assignments: vec![],
                 conjunctions: default_rule_clauses,

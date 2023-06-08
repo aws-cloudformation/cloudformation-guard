@@ -117,9 +117,20 @@ impl TryFrom<&str> for Status {
             "FAIL" => Ok(Status::FAIL),
             "SKIP" => Ok(Status::SKIP),
             _ => Err(Error::IncompatibleError(format!(
-                "Status code is incorrect {}",
-                value
+                "Status code is incorrect {value}",
             ))),
+        }
+    }
+}
+impl Status {
+    fn and(&self, status: Status) -> Status {
+        match self {
+            Status::FAIL => Status::FAIL,
+            Status::PASS => match status {
+                Status::FAIL => status,
+                _ => Status::PASS,
+            },
+            Status::SKIP => status,
         }
     }
 }
