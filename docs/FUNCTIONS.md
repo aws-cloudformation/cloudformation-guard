@@ -53,7 +53,6 @@ you can now evaluate certain properties of this struct just like with a normal j
 This function accepts a single argument:
 
 - this argument can either be a query that resolves to a string or a string literal.
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 
 The return value for this function is a query where each string that was resolved from the input is parsed into its json value
 
@@ -87,7 +86,6 @@ The regex_replace function adds support for replacing one regular expression wit
 This function accepts 3 arguments:
 
 - The first argument is a query, each string that is resolved from this query will be operated on
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 - The second argument is either a query that resolves to a string or a string literal, this is the expression we are looking for to extract
   - Note: if this string does not resolve to a valid regular expression an error will occur
 - The third argument is either a query that resolves to a string or a string literal, this is the expression we are going to use replace the extracted part of the string
@@ -120,7 +118,6 @@ The join function adds support to collect a query, and then join their values us
 This function accepts 2 arguments:
 
 - The first argument is a query, all string values resolved from this query will then be joined using the delimter argument
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 - The second argument is either a query that resolves to a string/character, or a literal value that is either a string or character
 
 The return value for this function is query where each string that was resolved from the input is joined with the provided delimiter
@@ -143,7 +140,6 @@ rule TEST_COLLECTION when %template !empty {
 Both functions accept a single argument:
 
 - This argument is a query that resolves to a string(s) - all strings resolved will have the operation applied on them
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 
 Both these functions are very similar, one manipulates all resolved strings from a query to lower case, and the other to upper case
 
@@ -168,7 +164,6 @@ The substring function adds support to collect a part of all strings resolved fr
 This function accepts 3 arguments:
 
 - The first argument is a query, each string that is resolved from this query will be operated on
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 - The second argument is either a query that resolves to an int or a literal int, this is the starting index for the substring (inclusive)
 - The third argument is either a query that resolves to an int or a literal int, this is the ending index for the substring (exclusive)
 
@@ -193,7 +188,6 @@ rule TEST_SUBSTRING when %template !empty {
 This function accepts a single argument:
 
 - this argument can either be a query that resolves to a string or a string literal.
-  - NOTE: Any part of the query that does not resolve to a string is skipped[this means that if you have a query that resolves to multiple strings and the 2nd resolved value is not a string, but the 3rd is the result will contain 2 values]
 
 The return value for this function is a query that contains each url decoded version of every string value from the input
 
