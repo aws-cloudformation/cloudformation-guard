@@ -288,9 +288,9 @@ mod test_command_tests {
                 "resources/test-command/functions/data/template.yaml",
             ))
             .rules(Some(
-                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+                "resources/test-command/functions/rules/json_parse.guard",
             ))
-            .previous_engine()
+            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
