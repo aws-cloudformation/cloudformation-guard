@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
 
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
@@ -934,7 +935,7 @@ fn evaluate_against_data_input<'r>(
                 None => file.path_value.clone(),
             };
             let traversal = Traversal::from(&each);
-            let mut root_scope = root_scope(rules, &each)?;
+            let mut root_scope = root_scope(rules, Rc::new(each.clone()))?;
             let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
 
             let root_record = root_scope.reset_recorder().extract();

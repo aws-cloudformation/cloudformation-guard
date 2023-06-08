@@ -1,7 +1,6 @@
 use super::*;
 use crate::rules::parser::{from_str2, Span};
 
-use crate::rules::values::Value::Bool;
 use indexmap::map::IndexMap;
 
 #[test]

@@ -1,0 +1,14 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+let type = Resources.newServer.Type
+
+rule SOME_RULE when %type !empty {
+    let lower = to_lower(%type)
+    %lower == "aws::new::service"
+    %lower == /aws::new::service/
+
+    let upper = to_upper(%type)
+    %upper == "AWS::NEW::SERVICE"
+    %upper == /AWS::NEW::SERVICE/
+}
+

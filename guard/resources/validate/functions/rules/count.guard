@@ -1,0 +1,28 @@
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+rule SOME_RULE when %template !empty {
+    %template.Properties exists
+    %template.Properties is_struct
+
+    let props = %template.Properties.*
+    let res = count(%props)
+    %res == 3
+
+    %template.Collection exists
+    %template.Collection is_list
+
+    let collection = %template.Collection.*
+    let res = count(%collection)
+    %res == 3
+}
+
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule SOME_BUCKET_RULE when %buckets !empty {
+    let b1 = %buckets[ Properties.PublicAccessBlockConfiguration exists ]
+    let res1 = count(%b1)
+    %res1 == 2
+
+    let b = %buckets[ Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true ]
+
+    let res = count(%b)
+    %res == 1
+}

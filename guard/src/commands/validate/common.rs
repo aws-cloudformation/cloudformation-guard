@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::OutputFormatType;
-use crate::rules::errors::Error;
 use crate::rules::eval_context::{
     simplifed_json_from_root, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
     GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
@@ -197,7 +196,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 
         Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(check))) => match &check.value.from {
             QueryResult::Resolved(res) => {
-                let (path, provided): (String, serde_json::Value) = (*res).try_into()?;
+                let (path, provided): (String, serde_json::Value) = (&**res).try_into()?;
                 NameInfo {
                     rule: rule_name,
                     comparison: Some(check.comparison.into()),
@@ -215,7 +214,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 
             QueryResult::UnResolved(unres) => {
                 let (path, provided): (String, serde_json::Value) =
-                    unres.traversed_to.try_into()?;
+                    (&*unres.traversed_to).try_into()?;
                 NameInfo {
                     rule: rule_name,
                     comparison: Some(check.comparison.into()),
@@ -241,12 +240,12 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
             QueryResult::Literal(_) => unreachable!(),
 
             QueryResult::Resolved(res) => {
-                let (path, provided): (String, serde_json::Value) = (*res).try_into()?;
+                let (path, provided): (String, serde_json::Value) = (&**res).try_into()?;
                 let expected: Option<(String, serde_json::Value)> = match &check.to {
                     Some(to) => match to {
                         QueryResult::Literal(_) => unreachable!(),
-                        QueryResult::Resolved(v) => Some((*v).try_into()?),
-                        QueryResult::UnResolved(ur) => Some(ur.traversed_to.try_into()?),
+                        QueryResult::Resolved(v) => Some((&**v).try_into()?),
+                        QueryResult::UnResolved(ur) => Some((&*ur.traversed_to).try_into()?),
                     },
                     None => None,
                 };
@@ -271,7 +270,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 
             QueryResult::UnResolved(unres) => {
                 let (path, provided): (String, serde_json::Value) =
-                    unres.traversed_to.try_into()?;
+                    (&*unres.traversed_to).try_into()?;
                 NameInfo {
                     rule: rule_name,
                     comparison: Some(check.comparison.into()),
@@ -303,7 +302,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
         Some(RecordType::ClauseValueCheck(ClauseCheck::InComparison(incomp))) => {
             let provided = match incomp.from.resolved() {
                 Some(val) => {
-                    let (_, value): (String, serde_json::Value) = val.try_into()?;
+                    let (_, value): (String, serde_json::Value) = (&*val).try_into()?;
                     Some(value)
                 }
                 None => None,
@@ -311,9 +310,9 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
             let mut to = Vec::new();
             for each in &incomp.to {
                 let (_, expected): (String, serde_json::Value) = match each {
-                    QueryResult::Literal(l) => (*l).try_into()?,
-                    QueryResult::Resolved(v) => (*v).try_into()?,
-                    QueryResult::UnResolved(ur) => ur.traversed_to.try_into()?,
+                    QueryResult::Literal(l) => (&**l).try_into()?,
+                    QueryResult::Resolved(v) => (&**v).try_into()?,
+                    QueryResult::UnResolved(ur) => (&*ur.traversed_to).try_into()?,
                 };
                 to.push(expected);
             }
@@ -756,7 +755,7 @@ pub(super) type RuleHierarchy<'report, 'value> =
     BTreeMap<std::rc::Rc<String>, std::rc::Rc<Node<'report, 'value>>>;
 
 pub(super) type PathTree<'report, 'value> =
-    BTreeMap<&'value str, Vec<std::rc::Rc<Node<'report, 'value>>>>;
+    BTreeMap<String, Vec<std::rc::Rc<Node<'report, 'value>>>>;
 
 pub(super) fn insert_into_trees<'report, 'value: 'report>(
     clause: &'report ClauseReport<'value>,
@@ -773,12 +772,12 @@ pub(super) fn insert_into_trees<'report, 'value: 'report>(
     hierarchy.insert(path, node.clone());
 
     if let Some(from) = clause.value_from() {
-        let path = from.self_path().0.as_str();
+        let path = from.self_path().0.to_string();
         path_tree.entry(path).or_insert(vec![]).push(node.clone());
     }
 
     if let Some(from) = clause.value_to() {
-        let path = from.self_path().0.as_str();
+        let path = from.self_path().0.to_string();
         path_tree.entry(path).or_insert(vec![]).push(node);
     }
 }
@@ -827,16 +826,12 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
 pub(super) type BinaryComparisonErrorFn = dyn Fn(
     &mut dyn Write,
     &ClauseReport<'_>,
-    &BinaryComparison<'_>,
+    &BinaryComparison,
     String,
 ) -> crate::rules::Result<()>;
 
-pub(super) type UnaryComparisonErrorFn = dyn Fn(
-    &mut dyn Write,
-    &ClauseReport<'_>,
-    &UnaryComparison<'_>,
-    String,
-) -> crate::rules::Result<()>;
+pub(super) type UnaryComparisonErrorFn =
+    dyn Fn(&mut dyn Write, &ClauseReport<'_>, &UnaryComparison, String) -> crate::rules::Result<()>;
 
 fn emit_messages(
     writer: &mut dyn Write,
@@ -905,7 +900,7 @@ fn emit_messages(
 fn emit_retrieval_error(
     writer: &mut dyn Write,
     prefix: &str,
-    vur: &ValueUnResolved<'_>,
+    vur: &ValueUnResolved,
     clause: &ClauseReport<'_>,
     context: &str,
     message: &str,
@@ -958,7 +953,7 @@ pub(super) trait ComparisonErrorWriter {
         &mut self,
         _writer: &mut dyn Write,
         _cr: &ClauseReport<'_>,
-        _bc: Option<&UnResolved<'_>>,
+        _bc: Option<&UnResolved>,
         _prefix: &str,
     ) -> crate::rules::Result<usize> {
         Ok(0)
@@ -968,7 +963,7 @@ pub(super) trait ComparisonErrorWriter {
         &mut self,
         _writer: &mut dyn Write,
         _cr: &ClauseReport<'_>,
-        _bc: &BinaryComparison<'_>,
+        _bc: &BinaryComparison,
         _prefix: &str,
     ) -> crate::rules::Result<usize> {
         Ok(0)
@@ -978,7 +973,7 @@ pub(super) trait ComparisonErrorWriter {
         &mut self,
         _writer: &mut dyn Write,
         _cr: &ClauseReport<'_>,
-        _bc: &InComparison<'_>,
+        _bc: &InComparison,
         _prefix: &str,
     ) -> crate::rules::Result<usize> {
         Ok(0)
@@ -988,7 +983,7 @@ pub(super) trait ComparisonErrorWriter {
         &mut self,
         _writer: &mut dyn Write,
         _cr: &ClauseReport<'_>,
-        _bc: &UnaryComparison<'_>,
+        _bc: &UnaryComparison,
         _prefix: &str,
     ) -> crate::rules::Result<usize> {
         Ok(0)
