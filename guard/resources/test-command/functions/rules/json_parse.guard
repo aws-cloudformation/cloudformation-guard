@@ -1,0 +1,16 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+let expected = {
+        "Principal": "*",
+        "Actions": ["s3*", "ec2*"]
+}
+
+rule SOME_RULE when %template !empty {
+    let policy = %template.Properties.Policy
+    let res = json_parse(%policy)
+
+    %res !empty
+    %res == %expected
+
+}
+

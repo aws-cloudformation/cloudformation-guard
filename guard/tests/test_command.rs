@@ -278,4 +278,21 @@ mod test_command_tests {
             writer
         );
     }
+
+    #[test]
+    fn test_with_function_expr() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/functions/data/template.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .previous_engine()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
 }
