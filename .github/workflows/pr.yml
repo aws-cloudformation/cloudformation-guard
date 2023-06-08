@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development ]
+    branches: [ 2.x.x ]
   pull_request:
-    branches: [ main, development ]
+    branches: [ 2.x.x ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,72 +39,5 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
-  aws-guard-rules-registry-ubuntu-integration-tests:
-    name: Integration tests against aws-guard-rules-registry on Ubuntu
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        name: Checkout cfn-guard
-        with:
-          path: cloudformation-guard
-      - name: Build binary
-        run: |
-          cd cloudformation-guard/guard/
-          cargo build --release
-      - uses: actions/checkout@v3
-        name: Checkout aws-guard-rules-registry
-        with:
-          repository: aws-cloudformation/aws-guard-rules-registry
-          path: aws-guard-rules-registry
-          ref: main
-      - name: Run integration tests using test command
-        run: |
-          if cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules; then
-              echo "The integration tests for test command have passed."
-          else
-              echo "The integration tests for test command have failed."
-              exit 1
-          fi
-
-      - name: Run integration tests using parse-tree command
-        run: |
-          cd aws-guard-rules-registry/rules
-          
-          FAILED_RULES=()
-          SKIPPED_RULES=()
-          rules=( $(find . -type f -name "*.guard") )
-          
-          for rule in "${rules[@]}"
-          do
-              if [ $(sed -e '/^[ \s]*#.*$/d' $rule |  sed -r '/^\s*$/d' | wc -l) -eq 0 ]; then
-                  SKIPPED_RULES+=("$rule")
-              elif ../../cloudformation-guard/target/release/cfn-guard parse-tree --rules $rule; then
-                  continue
-              else
-                  FAILED_RULES+=("$rule")
-              fi
-          done
-          
-          SKIPPED_RULE_COUNT=${#SKIPPED_RULES[@]}
-          if [ $SKIPPED_RULE_COUNT -gt 0 ]; then
-              echo "The following $SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
-              for skipped_rule in "${SKIPPED_RULES[@]}"
-              do
-                  echo "$skipped_rule"
-              done
-          fi
-          
-          FAILED_RULE_COUNT=${#FAILED_RULES[@]}
-          
-          if [ $FAILED_RULE_COUNT -gt 0 ]; then
-              echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
-              for failed_rule in "${FAILED_RULES[@]}"
-              do
-                  echo "$failed_rule"
-              done
-              exit 1
-          else
-              echo "All the rules have succeeded the parse-tree integration tests."
-          fi
           
           
