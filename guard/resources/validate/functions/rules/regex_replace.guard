@@ -3,8 +3,10 @@ let template = Resources.*[ Type == 'AWS::New::Service']
 rule SOME_RULE when %template !empty {
     %template.Properties.Arn exists
     let arn = %template.Properties.Arn
-
-    let res = regex_replace(%arn, "^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$", "${1}/${4}/${3}/${2}-${5}")
+    
+    let arn_partition_regex = "^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$"
+    let capture_group_reordering = "${1}/${4}/${3}/${2}-${5}"
+    let res = regex_replace(%arn, %arn_partition_regex, %capture_group_reordering)
 
     %res == "aws/123456789012/us-west-2/newservice-Table/extracted"
 }

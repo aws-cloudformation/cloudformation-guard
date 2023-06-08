@@ -344,33 +344,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 QueryResult::UnResolved(ur) => {
                     resolved.push(QueryResult::UnResolved(ur.clone()));
                 }
-                QueryResult::Resolved(value) => {
-                    let index = if query_index + 1 < query.len() {
-                        match &query[query_index + 1] {
-                            QueryPart::AllIndices(_name) => query_index + 2,
-                            _ => query_index + 1,
-                        }
-                    } else {
-                        query_index + 1
-                    };
-
-                    if index < query.len() {
-                        let mut scope = ValueScope {
-                            root: Rc::clone(value),
-                            parent: resolver,
-                        };
-                        resolved.extend(query_retrieval_with_converter(
-                            index,
-                            query,
-                            Rc::clone(value),
-                            &mut scope,
-                            converter,
-                        )?);
-                    } else {
-                        resolved.push(each.clone())
-                    }
-                }
-                QueryResult::Literal(value) => {
+                QueryResult::Literal(value) | QueryResult::Resolved(value) => {
                     let index = if query_index + 1 < query.len() {
                         match &query[query_index + 1] {
                             QueryPart::AllIndices(_name) => query_index + 2,
@@ -906,16 +880,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 let mut extended = Vec::with_capacity(selected.len());
                 for each in selected {
                     match each {
-                        QueryResult::Literal(r) => {
-                            extended.extend(query_retrieval_with_converter(
-                                query_index + 1,
-                                query,
-                                r,
-                                resolver,
-                                converter,
-                            )?);
-                        }
-                        QueryResult::Resolved(r) => {
+                        QueryResult::Literal(r) | QueryResult::Resolved(r) => {
                             extended.extend(query_retrieval_with_converter(
                                 query_index + 1,
                                 query,
@@ -2187,10 +2152,6 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 error_message: Some(error_message),
                             },
                             check: BinaryCheck::InResolved(InComparison {
-                                // from: from.resolved().map_or_else(
-                                //     || match from.unresolved_traversed_to().unwrap(),
-                                //     std::convert::identity,
-                                // ),
                                 from: match from.resolved() {
                                     Some(val) => val,
                                     None => match from.unresolved_traversed_to() {

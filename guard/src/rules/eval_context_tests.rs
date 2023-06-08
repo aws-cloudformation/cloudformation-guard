@@ -453,6 +453,7 @@ fn test_with_converter() -> Result<()> {
     Ok(())
 }
 
+// FIXME: break this up into multiple tests
 #[test]
 fn test_handle_function_call() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(

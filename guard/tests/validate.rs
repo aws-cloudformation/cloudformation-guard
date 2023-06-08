@@ -810,7 +810,7 @@ mod validate_tests {
     #[case("regex_replace.guard")]
     #[case("substring.guard")]
     #[case("json_parse.guard")]
-    #[case("string_manip.guard")]
+    #[case("string_manipulation.guard")]
     #[case("url_decode.guard")]
     #[case("join.guard")]
     #[case("count.guard")]

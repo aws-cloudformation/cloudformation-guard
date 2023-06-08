@@ -6,16 +6,12 @@ let expected = {
 }
 
 rule SOME_RULE when %template !empty {
-    %template.Properties.Policy exists
     let policy = %template.Properties.Policy
 
     let res = json_parse(%policy)
 
     %res !empty
     %res == %expected
-
-    %template.BucketPolicy exists
-    %template.BucketPolicy.PolicyText exists
 
     let policy_text = %template.BucketPolicy.PolicyText
     let res2 = json_parse(%policy_text)
