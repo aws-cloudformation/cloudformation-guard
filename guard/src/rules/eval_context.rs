@@ -1193,7 +1193,7 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
     let expected_num_args = match name {
         "join" => 2,
         "substring" | "regex_replace" => 3,
-        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => 4,
+        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => 1,
         _ => {
             return Err(Error::ParseError(format!(
                 "no such function named {name} exists"
