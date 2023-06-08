@@ -12,8 +12,8 @@ mod test_command_tests {
 
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{
-        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, PREVIOUS_ENGINE, RULES, RULES_AND_TEST_FILE,
-        RULES_FILE, TEST, TEST_DATA, VERBOSE,
+        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, RULES, RULES_AND_TEST_FILE, RULES_FILE, TEST,
+        TEST_DATA, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
@@ -30,7 +30,6 @@ mod test_command_tests {
         directory: Option<&'args str>,
         rules_and_test_file: Option<&'args str>,
         directory_only: bool,
-        previous_engine: bool,
         alphabetical: bool,
         last_modified: bool,
         verbose: bool,
@@ -62,11 +61,6 @@ mod test_command_tests {
 
         fn directory_only(&'args mut self) -> &'args mut TestCommandTestRunner {
             self.directory_only = true;
-            self
-        }
-
-        fn previous_engine(&'args mut self) -> &'args mut TestCommandTestRunner {
-            self.previous_engine = true;
             self
         }
 
@@ -111,10 +105,6 @@ mod test_command_tests {
             }
 
             if self.directory_only {}
-
-            if self.previous_engine {
-                args.push(format!("-{}", PREVIOUS_ENGINE.1));
-            }
 
             if self.alphabetical {
                 args.push(format!("-{}", ALPHABETICAL.1));
