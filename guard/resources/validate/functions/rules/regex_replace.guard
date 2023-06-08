@@ -1,3 +1,18 @@
+#
+# In this simple example, we will re-format an ARN by moving around some sections in it.
+#
+# We will start with a normal ARN that has the following pattern:
+#    arn:<Partition>:<Service>:<Region>:<AccountID>:<ResourceType>/<ResourceID>
+# and we will try to convert it to:
+#    <Partition>/<AccountID>/<Region>/<Service>-<ResourceType>/<ResourceID>
+#
+# For example:
+#    arn:aws:newservice:us-west-2:123456789012:Table/extracted
+# becomes:
+#    aws/123456789012/us-west-2/newservice-Table/extracted
+#
+
+
 let template = Resources.*[ Type == 'AWS::New::Service']
 
 rule SOME_RULE when %template !empty {
