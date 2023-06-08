@@ -3,8 +3,7 @@ use std::io::{stderr, stdout};
 
 use crate::utils::writer::Writer;
 use grep_searcher::SearcherBuilder;
-use indoc::{formatdoc, indoc};
-use rstest::rstest;
+use indoc::formatdoc;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
@@ -44,9 +43,9 @@ fn test_all_unary_functions() -> Result<()> {
     let float_range_value = PathAwareValue::try_from(r#"r(10.0, 20.5]"#)?;
 
     type UnaryTest<'test> = Vec<(
-        Box<dyn Fn(&QueryResult<'_>) -> Result<bool>>,
-        Vec<QueryResult<'test>>,
-        Vec<QueryResult<'test>>,
+        Box<dyn Fn(&QueryResult) -> Result<bool>>,
+        Vec<QueryResult>,
+        Vec<QueryResult>,
     )>;
 
     let tests: UnaryTest = vec![
@@ -54,12 +53,12 @@ fn test_all_unary_functions() -> Result<()> {
             Box::new(exists_operation),
             // Successful tests
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
             ],
             // Failure tests
             vec![QueryResult::UnResolved(UnResolved {
-                traversed_to: &path_value,
+                traversed_to: Rc::new(path_value.clone()),
                 reason: None,
                 remaining_query: "".to_string(),
             })],
@@ -68,34 +67,34 @@ fn test_all_unary_functions() -> Result<()> {
             Box::new(element_empty_operation),
             // Successful Tests
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&empty_string_value), // we do check for string empty as well
-                QueryResult::Resolved(&empty_list_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(empty_string_value)), // we do check for string empty as well
+                QueryResult::Resolved(Rc::new(empty_list_value.clone())),
                 QueryResult::UnResolved(UnResolved {
                     remaining_query: "".to_string(),
                     reason: None,
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                 }),
             ],
             // Failure tests
             vec![
-                QueryResult::Resolved(&non_empty_path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
             ],
         ),
         (
             Box::new(is_string_operation),
             // Success Case
-            vec![QueryResult::Resolved(&string_value)],
+            vec![QueryResult::Resolved(Rc::new(string_value.clone()))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -104,15 +103,15 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_int_operation),
             // Success Case
-            vec![QueryResult::Resolved(&int_value)],
+            vec![QueryResult::Resolved(Rc::new(int_value.clone()))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -122,18 +121,18 @@ fn test_all_unary_functions() -> Result<()> {
             Box::new(is_list_operation),
             // Success Case
             vec![
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&empty_list_value),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(empty_list_value.clone())),
             ],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&int_range_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(int_range_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -143,18 +142,18 @@ fn test_all_unary_functions() -> Result<()> {
             Box::new(is_struct_operation),
             // Success Case
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
             ],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&empty_list_value),
-                QueryResult::Resolved(&float_value),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(empty_list_value)),
+                QueryResult::Resolved(Rc::new(float_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -163,15 +162,15 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_bool_operation),
             // Success Case
-            vec![QueryResult::Resolved(&bool_value)],
+            vec![QueryResult::Resolved(Rc::new(bool_value))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -180,16 +179,16 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_float_operation),
             // Success Case
-            vec![QueryResult::Resolved(&float_value)],
+            vec![QueryResult::Resolved(Rc::new(float_value))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&non_empty_path_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -198,18 +197,18 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_char_range_operation),
             // Success Case
-            vec![QueryResult::Resolved(&char_range_value)],
+            vec![QueryResult::Resolved(Rc::new(char_range_value.clone()))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&non_empty_path_value),
-                QueryResult::Resolved(&float_range_value),
-                QueryResult::Resolved(&int_range_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
+                QueryResult::Resolved(Rc::new(float_range_value.clone())),
+                QueryResult::Resolved(Rc::new(int_range_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -218,18 +217,18 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_int_range_operation),
             // Success Case
-            vec![QueryResult::Resolved(&int_range_value)],
+            vec![QueryResult::Resolved(Rc::new(int_range_value))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&non_empty_path_value),
-                QueryResult::Resolved(&float_range_value),
-                QueryResult::Resolved(&char_range_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value.clone())),
+                QueryResult::Resolved(Rc::new(string_value.clone())),
+                QueryResult::Resolved(Rc::new(int_value.clone())),
+                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
+                QueryResult::Resolved(Rc::new(float_range_value.clone())),
+                QueryResult::Resolved(Rc::new(char_range_value.clone())),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value.clone()),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -238,18 +237,18 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_float_range_operation),
             // Success Case
-            vec![QueryResult::Resolved(&float_range_value)],
+            vec![QueryResult::Resolved(Rc::new(float_range_value))],
             // Failure Cases
             vec![
-                QueryResult::Resolved(&path_value),
-                QueryResult::Resolved(&list_value),
-                QueryResult::Resolved(&string_value),
-                QueryResult::Resolved(&int_value),
-                QueryResult::Resolved(&non_empty_path_value),
-                QueryResult::Resolved(&char_range_value),
-                QueryResult::Resolved(&char_range_value),
+                QueryResult::Resolved(Rc::new(path_value.clone())),
+                QueryResult::Resolved(Rc::new(list_value)),
+                QueryResult::Resolved(Rc::new(string_value)),
+                QueryResult::Resolved(Rc::new(int_value)),
+                QueryResult::Resolved(Rc::new(non_empty_path_value)),
+                QueryResult::Resolved(Rc::new(char_range_value.clone())),
+                QueryResult::Resolved(Rc::new(char_range_value)),
                 QueryResult::UnResolved(UnResolved {
-                    traversed_to: &path_value,
+                    traversed_to: Rc::new(path_value),
                     reason: None,
                     remaining_query: "".to_string(),
                 }),
@@ -286,7 +285,7 @@ fn query_empty_and_non_empty() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
@@ -353,20 +352,20 @@ fn each_lhs_value_not_comparable() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
     let query_ec2 = AccessQuery::try_from("Resources.ec2.Properties.ImageId")?.query;
     let lhs = eval.query(&query_ec2)?;
     assert_eq!(lhs.len(), 1);
-    let lhs = match lhs[0] {
+    let lhs = match &lhs[0] {
         QueryResult::Resolved(val) => val,
         _ => unreachable!(),
     };
     let rhs_query = AccessQuery::try_from("Parameters.allowed_images")?.query;
     let rhs = eval.query(&rhs_query)?;
-    let result = each_lhs_compare(compare_eq, lhs, &rhs)?;
+    let result = each_lhs_compare(compare_eq, Rc::clone(lhs), &rhs)?;
 
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
@@ -376,10 +375,11 @@ fn each_lhs_value_not_comparable() -> Result<()> {
             ..
         }) => {
             let rhs_ptr = match &rhs[0] {
-                QueryResult::Resolved(ptr) => *ptr,
+                QueryResult::Resolved(ptr) => &*ptr,
                 _ => unreachable!(),
             };
-            assert!(std::ptr::eq(rhs_ptr, *value));
+
+            assert_eq!(&**rhs_ptr, &**value);
         }
 
         _ => unreachable!(),
@@ -387,7 +387,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
 
     let result = each_lhs_compare(
         in_cmp(true), // not in operation
-        lhs,
+        Rc::clone(lhs),
         &rhs,
     )?;
 
@@ -403,7 +403,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
 
     let result = each_lhs_compare(
         in_cmp(false), // in operation
-        lhs,
+        Rc::clone(lhs),
         &rhs,
     )?;
 
@@ -436,21 +436,21 @@ fn each_lhs_value_eq_compare() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
     let query_ec2 = AccessQuery::try_from("Resources.ec2.Properties.ImageId")?.query;
     let lhs = eval.query(&query_ec2)?;
     assert_eq!(lhs.len(), 1);
-    let lhs = match lhs[0] {
+    let lhs = match &lhs[0] {
         QueryResult::Resolved(val) => val,
         _ => unreachable!(),
     };
     let rhs_query = AccessQuery::try_from("Parameters.allowed_images[*]")?.query;
     let rhs = eval.query(&rhs_query)?;
     assert_eq!(rhs.len(), 2);
-    let result = each_lhs_compare(compare_eq, lhs, &rhs)?;
+    let result = each_lhs_compare(compare_eq, Rc::clone(lhs), &rhs)?;
 
     assert_eq!(result.len(), 2);
     for cmp_result in result {
@@ -460,7 +460,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                 outcome,
             }) => {
                 if outcome {
-                    match (lhs, rhs) {
+                    match (&**lhs, &*rhs) {
                         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => {
                             assert_eq!(s1, s2);
                             assert!(!std::ptr::eq(s1, s2));
@@ -469,7 +469,7 @@ fn each_lhs_value_eq_compare() -> Result<()> {
                         (_, _) => unreachable!(),
                     }
                 } else {
-                    match (lhs, rhs) {
+                    match (&**lhs, &*rhs) {
                         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => {
                             assert_ne!(s1, s2);
                             assert!(!std::ptr::eq(s1, s2));
@@ -509,7 +509,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
@@ -523,13 +523,15 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
     assert_eq!(selected_lhs.len(), 2); // 2 statements present
 
     let rhs_value = PathAwareValue::try_from(r#""*""#)?;
-    let rhs_query_result = vec![QueryResult::Resolved(&rhs_value)];
+    let rhs_query_result = vec![QueryResult::Resolved(Rc::new(rhs_value))];
     for each_lhs in selected_lhs {
-        match each_lhs {
+        match &each_lhs {
             QueryResult::Resolved(lhs) => {
-                for cmp_result in
-                    each_lhs_compare(not_compare(compare_eq, true), lhs, &rhs_query_result)?
-                {
+                for cmp_result in each_lhs_compare(
+                    not_compare(compare_eq, true),
+                    Rc::clone(lhs),
+                    &rhs_query_result,
+                )? {
                     match cmp_result {
                         ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if !outcome {
@@ -572,7 +574,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
         "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
@@ -586,11 +588,12 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
     assert_eq!(selected_lhs.len(), 3); // 3 selected values
 
     let rhs_value = PathAwareValue::try_from(r#""*""#)?;
-    let rhs_query_result = vec![QueryResult::Resolved(&rhs_value)];
+    let rhs_query_result = vec![QueryResult::Resolved(Rc::new(rhs_value.clone()))];
     for each_lhs in selected_lhs {
         match each_lhs {
             QueryResult::Resolved(lhs) => {
-                for cmp_result in each_lhs_compare(compare_eq, lhs, &rhs_query_result)? {
+                for cmp_result in each_lhs_compare(compare_eq, Rc::clone(&lhs), &rhs_query_result)?
+                {
                     match cmp_result {
                         ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if outcome {
@@ -624,9 +627,11 @@ macro_rules! test_case {
         for each_lhs in values {
             match each_lhs {
                 QueryResult::Resolved(res) => {
-                    for cmp_result in
-                        each_lhs_compare($func, res, &[QueryResult::Resolved(&rhs_value)])?
-                    {
+                    for cmp_result in each_lhs_compare(
+                        $func,
+                        res,
+                        &[QueryResult::Resolved(Rc::new(rhs_value.clone()))],
+                    )? {
                         match cmp_result {
                             ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
                                 assert_eq!(outcome, $assert);
@@ -656,7 +661,7 @@ fn binary_comparisons_gt_ge() -> Result<()> {
     "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
@@ -766,7 +771,7 @@ fn binary_comparisons_lt_le() -> Result<()> {
     "#,
     )?)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
 
@@ -890,7 +895,7 @@ Resources:
     "###;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
-    let mut root = root_scope(&rules, &value)?;
+    let mut root = root_scope(&rules, Rc::new(value.clone()))?;
     //let mut tracker = RecordTracker::new(&mut root);
     let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
@@ -932,7 +937,7 @@ fn block_guard_pass() -> Result<()> {
 
     let mut tracker = RecordTracker::new();
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: Some(&mut tracker),
     };
     let status = eval_guard_clause(&block_clauses, &mut eval)?;
@@ -1024,7 +1029,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
 
@@ -1079,7 +1084,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     //
@@ -1122,7 +1127,7 @@ fn block_evaluation() -> Result<()> {
     "#;
     let clause = GuardClause::try_from(clause_str)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval)?;
@@ -1160,7 +1165,7 @@ fn block_evaluation_fail() -> Result<()> {
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let clause_str = r#"Resources.*[ Type == 'AWS::ApiGateway::RestApi' ].Properties {
@@ -1210,7 +1215,7 @@ fn variable_projections() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = root_scope(&rules_file, &path_value)?;
+    let mut root_scope = root_scope(&rules_file, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -1250,7 +1255,7 @@ fn variable_projections_failures() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = root_scope(&rules_file, &path_value)?;
+    let mut root_scope = root_scope(&rules_file, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut root_scope, None)?;
     assert_eq!(status, Status::FAIL); // for s3_bucket_policy_2.Properties.Bucket == ""
 
@@ -1335,7 +1340,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = root_scope(&rules_files, &path_value)?;
+    let mut root_scope = root_scope(&rules_files, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -1349,7 +1354,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::SKIP);
 
@@ -1383,7 +1388,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1401,7 +1406,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -1419,7 +1424,7 @@ fn query_cross_joins() -> Result<()> {
     }
     "#,
     )?;
-    let mut root_scope = eval_context::root_scope(&rules_files, &path_value)?;
+    let mut root_scope = eval_context::root_scope(&rules_files, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -1462,7 +1467,7 @@ fn cross_rule_clause_when_checks() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let mut root = root_scope(&rules, &resources)?;
+    let mut root = root_scope(&rules, Rc::new(resources.clone()))?;
     let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
     let mut expectations = HashMap::with_capacity(4);
@@ -1496,7 +1501,7 @@ fn cross_rule_clause_when_checks() -> Result<()> {
     "#;
 
     let resources = PathAwareValue::try_from(input)?;
-    let mut root = root_scope(&rules, &resources)?;
+    let mut root = root_scope(&rules, Rc::new(resources.clone()))?;
     let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::PASS);
     expectations.clear();
@@ -1537,7 +1542,7 @@ fn test_field_type_array_or_single() -> Result<()> {
     let path_value = PathAwareValue::try_from(statements)?;
     let clause = GuardClause::try_from(r#"Statement[*].Action != '*'"#)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval)?;
@@ -1553,7 +1558,7 @@ fn test_field_type_array_or_single() -> Result<()> {
     "#;
     let path_value = PathAwareValue::try_from(statements)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval)?;
@@ -1595,7 +1600,7 @@ fn test_for_in_and_not_in() -> Result<()> {
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
 
@@ -1639,7 +1644,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1655,7 +1660,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1706,7 +1711,7 @@ fn test_inner_when_skipped() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1728,7 +1733,7 @@ fn test_inner_when_skipped() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1739,7 +1744,7 @@ fn test_inner_when_skipped() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1748,7 +1753,7 @@ fn test_inner_when_skipped() -> Result<()> {
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -1840,7 +1845,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let mut asserter = ReportAssertions {};
     let mut root = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: Some(&mut asserter),
     };
     let status = eval_rule(&rules, &mut root)?;
@@ -1852,7 +1857,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     "###;
 
     let rules = RulesFile::try_from(rule)?;
-    let mut root = root_scope(&rules, &values)?;
+    let mut root = root_scope(&rules, Rc::new(values.clone()))?;
     let status = eval_rules_file(&rules, &mut root, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1905,7 +1910,7 @@ fn test_in_comparison_operator_for_list_of_lists(
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
-    let mut context = root_scope(&rule_eval, &value)?;
+    let mut context = root_scope(&rule_eval, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule_eval, &mut context, None)?;
     assert_eq!(status, status_arg);
 
@@ -1939,7 +1944,7 @@ fn test_type_conversions(#[case] ttl_arg: &str, #[case] status_arg: Status) -> R
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
-    let mut context = root_scope(&rule_eval, &value)?;
+    let mut context = root_scope(&rule_eval, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule_eval, &mut context, None)?;
     assert_eq!(status, status_arg);
 
@@ -1963,7 +1968,7 @@ fn is_bool() -> Result<()> {
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
     println!("{:?}", rules_file);
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -1973,7 +1978,7 @@ fn is_bool() -> Result<()> {
     }
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1997,7 +2002,7 @@ fn is_int() -> Result<()> {
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
     println!("{:?}", rules_file);
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -2007,7 +2012,7 @@ fn is_int() -> Result<()> {
     }
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -2069,7 +2074,7 @@ fn double_projection_tests() -> Result<()> {
 
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -2086,7 +2091,7 @@ fn double_projection_tests() -> Result<()> {
     }
     "###;
     let value = PathAwareValue::try_from(resources_str)?;
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -2163,7 +2168,7 @@ fn test_rules_with_some_clauses() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(resources)?;
     let parsed = RulesFile::try_from(query)?;
-    let mut eval = root_scope(&parsed, &value)?;
+    let mut eval = root_scope(&parsed, Rc::new(value.clone()))?;
     let selected = eval.resolve_variable("x")?;
     println!("{:?}", selected);
     assert_eq!(selected.len(), 1);
@@ -2194,7 +2199,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     "#;
     let values = PathAwareValue::try_from(values_str)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
 
@@ -2207,7 +2212,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     let values_str = r#"{ Tags: [] }"#;
     let values = PathAwareValue::try_from(values_str)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval)?;
@@ -2219,7 +2224,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval)?;
@@ -2256,7 +2261,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     let _resources = PathAwareValue::try_from(resources_str)?;
     let selection_query = AccessQuery::try_from(selection_str)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let selected = eval.query(&selection_query.query)?;
@@ -2294,7 +2299,7 @@ rule check_rest_api_is_private_and_has_access {
     }
 }"#;
     let rule = RulesFile::try_from(rule_str)?;
-    let mut root = root_scope(&rule, &value)?;
+    let mut root = root_scope(&rule, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule, &mut root, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -2315,7 +2320,7 @@ rule check_rest_api_is_private_and_has_access {
     "#;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let mut root = root_scope(&rule, &value)?;
+    let mut root = root_scope(&rule, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule, &mut root, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -2328,7 +2333,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*].Key == /Name/"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2336,7 +2341,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*].Key == /Name/"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2344,7 +2349,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2352,7 +2357,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2360,7 +2365,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags !empty"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2368,7 +2373,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags empty"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2376,7 +2381,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] !empty"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2384,7 +2389,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] empty"#)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
@@ -2398,7 +2403,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let resources = r#"Resources: {}"#;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
 
@@ -2434,7 +2439,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     "#;
     let _value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
@@ -2446,7 +2451,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let resources = r#"{}"#;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
@@ -2527,7 +2532,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     let rules_file = RulesFile::try_from(rules)?;
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
-    let mut eval = root_scope(&rules_file, &path_value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -2580,7 +2585,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     "#;
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
-    let mut eval = root_scope(&rules_file, &path_value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::SKIP);
 
@@ -2606,7 +2611,7 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     "#;
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
-    let mut eval = eval.reset_root(&path_value)?;
+    let mut eval = eval.reset_root(Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::SKIP);
 
@@ -2634,7 +2639,9 @@ fn filter_based_join_clauses_failures_and_skips() -> Result<()> {
     "###;
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
-    let mut eval = eval.reset_root(&path_value)?;
+
+    let mut eval = eval.reset_root(Rc::new(path_value.clone()))?;
+
     //
     // Let us track failures and assert on what must be observed
     //
@@ -2706,7 +2713,7 @@ fn filter_based_with_join_pass_use_cases() -> Result<()> {
     let path_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
     let rules_file = RulesFile::try_from(rules)?;
-    let mut eval = root_scope(&rules_file, &path_value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(path_value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
@@ -2745,7 +2752,7 @@ fn rule_clause_tests() -> Result<()> {
     "#;
 
     let value = PathAwareValue::try_from(v)?;
-    let mut eval = root_scope(&rule, &value)?;
+    let mut eval = root_scope(&rule, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule, &mut eval, None)?;
     assert_eq!(Status::PASS, status);
 
@@ -2767,7 +2774,7 @@ fn rule_clause_tests() -> Result<()> {
     "#;
 
     let value = PathAwareValue::try_from(v)?;
-    let mut eval = eval.reset_root(&value)?;
+    let mut eval = eval.reset_root(Rc::new(value.clone()))?;
     let status = eval_rules_file(&rule, &mut eval, None)?;
     assert_eq!(Status::FAIL, status);
 
@@ -2828,7 +2835,7 @@ fn rule_test_type_blocks() -> Result<()> {
 
     let root = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let rules_file = RulesFile::try_from(r)?;
-    let mut root_context = root_scope(&rules_file, &root)?;
+    let mut root_context = root_scope(&rules_file, Rc::new(root.clone()))?;
     let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
 
@@ -2921,7 +2928,7 @@ rule iam_basic_checks when iam_resources_exists {
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
-    let mut root_context = root_scope(&rules_file, &root)?;
+    let mut root_context = root_scope(&rules_file, Rc::new(root.clone()))?;
     let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::PASS, status);
 
@@ -2989,7 +2996,7 @@ rule iam_basic_checks {
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
-    let mut root_context = root_scope(&rules_file, &root)?;
+    let mut root_context = root_scope(&rules_file, Rc::new(root.clone()))?;
 
     let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
@@ -3057,7 +3064,7 @@ rule iam_basic_checks {
     "###;
 
     let root = PathAwareValue::try_from(value)?;
-    let mut root_context = root_context.reset_root(&root)?;
+    let mut root_context = root_context.reset_root(Rc::new(root.clone()))?;
     let status = eval_rules_file(&rules_file, &mut root_context, None)?;
     assert_eq!(Status::FAIL, status);
 
@@ -3145,7 +3152,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     "###;
     let values = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
 
@@ -3182,7 +3189,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     }"###;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval)?;
@@ -3203,7 +3210,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     }"###;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval)?;
@@ -3225,7 +3232,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     }"###;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval)?;
@@ -3234,7 +3241,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     let value = PathAwareValue::try_from(SAMPLE)?;
     let parsed = GuardClause::try_from(clause)?;
     let mut eval = BasicQueryTesting {
-        root: &value,
+        root: Rc::new(value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval)?;
@@ -3297,7 +3304,7 @@ rule check_rest_api_private {
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -3362,7 +3369,7 @@ rule check_rest_api_private {
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -3406,7 +3413,7 @@ rule check_rest_api_private {
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
-        root: &values,
+        root: Rc::new(values.clone()),
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval)?;
@@ -3470,7 +3477,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
-    let mut eval = root_scope(&rules_file, &value)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
 
     println!("{}", status);
@@ -3587,7 +3594,7 @@ rule deny_egress when %sgs NOT EMPTY {
     };
 
     for (index, each) in samples.iter().enumerate() {
-        let mut root_context = root_scope(&rules_file, each)?;
+        let mut root_context = root_scope(&rules_file, Rc::new(each.clone()))?;
         let status = eval_rules_file(&rules_file, &mut root_context, None)?;
         println!("{}", format!("Status {} = {}", index, status).underline());
     }
@@ -3787,7 +3794,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     ];
 
     for (idx, each) in parsed_values.iter().enumerate() {
-        let mut root_scope = root_scope(&s3_rule, each)?;
+        let mut root_scope = root_scope(&s3_rule, Rc::new(each.clone()))?;
         let status = eval_rules_file(&s3_rule, &mut root_scope, None)?;
         assert_eq!(status, expectations[idx]);
     }
@@ -3801,7 +3808,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let guard_clause = GuardClause::try_from(clause)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval)?;
@@ -3812,7 +3819,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let guard_clause = GuardClause::try_from(clause)?;
     let mut eval = BasicQueryTesting {
-        root: &path_value,
+        root: Rc::new(path_value.clone()),
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval)?;
@@ -3861,7 +3868,7 @@ fn parameterized_evaluations() -> Result<()> {
     let template =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template_value)?)?;
 
-    let mut eval = root_scope(&rules_files, &template)?;
+    let mut eval = root_scope(&rules_files, Rc::new(template.clone()))?;
     let status = eval_rules_file(&rules_files, &mut eval, None)?;
     let top = eval.reset_recorder().extract();
     let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
@@ -3882,7 +3889,7 @@ fn parameterized_evaluations() -> Result<()> {
     let config_value =
         PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(aws_config_value)?)?;
 
-    let mut eval = root_scope(&rules_files, &config_value)?;
+    let mut eval = root_scope(&rules_files, Rc::new(config_value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut eval, None)?;
     let top = eval.reset_recorder().extract();
     crate::commands::validate::print_verbose_tree(&top, &mut writer);
@@ -3922,7 +3929,7 @@ fn using_resource_names_for_assessment() -> Result<()> {
     "###;
 
     let rules = RulesFile::try_from(rules_file)?;
-    let mut eval = root_scope(&rules, &value)?;
+    let mut eval = root_scope(&rules, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules, &mut eval, None)?;
     assert_eq!(status, Status::FAIL);
 
@@ -3958,7 +3965,7 @@ fn test_string_in_comparison() -> Result<()> {
     "###;
 
     let rules_files = RulesFile::try_from(rules)?;
-    let mut eval = root_scope(&rules_files, &value)?;
+    let mut eval = root_scope(&rules_files, Rc::new(value.clone()))?;
     let status = eval_rules_file(&rules_files, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 

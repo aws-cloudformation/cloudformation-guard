@@ -278,4 +278,21 @@ mod test_command_tests {
             writer
         );
     }
+
+    #[test]
+    fn test_with_function_expr() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/functions/data/template.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/functions/rules/json_parse.guard",
+            ))
+            .verbose()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
 }

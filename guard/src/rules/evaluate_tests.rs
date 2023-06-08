@@ -30,7 +30,7 @@ fn read_data(file: File) -> Result<Value> {
     let context = read_file_content(file)?;
     match serde_json::from_str::<serde_json::Value>(&context) {
         Ok(value) => Value::try_from(value),
-        Err(e) => {
+        Err(_) => {
             let value = serde_yaml::from_str::<serde_yaml::Value>(&context)?;
             Value::try_from(value)
         }
@@ -2145,20 +2145,20 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     "###;
 
     #[derive(Debug, Clone)]
-    struct Reporter {};
+    struct Reporter {}
     impl EvaluationContext for Reporter {
-        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        fn resolve_variable(&self, _: &str) -> Result<Vec<&PathAwareValue>> {
             todo!()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _: &str) -> Result<Status> {
             todo!()
         }
 
         fn end_evaluation(
             &self,
             eval_type: EvaluationType,
-            context: &str,
+            _: &str,
             msg: String,
             from: Option<PathAwareValue>,
             to: Option<PathAwareValue>,
@@ -2187,7 +2187,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
             }
         }
 
-        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {}
+        fn start_evaluation(&self, _: EvaluationType, _: &str) {}
     }
 
     let rules = Rule::try_from(rule)?;
@@ -2223,7 +2223,8 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
 
     struct Reporter<'a> {
         root: &'a dyn EvaluationContext,
-    };
+    }
+
     impl<'a> EvaluationContext for Reporter<'a> {
         fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
             self.root.resolve_variable(variable)

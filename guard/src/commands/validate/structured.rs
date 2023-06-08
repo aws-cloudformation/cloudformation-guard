@@ -1,6 +1,7 @@
+use std::rc::Rc;
+
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
 use crate::rules;
-use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root, FileReport};
 use crate::rules::exprs::RulesFile;
@@ -61,6 +62,7 @@ impl<'eval> StructuredEvaluator<'eval> {
         let merged_data = self.merge_input_params_with_data();
 
         let mut records = vec![];
+
         for each in &merged_data {
             let mut file_report: FileReport = FileReport {
                 name: &each.name,
@@ -68,7 +70,7 @@ impl<'eval> StructuredEvaluator<'eval> {
             };
 
             for rule in &rules {
-                let mut root_scope = root_scope(rule, &each.path_value)?;
+                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
                     self.exit_code = 5;
