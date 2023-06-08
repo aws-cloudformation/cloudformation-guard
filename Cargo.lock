@@ -128,6 +128,7 @@ version = "3.0.0-alpha"
 dependencies = [
  "Inflector",
  "clap",
+ "clap_complete",
  "colored",
  "enumflags2",
  "enumflags2_derive",
@@ -187,6 +188,15 @@ dependencies = [
  "is-terminal",
  "strsim",
  "termcolor",
+]
+
+[[package]]
+name = "clap_complete"
+version = "4.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd125be87bf4c255ebc50de0b7f4d2a6201e8ac3dc86e39c0ad081dc5e7236fe"
+dependencies = [
+ "clap",
 ]
 
 [[package]]

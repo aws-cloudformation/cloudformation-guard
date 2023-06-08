@@ -6,27 +6,27 @@ As an example of how to use AWS CloudFormation Guard (cfn-guard), given a CloudF
 
 ```json
 {
-    "Resources":{
-        "NewVolume":{
-            "Type":"AWS::EC2::Volume",
-            "Properties":{
-                "Size":500,
-                "Encrypted":false,
-                "AvailabilityZone":"us-west-2b"
-            }
-        },
-        "NewVolume2":{
-            "Type":"AWS::EC2::Volume",
-            "Properties":{
-                "Size":100,
-                "Encrypted":false,
-                "AvailabilityZone":"us-west-2c"
-            }
-        }
+  "Resources": {
+    "NewVolume": {
+      "Type": "AWS::EC2::Volume",
+      "Properties": {
+        "Size": 500,
+        "Encrypted": false,
+        "AvailabilityZone": "us-west-2b"
+      }
     },
-    "Parameters":{
-        "InstanceName":"NewInstance"
+    "NewVolume2": {
+      "Type": "AWS::EC2::Volume",
+      "Properties": {
+        "Size": 100,
+        "Encrypted": false,
+        "AvailabilityZone": "us-west-2c"
+      }
     }
+  },
+  "Parameters": {
+    "InstanceName": "NewInstance"
+  }
 }
 ```
 
@@ -70,12 +70,11 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 
 `cfn-guard` has five modes of operation:
 
-
 ### Validate
 
 `validate` (like the example above) validates data against rules.
 
-```bash
+````bash
 Usage: cfn-guard validate [OPTIONS] <--rules [<rules>...]|--payload>
 
 Options:
@@ -146,7 +145,8 @@ FLAGS:
 OPTIONS:
     -o, --output <output>        Write to output file
     -t, --template <template>    Provide path to a CloudFormation template file in JSON or YAML
-```
+````
+
 For example, using the same template (template.json) from the above example:
 
 ```bash
@@ -284,3 +284,35 @@ You can then test your rules file using the `test` command as:
 $ cfn-guard test -r rules.guard -t test.yml
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = SKIP, Got Status = SKIP
 PASS Expected Rule = assert_all_resources_have_non_empty_tags, Status = FAIL, Got Status = FAIL
+```
+
+### Autocompletions
+
+To setup Autocompletions you will need to follow instructions for the specific shell your are running.
+
+Currently guard only supports autocompletions for zsh, bash, and fish shells. If you would like autocompletions for a specific shell feel free to open up a new github issue.
+
+Autocompletions are only something available for version >= 3.0
+
+#### zsh
+
+```sh
+    cfn-guard completions --shell='zsh' > /usr/local/share/zsh/site-functions/_cfn-guard && compinit
+```
+
+#### bash
+
+```bash
+    cfn-guard completions --shell='bash' > ~/cfn-guard.bash && source ~/cfn-guard.bash
+```
+
+#### fish
+
+```sh
+    cfn-guard completions --shell='fish' > ~/cfn-guard.fish
+    cd ~
+    ./ ./cfn-guard.fish
+```
+
+NOTE: for both bash and fish shells you are able to output the completions script to any file in any location you would like, just make sure the file you output it to and the file you source are the same.
+For bash shells if you dont want to do this everytime you open up a new terminal, once you have the script you can add source ~/cfn-guard.bash to your .bashrc

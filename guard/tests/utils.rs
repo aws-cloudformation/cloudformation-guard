@@ -7,10 +7,7 @@ use std::io::Write;
 use std::io::{stdout, BufReader, Read};
 use std::path::PathBuf;
 
-use cfn_guard::command::Command;
-use cfn_guard::commands::{
-    migrate::Migrate, parse_tree::ParseTree, rulegen::Rulegen, test::Test, validate::Validate,
-};
+use cfn_guard::utils;
 use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::{WriteBuffer, Writer};
@@ -76,12 +73,7 @@ pub trait CommandTestRunner {
                     res
                 });
 
-        let mut commands: Vec<Box<dyn Command>> = Vec::with_capacity(2);
-        commands.push(Box::new(Validate::new()));
-        commands.push(Box::new(Test::new()));
-        commands.push(Box::new(ParseTree::new()));
-        commands.push(Box::new(Migrate::new()));
-        commands.push(Box::new(Rulegen::new()));
+        let commands = utils::get_guard_commands();
 
         let mappings = commands.iter().map(|s| (s.name(), s)).fold(
             HashMap::with_capacity(commands.len()),
