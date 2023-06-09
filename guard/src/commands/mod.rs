@@ -30,7 +30,6 @@ pub const OUTPUT_FORMAT: (&str, char) = ("output-format", 'o');
 pub const INPUT_PARAMETERS: (&str, char) = ("input-parameters", 'i');
 pub const PAYLOAD: (&str, char) = ("payload", 'P');
 pub const PRINT_JSON: (&str, char) = ("print-json", 'p');
-pub const PRINT_JSON_DEPRECATED: char = 'j';
 pub const SHOW_SUMMARY: (&str, char) = ("show-summary", 'S');
 pub const TYPE: (&str, char) = ("type", 't');
 pub const VERBOSE: (&str, char) = ("verbose", 'v');

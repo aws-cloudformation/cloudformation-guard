@@ -1,4 +1,4 @@
-# Guard built in functions and stateful rules
+# Guard built-in functions and stateful rules
 
 As of version 3.0.0 guard now supplies some builtin functions, allowing for stateful rules
 

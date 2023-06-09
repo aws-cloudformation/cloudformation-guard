@@ -4,19 +4,21 @@
 
 AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 
-Guard 2.0 release is a complete re-write of the earlier 1.0 version to make the tool general-purpose. With Guard 2.0, developers can continue writing policies for CloudFormation Templates. In addition, developers can use Guard in the following business domains:
+The Guard 3.0 release introduces support for stateful rules through built-in functions, SAM CLI as an alternative deployment method for `cfn-guard-lambda`, command auto-completions for shell, advanced regular expressions, improved handling of intrinsic functions for the test command, as well as the `--structured` flag to the validate command to emit JSON/YAML parseable output.  Note that previously written tests may have to be reviewed due to the corrected behavior of intrinsic function handling.  Please see the release notes for full details and examples.
+
+Guard can be used for the following domains:
 
 1. **Preventative Governance and Compliance (shift left):** validate Infrastructure-as-code (IaC) or infrastructure/service compositions such as CloudFormation Templates, CloudFormation ChangeSets, Terraform JSON configuration files, Kubernetes configurations, and more against Guard policies representing your organizational best practices for security, compliance, and more. For example, developers can use Guard policies with
-    1. Terraform plan (in JSON format) for deployment safety assessment checks or Terraform state files to detect live state deviations.
+    1. Terraform plan (**in JSON format**) for deployment safety assessment checks or Terraform state files to detect live state deviations.
     2. Static assessment of IaC templates to determine network reachability like Amazon Redshift cluster deployed inside a VPC and prevent the provision of such stacks.
 2. **Detective Governance and Compliance:** validate conformity of Configuration Management Database (CMDB) resources such as AWS Config-based configuration items (CIs). For example, developers can use Guard policies against AWS Config CIs to continuously monitor state of deployed AWS and non-AWS resources, detect violations from policies, and trigger remediation.
-3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 2.0, you can prevent such changes in your CI/CD pipelines.
+3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 3.0, you can prevent such changes in your CI/CD pipelines.
 
-> **NOTE**: If you are using Guard 1.0 rules, we highly recommend upgrading the rules to 2.0 to simplify your current policy-as-code experience. Guard 2.0 and higher versions are backward incompatible with your Guard 1.0 rules and can result in breaking changes. 
+> **NOTE**: If you are using Guard 1.0 rules, we highly recommend adopting the latest version of Guard to simplify your current policy-as-code experience. Guard 2.0 and higher versions are backward incompatible with your Guard 1.0 rules and can result in breaking changes. The Guard 2.0 release was a complete re-write of the earlier 1.0 version to make the tool general-purpose.
 >
-> To migrate from Guard 1.0 to Guard 2.0, 
-> 1. Pull the release artifacts for the latest `2.x.x` release from the corresponding release page listed [here](https://github.com/aws-cloudformation/cloudformation-guard/releases) 
-> 2. Use `migrate` command to transition your existing 1.0 rules to 2.0 rules 
+> To migrate from Guard 1.0 rules to use the updated grammar, follow the steps given below. 
+> 1. Pull the release artifacts for the latest `2.x.x` release from the corresponding release page listed [here](https://github.com/aws-cloudformation/cloudformation-guard/releases). 
+> 2. Use `migrate` command to transition your existing 1.0 rules to use the updated grammar
 > 3. Read about all new Guard features from the latest release, and modify your rules for enhanced experience
 
 
@@ -41,7 +43,7 @@ Guard 2.0 release is a complete re-write of the earlier 1.0 version to make the 
 > Guard is an open-source command line interface (CLI) that provides developers a general purpose domain-specific language (DSL) to express policy-as-code and then validate their JSON- and YAML-formatted data against that code. Guard’s DSL is a simple, powerful, and expressive declarative language to define policies. It is built on the foundation of clauses, which are assertions that evaluate to `true` or `false`. Examples clauses can include simple validations like all Amazon Simple Storage Service (S3) buckets must have versioning enabled, or combined to express complex validations like preventing public network reachability of Amazon Redshift clusters placed in a subnet. Guard has support for looping, queries with filtering, cross query joins, single shot variable assignments, conditional executions, and composable rules. These features help developers to express simple and advanced policies for various domains.
 
 **2) What Guard is not?**
-> Guard **is not** a general-purpose programming language. It is a purpose-built DSL that is designed for policy definition and evaluation. Both non-technical people and developers can easily pick up Guard. Guard is human-readable and machine enforceable.
+> Guard **is not** a general-purpose programming language. It is a **purpose-built** DSL that is designed for policy definition and evaluation. Both non-technical people and developers can easily pick up Guard. Guard is human-readable and machine enforceable.
 
 **3) Where can I use Guard?**
 > You can use Guard to define any type of policy for evaluation. You can apply Guard in the context of multiple domains: a) validating IaC/service compositions such as [CloudFormation Templates](https://aws.amazon.com/cloudformation/resources/templates/), Terraform JSON configuration files, and Kubernetes configurations, b) verifying conformity of CMDB resources such as AWS Config-based CIs, and c) assessing security postures across resources like AWS Security Hub. The policy language and expression is common to all of them, based on simple Guard clauses.
@@ -157,7 +159,7 @@ These tenets help guide the development of the Guard DSL:
 
 ##### MacOS
 
-By default this is built for macOS-10 (Catalina). It has been tested to work on macOS-11 (Big Sur). See [OS Matrix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
+By default this is built for macOS-12 (Monterey). See [OS Matrix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
 
 1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
 2. Cut-n-paste the commands below (change version=X for other versions)
@@ -220,7 +222,7 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 3.0.0-alpha
+cfn-guard 3.0.0-beta
 
   Guard is a general-purpose tool that provides a simple declarative syntax to define
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
@@ -229,29 +231,31 @@ cfn-guard 3.0.0-alpha
   integration with CloudFormation templates for evaluation but is a general tool
   that equally works for any JSON- and YAML- data.
 
-USAGE:
-    cfn-guard [SUBCOMMAND]
+Usage: cfn-guard [COMMAND]
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+Commands:
+  parse-tree   Prints out the parse tree for the rules defined in the file.
+  test         Built in unit testing capability to validate a Guard rules file against
+               unit tests specified in YAML format to determine each individual rule's success
+               or failure testing.
+                   
+  validate     Evaluates rules against the data files to determine success or failure.
+               You can point rules flag to a rules directory and point data flag to a data directory.
+               When pointed to a directory it will read all rules in the directory file and evaluate
+               them against the data files found in the directory. The command can also point to a
+               single file and it would work as well.
+               Note - When pointing the command to a directory, the directory may not contain a mix of
+               rules and data files. The directory being pointed to must contain only data files,
+               or rules files.
+                   
+  rulegen      Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
+  completions  Generate auto-completions for all the sub-commands in shell.
+  help         Print this message or the help of the given subcommand(s)
 
-SUBCOMMANDS:
-    help          Prints this message or the help of the given subcommand(s)
-    parse-tree    Prints out the parse tree for the rules defined in the file.
-    rulegen       Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only
-                  CloudFormation templates)
-    test          Built in unit testing capability to validate a Guard rules file against
-                  unit tests specified in YAML format to determine each individual rule's success
-                  or failure testing.
-    validate      Evaluates rules against the data files to determine success or failure.
-                  You can point rules flag to a rules directory and point data flag to a data directory.
-                  When pointed to a directory it will read all rules in the directory file and evaluate
-                  them against the data files found in the directory. The command can also point to a
-                  single file and it would work as well.
-                  Note - When pointing the command to a directory, the directory may not contain a mix of
-                  rules and data files. The directory being pointed to must contain only data files,
-                  or rules files.
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
 ```
 
 ### How does Guard CLI work?
