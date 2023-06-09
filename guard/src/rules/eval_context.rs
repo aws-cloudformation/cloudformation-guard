@@ -1285,7 +1285,6 @@ pub(crate) struct FileReport<'value> {
     pub(crate) name: &'value str,
     pub(crate) metadata: Metadata,
     pub(crate) status: Status,
-    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) not_compliant: Vec<ClauseReport<'value>>,
     pub(crate) not_applicable: HashSet<String>,
     pub(crate) compliant: HashSet<String>,
