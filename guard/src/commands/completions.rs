@@ -35,14 +35,16 @@ impl Command for Completions {
     }
 
     fn command(&self) -> clap::Command {
-        clap::Command::new(COMPLETIONS).arg(
-            Arg::new(SHELL.0)
-                .long(SHELL.0)
-                .short(SHELL.1)
-                .required(true)
-                .value_parser(SHELL_TYPES)
-                .action(ArgAction::Set),
-        )
+        clap::Command::new(COMPLETIONS)
+            .about("Generate auto-completions for all the sub-commands in shell.")
+            .arg(
+                Arg::new(SHELL.0)
+                    .long(SHELL.0)
+                    .short(SHELL.1)
+                    .required(true)
+                    .value_parser(SHELL_TYPES)
+                    .action(ArgAction::Set),
+            )
     }
 
     fn execute(&self, args: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {

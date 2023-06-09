@@ -220,7 +220,7 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 3.0.0-alpha
+cfn-guard 3.0.0-beta
 
   Guard is a general-purpose tool that provides a simple declarative syntax to define
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
@@ -229,29 +229,31 @@ cfn-guard 3.0.0-alpha
   integration with CloudFormation templates for evaluation but is a general tool
   that equally works for any JSON- and YAML- data.
 
-USAGE:
-    cfn-guard [SUBCOMMAND]
+Usage: cfn-guard [COMMAND]
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+Commands:
+  parse-tree   Prints out the parse tree for the rules defined in the file.
+  test         Built in unit testing capability to validate a Guard rules file against
+               unit tests specified in YAML format to determine each individual rule's success
+               or failure testing.
+                   
+  validate     Evaluates rules against the data files to determine success or failure.
+               You can point rules flag to a rules directory and point data flag to a data directory.
+               When pointed to a directory it will read all rules in the directory file and evaluate
+               them against the data files found in the directory. The command can also point to a
+               single file and it would work as well.
+               Note - When pointing the command to a directory, the directory may not contain a mix of
+               rules and data files. The directory being pointed to must contain only data files,
+               or rules files.
+                   
+  rulegen      Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
+  completions  Generate auto-completions for all the sub-commands in shell.
+  help         Print this message or the help of the given subcommand(s)
 
-SUBCOMMANDS:
-    help          Prints this message or the help of the given subcommand(s)
-    parse-tree    Prints out the parse tree for the rules defined in the file.
-    rulegen       Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only
-                  CloudFormation templates)
-    test          Built in unit testing capability to validate a Guard rules file against
-                  unit tests specified in YAML format to determine each individual rule's success
-                  or failure testing.
-    validate      Evaluates rules against the data files to determine success or failure.
-                  You can point rules flag to a rules directory and point data flag to a data directory.
-                  When pointed to a directory it will read all rules in the directory file and evaluate
-                  them against the data files found in the directory. The command can also point to a
-                  single file and it would work as well.
-                  Note - When pointing the command to a directory, the directory may not contain a mix of
-                  rules and data files. The directory being pointed to must contain only data files,
-                  or rules files.
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
 ```
 
 ### How does Guard CLI work?
