@@ -8,10 +8,7 @@ use std::{
 use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
-use crate::rules::{
-    errors::Error, libyaml::loader::Loader, parser::Span, path_value::Location, short_form_to_long,
-    SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
-};
+use crate::rules::{errors::Error, libyaml::loader::Loader, parser::Span, path_value::Location};
 
 use serde::{Deserialize, Serialize};
 
@@ -306,18 +303,7 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
                     Ok(res)
                 },
             )?)),
-            serde_yaml::Value::Tagged(tag) => {
-                let prefix = tag.tag.to_string();
-                let value = tag.value.clone();
-
-                match prefix.matches('!').count() {
-                    1 => {
-                        let stripped_prefix = prefix.strip_prefix('!').unwrap();
-                        Ok(handle_tagged_value(value, stripped_prefix)?)
-                    }
-                    _ => Ok(Value::try_from(value)?),
-                }
-            }
+            serde_yaml::Value::Tagged(tag) => Ok(Value::try_from(tag.value.clone())?),
             serde_yaml::Value::Null => Ok(Value::Null),
         }
     }
