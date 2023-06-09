@@ -1,10 +1,11 @@
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use std::rc::Rc;
 use walkdir::DirEntry;
 
 use validate::validate_path;
@@ -16,8 +17,8 @@ use crate::commands::files::{
 };
 use crate::commands::tracker::StackTracker;
 use crate::commands::{
-    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, PREVIOUS_ENGINE,
-    RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
+    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
+    RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
@@ -46,53 +47,66 @@ impl Command for Test {
 
     fn command(&self) -> clap::Command {
         clap::Command::new(TEST)
-            .about(r#"Built in unit testing capability to validate a Guard rules file against
+            .about(
+                r#"Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
 or failure testing.
-"#)
-            .arg(Arg::new(RULES_FILE.0)
-                .long(RULES_FILE.0)
-                .short(RULES_FILE.1)
-                .action(ArgAction::Set)
-                .help("Provide a rules file"))
-            .arg(Arg::new(TEST_DATA.0)
-                .long(TEST_DATA.0)
-                .short(TEST_DATA.1)
-                .action(ArgAction::Set)
-                .help("Provide a file or dir for data files in JSON or YAML"))
-            .arg(Arg::new(DIRECTORY.0)
-                .long(DIRECTORY.0)
-                .short(DIRECTORY.1)
-                .action(ArgAction::Set)
-                .help("Provide the root directory for rules"))
-            .group(ArgGroup::new(RULES_AND_TEST_FILE)
-                .requires_all([RULES_FILE.0, TEST_DATA.0])
-                .conflicts_with(DIRECTORY_ONLY))
-            .group(ArgGroup::new(DIRECTORY_ONLY)
-                .args(["dir"])
-                .requires_all([DIRECTORY.0])
-                .conflicts_with(RULES_AND_TEST_FILE))
-            .arg(Arg::new(PREVIOUS_ENGINE.0)
-                .long(PREVIOUS_ENGINE.0)
-                .short(PREVIOUS_ENGINE.1)
-                .action(ArgAction::SetTrue)
-                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
-            .arg(Arg::new(ALPHABETICAL.0)
-                .long(ALPHABETICAL.0)
-                .short(ALPHABETICAL.1)
-                .action(ArgAction::SetTrue)
-                .help("Sort alphabetically inside a directory"))
-            .arg(Arg::new(LAST_MODIFIED.0)
-                .long(LAST_MODIFIED.0)
-                .short(LAST_MODIFIED.1)
-                .action(ArgAction::SetTrue)
-                .conflicts_with(ALPHABETICAL.0)
-                .help("Sort by last modified times within a directory"))
-            .arg(Arg::new(VERBOSE.0)
-                .long(VERBOSE.0)
-                .short(VERBOSE.1)
-                .action(ArgAction::SetTrue)
-                .help("Verbose logging"))
+"#,
+            )
+            .arg(
+                Arg::new(RULES_FILE.0)
+                    .long(RULES_FILE.0)
+                    .short(RULES_FILE.1)
+                    .action(ArgAction::Set)
+                    .help("Provide a rules file"),
+            )
+            .arg(
+                Arg::new(TEST_DATA.0)
+                    .long(TEST_DATA.0)
+                    .short(TEST_DATA.1)
+                    .action(ArgAction::Set)
+                    .help("Provide a file or dir for data files in JSON or YAML"),
+            )
+            .arg(
+                Arg::new(DIRECTORY.0)
+                    .long(DIRECTORY.0)
+                    .short(DIRECTORY.1)
+                    .action(ArgAction::Set)
+                    .help("Provide the root directory for rules"),
+            )
+            .group(
+                ArgGroup::new(RULES_AND_TEST_FILE)
+                    .requires_all([RULES_FILE.0, TEST_DATA.0])
+                    .conflicts_with(DIRECTORY_ONLY),
+            )
+            .group(
+                ArgGroup::new(DIRECTORY_ONLY)
+                    .args(["dir"])
+                    .requires_all([DIRECTORY.0])
+                    .conflicts_with(RULES_AND_TEST_FILE),
+            )
+            .arg(
+                Arg::new(ALPHABETICAL.0)
+                    .long(ALPHABETICAL.0)
+                    .short(ALPHABETICAL.1)
+                    .action(ArgAction::SetTrue)
+                    .help("Sort alphabetically inside a directory"),
+            )
+            .arg(
+                Arg::new(LAST_MODIFIED.0)
+                    .long(LAST_MODIFIED.0)
+                    .short(LAST_MODIFIED.1)
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with(ALPHABETICAL.0)
+                    .help("Sort by last modified times within a directory"),
+            )
+            .arg(
+                Arg::new(VERBOSE.0)
+                    .long(VERBOSE.0)
+                    .short(VERBOSE.1)
+                    .action(ArgAction::SetTrue)
+                    .help("Verbose logging"),
+            )
             .arg_required_else_help(true)
     }
 
@@ -107,7 +121,6 @@ or failure testing.
         };
 
         let verbose = app.get_flag(VERBOSE.0);
-        let new_engine = !app.get_flag(PREVIOUS_ENGINE.0);
 
         if app.contains_id(DIRECTORY_ONLY) {
             struct GuardFile {
@@ -213,13 +226,8 @@ or failure testing.
                                 .iter()
                                 .map(|de| de.path().to_path_buf())
                                 .collect::<Vec<PathBuf>>();
-                            let test_exit_code = test_with_data(
-                                &data_test_files,
-                                &rules,
-                                verbose,
-                                new_engine,
-                                writer,
-                            )?;
+                            let test_exit_code =
+                                test_with_data(&data_test_files, &rules, verbose, writer)?;
                             exit_code = if exit_code == 0 {
                                 test_exit_code
                             } else {
@@ -278,13 +286,8 @@ or failure testing.
                                 exit_code = 1;
                             }
                             Ok(rules) => {
-                                let curr_exit_code = test_with_data(
-                                    &data_test_files,
-                                    &rules,
-                                    verbose,
-                                    new_engine,
-                                    writer,
-                                )?;
+                                let curr_exit_code =
+                                    test_with_data(&data_test_files, &rules, verbose, writer)?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -316,7 +319,6 @@ fn test_with_data(
     test_data_files: &[PathBuf],
     rules: &RulesFile<'_>,
     verbose: bool,
-    new_engine: bool,
     writer: &mut Writer,
 ) -> Result<i32> {
     let mut exit_code = 0;
@@ -346,11 +348,12 @@ fn test_with_data(
                         writeln!(writer, "Name: {}", each.name.unwrap())?;
                     }
 
-                    let by_result = if new_engine {
+                    let by_result = {
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
-                        let mut root_scope = crate::rules::eval_context::root_scope(rules, &root)?;
-                        eval_rules_file(rules, &mut root_scope)?;
+                        let mut root_scope =
+                            crate::rules::eval_context::root_scope(rules, Rc::new(root.clone()))?;
+                        eval_rules_file(rules, &mut root_scope, None)?; // we never use data file name in the output
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules = top.children.iter().fold(HashMap::new(), |mut acc, rule| {
@@ -428,55 +431,6 @@ fn test_with_data(
 
                         if verbose {
                             validate::print_verbose_tree(&top, writer);
-                        }
-                        by_result
-                    } else {
-                        let root = PathAwareValue::try_from(each.input)?;
-                        let context = RootScope::new(rules, &root)?;
-                        let stacker = StackTracker::new(&context);
-                        rules.evaluate(&root, &stacker)?;
-                        let expectations = each.expectations.rules;
-                        let stack = stacker.stack();
-
-                        let mut by_result = HashMap::new();
-                        for each in &stack[0].children {
-                            match expectations.get(&each.context) {
-                                Some(value) => match Status::try_from(value.as_str()) {
-                                    Err(e) => {
-                                        writeln!(writer, "Incorrect STATUS provided {e}")?;
-                                        exit_code = 1;
-                                    }
-                                    Ok(status) => {
-                                        let got = each.status.unwrap();
-                                        if status != got {
-                                            by_result
-                                                .entry(String::from("FAILED"))
-                                                .or_insert_with(indexmap::IndexSet::new)
-                                                .insert(format!(
-                                                    "{}: Expected = {}, Evaluated = {}",
-                                                    each.context, status, got
-                                                ));
-                                            exit_code = 7;
-                                        } else {
-                                            by_result
-                                                .entry(String::from("PASS"))
-                                                .or_insert_with(indexmap::IndexSet::new)
-                                                .insert(format!(
-                                                    "{}: Expected = {}, Evaluated = {}",
-                                                    each.context, status, got
-                                                ));
-                                        }
-                                        if verbose {
-                                            validate::print_context(each, 1, writer);
-                                        }
-                                    }
-                                },
-                                None => writeln!(
-                                    writer,
-                                    "  No Test expectation was set for Rule {}",
-                                    each.context
-                                )?,
-                            }
                         }
                         by_result
                     };

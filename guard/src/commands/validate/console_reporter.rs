@@ -8,6 +8,7 @@ use crate::rules::{
     TypeBlockCheck, UnaryValueCheck, ValueCheck,
 };
 use std::io::Write;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter {}
@@ -34,7 +35,6 @@ fn pprint_failed_sub_tree(
             status: Status::FAIL,
             ..
         }))
-        | Some(RecordType::TypeBlock(Status::FAIL))
         | Some(RecordType::TypeCheck(TypeBlockCheck {
             block:
                 BlockCheck {
@@ -68,7 +68,7 @@ fn pprint_failed_sub_tree(
                 ClauseCheck::NoValueForEmptyCheck(msg) => {
                     let custom_message = msg
                         .as_ref()
-                        .map_or("".to_string(), |s| format!("{}", s.replace("\n", ";")));
+                        .map_or("".to_string(), |s| s.replace('\n', ";"));
 
                     writeln!(
                         writer,
@@ -97,7 +97,7 @@ fn pprint_failed_sub_tree(
                 ClauseCheck::MissingBlockValue(missing) => {
                     let (property, far) = match &missing.from {
                         QueryResult::UnResolved(ur) => {
-                            (ur.remaining_query.as_str(), ur.traversed_to)
+                            (ur.remaining_query.as_str(), Rc::clone(&ur.traversed_to))
                         }
                         _ => unreachable!(),
                     };
@@ -162,7 +162,7 @@ fn pprint_failed_sub_tree(
                     };
 
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
-                        format!(" Message = [{}]", s.replace("\n", ";"))
+                        format!(" Message = [{}]", s.replace('\n', ";"))
                     });
 
                     let error_message = message
@@ -208,7 +208,7 @@ fn pprint_failed_sub_tree(
                     to,
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
-                        format!(" Message = [{}]", s.replace("\n", ";"))
+                        format!(" Message = [{}]", s.replace('\n', ";"))
                     });
 
                     let error_message = message
@@ -218,7 +218,7 @@ fn pprint_failed_sub_tree(
                     let to_result = match to {
                         Some(to) => match to {
                             QueryResult::Literal(_) => unreachable!(),
-                            QueryResult::Resolved(to_res) => Some(*to_res),
+                            QueryResult::Resolved(to_res) => Some(Rc::clone(to_res)),
 
                             QueryResult::UnResolved(to_unres) => {
                                 writeln!(

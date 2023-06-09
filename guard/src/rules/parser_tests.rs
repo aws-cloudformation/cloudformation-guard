@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::WithinRange;
 use crate::rules::{EvaluationContext, EvaluationType, Status};
@@ -161,7 +159,7 @@ fn test_parse_regex() {
 
     let improperly_escaped_regular_expression =
         "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
-    let cmp = unsafe {
+    let _cmp = unsafe {
         Span::new_from_raw_offset(
             11,
             1,
@@ -4542,4 +4540,64 @@ fn test_parse_value_when_strings_are_randomly_generated() {
         let cmp = unsafe { Span::new_from_raw_offset(value.len(), 5, value, "") };
         assert!(parse_value(cmp).is_err())
     }
+}
+
+#[test]
+fn test_parse_assignment_with_function_call() {
+    let input = "let num = count(%s3_buckets_bucket_logging_enabled)";
+
+    let res = assignment(from_str2(input)).unwrap();
+
+    assert_eq!(res.1.var, "num");
+
+    let function = res.1.value;
+    assert!(matches!(function, LetValue::FunctionCall(_)));
+
+    if let LetValue::FunctionCall(function) = function {
+        assert_eq!(function.name, "count");
+        assert_eq!(function.parameters.len(), 1);
+        assert!(matches!(function.parameters[0], LetValue::AccessClause(_)));
+    }
+}
+
+#[test]
+fn test_parse_assignment_with_function_call2() {
+    let input = r#"let num = regex_replace(%s3_buckets_bucket_logging_enabled, "^arn:(\\w+):(\\w+):([\\w0-9-]+):(\\d+):(.+)$", "${1}/${4}/${3}/${2}-${5}")"#;
+    let res = assignment(from_str2(input)).unwrap();
+
+    assert_eq!(res.1.var, "num");
+
+    let function = res.1.value;
+    assert!(matches!(function, LetValue::FunctionCall(_)));
+
+    if let LetValue::FunctionCall(function) = function {
+        assert_eq!(function.name, "regex_replace");
+        assert_eq!(function.parameters.len(), 3);
+        assert!(matches!(
+            function.parameters[1],
+            LetValue::Value(PathAwareValue::String(_))
+        ));
+        assert!(matches!(
+            function.parameters[2],
+            LetValue::Value(PathAwareValue::String(_))
+        ));
+        assert_eq!(function.parameters.len(), 3);
+        assert!(matches!(function.parameters[0], LetValue::AccessClause(_)));
+    }
+}
+
+#[test]
+fn test_get_rule_name() {
+    let rule_clause_name1 = "harry";
+    let rule_file_name = "lily.guard";
+    let rule_clause_name2 = "lily.guard/harry";
+
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name1),
+        rule_clause_name1
+    );
+    assert_eq!(
+        get_rule_name(rule_file_name, rule_clause_name2),
+        rule_clause_name1
+    );
 }

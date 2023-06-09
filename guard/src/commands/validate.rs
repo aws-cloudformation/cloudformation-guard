@@ -4,9 +4,10 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
 
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use colored::*;
 use enumflags2::BitFlags;
 use serde::Deserialize;
@@ -20,15 +21,15 @@ use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE,
-    VERBOSE,
+    OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
+    SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
+use crate::rules::parser::get_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
@@ -47,9 +48,9 @@ mod tf;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
-    content: String,
-    path_value: PathAwareValue,
-    name: String,
+    pub(crate) content: String,
+    pub(crate) path_value: PathAwareValue,
+    pub(crate) name: String,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
@@ -158,6 +159,8 @@ or rules files.
                 .short(RULES.1)
                 .num_args(0..)
                 .action(ArgAction::Append)
+                .value_hint(ValueHint::AnyPath)
+                .num_args(0..)
                 .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
@@ -167,6 +170,7 @@ or rules files.
                 .short(DATA.1)
                 .num_args(0..)
                 .action(ArgAction::Append)
+                .value_hint(ValueHint::FilePath)
                 .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
                           \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
@@ -175,6 +179,7 @@ or rules files.
                 .long(INPUT_PARAMETERS.0)
                 .short(INPUT_PARAMETERS.1)
                 .num_args(0..)
+                .value_hint(ValueHint::AnyPath)
                 .action(ArgAction::Append)
                 .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
                            All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
@@ -184,18 +189,16 @@ or rules files.
             .arg(Arg::new(TYPE.0)
                 .long(TYPE.0)
                 .short(TYPE.1)
-                .action(ArgAction::Set)
                 .required(false)
                 .value_parser(TEMPLATE_TYPE)
+                .value_hint(ValueHint::Other)
                 .help("Specify the type of data file used for improved messaging - ex: CFNTemplate"))
             .arg(Arg::new(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1)
                 .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
                 .default_value("single-line-summary")
                 .action(ArgAction::Set)
+                .value_hint(ValueHint::Other)
                 .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::new(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1)
-                .action(ArgAction::SetTrue)
-                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
             .arg(Arg::new(SHOW_SUMMARY.0)
                 .long(SHOW_SUMMARY.0)
                 .short(SHOW_SUMMARY.1)
@@ -203,12 +206,8 @@ or rules files.
                 .action(ArgAction::Append)
                 .value_parser(SHOW_SUMMARY_VALUE_TYPE)
                 .default_value("fail")
+                .value_hint(ValueHint::Other)
                 .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::new(SHOW_CLAUSE_FAILURES.0)
-                .long(SHOW_CLAUSE_FAILURES.0)
-                .short(SHOW_CLAUSE_FAILURES.1)
-                .action(ArgAction::SetTrue)
-                .help("Show clause failure along with summary"))
             .arg(Arg::new(ALPHABETICAL.0)
                 .long(ALPHABETICAL.0)
                 .short(ALPHABETICAL.1)
@@ -240,8 +239,8 @@ or rules files.
             .arg(Arg::new(STRUCTURED.0)
                 .long(STRUCTURED.0)
                 .short(STRUCTURED.1)
-                .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n previous-engine \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
-                .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0, PREVIOUS_ENGINE.0])
+                .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
+                .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0])
                 .action(ArgAction::SetTrue))
             .group(ArgGroup::new(REQUIRED_FLAGS)
                 .args([RULES.0, PAYLOAD.0])
@@ -391,8 +390,6 @@ or rules files.
         };
 
         let print_json = app.get_flag(PRINT_JSON.0);
-        let show_clause_failures = app.get_flag(SHOW_CLAUSE_FAILURES.0);
-        let new_version_eval_engine = !app.get_flag(PREVIOUS_ENGINE.0);
 
         let mut exit_code = 0;
 
@@ -459,8 +456,6 @@ or rules files.
                                     rule,
                                     verbose,
                                     print_json,
-                                    show_clause_failures,
-                                    new_version_eval_engine,
                                     summary_type,
                                     writer,
                                 )?;
@@ -527,8 +522,6 @@ or rules files.
                             rule,
                             verbose,
                             print_json,
-                            show_clause_failures,
-                            new_version_eval_engine,
                             summary_type,
                             writer,
                         )?;
@@ -557,8 +550,6 @@ fn evaluate_rule(
     rule: RuleFileInfo,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
-    new_version_eval_engine: bool,
     summary_type: BitFlags<SummaryType>,
     writer: &mut Writer,
 ) -> Result<i32> {
@@ -583,8 +574,6 @@ fn evaluate_rule(
                 file_name,
                 verbose,
                 print_json,
-                show_clause_failures,
-                new_version_eval_engine,
                 summary_type,
                 writer,
             )?;
@@ -625,7 +614,6 @@ pub(crate) struct ConsoleReporter<'r> {
     data_file_name: &'r str,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
     writer: &'r mut Writer,
 }
 
@@ -700,99 +688,6 @@ pub(super) fn print_context(cxt: &StatusContext, depth: usize, writer: &mut Writ
     }
 }
 
-#[allow(clippy::uninlined_format_args)]
-fn print_failing_clause(
-    rules_file_name: &str,
-    rule: &StatusContext,
-    longest: usize,
-    writer: &mut Writer,
-) {
-    write!(
-        writer,
-        "{file}/{rule:<0$}",
-        longest + 4,
-        file = rules_file_name,
-        rule = rule.context
-    )
-    .expect("Unable to write to the output");
-    let longest = rules_file_name.len() + longest;
-    let mut first = true;
-    for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
-        let matched = *matched;
-        let header = format!(
-            "{}({})",
-            common::colored_string(matched.status),
-            matched.context
-        )
-        .underline();
-        if !first {
-            write!(
-                writer,
-                "{space:>longest$}",
-                space = " ",
-                longest = longest + 4
-            )
-            .expect("Unable to write to the output");
-        }
-        let clause = format!("Clause #{}", index + 1).bold();
-        writeln!(
-            writer,
-            "{header:<20}{content}",
-            header = clause,
-            content = header
-        )
-        .expect("Unable to write to the output");
-        match &matched.from {
-            Some(from) => {
-                write!(
-                    writer,
-                    "{space:>longest$}",
-                    space = " ",
-                    longest = longest + 4
-                )
-                .expect("Unable to write to the output");
-                let content = format!("Comparing {:?}", from);
-                write!(
-                    writer,
-                    "{header:<20}{content}",
-                    header = " ",
-                    content = content
-                )
-                .expect("Unable to write to the output");
-            }
-            None => {}
-        }
-        match &matched.to {
-            Some(to) => {
-                writeln!(writer, " with {:?} failed", to).expect("Unable to write to the output");
-            }
-            None => {
-                writeln!(writer).expect("Unable to write to the output");
-            }
-        }
-        match &matched.msg {
-            Some(m) => {
-                for each in m.split('\n') {
-                    write!(
-                        writer,
-                        "{space:>longest$}",
-                        space = " ",
-                        longest = longest + 4 + 20
-                    )
-                    .expect("Unable to write to the output");
-                    writeln!(writer, "{}", each).expect("Unable to write to the output");
-                }
-            }
-            None => {
-                writeln!(writer).expect("Unable to write to the output");
-            }
-        }
-        if first {
-            first = false;
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 impl<'r> ConsoleReporter<'r> {
     pub(crate) fn new(
@@ -802,7 +697,6 @@ impl<'r> ConsoleReporter<'r> {
         data_file_name: &'r str,
         verbose: bool,
         print_json: bool,
-        show_clause_failures: bool,
         writer: &'r mut Writer,
     ) -> ConsoleReporter<'r> {
         ConsoleReporter {
@@ -812,7 +706,6 @@ impl<'r> ConsoleReporter<'r> {
             data_file_name,
             verbose,
             print_json,
-            show_clause_failures,
             writer,
         }
     }
@@ -825,7 +718,7 @@ impl<'r> ConsoleReporter<'r> {
             let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
             writeln!(self.writer, "{serialized_user}").expect("Unable to write to the output");
         } else {
-            let longest = get_longest(top);
+            let longest = get_longest(top, self.rules_file_name);
 
             let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
                 partition_failed_and_rest(top);
@@ -844,14 +737,6 @@ impl<'r> ConsoleReporter<'r> {
                     &traversal,
                     output_format_type,
                 )?;
-            }
-
-            if self.show_clause_failures {
-                writeln!(self.writer, "{}", "Clause Failure Summary".bold())
-                    .expect("Unable to write to the output");
-                for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest, self.writer);
-                }
             }
 
             if self.verbose {
@@ -906,8 +791,6 @@ fn evaluate_against_data_input<'r>(
     rules_file_name: &'r str,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
-    new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
     mut write_output: &mut Writer,
 ) -> Result<Status> {
@@ -928,69 +811,42 @@ fn evaluate_against_data_input<'r>(
     };
 
     for file in data_files {
-        if new_engine_version {
-            let each = match &extra_data {
-                Some(data) => data.clone().merge(file.path_value.clone())?,
-                None => file.path_value.clone(),
-            };
-            let traversal = Traversal::from(&each);
-            let mut root_scope = root_scope(rules, &each)?;
-            let status = eval_rules_file(rules, &mut root_scope)?;
-            let root_record = root_scope.reset_recorder().extract();
+        let each = match &extra_data {
+            Some(data) => data.clone().merge(file.path_value.clone())?,
+            None => file.path_value.clone(),
+        };
+        let traversal = Traversal::from(&each);
+        let mut root_scope = root_scope(rules, Rc::new(each.clone()))?;
+        let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
 
-            reporter.report_eval(
-                &mut write_output,
-                status,
-                &root_record,
-                rules_file_name,
-                &file.name,
-                &file.content,
-                &traversal,
-                output,
-            )?;
+        let root_record = root_scope.reset_recorder().extract();
 
-            if verbose {
-                print_verbose_tree(&root_record, write_output);
-            }
+        reporter.report_eval(
+            &mut write_output,
+            status,
+            &root_record,
+            rules_file_name,
+            &file.name,
+            &file.content,
+            &traversal,
+            output,
+        )?;
 
-            if print_json {
-                writeln!(
-                    write_output,
-                    "{}",
-                    serde_json::to_string_pretty(&root_record)?
-                )
-                .expect("Unable to write to the output");
-            }
+        if verbose {
+            print_verbose_tree(&root_record, write_output);
+        }
 
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
-        } else {
-            let each = &file.path_value;
-            let root_context = RootScope::new(rules, each)?;
-            let stacker = StackTracker::new(&root_context);
-            let renderers = vec![reporter.as_ref()];
-
-            let reporter = ConsoleReporter::new(
-                stacker,
-                &renderers,
-                rules_file_name,
-                &file.name,
-                verbose,
-                print_json,
-                show_clause_failures,
+        if print_json {
+            writeln!(
                 write_output,
-            );
+                "{}",
+                serde_json::to_string_pretty(&root_record)?
+            )
+            .expect("Unable to write to the output");
+        }
 
-            let appender = MetadataAppender {
-                delegate: &reporter,
-                root_context: each,
-            };
-            let status = rules.evaluate(each, &appender)?;
-            reporter.report(each, output)?;
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
+        if status == Status::FAIL {
+            overall = Status::FAIL
         }
     }
     Ok(overall)
@@ -1024,11 +880,15 @@ fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&
         .partition(|ctx| matches!(ctx.status, Some(Status::FAIL)))
 }
 
-fn get_longest(top: &StatusContext) -> usize {
+fn get_longest(top: &StatusContext, rule_file_name: &str) -> usize {
     top.children
         .iter()
-        .max_by(|f, s| f.context.len().cmp(&s.context.len()))
-        .map(|elem| elem.context.len())
+        .max_by(|f, s| {
+            get_rule_name(rule_file_name, &f.context)
+                .len()
+                .cmp(&get_rule_name(rule_file_name, &s.context).len())
+        })
+        .map(|elem| get_rule_name(rule_file_name, &elem.context).len())
         .unwrap_or(20)
 }
 

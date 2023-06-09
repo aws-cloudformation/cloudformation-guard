@@ -1,7 +1,9 @@
+use std::rc::Rc;
+
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
 use crate::rules;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root};
+use crate::rules::eval_context::{root_scope, simplifed_json_from_root, FileReport};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status;
@@ -18,14 +20,20 @@ pub struct StructuredEvaluator<'eval> {
 }
 
 impl<'eval> StructuredEvaluator<'eval> {
-    fn merge_input_params_with_data(&mut self) -> Vec<PathAwareValue> {
+    fn merge_input_params_with_data(&mut self) -> Vec<DataFile> {
         self.data.iter().fold(vec![], |mut res, file| {
             let each = match &self.input_params {
                 Some(data) => data.clone().merge(file.path_value.clone()).unwrap(),
                 None => file.path_value.clone(),
             };
 
-            res.push(each);
+            let merged_file_data = DataFile {
+                path_value: each,
+                name: file.name.to_owned(),
+                content: "".to_string(), // not used later on
+            };
+
+            res.push(merged_file_data);
             res
         })
     }
@@ -54,19 +62,25 @@ impl<'eval> StructuredEvaluator<'eval> {
         let merged_data = self.merge_input_params_with_data();
 
         let mut records = vec![];
-        for rule in &rules {
-            for each in &merged_data {
-                let mut root_scope = root_scope(rule, each)?;
 
-                if let Status::FAIL = eval_rules_file(rule, &mut root_scope)? {
+        for each in &merged_data {
+            let mut file_report: FileReport = FileReport {
+                name: &each.name,
+                ..Default::default()
+            };
+
+            for rule in &rules {
+                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
+
+                if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
                     self.exit_code = 5;
                 }
-
                 let root_record = root_scope.reset_recorder().extract();
-
                 let report = simplifed_json_from_root(&root_record)?;
-                records.push(report)
+                file_report.combine(report);
             }
+
+            records.push(file_report);
         }
 
         match self.output {

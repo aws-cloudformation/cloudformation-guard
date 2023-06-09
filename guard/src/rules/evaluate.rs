@@ -124,6 +124,7 @@ where
     Ok((lhs_cmp, results))
 }
 
+#[allow(clippy::never_loop)]
 fn compare_loop<F>(
     lhs: &Vec<&PathAwareValue>,
     rhs: &Vec<&PathAwareValue>,
@@ -145,10 +146,8 @@ where
                     if *each {
                         break 'outer true;
                     }
-                } else {
-                    if !*each {
-                        break 'outer false;
-                    }
+                } else if !*each {
+                    break 'outer false;
                 }
             }
             if atleast_one {
@@ -332,6 +331,7 @@ where
 }
 
 impl<'loc> Evaluate for GuardAccessClause<'loc> {
+    #[allow(clippy::never_loop)]
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -727,6 +727,7 @@ impl<'loc> Evaluate for GuardNamedRuleClause<'loc> {
 }
 
 impl<'loc> Evaluate for GuardClause<'loc> {
+    #[allow(clippy::never_loop)]
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -776,6 +777,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Block<'loc, T> {
 }
 
 impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
+    #[allow(clippy::never_loop)]
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -833,6 +835,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
 }
 
 impl<'loc> Evaluate for BlockGuardClause<'loc> {
+    #[allow(clippy::never_loop)]
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -918,6 +921,7 @@ impl<'loc> Evaluate for WhenGuardClause<'loc> {
 }
 
 impl<'loc> Evaluate for TypeBlock<'loc> {
+    #[allow(clippy::never_loop)]
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -1102,6 +1106,8 @@ fn extract_variables<'s, 'loc>(
 }
 
 #[derive(Debug)]
+#[deprecated]
+#[allow(dead_code)]
 pub(crate) struct RootScope<'s, 'loc> {
     rules: &'s RulesFile<'loc>,
     input_context: &'s PathAwareValue,
@@ -1144,7 +1150,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
             let all = (*query).match_all;
-            let query: &[QueryPart<'_>] = &(*query).query;
+            let query = &query.query;
             let values = match query[0].variable() {
                 Some(var) => resolve_variable_query(all, var, query, self)?,
                 None => {
@@ -1200,6 +1206,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
     fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
 }
 
+#[allow(dead_code)]
 pub(crate) struct BlockScope<'s, T> {
     block_type: &'s Block<'s, T>,
     input_context: &'s PathAwareValue,
@@ -1240,7 +1247,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
             let all = (*query).match_all;
-            let query: &[QueryPart<'_>] = &(*query).query;
+            let query = &query.query;
             let values = match query[0].variable() {
                 Some(var) => resolve_variable_query(all, var, query, self)?,
                 None => {

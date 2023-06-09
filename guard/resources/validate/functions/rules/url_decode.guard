@@ -1,0 +1,9 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+rule SOME_RULE when %template !empty {
+    %template.Properties.Encoded exists
+    let encoded = %template.Properties.Encoded
+
+    let res = url_decode(%encoded)
+    %res == "This string will be URL encoded"
+}

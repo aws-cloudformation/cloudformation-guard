@@ -1,9 +1,9 @@
 use crate::command::Command;
-use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_JSON_DEPRECATED, PRINT_YAML, RULES};
+use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{Arg, ArgAction, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches, ValueHint};
 use std::fs::File;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl Command for ParseTree {
                     .long(RULES.0)
                     .short(RULES.1)
                     .help("Provide a rules file")
-                    .action(ArgAction::Set)
+                    .value_hint(ValueHint::FilePath)
                     .required(false),
             )
             .arg(
@@ -37,16 +37,15 @@ impl Command for ParseTree {
                     .long(OUTPUT.0)
                     .short(OUTPUT.1)
                     .help("Write to output file")
-                    .action(ArgAction::Set)
+                    .value_hint(ValueHint::FilePath)
                     .required(false),
             )
             .arg(
                 Arg::new(PRINT_JSON.0)
                     .long(PRINT_JSON.0)
                     .short(PRINT_JSON.1)
-                    .short_alias(PRINT_JSON_DEPRECATED)
                     .action(ArgAction::SetTrue)
-                    .help("Print output in JSON format. Use -p going forward, as the short flag -j is on deprecation path."),
+                    .help("Print output in JSON format. Use -p as the short flag"),
             )
             .arg(
                 Arg::new(PRINT_YAML.0)

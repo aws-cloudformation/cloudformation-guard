@@ -3,11 +3,10 @@ use std::process;
 
 use crate::command::Command;
 use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
-use crate::rules::errors::Error;
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{Arg, ArgMatches};
+use clap::{Arg, ArgMatches, ValueHint};
 use itertools::Itertools;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -35,11 +34,13 @@ impl Command for Rulegen {
             .arg(Arg::new(TEMPLATE.0)
                 .long(TEMPLATE.0)
                 .short(TEMPLATE.1)
+                .value_hint(ValueHint::FilePath)
                 .help("Provide path to a CloudFormation template file in JSON or YAML")
                 .required(true))
             .arg(Arg::new(OUTPUT.0)
                 .long(OUTPUT.0)
                 .short(OUTPUT.1)
+                .value_hint(ValueHint::FilePath)
                 .help("Write to output file")
                 .required(false))
             .arg_required_else_help(true)

@@ -10,6 +10,7 @@ use fancy_regex::Regex;
 use lazy_static::lazy_static;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub(crate) struct TfAware<'reporter> {
@@ -136,12 +137,13 @@ fn single_line(
     }
 
     let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range("/resource_changes/"..) {
-        let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(*key) {
+    for (key, value) in path_tree.range(String::from("/resource_changes/")..) {
+        let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(&key) {
             Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
             Ok(None) => unreachable!(),
             Err(e) => return Err(Error::from(e)),
         };
+
         let address = format!("/resource_changes/{}", resource_ptr);
         let resource = match data.at(&address, root)? {
             TraversalResult::Value(n) => n,
@@ -225,7 +227,7 @@ fn single_line(
                         &mut self,
                         writer: &mut dyn Write,
                         _cr: &ClauseReport<'_>,
-                        bc: &BinaryComparison<'_>,
+                        bc: &BinaryComparison,
                         prefix: &str,
                     ) -> crate::rules::Result<usize> {
                         let width = "PropertyPath".len() + 4;
@@ -252,19 +254,19 @@ fn single_line(
                             cw="ComparedWith",
                             prefix=prefix,
                             path=property,
-                            value=ValueOnlyDisplay(bc.from),
+                            value=ValueOnlyDisplay(Rc::clone(&bc.from)),
                             cmp=crate::rules::eval_context::cmp_str(bc.comparison),
-                            with=ValueOnlyDisplay(bc.to)
+                            with=ValueOnlyDisplay(Rc::clone(&bc.to))
                         )?;
                         Ok(width)
                     }
 
                     fn binary_error_in_msg(
                         &mut self,
-                        writer: &mut dyn Write,
-                        cr: &ClauseReport<'_>,
-                        bc: &InComparison<'_>,
-                        prefix: &str,
+                        _: &mut dyn Write,
+                        _: &ClauseReport<'_>,
+                        _: &InComparison,
+                        _: &str,
                     ) -> crate::rules::Result<usize> {
                         todo!()
                     }
@@ -273,10 +275,9 @@ fn single_line(
                         &mut self,
                         writer: &mut dyn Write,
                         _cr: &ClauseReport<'_>,
-                        re: &UnaryComparison<'_>,
+                        re: &UnaryComparison,
                         prefix: &str,
                     ) -> crate::rules::Result<usize> {
-                        let width = "PropertyPath".len() + 4;
                         let resource_based = re.value.self_path().0.as_str();
                         let (_res, property) = match resource_based.find("changes/after/") {
                             Some(idx) => resource_based.split_at(idx),

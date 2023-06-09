@@ -1,11 +1,11 @@
-name: ''
+name: STDIN
 metadata: {}
 status: PASS
 not_compliant: []
 not_applicable: []
 compliant:
 - S3_BUCKET_PUBLIC_READ_PROHIBITED
-`- File(, Status=PASS)[Context=File(rules=1)]
+`- File(STDIN, Status=PASS)[Context=File(rules=1)]
    `- Rule(S3_BUCKET_PUBLIC_READ_PROHIBITED, Status=PASS)[Context=S3_BUCKET_PUBLIC_READ_PROHIBITED]
       |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_PUBLIC_READ_PROHIBITED/When]
       |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited not EMPTY  ]

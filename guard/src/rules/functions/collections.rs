@@ -1,6 +1,6 @@
 use crate::rules::QueryResult;
 
-pub(crate) fn count(args: &[QueryResult<'_>]) -> u32 {
+pub(crate) fn count(args: &[QueryResult]) -> u32 {
     args.iter().fold(0, |each, entry| match entry {
         QueryResult::Literal(_) | QueryResult::Resolved(_) => each + 1,
         _ => each,

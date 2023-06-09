@@ -6,7 +6,6 @@
 
 pub mod command;
 pub mod commands;
-mod migrate;
 mod rules;
 pub mod utils;
 

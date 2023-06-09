@@ -1,0 +1,17 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+rule SOME_RULE when %template !empty {
+    let collection = %template.Collection.*
+
+    let res = join(%collection, ",")
+    %res == "a,b,c"
+}
+
+
+let buckets = Resources[ Type == 'AWS::S3::Bucket' ]
+
+rule SOME_BUCKET_RULE when %buckets !empty {
+    let res = join(%buckets.Type, '-')
+
+    %res == "AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket-AWS::S3::Bucket"
+}

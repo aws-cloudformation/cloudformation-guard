@@ -21,6 +21,7 @@ use nom::lib::std::convert::TryFrom;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
+use std::rc::Rc;
 
 pub(crate) type Result<R> = std::result::Result<R, Error>;
 
@@ -116,9 +117,20 @@ impl TryFrom<&str> for Status {
             "FAIL" => Ok(Status::FAIL),
             "SKIP" => Ok(Status::SKIP),
             _ => Err(Error::IncompatibleError(format!(
-                "Status code is incorrect {}",
-                value
+                "Status code is incorrect {value}",
             ))),
+        }
+    }
+}
+impl Status {
+    fn and(&self, status: Status) -> Status {
+        match self {
+            Status::FAIL => Status::FAIL,
+            Status::PASS => match status {
+                Status::FAIL => status,
+                _ => Status::PASS,
+            },
+            Status::SKIP => status,
         }
     }
 }
@@ -154,66 +166,66 @@ impl std::fmt::Display for EvaluationType {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct UnResolved<'value> {
-    pub(crate) traversed_to: &'value PathAwareValue,
+pub(crate) struct UnResolved {
+    pub(crate) traversed_to: Rc<PathAwareValue>,
     pub(crate) remaining_query: String,
     pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) enum QueryResult<'value> {
-    Literal(&'value PathAwareValue),
-    Resolved(&'value PathAwareValue),
-    UnResolved(UnResolved<'value>),
+pub(crate) enum QueryResult {
+    Literal(Rc<PathAwareValue>),
+    Resolved(Rc<PathAwareValue>),
+    UnResolved(UnResolved),
 }
 
-impl<'value> QueryResult<'value> {
-    pub(crate) fn resolved(&self) -> Option<&'value PathAwareValue> {
+impl QueryResult {
+    pub(crate) fn resolved(&self) -> Option<Rc<PathAwareValue>> {
         if let QueryResult::Resolved(res) = self {
-            return Some(*res);
+            return Some(Rc::clone(res));
         }
         None
     }
 
-    pub(crate) fn unresolved_traversed_to(&self) -> Option<&'value PathAwareValue> {
+    pub(crate) fn unresolved_traversed_to(&self) -> Option<Rc<PathAwareValue>> {
         if let QueryResult::UnResolved(res) = self {
-            return Some(res.traversed_to);
+            return Some(Rc::clone(&res.traversed_to));
         }
         None
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct ComparisonClauseCheck<'value> {
+pub(crate) struct ComparisonClauseCheck {
     pub(crate) comparison: (CmpOperator, bool),
-    pub(crate) from: QueryResult<'value>,
-    pub(crate) to: Option<QueryResult<'value>>, // happens with from is unresolved
+    pub(crate) from: QueryResult,
+    pub(crate) to: Option<QueryResult>, // happens with from is unresolved
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct InComparisonCheck<'value> {
+pub(crate) struct InComparisonCheck {
     pub(crate) comparison: (CmpOperator, bool),
-    pub(crate) from: QueryResult<'value>,
-    pub(crate) to: Vec<QueryResult<'value>>, // happens with from is unresolved
+    pub(crate) from: QueryResult,
+    pub(crate) to: Vec<QueryResult>, // happens with from is unresolved
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct ValueCheck<'value> {
-    pub(crate) from: QueryResult<'value>,
+pub(crate) struct ValueCheck {
+    pub(crate) from: QueryResult,
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct UnaryValueCheck<'value> {
-    pub(crate) value: ValueCheck<'value>,
+pub(crate) struct UnaryValueCheck {
+    pub(crate) value: ValueCheck,
     pub(crate) comparison: (CmpOperator, bool),
 }
 
@@ -228,12 +240,12 @@ pub(crate) struct MissingValueCheck<'value> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum ClauseCheck<'value> {
     Success,
-    Comparison(ComparisonClauseCheck<'value>),
-    InComparison(InComparisonCheck<'value>),
-    Unary(UnaryValueCheck<'value>),
+    Comparison(ComparisonClauseCheck),
+    InComparison(InComparisonCheck),
+    Unary(UnaryValueCheck),
     NoValueForEmptyCheck(Option<String>),
     DependentRule(MissingValueCheck<'value>),
-    MissingBlockValue(ValueCheck<'value>),
+    MissingBlockValue(ValueCheck),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -355,25 +367,21 @@ pub(crate) trait RecordTracer<'value> {
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>>;
-    //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult<'value>>>;
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>>;
+    //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult>>;
     fn find_parameterized_rule(
         &mut self,
         rule_name: &str,
     ) -> Result<&'value ParameterizedRule<'loc>>;
-    fn root(&mut self) -> &'value PathAwareValue;
+    fn root(&mut self) -> Rc<PathAwareValue>;
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>>;
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
-        key: &'value PathAwareValue,
+        key: Rc<PathAwareValue>,
     ) -> Result<()>;
-    fn add_variable_capture_index(
-        &mut self,
-        variable_name: &str,
-        index: &'value PathAwareValue,
-    ) -> Result<()> {
+    fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }
 }
