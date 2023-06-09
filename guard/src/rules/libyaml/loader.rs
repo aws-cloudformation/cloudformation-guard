@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use std::borrow::Cow;
 
 use crate::rules::{
@@ -8,10 +9,69 @@ use crate::rules::{
         parser::Parser,
     },
     path_value::Location,
-    short_form_to_long,
     values::MarkedValue,
-    SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
 };
+
+use std::collections::{HashMap, HashSet};
+
+lazy_static! {
+    static ref SHORT_FORM_TO_LONG_MAPPING: HashMap<&'static str, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert("Ref", "Ref");
+        m.insert("GetAtt", "Fn::GetAtt");
+        m.insert("Base64", "Fn::Base64");
+        m.insert("Sub", "Fn::Sub");
+        m.insert("GetAZs", "Fn::GetAZs");
+        m.insert("ImportValue", "Fn::ImportValue");
+        m.insert("Condition", "Condition");
+        m.insert("RefAll", "Fn::RefAll");
+        m.insert("Select", "Fn::Select");
+        m.insert("Split", "Fn::Split");
+        m.insert("Join", "Fn::Join");
+        m.insert("FindInMap", "Fn::FindInMap");
+        m.insert("And", "Fn::And");
+        m.insert("Equals", "Fn::Equals");
+        m.insert("Contains", "Fn::Contains");
+        m.insert("EachMemberIn", "Fn::EachMemberIn");
+        m.insert("EachMemberEquals", "Fn::EachMemberEquals");
+        m.insert("ValueOf", "Fn::ValueOf");
+        m.insert("If", "Fn::If");
+        m.insert("Not", "Fn::Not");
+        m.insert("Or", "Fn::Or");
+        m
+    };
+    static ref SINGLE_VALUE_FUNC_REF: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("Ref");
+        set.insert("Base64");
+        set.insert("Sub");
+        set.insert("GetAZs");
+        set.insert("ImportValue");
+        set.insert("GetAtt");
+        set.insert("Condition");
+        set.insert("RefAll");
+        set
+    };
+    static ref SEQUENCE_VALUE_FUNC_REF: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("GetAtt");
+        set.insert("Sub");
+        set.insert("Select");
+        set.insert("Split");
+        set.insert("Join");
+        set.insert("FindInMap");
+        set.insert("And");
+        set.insert("Equals");
+        set.insert("Contains");
+        set.insert("EachMemberIn");
+        set.insert("EachMemberEquals");
+        set.insert("ValueOf");
+        set.insert("If");
+        set.insert("Not");
+        set.insert("Or");
+        set
+    };
+}
 
 const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
 
@@ -130,11 +190,14 @@ impl Loader {
             let handle = tag.get_handle();
             let suffix = tag.get_suffix(handle.len());
             if handle == "!" {
-                if let Some(value) = handle_sequence_value_func_ref(location.clone(), &suffix) {
-                    self.stack.push(value);
-                    let fn_ref = short_form_to_long(&suffix);
-                    self.func_support_index
-                        .push((self.stack.len() - 1, (fn_ref.to_owned(), location.clone())));
+                match handle_sequence_value_func_ref(location.clone(), &suffix) {
+                    Some(value) => {
+                        self.stack.push(value);
+                        let fn_ref = short_form_to_long(&suffix);
+                        self.func_support_index
+                            .push((self.stack.len() - 1, (fn_ref.to_owned(), location.clone())));
+                    }
+                    None => {}
                 }
             }
         }
@@ -164,6 +227,13 @@ impl Loader {
         self.stack
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
+    }
+}
+
+fn short_form_to_long(fn_ref: &str) -> &'static str {
+    match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
+        Some(fn_ref) => fn_ref,
+        _ => unreachable!(),
     }
 }
 

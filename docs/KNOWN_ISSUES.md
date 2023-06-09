@@ -34,4 +34,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
 
 3. When performing `!=` comparison, if the values are incompatible like comparing a `string` to `int`, an error is thrown internally but currently suppressed and converted to `false` to satisfy the requirements of Rust’s [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html). We are tracking to release a fix for this issue soon.
 4. `exists` and `empty` checks do not display the JSON pointer path inside the document in the error messages. Both these clauses often have retrieval errors which does not maintain this traversal information today. We are tracking to resolve this issue. 
-5. Currently, for `string` literals, Guard does not support embedded escaped strings. We are tracking to resolve this issue soon.
+5. When evaluating CloudFormation templates in YAML format, we do not support the short form versions of CloudFormation intrinsic functions like `!Join`, `!Sub` and others. Guard does not support these YAML extensions when evaluating.
+    
+> **Workaround**: use the expanded form when using these functions. 
+6. Currently, for `string` literals, Guard does not support embedded escaped strings. We are tracking to resolve this issue soon.

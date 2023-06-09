@@ -3,8 +3,6 @@ use std::io::{stderr, stdout};
 
 use crate::utils::writer::Writer;
 use grep_searcher::SearcherBuilder;
-use indoc::{formatdoc, indoc};
-use rstest::rstest;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
@@ -1859,89 +1857,70 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     Ok(())
 }
 
-#[rstest::rstest]
-#[case("SubdomainMaster", "Master.PrivateIp", Status::PASS)]
-#[case("SubdomainInternal", "Master.PrivateIp", Status::PASS)]
-#[case("SubdomainDefault", "Infra1.PrivateIp", Status::PASS)]
-#[case("SubdomainDefault", "Infra1.PrivateIp", Status::PASS)]
-#[case("Subdomain", "Infra1.PrivateIp", Status::FAIL)]
-#[case("SubdomainDefault", "Infra1.PublicIp", Status::FAIL)]
-#[case("Subdomain", "Master.PrivateIp", Status::FAIL)]
-#[case("SubdomainDefault", "Master.PublicIp", Status::FAIL)]
-fn test_in_comparison_operator_for_list_of_lists(
-    #[case] name_arg: &str,
-    #[case] resource_records_arg: &str,
-    #[case] status_arg: Status,
-) -> Result<()> {
-    let template = formatdoc! {
-        r###"
-        Resources:
-            MasterRecord:
-                Type: AWS::Route53::RecordSet
-                Properties:
-                    HostedZoneName: !Ref 'HostedZoneName'
-                    Comment: DNS name for my instance.
-                    Name: !Join ['', [!Ref '{}', ., !Ref 'HostedZoneName']]
-                    Type: A
-                    TTL: "900"
-                    ResourceRecords:
-                    - !GetAtt '{}'"###, 
-        name_arg,
-        resource_records_arg,
-    };
+#[test]
+fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
+    let template = r###"
+Resources:
+    MasterRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainMaster', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Master.PrivateIp
+    InternalRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainInternal', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Master.PrivateIp
+    SubdomainRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainDefault', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Infra1.PrivateIp
+    WildcardRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneName: !Ref 'HostedZoneName'
+            Comment: DNS name for my instance.
+            Name: !Join ['', [!Ref 'SubdomainWild', ., !Ref 'HostedZoneName']]
+            Type: A
+            TTL: '900'
+            ResourceRecords:
+                - !GetAtt Infra1.PrivateIp
+    "###;
 
     let rules = r###"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
-      let targets = [{"Fn::Join": ["",[{"Ref": "SubdomainMaster"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainWild"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": 'SubdomainInternal'},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainDefault"},".", {"Ref": "HostedZoneName"}]]}]
       %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
-      %aws_route53_recordset_resources.Properties.ResourceRecords IN [[{"Fn::GetAtt": "Master.PrivateIp"}], [{"Fn::GetAtt": "Infra1.PrivateIp"}]]
+      let targets = [["",["SubdomainWild",".","HostedZoneName"]], ["",["SubdomainInternal",".","HostedZoneName"]], ["",["SubdomainMaster",".","HostedZoneName"]], ["",["SubdomainDefault",".","HostedZoneName"]]]
       %aws_route53_recordset_resources.Properties.Name IN %targets
       %aws_route53_recordset_resources.Properties.Type == "A"
+      %aws_route53_recordset_resources.Properties.ResourceRecords IN [["Master.PrivateIp"], ["Infra1.PrivateIp"]]
       %aws_route53_recordset_resources.Properties.TTL == "900"
-      %aws_route53_recordset_resources.Properties.HostedZoneName == {"Ref": "HostedZoneName"}
+      %aws_route53_recordset_resources.Properties.HostedZoneName == "HostedZoneName"
     }
     "###;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
     let mut context = root_scope(&rule_eval, &value)?;
     let status = eval_rules_file(&rule_eval, &mut context)?;
-    assert_eq!(status, status_arg);
-
-    Ok(())
-}
-
-#[rstest::rstest]
-#[case(r#"'900'"#, Status::PASS)]
-#[case(r#"!!str 900"#, Status::PASS)]
-#[case(r#"900"#, Status::FAIL)]
-#[case(r#"!!int "900""#, Status::FAIL)]
-#[case(r#"!!float "900""#, Status::FAIL)]
-fn test_type_conversions(#[case] ttl_arg: &str, #[case] status_arg: Status) -> Result<()> {
-    let template = formatdoc! {
-        r###"
-        Resources:
-            MasterRecord:
-                Type: AWS::Route53::RecordSet
-                Properties:
-                    TTL: {}
-                    "###,
-        ttl_arg,
-    };
-
-    let rules = r###"
-    let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
-    rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
-      %aws_route53_recordset_resources.Properties.TTL == "900"
-    }
-    "###;
-
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
-    let rule_eval = RulesFile::try_from(rules)?;
-    let mut context = root_scope(&rule_eval, &value)?;
-    let status = eval_rules_file(&rule_eval, &mut context)?;
-    assert_eq!(status, status_arg);
+    assert_eq!(status, Status::PASS);
 
     Ok(())
 }

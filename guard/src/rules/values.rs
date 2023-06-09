@@ -440,18 +440,6 @@ where
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
 }
 
-fn handle_tagged_value(val: serde_yaml::Value, fn_ref: &str) -> crate::rules::Result<Value> {
-    if SINGLE_VALUE_FUNC_REF.contains(fn_ref) || SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
-        let mut map = indexmap::IndexMap::new();
-        let fn_ref = short_form_to_long(fn_ref);
-        map.insert(fn_ref.to_string(), Value::try_from(val)?);
-
-        return Ok(Value::Map(map));
-    }
-
-    Value::try_from(val)
-}
-
 #[cfg(test)]
 #[path = "values_tests.rs"]
 mod values_tests;
