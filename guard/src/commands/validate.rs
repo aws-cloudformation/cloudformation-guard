@@ -13,9 +13,8 @@ use enumflags2::BitFlags;
 use serde::Deserialize;
 
 use crate::command::Command;
-use crate::commands::aws_meta_appender::MetadataAppender;
 use crate::commands::files::{alpabetical, iterate_over, last_modified};
-use crate::commands::tracker::{StackTracker, StatusContext};
+use crate::commands::tracker::StatusContext;
 use crate::commands::validate::structured::StructuredEvaluator;
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
@@ -27,13 +26,10 @@ use crate::commands::{
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
-use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
-use crate::rules::parser::get_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
-use crate::rules::values::CmpOperator;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
+use crate::rules::{EvaluationType, Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
@@ -612,23 +608,6 @@ fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Res
     crate::rules::parser::rules_file(span)
 }
 
-#[derive(Debug)]
-pub(crate) struct ConsoleReporter<'r> {
-    root_context: StackTracker<'r>,
-    reporters: &'r Vec<&'r dyn Reporter>,
-    rules_file_name: &'r str,
-    data_file_name: &'r str,
-    verbose: bool,
-    print_json: bool,
-    writer: &'r mut Writer,
-}
-
-fn indent_spaces(indent: usize, writer: &mut Writer) {
-    for _idx in 0..indent {
-        write!(writer, "{INDENT}").expect("Unable to write to the output");
-    }
-}
-
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
@@ -650,141 +629,6 @@ fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, writer: &m
 
 pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut Writer) {
     pprint_tree(root, "".to_string(), true, writer);
-}
-
-pub(super) fn print_context(cxt: &StatusContext, depth: usize, writer: &mut Writer) {
-    let header = format!(
-        "{}({}, {})",
-        cxt.eval_type,
-        cxt.context,
-        common::colored_string(cxt.status)
-    )
-    .underline();
-    //let depth = cxt.indent;
-    let _sub_indent = depth + 1;
-    indent_spaces(depth - 1, writer);
-    writeln!(writer, "{header}").expect("Unable to write to the output");
-    match &cxt.from {
-        Some(v) => {
-            indent_spaces(depth, writer);
-            write!(writer, "|  ").expect("Unable to write to the output");
-            writeln!(writer, "From: {v:?}").expect("Unable to write to the output");
-        }
-        None => {}
-    }
-    match &cxt.to {
-        Some(v) => {
-            indent_spaces(depth, writer);
-            write!(writer, "|  ").expect("Unable to write to the output");
-            writeln!(writer, "To: {v:?}").expect("Unable to write to the output");
-        }
-        None => {}
-    }
-    match &cxt.msg {
-        Some(message) => {
-            indent_spaces(depth, writer);
-            write!(writer, "|  ").expect("Unable to write to the output");
-            writeln!(writer, "Message: {message}").expect("Unable to write to the output");
-        }
-        None => {}
-    }
-
-    for child in &cxt.children {
-        print_context(child, depth + 1, writer)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-impl<'r> ConsoleReporter<'r> {
-    pub(crate) fn new(
-        root: StackTracker<'r>,
-        renderers: &'r Vec<&'r dyn Reporter>,
-        rules_file_name: &'r str,
-        data_file_name: &'r str,
-        verbose: bool,
-        print_json: bool,
-        writer: &'r mut Writer,
-    ) -> ConsoleReporter<'r> {
-        ConsoleReporter {
-            root_context: root,
-            reporters: renderers,
-            rules_file_name,
-            data_file_name,
-            verbose,
-            print_json,
-            writer,
-        }
-    }
-
-    fn report(mut self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
-        let stack = self.root_context.stack();
-        let top = stack.first().unwrap();
-
-        if self.verbose && self.print_json {
-            let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
-            writeln!(self.writer, "{serialized_user}").expect("Unable to write to the output");
-        } else {
-            let longest = get_longest(top, self.rules_file_name);
-
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                partition_failed_and_rest(top);
-
-            let traversal = Traversal::from(root);
-
-            for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut self.writer,
-                    top.status,
-                    &failed,
-                    &rest,
-                    longest,
-                    self.rules_file_name,
-                    self.data_file_name,
-                    &traversal,
-                    output_format_type,
-                )?;
-            }
-
-            if self.verbose {
-                writeln!(self.writer, "Evaluation Tree").expect("Unable to write to the output");
-                for each in &top.children {
-                    print_context(each, 1, self.writer);
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-const INDENT: &str = "    ";
-
-impl<'r> EvaluationContext for ConsoleReporter<'r> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
-        self.root_context.resolve_variable(variable)
-    }
-
-    fn rule_status(&self, rule_name: &str) -> Result<Status> {
-        self.root_context.rule_status(rule_name)
-    }
-
-    fn end_evaluation(
-        &self,
-        eval_type: EvaluationType,
-        context: &str,
-        msg: String,
-        from: Option<PathAwareValue>,
-        to: Option<PathAwareValue>,
-        status: Option<Status>,
-        cmp: Option<(CmpOperator, bool)>,
-    ) {
-        self.root_context
-            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
-    }
-
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
-        self.root_context.start_evaluation(eval_type, context);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -881,24 +725,6 @@ fn get_path_aware_value_from_data(content: &str, name: &str) -> Result<PathAware
 
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
     extensions.iter().any(|extension| name.ends_with(extension))
-}
-
-fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
-    top.children
-        .iter()
-        .partition(|ctx| matches!(ctx.status, Some(Status::FAIL)))
-}
-
-fn get_longest(top: &StatusContext, rule_file_name: &str) -> usize {
-    top.children
-        .iter()
-        .max_by(|f, s| {
-            get_rule_name(rule_file_name, &f.context)
-                .len()
-                .cmp(&get_rule_name(rule_file_name, &s.context).len())
-        })
-        .map(|elem| get_rule_name(rule_file_name, &elem.context).len())
-        .unwrap_or(20)
 }
 
 fn get_file_name(file: &Path, base: &Path) -> String {
