@@ -44,20 +44,6 @@ pub(crate) struct ParserError<'a> {
 
 pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
 
-impl<'a> ParserError<'a> {
-    pub(crate) fn context(&self) -> &str {
-        &self.context
-    }
-
-    pub(crate) fn span(&self) -> &Span<'a> {
-        &self.span
-    }
-
-    pub(crate) fn kind(&self) -> ErrorKind {
-        self.kind
-    }
-}
-
 impl<'a> nom::error::ParseError<Span<'a>> for ParserError<'a> {
     fn from_error_kind(input: Span<'a>, kind: ErrorKind) -> Self {
         ParserError {
@@ -264,9 +250,9 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
         let validate_regex = Regex::new(regex.as_str());
         return match validate_regex {
-            Ok(valid_regex) => Ok((remainder, Value::Regex(regex))),
+            Ok(_) => Ok((remainder, Value::Regex(regex))),
             Err(e) => Err(nom::Err::Error(ParserError {
-                context: format!("Could not parse regular expression: {}", e.to_string()),
+                context: format!("Could not parse regular expression: {}", e),
                 kind: ErrorKind::RegexpMatch,
                 span: input,
             })),
@@ -539,7 +525,7 @@ pub(crate) fn var_name(input: Span) -> IResult<Span, String> {
     let (remainder, first_part) = alpha1(input)?;
     let (remainder, next_part) = take_while(|c: char| c.is_alphanumeric() || c == '_')(remainder)?;
     let mut var_name = (*first_part.fragment()).to_string();
-    var_name.push_str(*next_part.fragment());
+    var_name.push_str(next_part.fragment());
     Ok((remainder, var_name))
 }
 
@@ -1844,8 +1830,8 @@ pub(crate) fn rules_file(input: Span) -> Result<RulesFile, Error> {
         } else {
             format!(
                 "{rule_file_name}/{rule_name}",
-                rule_file_name = input.extra.to_string(),
-                rule_name = DEFAULT_RULE_NAME.to_string()
+                rule_file_name = input.extra,
+                rule_name = DEFAULT_RULE_NAME
             )
         };
 
