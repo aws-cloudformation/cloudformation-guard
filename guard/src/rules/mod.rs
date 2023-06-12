@@ -84,17 +84,13 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize, Default)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum Status {
     PASS,
     FAIL,
+    #[default]
     SKIP,
-}
-
-impl Default for Status {
-    fn default() -> Self {
-        Status::SKIP
-    }
 }
 
 impl std::fmt::Display for Status {
@@ -357,10 +353,6 @@ pub(crate) enum RecordType<'value> {
     ClauseValueCheck(ClauseCheck<'value>),
 }
 
-struct ParameterRuleResult<'value, 'loc> {
-    rule: &'value ParameterizedRule<'loc>,
-}
-
 pub(crate) trait RecordTracer<'value> {
     fn start_record(&mut self, context: &str) -> Result<()>;
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
@@ -391,6 +383,7 @@ pub(crate) trait EvaluationContext {
 
     fn rule_status(&self, rule_name: &str) -> Result<Status>;
 
+    #[allow(clippy::too_many_arguments)]
     fn end_evaluation(
         &self,
         eval_type: EvaluationType,
