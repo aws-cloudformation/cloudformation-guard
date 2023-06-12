@@ -18,6 +18,7 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
         self.delegate.rule_status(rule_name)
     }
 
+    #[allow(clippy::never_loop)]
     fn end_evaluation(
         &self,
         eval_type: EvaluationType,
@@ -42,7 +43,7 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
                                         parts[2]
                                     );
                                     let AccessQuery {
-                                        query: query,
+                                        query,
                                         match_all: all,
                                     } = AccessQuery::try_from(query.as_str()).unwrap();
                                     if let Ok(selected) =
