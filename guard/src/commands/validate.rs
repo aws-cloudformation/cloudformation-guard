@@ -285,10 +285,10 @@ or rules files.
             )));
         }
 
-        let mut streams = Vec::new();
-
         let data_files = match app.get_many::<String>(DATA.0) {
             Some(list_of_file_or_dir) => {
+                let mut streams = Vec::new();
+
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
@@ -304,21 +304,9 @@ or rules files.
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let path = file.path();
+                                let data_file = build_data_file(content, name)?;
 
-                                let file_name = get_file_name(path, &base);
-
-                                let path_value =
-                                    match get_path_aware_value_from_data(&content, &name) {
-                                        Ok(t) => t,
-                                        Err(e) => return Err(e),
-                                    };
-
-                                streams.push(DataFile {
-                                    name: file_name,
-                                    path_value,
-                                    content,
-                                });
+                                streams.push(data_file);
                             }
                         }
                     }
@@ -330,19 +318,9 @@ or rules files.
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
 
-                    let name = "STDIN".to_string();
+                    let data_file = build_data_file(content, "STDIN".to_string())?;
 
-                    let path_value = match get_path_aware_value_from_data(&content, &name) {
-                        Ok(t) => t,
-                        Err(e) => return Err(e),
-                    };
-
-                    streams.push(DataFile {
-                        name,
-                        path_value,
-                        content,
-                    });
-                    streams
+                    vec![data_file]
                 } else {
                     vec![]
                 } // expect Payload, since rules aren't specified
@@ -368,7 +346,7 @@ or rules files.
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let path_value = get_path_aware_value_from_data(&content, &name)?;
+                                let DataFile { path_value, .. } = build_data_file(content, name)?;
 
                                 primary_path_value = match primary_path_value {
                                     Some(current) => Some(current.merge(path_value)?),
@@ -480,13 +458,9 @@ or rules files.
                 |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
                     let content = data.to_string();
                     let name = format!("DATA_STDIN[{}]", i + 1);
-                    let path_value = get_path_aware_value_from_data(&content, &name)?;
+                    let data_file = build_data_file(content, name)?;
 
-                    data_collection.push(DataFile {
-                        name,
-                        path_value,
-                        content,
-                    });
+                    data_collection.push(data_file);
 
                     Ok(data_collection)
                 },
@@ -701,15 +675,14 @@ fn evaluate_against_data_input<'r>(
     }
     Ok(overall)
 }
-
-fn get_path_aware_value_from_data(content: &str, name: &str) -> Result<PathAwareValue> {
+fn build_data_file(content: String, name: String) -> Result<DataFile> {
     if content.trim().is_empty() {
         return Err(Error::ParseError(format!(
             "Unable to parse a template from data file: {name} is empty"
         )));
     }
 
-    let path_value = match crate::rules::values::read_from(content) {
+    let path_value = match crate::rules::values::read_from(&content) {
         Ok(value) => PathAwareValue::try_from(value)?,
         Err(_) => {
             let str_len: usize = cmp::min(content.len(), 100);
@@ -720,7 +693,11 @@ fn get_path_aware_value_from_data(content: &str, name: &str) -> Result<PathAware
         }
     };
 
-    Ok(path_value)
+    Ok(DataFile {
+        name,
+        path_value,
+        content,
+    })
 }
 
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
