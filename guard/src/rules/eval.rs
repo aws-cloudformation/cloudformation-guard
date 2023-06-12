@@ -963,8 +963,6 @@ fn binary_operation<'value, 'loc: 'value>(
                             }
                         }
                     },
-
-                    operators::ValueEvalResult::UnaryResult(_) => unreachable!(),
                 }
             }
             Ok(EvaluationResult::QueryValueResult(statues))
