@@ -57,8 +57,8 @@ fn append_cdk_metadata_test() -> Result<()> {
             _cmp: Option<(CmpOperator, bool)>,
         ) {
             assert_ne!(msg.as_str(), "");
-            assert_eq!(msg.starts_with("FIRST PART"), true);
-            assert_eq!(msg.len() > "FIRST PART".len(), true);
+            assert!(msg.starts_with("FIRST PART"));
+            assert!(msg.len() > "FIRST PART".len());
             println!("{}", msg);
         }
 
