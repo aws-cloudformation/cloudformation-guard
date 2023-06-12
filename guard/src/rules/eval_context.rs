@@ -46,6 +46,7 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
+    #[cfg(test)]
     pub fn reset_root(self, new_root: Rc<PathAwareValue>) -> Result<RootScope<'value, 'loc>> {
         root_scope_with(
             self.scope.literals,
@@ -304,8 +305,10 @@ fn check_and_delegate<'value, 'loc: 'value>(
     }
 }
 
+type Converters = &'static [(fn(&str) -> bool, fn(&str) -> String)];
 lazy_static! {
-    static ref CONVERTERS: &'static [(fn(&str) -> bool, fn(&str) -> String)] = &[
+    #[allow(clippy::type_complexity)]
+    static ref CONVERTERS: Converters = &[
         (camelcase::is_camel_case, camelcase::to_camel_case),
         (classcase::is_class_case, classcase::to_class_case),
         (kebabcase::is_kebab_case, kebabcase::to_kebab_case),
