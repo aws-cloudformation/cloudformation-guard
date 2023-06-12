@@ -58,10 +58,14 @@ is_type_fn!(is_string_operation, PathAwareValue::String(_));
 is_type_fn!(is_list_operation, PathAwareValue::List(_));
 is_type_fn!(is_struct_operation, PathAwareValue::Map(_));
 is_type_fn!(is_int_operation, PathAwareValue::Int(_));
+#[cfg(test)]
 is_type_fn!(is_float_operation, PathAwareValue::Float(_));
 is_type_fn!(is_bool_operation, PathAwareValue::Bool(_));
+#[cfg(test)]
 is_type_fn!(is_char_range_operation, PathAwareValue::RangeChar(_));
+#[cfg(test)]
 is_type_fn!(is_int_range_operation, PathAwareValue::RangeInt(_));
+#[cfg(test)]
 is_type_fn!(is_float_range_operation, PathAwareValue::RangeFloat(_));
 
 fn not_operation<O>(operation: O) -> impl Fn(&QueryResult) -> Result<bool>
@@ -88,6 +92,7 @@ where
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn record_unary_clause<'eval, 'value, 'loc: 'value, O>(
     operation: O,
     cmp: (CmpOperator, bool),
@@ -165,6 +170,7 @@ pub(super) enum EvaluationResult {
     QueryValueResult(Vec<(QueryResult, Status)>),
 }
 
+#[allow(clippy::type_complexity)]
 fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     lhs_query: &'l [QueryPart<'loc>],
     cmp: (CmpOperator, bool),
@@ -264,7 +270,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                 EvaluationResult::QueryValueResult(results)
             } else {
                 EvaluationResult::EmptyQueryResult({
-                    let result = if cmp.1 { false } else { true };
+                    let result = !cmp.1;
                     let result = if inverse { !result } else { result };
                     match result {
                         true => {
@@ -280,7 +286,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                             eval_context.end_record(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck(
-                                    custom_message.clone(),
+                                    custom_message,
                                 )),
                             )?;
                             Status::FAIL
@@ -396,6 +402,7 @@ struct ComparisonWithRhs {
     pair: LhsRhsPair,
 }
 
+#[allow(dead_code)]
 struct NotComparableWithRhs {
     reason: String,
     pair: LhsRhsPair,
@@ -406,10 +413,10 @@ struct UnResolvedRhs {
     lhs: Rc<PathAwareValue>,
 }
 
-fn each_lhs_compare<'r, C>(
+fn each_lhs_compare<C>(
     cmp: C,
     lhs: Rc<PathAwareValue>,
-    rhs: &'r [QueryResult],
+    rhs: &[QueryResult],
 ) -> Result<Vec<ComparisonResult>>
 where
     C: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>,
@@ -434,7 +441,7 @@ where
                             // && each_rhs_resolved.is_scalar() {
                             if let PathAwareValue::List((_, inner)) = &*lhs {
                                 for each in inner {
-                                    match cmp(&each, each_rhs_resolved) {
+                                    match cmp(each, each_rhs_resolved) {
                                         Ok(outcome) => {
                                             statues.push(ComparisonResult::Comparable(
                                                 ComparisonWithRhs {
@@ -532,18 +539,6 @@ where
     Ok(statues)
 }
 
-fn not_cmp<F>(cmp: F) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>
-where
-    F: Fn(&PathAwareValue, &PathAwareValue) -> Result<bool>,
-{
-    move |left, right| {
-        Ok(match cmp(left, right)? {
-            true => false,
-            false => true,
-        })
-    }
-}
-
 fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<bool> {
     move |lhs, rhs| match (lhs, rhs) {
         (PathAwareValue::String((_, lhs_value)), PathAwareValue::String((_, rhs_value))) => {
@@ -557,20 +552,8 @@ fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<b
                 tracking.push(compare_eq(lhs, each_rhs)?);
             }
             match tracking.iter().find(|s| **s) {
-                Some(_) => {
-                    if not_in {
-                        false
-                    } else {
-                        true
-                    }
-                }
-                None => {
-                    if not_in {
-                        true
-                    } else {
-                        false
-                    }
-                }
+                Some(_) => !not_in,
+                None => not_in,
             }
         }),
 
@@ -598,7 +581,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 },
         }) => (
             QueryResult::Resolved(Rc::clone(lhs_value)),
-            Some(QueryResult::Resolved(Rc::clone(&rhs_value))),
+            Some(QueryResult::Resolved(Rc::clone(rhs_value))),
             *outcome,
             None,
         ),
@@ -640,7 +623,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 from: lhs_value.clone(),
                 comparison: cmp,
                 to: rhs_value,
-                custom_message: custom_message.clone(),
+                custom_message,
                 message: reason,
                 status: Status::FAIL,
             })),
@@ -712,9 +695,11 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     }
 
     for (lhs, results) in by_lhs_value.iter() {
-        let found = results.iter().find(|(r, _rhs)| match r {
-            ComparisonResult::Comparable(ComparisonWithRhs { outcome: true, .. }) => true,
-            _ => false,
+        let found = results.iter().find(|(r, _rhs)| {
+            matches!(
+                r,
+                ComparisonResult::Comparable(ComparisonWithRhs { outcome: true, .. })
+            )
         });
         match found {
             Some(_) => {
@@ -770,7 +755,7 @@ fn binary_operation<'value, 'loc: 'value>(
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
     match results {
-        operators::EvalResult::Skip => return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
+        operators::EvalResult::Skip => Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
             for each in results {
@@ -940,7 +925,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 .rhs
                                 .iter()
                                 .cloned()
-                                .map(|e| QueryResult::Resolved(e))
+                                .map(QueryResult::Resolved)
                                 .collect::<Vec<_>>();
 
                             for lhs in qin.diff {
@@ -1118,9 +1103,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     RecordType::GuardClauseBlockCheck(BlockCheck {
                         status: Status::FAIL,
                         at_least_one_matches: !all,
-                        message: Some(format!(
+                        message: Some(
                             "Error not RHS for binary clause when handling clause, bailing"
-                        )),
+                                .to_string(),
+                        ),
                     }),
                 )?;
                 return Err(Error::NotComparable(format!(
@@ -1200,7 +1186,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     message: Some(format!("Error {} when handling clause, bailing", e)),
                 }),
             )?;
-            return Err(e);
+
+            Err(e)
         }
     }
 }
@@ -1536,7 +1523,7 @@ impl<'eval, 'value, 'loc: 'value> RecordTracer<'value>
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
         let record = match record {
             RecordType::RuleCheck(ns) => {
-                if ns.name == &self.call_rule.named_rule.dependent_rule {
+                if ns.name == self.call_rule.named_rule.dependent_rule {
                     RecordType::RuleCheck(NamedStatus {
                         name: ns.name,
                         status: ns.status,
@@ -1572,13 +1559,13 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
         match each {
             LetValue::Value(val) => {
                 resolved_parameters.insert(
-                    (&param_rule.parameter_names[idx]).as_str(),
+                    (param_rule.parameter_names[idx]).as_str(),
                     vec![QueryResult::Resolved(Rc::new(val.clone()))],
                 );
             }
             LetValue::AccessClause(query) => {
                 resolved_parameters.insert(
-                    (&param_rule.parameter_names[idx]).as_str(),
+                    (param_rule.parameter_names[idx]).as_str(),
                     resolver.query(&query.query)?,
                 );
             }
@@ -1608,7 +1595,7 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
             block,
             resolver,
         ),
-        GuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(&prc, resolver),
+        GuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
     }
 }
 
@@ -1619,9 +1606,7 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     match when_clause {
         WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
         WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver),
-        WhenGuardClause::ParameterizedNamedRule(prc) => {
-            eval_parameterized_rule_call(&prc, resolver)
-        }
+        WhenGuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
     }
 }
 
@@ -1801,7 +1786,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Status> {
-    let context = format!("{}", rule.rule_name);
+    let context = rule.rule_name.to_string();
     resolver.start_record(&context)?;
     let block = if let Some(conditions) = &rule.conditions {
         let when_context = format!("Rule#{}/When", context);
@@ -1863,7 +1848,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                     ..Default::default()
                 }),
             )?;
-            return Err(e);
+            Err(e)
         }
     }
 }
