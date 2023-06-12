@@ -47,9 +47,9 @@ pub(super) fn resolve_variable_query<'s>(
     Ok(acc)
 }
 
-pub(super) fn resolve_query<'s, 'loc>(
+pub(super) fn resolve_query<'s>(
     all: bool,
-    query: &[QueryPart<'loc>],
+    query: &[QueryPart<'_>],
     context: &'s PathAwareValue,
     var_resolver: &'s dyn EvaluationContext,
 ) -> Result<Vec<&'s PathAwareValue>> {
@@ -80,6 +80,7 @@ fn negation_status(r: bool, clause_not: bool, not: bool) -> Status {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn compare_loop_all<F>(
     lhs: &Vec<&PathAwareValue>,
     rhs: &Vec<&PathAwareValue>,
@@ -97,7 +98,7 @@ where
     'lhs: for lhs_value in lhs {
         let mut acc = Vec::with_capacity(lhs.len());
         for rhs_value in rhs {
-            let check = compare(*lhs_value, *rhs_value)?;
+            let check = compare(lhs_value, rhs_value)?;
             if check {
                 if any_one_rhs {
                     acc.clear();
@@ -124,7 +125,7 @@ where
     Ok((lhs_cmp, results))
 }
 
-#[allow(clippy::never_loop)]
+#[allow(clippy::never_loop, clippy::type_complexity)]
 fn compare_loop<F>(
     lhs: &Vec<&PathAwareValue>,
     rhs: &Vec<&PathAwareValue>,
@@ -216,6 +217,7 @@ fn merge_mixed_results<'a>(incoming: &'a [&PathAwareValue]) -> Vec<&'a PathAware
     merged
 }
 
+#[allow(clippy::type_complexity)]
 fn compare<F>(
     lhs: &Vec<&PathAwareValue>,
     _lhs_query: &[QueryPart<'_>],
@@ -287,32 +289,6 @@ where
         }
     }
 }
-
-//impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
-//    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//        f.write_fmt(
-//            format_args!(
-//                "Clause({}, Check: {} {} {} {})",
-//                self.access_clause.location,
-//                SliceDisplay(&self.access_clause.query.query),
-//                if self.access_clause.comparator.1 { "NOT" } else { "" },
-//                self.access_clause.comparator.0,
-//                match &self.access_clause.compare_with {
-//                    Some(v) => {
-//                        match v {
-//                            // TODO add Display for Value
-//                            LetValue::Value(val) => format!("{:?}", val),
-//                            LetValue::AccessClause(qry) => format!("{}", SliceDisplay(&qry.query)),
-//
-//                        }
-//                    },
-//                    None => "".to_string()
-//                },
-//            )
-//        )?;
-//        Ok(())
-//    }
-//}
 
 pub(super) fn invert_closure<F>(
     f: F,
@@ -411,13 +387,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => Some(negation_status(false, not, clause.negation)),
                 Some(l) => Some(negation_status(
                     l.iter()
-                        .find(|p| {
-                            if let PathAwareValue::String(_) = **p {
-                                false
-                            } else {
-                                true
-                            }
-                        })
+                        .find(|p| !matches!(**p, PathAwareValue::String(_)))
                         .map_or(true, |_i| false),
                     not,
                     clause.negation,
@@ -428,13 +398,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => Some(negation_status(false, not, clause.negation)),
                 Some(l) => Some(negation_status(
                     l.iter()
-                        .find(|p| {
-                            if let PathAwareValue::List(_) = **p {
-                                false
-                            } else {
-                                true
-                            }
-                        })
+                        .find(|p| !matches!(**p, PathAwareValue::List(_)))
                         .map_or(true, |_i| false),
                     not,
                     clause.negation,
@@ -445,13 +409,7 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
                 None => Some(negation_status(false, not, clause.negation)),
                 Some(l) => Some(negation_status(
                     l.iter()
-                        .find(|p| {
-                            if let PathAwareValue::Map(_) = **p {
-                                false
-                            } else {
-                                true
-                            }
-                        })
+                        .find(|p| !matches!(**p, PathAwareValue::Map(_)))
                         .map_or(true, |_i| false),
                     not,
                     clause.negation,
@@ -771,7 +729,7 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Block<'loc, T> {
         context: &'s PathAwareValue,
         var_resolver: &'s dyn EvaluationContext,
     ) -> Result<Status> {
-        let block = BlockScope::new(&self, context, var_resolver)?;
+        let block = BlockScope::new(self, context, var_resolver)?;
         self.conjunctions.evaluate(context, &block)
     }
 }
@@ -967,7 +925,7 @@ impl<'loc> Evaluate for TypeBlock<'loc> {
                 let mut each_type_report =
                     AutoReport::new(EvaluationType::Type, var_resolver, &type_context);
                 match each_type_report
-                    .status(self.block.evaluate(*each, var_resolver)?)
+                    .status(self.block.evaluate(each, var_resolver)?)
                     .get_status()
                 {
                     Status::PASS => {
@@ -1118,6 +1076,7 @@ pub(crate) struct RootScope<'s, 'loc> {
     rule_statues: std::cell::RefCell<HashMap<&'s str, Status>>,
 }
 
+#[cfg(test)]
 impl<'s, 'loc> RootScope<'s, 'loc> {
     pub(crate) fn new(rules: &'s RulesFile<'loc>, value: &'s PathAwareValue) -> Result<Self> {
         let mut literals = HashMap::new();
@@ -1149,7 +1108,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
             return Ok(value.clone());
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let all = (*query).match_all;
+            let all = query.match_all;
             let query = &query.query;
             let values = match query[0].variable() {
                 Some(var) => resolve_variable_query(all, var, query, self)?,
@@ -1246,7 +1205,7 @@ impl<'s, T> EvaluationContext for BlockScope<'s, T> {
             return Ok(value.clone());
         }
         return if let Some((key, query)) = self.pending_queries.get_key_value(variable) {
-            let all = (*query).match_all;
+            let all = query.match_all;
             let query = &query.query;
             let values = match query[0].variable() {
                 Some(var) => resolve_variable_query(all, var, query, self)?,
@@ -1328,20 +1287,6 @@ impl<'s> AutoReport<'s> {
 
     pub(super) fn status(&mut self, status: Status) -> &mut Self {
         self.status = Some(status);
-        self
-    }
-
-    pub(super) fn comparison(
-        &mut self,
-        status: Status,
-        from: Option<PathAwareValue>,
-        to: Option<PathAwareValue>,
-        cmp: (CmpOperator, bool),
-    ) -> &mut Self {
-        self.status = Some(status);
-        self.from = from;
-        self.to = to;
-        self.cmp = Some(cmp);
         self
     }
 

@@ -526,7 +526,7 @@ where
     B: Fn(&str, &str, &str, &NameInfo<'_>) -> crate::rules::Result<String>,
 {
     for each in info {
-        let (_) = match &each.comparison {
+        let _ = match &each.comparison {
             Some(cmp) => (Some(cmp.operator), cmp.not_operator_exists),
             None => (None, false),
         };
