@@ -207,6 +207,7 @@ mod validate_tests {
     )]
     #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,

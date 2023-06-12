@@ -312,10 +312,11 @@ or rules files.
 
                                 let file_name = get_file_name(path, &base);
 
-                                let path_value = match get_path_aware_value_from_data(&content) {
-                                    Ok(t) => t,
-                                    Err(e) => return Err(e),
-                                };
+                                let path_value =
+                                    match get_path_aware_value_from_data(&content, &name) {
+                                        Ok(t) => t,
+                                        Err(e) => return Err(e),
+                                    };
 
                                 streams.push(DataFile {
                                     name: file_name,
@@ -332,12 +333,16 @@ or rules files.
                 if app.contains_id(RULES.0) {
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
-                    let path_value = match get_path_aware_value_from_data(&content) {
+
+                    let name = "STDIN".to_string();
+
+                    let path_value = match get_path_aware_value_from_data(&content, &name) {
                         Ok(t) => t,
                         Err(e) => return Err(e),
                     };
+
                     streams.push(DataFile {
-                        name: "STDIN".to_string(),
+                        name,
                         path_value,
                         content,
                     });
@@ -367,7 +372,7 @@ or rules files.
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let path_value = get_path_aware_value_from_data(&content)?;
+                                let path_value = get_path_aware_value_from_data(&content, &name)?;
 
                                 primary_path_value = match primary_path_value {
                                     Some(current) => Some(current.merge(path_value)?),
@@ -478,10 +483,11 @@ or rules files.
                 vec![],
                 |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
                     let content = data.to_string();
-                    let path_value = get_path_aware_value_from_data(&content)?;
+                    let name = format!("DATA_STDIN[{}]", i + 1);
+                    let path_value = get_path_aware_value_from_data(&content, &name)?;
 
                     data_collection.push(DataFile {
-                        name: format!("DATA_STDIN[{}]", i + 1),
+                        name,
                         path_value,
                         content,
                     });
@@ -852,22 +858,25 @@ fn evaluate_against_data_input<'r>(
     Ok(overall)
 }
 
-fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
+fn get_path_aware_value_from_data(content: &str, name: &str) -> Result<PathAwareValue> {
     if content.trim().is_empty() {
-        Err(Error::ParseError("blank data".to_string()))
-    } else {
-        let path_value = match crate::rules::values::read_from(content) {
-            Ok(value) => PathAwareValue::try_from(value)?,
-            Err(_) => {
-                let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::ParseError(format!(
-                    "data beginning with \n{}\n ...",
-                    &content[..str_len]
-                )));
-            }
-        };
-        Ok(path_value)
+        return Err(Error::ParseError(format!(
+            "Unable to parse a template from data file: {name} is empty"
+        )));
     }
+
+    let path_value = match crate::rules::values::read_from(content) {
+        Ok(value) => PathAwareValue::try_from(value)?,
+        Err(_) => {
+            let str_len: usize = cmp::min(content.len(), 100);
+            return Err(Error::ParseError(format!(
+                "Error encountered while parsing data file: {name}, data beginning with \n{}\n ...",
+                &content[..str_len]
+            )));
+        }
+    };
+
+    Ok(path_value)
 }
 
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
