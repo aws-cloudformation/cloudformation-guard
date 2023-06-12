@@ -35,20 +35,16 @@ pub enum CmpOperator {
 
 impl CmpOperator {
     pub(crate) fn is_unary(&self) -> bool {
-        match self {
+        matches!(
+            self,
             CmpOperator::Exists
-            | CmpOperator::Empty
-            | CmpOperator::IsString
-            | CmpOperator::IsBool
-            | CmpOperator::IsList
-            | CmpOperator::IsInt
-            | CmpOperator::IsMap => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_binary(&self) -> bool {
-        !self.is_unary()
+                | CmpOperator::Empty
+                | CmpOperator::IsString
+                | CmpOperator::IsBool
+                | CmpOperator::IsList
+                | CmpOperator::IsInt
+                | CmpOperator::IsMap
+        )
     }
 }
 
@@ -156,8 +152,7 @@ impl Display for Value {
             Value::Float(float) => write!(f, "{}", float),
             Value::Bool(bool) => write!(f, "{}", bool),
             Value::List(list) => {
-                let result: Vec<String> =
-                    list.into_iter().map(|item| format!("{}", item)).collect();
+                let result: Vec<String> = list.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", result.join(", "))
             }
             Value::Map(map) => {
@@ -386,6 +381,7 @@ impl<'a> TryFrom<&'a str> for Value {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) enum MarkedValue {
     Null(Location),
     BadValue(String, Location),
@@ -429,10 +425,11 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::ParseError(format!("{}", e.to_string()))),
+        Err(e) => Err(Error::ParseError(format!("{}", e))),
     }
 }
 
+#[cfg(test)]
 pub(super) fn make_linked_hashmap<'a, I>(values: I) -> IndexMap<String, Value>
 where
     I: IntoIterator<Item = (&'a str, Value)>,
