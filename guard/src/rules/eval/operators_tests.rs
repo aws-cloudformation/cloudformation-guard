@@ -53,30 +53,30 @@ Resources:
       le: 10
 "###;
 
-const RULES_EQ: &str = r###"
-let literal1 = [10, 20, 30]
-let literal2 = [10, 20]
+// const RULES_EQ: &str = r###"
+// let literal1 = [10, 20, 30]
+// let literal2 = [10, 20]
 
-rule check_eq_literals_fail {
-    %literal1 == %literal2
-}
+// rule check_eq_literals_fail {
+//     %literal1 == %literal2
+// }
 
-rule check_in_literals_pass {
-    %literal2 in %literal1
-}
+// rule check_in_literals_pass {
+//     %literal2 in %literal1
+// }
 
-let s3s         = Resources[ s3_id | Type == "AWS::S3::Bucket" ]
-let s3Policies  = some Resources[ Type == "AWS::S3::BucketPolicy" ].Bucket.Ref
-rule check_eq_queries_fail when %s3s not empty {
-   %s3Policies == %s3_id
-}
+// let s3s         = Resources[ s3_id | Type == "AWS::S3::Bucket" ]
+// let s3Policies  = some Resources[ Type == "AWS::S3::BucketPolicy" ].Bucket.Ref
+// rule check_eq_queries_fail when %s3s not empty {
+//    %s3Policies == %s3_id
+// }
 
-rule check_query_to_rhs_literal_fail {
-    Resources[ Type == "AWS::IAM::Role" ].Properties.Policy.Statement[*] {
-        Principal != '*'
-    }
-}
-"###;
+// rule check_query_to_rhs_literal_fail {
+//     Resources[ Type == "AWS::IAM::Role" ].Properties.Policy.Statement[*] {
+//         Principal != '*'
+//     }
+// }
+// "###;
 
 #[test]
 fn test_operator_eq_literal() -> crate::rules::Result<()> {
