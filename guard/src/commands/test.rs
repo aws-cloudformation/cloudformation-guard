@@ -1,4 +1,4 @@
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -15,18 +15,16 @@ use crate::commands::files::{
     alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
-use crate::commands::tracker::StackTracker;
 use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
     RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::evaluate::RootScope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status::SKIP;
-use crate::rules::{Evaluate, NamedStatus, RecordType, Result, Status};
+use crate::rules::{NamedStatus, RecordType, Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
