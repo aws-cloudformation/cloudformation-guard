@@ -42,9 +42,9 @@ fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
     let traversal = Traversal::from(&value);
     let root = traversal.root().unwrap();
     let result = traversal.at("/", root)?;
-    assert_eq!(matches!(result, TraversalResult::Value(_)), true);
+    assert!(matches!(result, TraversalResult::Value(_)));
     if let TraversalResult::Value(curr) = result {
-        assert_eq!(std::ptr::eq(&value, curr.value), true);
+        assert!(std::ptr::eq(&value, curr.value));
     }
     let result = match result {
         TraversalResult::Value(val) => val,
@@ -52,18 +52,18 @@ fn test_absolute_pointer_traversal() -> crate::rules::Result<()> {
     };
 
     let result = traversal.at("/Resources/s3/Properties/AnalyticsConfiguration", result)?;
-    assert_eq!(matches!(result, TraversalResult::Value(_)), true);
+    assert!(matches!(result, TraversalResult::Value(_)));
     let result = match result {
         TraversalResult::Value(val) => val,
         _ => unreachable!(),
     };
-    assert_eq!(matches!(result.value, PathAwareValue::List(_)), true);
+    assert!(matches!(result.value, PathAwareValue::List(_)));
 
     //
     // Testing relative
     //
     let upward = traversal.at("1/Name", result)?;
-    assert_eq!(matches!(upward, TraversalResult::Value(_)), true);
+    assert!(matches!(upward, TraversalResult::Value(_)));
     let upward = match upward {
         TraversalResult::Value(up) => up,
         _ => unreachable!(),
