@@ -64,23 +64,15 @@ impl Command for ParseTree {
             None => Box::new(reader),
         };
 
-        let yaml = !app.get_flag(PRINT_JSON.0);
         let mut content = String::new();
         file.read_to_string(&mut content)?;
         let span = crate::rules::parser::Span::new_extra(&content, "");
-        match crate::rules::parser::rules_file(span) {
-            Err(e) => {
-                writer.write_err(format!("Parsing error handling rule, Error = {e}"))?;
-                return Err(e);
-            }
 
-            Ok(rules) => {
-                if yaml {
-                    serde_yaml::to_writer(writer, &rules)?;
-                } else {
-                    serde_json::to_writer(writer, &rules)?;
-                }
-            }
+        let rules = crate::rules::parser::rules_file(span)?;
+
+        match app.get_flag(PRINT_JSON.0) {
+            true => serde_json::to_writer(writer, &rules)?,
+            false => serde_yaml::to_writer(writer, &rules)?,
         }
 
         Ok(0_i32)
