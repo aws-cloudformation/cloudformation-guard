@@ -739,7 +739,7 @@ fn test_var_name() {
     ];
 
     for (idx, text) in examples.iter().enumerate() {
-        let span = from_str2(*text);
+        let span = from_str2(text);
         let actual = var_name(span);
         assert_eq!(&actual, &expectations[idx]);
     }
