@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::{command::Command, commands};
 
 pub mod reader;
