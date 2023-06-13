@@ -1086,6 +1086,7 @@ impl<'s, 'loc> RootScope<'s, 'loc> {
         for rule in &rules.guard_rules {
             lookup_cache.insert(rule.rule_name.as_str(), rule);
         }
+
         Ok(RootScope {
             rules,
             input_context: value,

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 pub(crate) mod display;
 pub(crate) mod errors;
 pub(crate) mod eval;
