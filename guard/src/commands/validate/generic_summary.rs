@@ -25,13 +25,13 @@ impl Reporter for GenericSummary {
     fn report(
         &self,
         writer: &mut dyn Write,
-        status: Option<Status>,
+        _: Option<Status>,
         failed_rules: &[&StatusContext],
         passed_or_skipped: &[&StatusContext],
         longest_rule_name: usize,
         rules_file: &str,
         data_file: &str,
-        data: &Traversal<'_>,
+        _: &Traversal<'_>,
         output_format_type: OutputFormatType,
     ) -> crate::rules::Result<()> {
         let renderer =
@@ -81,10 +81,7 @@ impl Reporter for GenericSummary {
             HashMap::new()
         };
 
-        let as_vec = passed_or_skipped
-            .iter()
-            .map(|s| *s)
-            .collect::<Vec<&StatusContext>>();
+        let as_vec = passed_or_skipped.to_vec();
         let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
             as_vec.iter().partition(|status| match status.status {
                 // This uses the dereference deep trait of Rust
@@ -146,7 +143,7 @@ impl Reporter for GenericSummary {
 struct SingleLineSummary {}
 
 fn retrieval_error_message(
-    rules_file: &str,
+    _: &str,
     data_file: &str,
     info: &NameInfo<'_>,
 ) -> crate::rules::Result<String> {
@@ -161,7 +158,7 @@ fn retrieval_error_message(
 }
 
 fn unary_error_message(
-    rules_file: &str,
+    _: &str,
     data_file: &str,
     op_msg: &str,
     info: &NameInfo<'_>,
@@ -172,12 +169,12 @@ fn unary_error_message(
                op_msg=op_msg,
                data=data_file,
                rule=info.rule,
-               msg=info.message.replace("\n", ";"),
+               msg=info.message.replace('\n', ";"),
     ))
 }
 
 fn binary_error_message(
-    rules_file: &str,
+    _: &str,
     data_file: &str,
     op_msg: &str,
     info: &NameInfo<'_>,
@@ -194,7 +191,7 @@ fn binary_error_message(
         op_msg = op_msg,
         data = data_file,
         rule = info.rule,
-        msg = info.message.replace("\n", ";"),
+        msg = info.message.replace('\n', ";"),
         expected = info
             .expected
             .as_ref()

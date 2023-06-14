@@ -5,20 +5,15 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod parse_tree_tests {
-    use std::io::stdout;
-
-    use rstest::rstest;
-
-    use cfn_guard;
     use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
-    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
+    #[allow(dead_code)]
     #[derive(Default)]
     struct ParseTreeTestRunner<'args> {
         rules: &'args str,
@@ -33,11 +28,13 @@ mod parse_tree_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn output(&'args mut self, arg: &'args str) -> &'args mut ParseTreeTestRunner {
             self.rules = arg;
             self
         }
 
+        #[allow(dead_code)]
         fn print_yaml(&'args mut self) -> &'args mut ParseTreeTestRunner {
             self.print_yaml = true;
             self

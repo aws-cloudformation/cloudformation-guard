@@ -5,17 +5,13 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod rulegen_tests {
-    use std::io::stdout;
-
-    use rstest::rstest;
 
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{OUTPUT, RULEGEN, TEMPLATE};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
-    use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
-    use cfn_guard::Error;
+    use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
 
@@ -31,6 +27,7 @@ mod rulegen_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn output(&'args mut self, arg: Option<&'args str>) -> &'args mut RulegenTestRunner {
             self.output = arg;
             self

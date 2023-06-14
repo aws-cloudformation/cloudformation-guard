@@ -1,4 +1,3 @@
-use clap::{ArgMatches, Parser};
 use std::collections::HashMap;
 use std::fs::File;
 mod command;
@@ -12,9 +11,7 @@ use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use commands::{APP_NAME, APP_VERSION};
 use rules::errors::Error;
-use std::io::Write;
 use std::process::exit;
-use std::rc::Rc;
 
 fn main() -> Result<(), Error> {
     let mut app = clap::Command::new(APP_NAME)
@@ -31,7 +28,7 @@ fn main() -> Result<(), Error> {
         .arg_required_else_help(true);
 
     let mut commands = utils::get_guard_commands();
-    commands.push(Box::new(commands::completions::Completions::default()));
+    commands.push(Box::<commands::completions::Completions>::default());
 
     let mappings = commands.iter().map(|s| (s.name(), s)).fold(
         HashMap::with_capacity(commands.len()),

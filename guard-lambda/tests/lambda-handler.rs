@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use cfn_guard_lambda;
     use cfn_guard_lambda::main::{call_cfn_guard, CustomEvent, CustomOutput};
     use lambda_runtime::Context;
 

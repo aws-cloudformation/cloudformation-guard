@@ -48,10 +48,6 @@ pub(crate) struct CfnAware<'reporter> {
 }
 
 impl<'reporter> CfnAware<'reporter> {
-    pub(crate) fn new() -> CfnAware<'reporter> {
-        CfnAware { next: None }
-    }
-
     pub(crate) fn new_with(next: &'reporter dyn Reporter) -> CfnAware {
         CfnAware { next: Some(next) }
     }
@@ -85,9 +81,9 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
         output_type: OutputFormatType,
     ) -> rules::Result<()> {
         let root = data.root().unwrap();
-        if let Ok(_) = data.at("/Resources", root) {
+        if data.at("/Resources", root).is_ok() {
             let failure_report = simplifed_json_from_root(root_record)?;
-            Ok(match output_type {
+            match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
                 OutputFormatType::SingleLineSummary => single_line(
@@ -98,7 +94,9 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                     data,
                     failure_report,
                 )?,
-            })
+            };
+
+            Ok(())
         } else {
             self.next.map_or(Ok(()), |next| {
                 next.report_eval(
@@ -114,30 +112,6 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
             })
         }
     }
-}
-
-fn binary_err_msg(
-    writer: &mut dyn Write,
-    _clause: &ClauseReport<'_>,
-    bc: &BinaryComparison,
-    prefix: &str,
-) -> rules::Result<usize> {
-    let width = "PropertyPath".len() + 4;
-    writeln!(
-        writer,
-        "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
-        width = width,
-        pp = "PropertyPath",
-        op = "Operator",
-        val = "Value",
-        cw = "ComparedWith",
-        prefix = prefix,
-        path = bc.from.self_path(),
-        value = ValueOnlyDisplay(Rc::clone(&bc.from)),
-        cmp = rules::eval_context::cmp_str(bc.comparison),
-        with = ValueOnlyDisplay(Rc::clone(&bc.to))
-    )?;
-    Ok(width)
 }
 
 fn unary_err_msg(
@@ -184,7 +158,7 @@ fn single_line(
     let root = data.root().unwrap();
     let mut by_resources = HashMap::new();
     for (key, value) in path_tree.range(String::from("/Resources")..) {
-        let matches = key.matches("/").count();
+        let matches = key.matches('/').count();
         let mut count = 1;
 
         if matches > 2 {
@@ -192,7 +166,7 @@ fn single_line(
                 if matches - count == 0 {
                     unreachable!()
                 }
-                let resource_name = get_resource_name(&key, count, matches);
+                let resource_name = get_resource_name(key, count, matches);
 
                 match handle_resource_aggr(data, root, resource_name, &mut by_resources, value) {
                     Some(_) => break,
@@ -200,7 +174,7 @@ fn single_line(
                 };
             }
         } else {
-            let resource_name = match CFN_RESOURCES.captures(&key) {
+            let resource_name = match CFN_RESOURCES.captures(key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
                     writeln!(writer, "key: {}", key)?;
@@ -401,21 +375,12 @@ fn single_line(
                             writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
                         }
                         let mut context = 5;
-                        loop {
-                            match self.code_segment.next() {
-                                Some((num, line)) => {
-                                    let line = format!("{num:>5}.{line}", num = num, line = line)
-                                        .bright_green();
-                                    writeln!(
-                                        writer,
-                                        "{prefix}{line}",
-                                        prefix = new_prefix,
-                                        line = line
-                                    )?;
-                                }
-                                None => break,
-                            }
+                        while let Some((num, line)) = self.code_segment.next() {
+                            let line =
+                                format!("{num:>5}.{line}", num = num, line = line).bright_green();
+                            writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
                             context -= 1;
+
                             if context <= 0 {
                                 break;
                             }
@@ -465,7 +430,7 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     root: &'value Node<'_>,
     name: String,
     by_resources: &mut HashMap<String, LocalResourceAggr<'record, 'value>>,
-    value: &Vec<Rc<crate::commands::validate::common::Node<'record, 'value>>>,
+    value: &[Rc<crate::commands::validate::common::Node<'record, 'value>>],
 ) -> Option<()> {
     let path = format!("/Resources/{}", name);
     let resource = match data.at(&path, root) {

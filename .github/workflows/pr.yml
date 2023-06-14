@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, development, rogue_one ]
+    branches: [main, development, rogue_one]
   pull_request:
-    branches: [ main, development, rogue_one ]
+    branches: [main, development, rogue_one]
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,19 +14,19 @@ jobs:
     name: Build all crates & run unit tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Build all crates
-      run: cargo build --release --verbose
-    - name: Run unit tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v2
+      - name: Build all crates
+        run: cargo build --release --verbose
+      - name: Run unit tests
+        run: cargo test --verbose
 
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Shellcheck
-      run: shellcheck install-guard.sh
+      - uses: actions/checkout@v2
+      - name: Shellcheck
+        run: shellcheck install-guard.sh
 
   formatting:
     name: Formatting check (cargo fmt)
@@ -39,10 +39,26 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
+  linting:
+    name: Linting check (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          args: -- -D warnings
+
   aws-guard-rules-registry-integration-tests-linux:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: Integration tests against aws-guard-rules-registry
     steps:
@@ -141,10 +157,10 @@ jobs:
       - name: Run integration tests using parse-tree command
         run: |
           cd aws-guard-rules-registry/rules
-          
+
           $FAILED_RULES = @()
           $SKIPPED_RULES = @()
-          
+
           $rules  = @(Get-ChildItem -Path .\ -Filter *.guard -Recurse -File)
 
           Foreach ($rule in $rules) {
@@ -158,15 +174,15 @@ jobs:
               $FAILED_RULES += "$rule"
             }
           }
-          
+
           $SKIPPED_RULE_COUNT = $SKIPPED_RULES.Length
           if ($SKIPPED_RULE_COUNT -gt 0) {
               echo "The following `$SKIPPED_RULE_COUNT.Length` rule(s) were skipped because they contained only comments:"
               echo $SKIPPED_RULES
           }
-          
+
           $FAILED_RULE_COUNT = $FAILED_RULES.Length
-  
+
           if ($FAILED_RULE_COUNT -gt 0) {
               echo "The following $FAILED_RULE_COUNT rule(s) have failed the parse-tree integration tests with a non-zero error code:"
               echo $FAILED_RULES

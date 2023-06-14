@@ -41,19 +41,6 @@ impl<'r> std::fmt::Debug for StackTracker<'r> {
     }
 }
 
-impl<'r> StackTracker<'r> {
-    pub(super) fn new(delegate: &'r dyn EvaluationContext) -> Self {
-        StackTracker {
-            root_context: delegate,
-            stack: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-
-    pub(super) fn stack(self) -> Vec<StatusContext> {
-        self.stack.into_inner()
-    }
-}
-
 impl<'r> EvaluationContext for StackTracker<'r> {
     fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         self.root_context.resolve_variable(variable)
@@ -76,11 +63,11 @@ impl<'r> EvaluationContext for StackTracker<'r> {
         if self.stack.borrow().len() == 1 {
             match self.stack.borrow_mut().get_mut(0) {
                 Some(top) => {
-                    top.status = status.clone();
-                    top.from = from.clone();
-                    top.to = to.clone();
-                    top.msg = Some(msg.clone());
-                    top.comparator = cmp.clone();
+                    top.status = status;
+                    top.from = from;
+                    top.to = to;
+                    top.msg = Some(msg);
+                    top.comparator = cmp;
                 }
                 None => unreachable!(),
             }
@@ -88,20 +75,17 @@ impl<'r> EvaluationContext for StackTracker<'r> {
         }
 
         let stack = self.stack.borrow_mut().pop();
-        match stack {
-            Some(mut stack) => {
-                stack.status = status.clone();
-                stack.from = from.clone();
-                stack.to = to.clone();
-                stack.msg = Some(msg.clone());
-                stack.comparator = cmp.clone();
+        if let Some(mut stack) = stack {
+            stack.status = status;
+            stack.from = from.clone();
+            stack.to = to.clone();
+            stack.msg = Some(msg.clone());
+            stack.comparator = cmp;
 
-                match self.stack.borrow_mut().last_mut() {
-                    Some(cxt) => cxt.children.push(stack),
-                    None => unreachable!(),
-                }
+            match self.stack.borrow_mut().last_mut() {
+                Some(cxt) => cxt.children.push(stack),
+                None => unreachable!(),
             }
-            None => {}
         }
         self.root_context
             .end_evaluation(eval_type, context, msg, from, to, status, cmp);

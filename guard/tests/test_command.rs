@@ -5,23 +5,20 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod test_command_tests {
-    use indoc::indoc;
-    use std::io::stdout;
 
     use rstest::rstest;
 
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{
-        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, RULES, RULES_AND_TEST_FILE, RULES_FILE, TEST,
-        TEST_DATA, VERBOSE,
+        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA,
+        VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
-    use cfn_guard::utils::writer::WriteBuffer::Stderr;
-    use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
+    use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
 
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
+    use crate::utils::{CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
@@ -51,6 +48,7 @@ mod test_command_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn rules_and_test_file(
             &'args mut self,
             arg: Option<&'args str>,
@@ -64,11 +62,13 @@ mod test_command_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn alphabetical(&'args mut self) -> &'args mut TestCommandTestRunner {
             self.alphabetical = true;
             self
         }
 
+        #[allow(dead_code)]
         fn last_modified(&'args mut self) -> &'args mut TestCommandTestRunner {
             self.last_modified = true;
             self
@@ -216,9 +216,9 @@ mod test_command_tests {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
-            .test_data(Some(&format!(
+            .test_data(Some(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
-            )))
+            ))
             .rules(Some(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
