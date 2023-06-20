@@ -254,6 +254,18 @@ mod validate_tests {
         "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose_non_compliant.out",
         StatusCode::PARSING_ERROR
     )]
+    #[case(
+        vec!["template_where_resources_isnt_root.json"],
+        vec!["workshop.guard"],
+        "resources/validate/output-dir/failing_template_without_resources_at_root.out",
+        StatusCode::PARSING_ERROR
+    )]
+    #[case(
+        vec!["failing_template_with_slash_in_key.yaml"],
+        vec!["rules-dir/s3_bucket_server_side_encryption_enabled.guard"],
+        "resources/validate/output-dir/failing_template_with_slash_in_key.out",
+        StatusCode::PARSING_ERROR
+    )]
     fn test_single_data_file_single_rules_file_verbose(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
