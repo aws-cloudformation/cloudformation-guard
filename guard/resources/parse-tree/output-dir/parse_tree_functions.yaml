@@ -1,0 +1,158 @@
+assignments:
+- var: template
+  value:
+    AccessClause:
+      query:
+      - Key: Resources
+      - AllValues: null
+      - Filter:
+        - null
+        - - - Clause:
+                access_clause:
+                  query:
+                    query:
+                    - Key: Type
+                    match_all: true
+                  comparator:
+                  - Eq
+                  - false
+                  compare_with:
+                    Value:
+                      path: ''
+                      value: AWS::New::Service
+                  custom_message: null
+                  location:
+                    line: 1
+                    column: 29
+                negation: false
+      match_all: true
+- var: type
+  value:
+    AccessClause:
+      query:
+      - Key: Resources
+      - Key: newServer
+      - Key: Type
+      match_all: true
+guard_rules:
+- rule_name: SOME_RULE
+  conditions:
+  - - Clause:
+        access_clause:
+          query:
+            query:
+            - Key: '%type'
+            match_all: true
+          comparator:
+          - Empty
+          - true
+          compare_with: null
+          custom_message: null
+          location:
+            line: 5
+            column: 21
+        negation: false
+  block:
+    assignments:
+    - var: lower
+      value:
+        FunctionCall:
+          parameters:
+          - AccessClause:
+              query:
+              - Key: '%type'
+              match_all: true
+          name: to_lower
+          location:
+            line: 6
+            column: 17
+    - var: upper
+      value:
+        FunctionCall:
+          parameters:
+          - AccessClause:
+              query:
+              - Key: '%type'
+              match_all: true
+          name: to_upper
+          location:
+            line: 10
+            column: 17
+    conjunctions:
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%lower'
+                match_all: true
+              comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: aws::new::service
+              custom_message: null
+              location:
+                line: 7
+                column: 5
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%lower'
+                match_all: true
+              comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: /aws::new::service/
+              custom_message: null
+              location:
+                line: 8
+                column: 5
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%upper'
+                match_all: true
+              comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: AWS::NEW::SERVICE
+              custom_message: null
+              location:
+                line: 11
+                column: 5
+            negation: false
+    - - Clause:
+          Clause:
+            access_clause:
+              query:
+                query:
+                - Key: '%upper'
+                match_all: true
+              comparator:
+              - Eq
+              - false
+              compare_with:
+                Value:
+                  path: ''
+                  value: /AWS::NEW::SERVICE/
+              custom_message: null
+              location:
+                line: 12
+                column: 5
+            negation: false
+parameterized_rules: []

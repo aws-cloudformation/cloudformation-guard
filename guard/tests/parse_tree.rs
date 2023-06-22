@@ -80,8 +80,8 @@ mod parse_tree_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
-        assert_output_from_str_eq!(
-            "{\"assignments\":[{\"var\":\"s3_buckets_server_side_encryption\",\"value\":{\"AccessClause\":{\"query\":[{\"Key\":\"Resources\"},{\"AllValues\":null},{\"Filter\":[null,[[{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"Type\"}],\"match_all\":true},\"comparator\":[\"Eq\",false],\"compare_with\":{\"Value\":{\"path\":\"\",\"value\":\"AWS::S3::Bucket\"}},\"custom_message\":null,\"location\":{\"line\":1,\"column\":54}},\"negation\":false}}],[{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"Metadata\"},{\"Key\":\"guard\"},{\"Key\":\"SuppressedRules\"}],\"match_all\":true},\"comparator\":[\"Exists\",true],\"compare_with\":null,\"custom_message\":null,\"location\":{\"line\":2,\"column\":3}},\"negation\":false}},{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"Metadata\"},{\"Key\":\"guard\"},{\"Key\":\"SuppressedRules\"},{\"AllValues\":null}],\"match_all\":true},\"comparator\":[\"Eq\",true],\"compare_with\":{\"Value\":{\"path\":\"\",\"value\":\"S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED\"}},\"custom_message\":null,\"location\":{\"line\":3,\"column\":3}},\"negation\":false}}]]]}],\"match_all\":true}}}],\"guard_rules\":[{\"rule_name\":\"S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED\",\"conditions\":[[{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"%s3_buckets_server_side_encryption\"}],\"match_all\":true},\"comparator\":[\"Empty\",true],\"compare_with\":null,\"custom_message\":null,\"location\":{\"line\":6,\"column\":52}},\"negation\":false}}]],\"block\":{\"assignments\":[],\"conjunctions\":[[{\"Clause\":{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"%s3_buckets_server_side_encryption\"},{\"AllIndices\":null},{\"Key\":\"Properties\"},{\"Key\":\"BucketEncryption\"}],\"match_all\":true},\"comparator\":[\"Exists\",false],\"compare_with\":null,\"custom_message\":null,\"location\":{\"line\":7,\"column\":3}},\"negation\":false}}}],[{\"Clause\":{\"Clause\":{\"access_clause\":{\"query\":{\"query\":[{\"Key\":\"%s3_buckets_server_side_encryption\"},{\"AllIndices\":null},{\"Key\":\"Properties\"},{\"Key\":\"BucketEncryption\"},{\"Key\":\"ServerSideEncryptionConfiguration\"},{\"AllIndices\":null},{\"Key\":\"ServerSideEncryptionByDefault\"},{\"Key\":\"SSEAlgorithm\"}],\"match_all\":true},\"comparator\":[\"In\",false],\"compare_with\":{\"Value\":{\"path\":\"\",\"value\":[\"aws:kms\",\"AES256\"]}},\"custom_message\":\"\\n    Violation: S3 Bucket must enable server-side encryption.\\n    Fix: Set the S3 Bucket property BucketEncryption.ServerSideEncryptionConfiguration.ServerSideEncryptionByDefault.SSEAlgorithm to either \\\"aws:kms\\\" or \\\"AES256\\\"\\n  \",\"location\":{\"line\":8,\"column\":3}},\"negation\":false}}}]]}}],\"parameterized_rules\":[]}",
+        assert_output_from_file_eq!(
+            "resources/parse-tree/output-dir/s3_bucket_server_side_encryption_parse_tree.json",
             writer
         )
     }
@@ -156,6 +156,11 @@ mod parse_tree_tests {
     #[case(
         "parse-tree/rules-dir/rule_with_this_keyword.guard",
         "resources/parse-tree/output-dir/test_rule_with_this_keyword.yaml",
+        StatusCode::SUCCESS
+    )]
+    #[case(
+        "validate/functions/rules/string_manipulation.guard",
+        "resources/parse-tree/output-dir/parse_tree_functions.yaml",
         StatusCode::SUCCESS
     )]
     fn test_yaml_output_compare_buffer_to_file(

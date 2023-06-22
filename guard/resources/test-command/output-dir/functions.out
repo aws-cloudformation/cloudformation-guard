@@ -1,0 +1,15 @@
+Test Case #1
+Name: Pass
+  PASS Rules:
+    SOME_RULE: Expected = PASS
+
+Test Case #2
+Name: Fail
+  PASS Rules:
+    SOME_RULE: Expected = FAIL
+
+Test Case #3
+Name: Skip
+  PASS Rules:
+    SOME_RULE: Expected = SKIP
+
