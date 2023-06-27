@@ -1907,13 +1907,11 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
         &context,
         RecordType::FileCheck(NamedStatus {
             status: overall,
-            name: match data_file_name {
-                Some(file_name) => file_name,
-                None => "",
-            },
+            name: data_file_name.unwrap_or_default(),
             ..Default::default()
         }),
     )?;
+
     Ok(overall)
 }
 

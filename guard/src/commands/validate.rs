@@ -410,7 +410,7 @@ or rules files.
                         data: data_files,
                         output: output_type,
                         writer,
-                        exit_code: 0,
+                        exit_code,
                     };
                     evaluator.evaluate()?
                 }
@@ -439,8 +439,8 @@ or rules files.
                                     writer,
                                 )?;
 
-                                if status == 5 {
-                                    exit_code = 5
+                                if status == 5 || status == 20 {
+                                    exit_code = status
                                 }
                             }
                         }
@@ -484,7 +484,7 @@ or rules files.
                         data: data_collection,
                         output: output_type,
                         writer,
-                        exit_code: 0,
+                        exit_code,
                     };
                     evaluator.evaluate()?
                 }
@@ -502,8 +502,8 @@ or rules files.
                             writer,
                         )?;
 
-                        if status == 5 {
-                            exit_code = 5;
+                        if status == 5 || status == 20 {
+                            exit_code = status;
                         }
                     }
                     exit_code
@@ -555,7 +555,7 @@ fn evaluate_rule(
             )?;
 
             if status == Status::FAIL {
-                return Ok(5);
+                return Ok(20);
             }
         }
     }
