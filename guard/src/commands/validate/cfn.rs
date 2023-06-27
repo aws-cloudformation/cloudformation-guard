@@ -81,19 +81,39 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
         output_type: OutputFormatType,
     ) -> rules::Result<()> {
         let root = data.root().unwrap();
+
         if data.at("/Resources", root).is_ok() {
             let failure_report = simplifed_json_from_root(root_record)?;
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
-                OutputFormatType::SingleLineSummary => single_line(
-                    write,
-                    data_file,
-                    data_file_bytes,
-                    rules_file,
-                    data,
-                    failure_report,
-                )?,
+                OutputFormatType::SingleLineSummary => {
+                    match single_line(
+                        write,
+                        data_file,
+                        data_file_bytes,
+                        rules_file,
+                        data,
+                        failure_report,
+                    ) {
+                        Err(crate::Error::InternalError(_)) => {
+                            self.next.map_or(Ok(()), |next| {
+                                next.report_eval(
+                                    write,
+                                    status,
+                                    root_record,
+                                    rules_file,
+                                    data_file,
+                                    data_file_bytes,
+                                    data,
+                                    output_type,
+                                )
+                            })?
+                        }
+                        Ok(_) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             };
 
             Ok(())
@@ -177,8 +197,9 @@ fn single_line(
             let resource_name = match CFN_RESOURCES.captures(key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
-                    writeln!(writer, "key: {}", key)?;
-                    unreachable!()
+                    return Err(crate::Error::InternalError(String::from(
+                        "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
+                    )));
                 }
             };
 

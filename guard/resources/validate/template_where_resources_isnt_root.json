@@ -1,0 +1,48 @@
+{
+    "Region": "us-east-1",
+    "Account": "314595678785",
+    "Partition": "aws",
+    "Roles": [
+        {
+            "RoleName": "MyRole",
+            "RolePath": "/",
+            "TrustPolicy": {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "AWS": [
+                                "314595678785"
+                            ]
+                        },
+                        "Action": [
+                            "sts:AssumeRole"
+                        ]
+                    }
+                ]
+            },
+            "Policies": [
+                {
+                    "Name": "root",
+                    "Policy": {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": "*"
+                            }
+                        ]
+                    },
+                    "Path": "/",
+                    "IsAWSManagedPolicy": false
+                }
+            ]
+        }
+    ],
+    "PermissionSets": [],
+    "Users": [],
+    "Groups": [],
+    "Resources": [],
+    "OrphanedPolicies": []
+}

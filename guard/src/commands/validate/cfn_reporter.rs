@@ -12,9 +12,9 @@ use crate::commands::validate::common::{
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 
-use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::EvaluationType;
 use crate::rules::Status;
 
 lazy_static! {

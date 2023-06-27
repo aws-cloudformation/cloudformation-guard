@@ -29,7 +29,7 @@ use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
-use crate::rules::{EvaluationType, Result, Status};
+use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 

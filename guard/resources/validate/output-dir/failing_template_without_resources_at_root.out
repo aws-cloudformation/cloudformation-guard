@@ -1,0 +1,37 @@
+template_where_resources_isnt_root.json Status = FAIL
+FAILED rules
+workshop.guard/assert_no_wildcard_actions    FAIL
+---
+Evaluation of rules workshop.guard against data template_where_resources_isnt_root.json
+--
+Property [/Roles/0] in data [template_where_resources_isnt_root.json] is not compliant with [assert_no_wildcard_actions] because needed value at [{"RoleName":"MyRole","RolePath":"/","TrustPolicy":{"Statement":[{"Effect":"Allow","Principal":{"AWS":["314595678785"]},"Action":["sts:AssumeRole"]}]},"Policies":[{"Name":"root","Policy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]},"Path":"/","IsAWSManagedPolicy":false}]}] was not empty. Error Message []
+Property [/Roles/0/Policies/0] in data [template_where_resources_isnt_root.json] is not compliant with [assert_no_wildcard_actions] because needed value at [{"Name":"root","Policy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]},"Path":"/","IsAWSManagedPolicy":false}] was not empty. Error Message []
+Property [/Roles/0/Policies/0/Policy/Statement/0/Action] in data [template_where_resources_isnt_root.json] is not compliant with [assert_no_wildcard_actions] because provided value ["*"] did match expected value ["*"]. Error Message []
+--
+`- File(template_where_resources_isnt_root.json, Status=FAIL)[Context=File(rules=1)]
+   `- Rule(assert_no_wildcard_actions, Status=FAIL)[Context=assert_no_wildcard_actions]
+      |- Disjunction(Status = FAIL)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+      |  |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Roles[*] EMPTY  ]
+      |  |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison= EMPTY, Value-At=(resolved, Path=/Roles/0[L:5,C:8] Value={"RoleName":"MyRole","RolePath":"/","TrustPolicy":{"Statement":[{"Effect":"Allow","Principal":{"AWS":["314595678785"]},"Action":["sts:AssumeRole"]}]},"Policies":[{"Name":"root","Policy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]},"Path":"/","IsAWSManagedPolicy":false}]}))[Context= Roles[*] EMPTY  ]
+      |  `- GuardValueBlockCheck(Status = FAIL)[Context=BlockGuardClause#Location[file:workshop.guard, line:7, column:3]]
+      |     `- Disjunction(Status = FAIL)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |        |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Policies[*] EMPTY  ]
+      |        |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison= EMPTY, Value-At=(resolved, Path=/Roles/0/Policies/0[L:24,C:16] Value={"Name":"root","Policy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]},"Path":"/","IsAWSManagedPolicy":false}))[Context= Policies[*] EMPTY  ]
+      |        `- GuardValueBlockCheck(Status = FAIL)[Context=BlockGuardClause#Location[file:workshop.guard, line:10, column:7]]
+      |           `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block Action[*] not EQUALS  "*"]
+      |              `- GuardClauseBinaryCheck(Status=FAIL, Comparison=not EQUALS, from=(resolved, Path=/Roles/0/Policies/0/Policy/Statement/0/Action[L:31,C:42] Value="*"), to=(resolved, Path=[L:0,C:0] Value="*"))[Context= Action[*] not EQUALS  "*"]
+      |- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Users[*] EMPTY  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= Users[*] EMPTY  ]
+      |- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Groups[*] EMPTY  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= Groups[*] EMPTY  ]
+      |- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Resources[*] EMPTY  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= Resources[*] EMPTY  ]
+      |- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block PermissionSets[*] EMPTY  ]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= PermissionSets[*] EMPTY  ]
+      `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::RuleClause#disjunction]
+         `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block OrphanedPolicies[*] EMPTY  ]
+            `- GuardClauseValueCheck(Status=PASS)[Context= OrphanedPolicies[*] EMPTY  ]

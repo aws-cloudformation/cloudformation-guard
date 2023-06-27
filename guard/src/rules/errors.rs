@@ -45,6 +45,8 @@ pub enum Error {
     Errors(#[from] Errors),
     #[error("{0}")]
     IllegalArguments(String),
+    #[error("internal error {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, Error)]
