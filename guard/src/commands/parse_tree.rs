@@ -71,7 +71,7 @@ impl Command for ParseTree {
         let rules = crate::rules::parser::rules_file(span)?;
 
         match app.get_flag(PRINT_JSON.0) {
-            true => serde_json::to_writer(writer, &rules)?,
+            true => serde_json::to_writer_pretty(writer, &rules)?,
             false => serde_yaml::to_writer(writer, &rules)?,
         }
 

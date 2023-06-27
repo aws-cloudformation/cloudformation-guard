@@ -262,9 +262,9 @@ mod test_command_tests {
             .rules(Some(
                 "resources/test-command/functions/rules/json_parse.guard",
             ))
-            .verbose()
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!("resources/test-command/output-dir/functions.out", writer);
     }
 }

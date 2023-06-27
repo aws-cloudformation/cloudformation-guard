@@ -8,7 +8,7 @@ use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
-use crate::rules::eval_context::EventRecord;
+use crate::rules::eval_context::{simplifed_json_from_root, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 
@@ -110,32 +110,30 @@ impl Reporter for GenericSummary {
 
     fn report_eval<'value>(
         &self,
-        _write: &mut dyn Write,
+        writer: &mut dyn Write,
         _status: Status,
-        _root_record: &EventRecord<'value>,
-        _rules_file: &str,
-        _data_file: &str,
+        root_record: &EventRecord<'value>,
+        rules_file: &str,
+        data_file: &str,
         _data_file_bytes: &str,
         _data: &Traversal<'value>,
-        _output_type: OutputFormatType,
+        output_type: OutputFormatType,
     ) -> crate::rules::Result<()> {
-        let renderer =
-            match _output_type {
-                OutputFormatType::SingleLineSummary => {
-                    Box::new(SingleLineSummary {}) as Box<dyn GenericReporter>
-                }
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON))
-                    as Box<dyn GenericReporter>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
-                    as Box<dyn GenericReporter>,
-            };
-        super::common::report_from_events(
-            _root_record,
-            _write,
-            _data_file,
-            _rules_file,
-            renderer.as_ref(),
-        )
+        let failure_repord = simplifed_json_from_root(root_record)?;
+
+        match output_type {
+            OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &failure_repord)?,
+            OutputFormatType::YAML => serde_yaml::to_writer(writer, &failure_repord)?,
+            OutputFormatType::SingleLineSummary => super::common::report_from_events(
+                root_record,
+                writer,
+                data_file,
+                rules_file,
+                &(SingleLineSummary {}),
+            )?,
+        };
+
+        Ok(())
     }
 }
 

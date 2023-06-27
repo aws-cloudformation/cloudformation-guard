@@ -5,17 +5,27 @@
       newServer:
         Type: AWS::New::Service
         Properties:
-          Policy: |
-            {
-               "Principal": "*",
-               "Actions": ["s3*", "ec2*"]
-            }
-          Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
-          Encoded: This%20string%20will%20be%20URL%20encoded
-        Collection:
-          - a
-          - b
-          - c
+          BucketPolicy:
+            PolicyText: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyReducedReliabilityStorage","Effect":"Deny","Principal":"*","Action":"s3:*","Resource":"arn:aws:s3:::s3-test-123/*","Condition":{"StringEquals":{"s3:x-amz-storage-class-123":["ONEZONE_IA","REDUCED_REDUNDANCY"]}}}]}'
   expectations:
     rules:
       SOME_RULE: PASS
+
+- name: Fail
+  input:
+    Resources:
+      newServer:
+        Type: AWS::New::Service
+        Properties:
+          BucketPolicy:
+            PolicyText: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyReducedReliabilityStorage","Effect":"Allow","Principal":"*","Action":"s3:*","Resource":"arn:aws:s3:::s3-test-123/*","Condition":{"StringEquals":{"s3:x-amz-storage-class-123":["ONEZONE_IA","REDUCED_REDUNDANCY"]}}}]}'
+  expectations:
+    rules:
+      SOME_RULE: FAIL
+
+- name: Skip
+  input:
+    Resources: {}
+  expectations:
+    rules:
+      SOME_RULE: SKIP
