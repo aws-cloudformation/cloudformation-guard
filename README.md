@@ -35,6 +35,10 @@ Guard can be used for the following domains:
 * [Guard CLI](#guard-cli)
   * [Installation](#installation)
   * [How does Guard CLI work?](#how-does-guard-cli-work?)
+* [Rule authoring references](#references)
+* [Built-in functions & stateful rules](#functions)
+* [AWS Rule Registry](#registry)
+* [Use Guard as a Docker Image](#docker)
 * [License](#license)
 
 ## FAQs
@@ -489,7 +493,7 @@ cfn-guard test -r api_gateway_private_access.guard -t api_gateway_private_access
 
 Read [Guard: Unit Testing](docs/UNIT_TESTING.md) for more information on unit testing. To know about other commands read the [Readme in the guard directory](guard/README.md).
 
-## Rule authoring references
+## <a name="references"></a> Rule authoring references
 
 As a starting point for writing Guard rules for yourself or your organisation we recommend following [this official guide](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html)
 
@@ -507,15 +511,50 @@ As a starting point for writing Guard rules for yourself or your organisation we
 9. [Composing named-rule blocks in AWS CloudFormation Guard](https://docs.aws.amazon.com/cfn-guard/latest/ug/named-rule-block-composition.html)
 10. [Writing clauses to perform context-aware evaluations](https://docs.aws.amazon.com/cfn-guard/latest/ug/context-aware-evaluations.html)
 
+## <a name="functions"></a> Built-in functions & stateful rules
 
-## AWS Rule Registry
+Guard 3.0 introduces support for functions, allowing for stateful rules that can run on a value that's evaluated based 
+on some properties extracted out of a data template.
+
+### Sample template
+
+Imagine we have a property in our template which consists of a list called as `Collection` and we need to ensure
+it has at least 3 items in it.
+
+```yaml
+Resources:
+  newServer:
+    Type: AWS::New::Service
+    Collection:
+      - a
+      - b
+      - c
+```
+### Sample rule
+
+We can write a rule to check this condition as follows:
+
+```
+let server = Resources.*[ Type == 'AWS::New::Service' ]
+rule COUNT_CHECK when %server !empty {
+    let collection = %server.Collection.*
+    let count_of_items = count(%collection)
+    %count_of_items >= 3
+}
+```
+
+For detailed documentation regarding all supported functions, please [follow this link](./docs/FUNCTIONS.md).
+
+## <a name="registry"></a> AWS Rule Registry
 
 As a reference for Guard rules and rule-sets that contain (on a best-effort basis) the compliance policies that adhere
 to the industry best practices around usages across AWS resources, we have recently launched
 [AWS Guard Rules Registry](https://github.com/aws-cloudformation/aws-guard-rules-registry).
 
 
-## Guard Docker Image launched on [ECR public gallery](https://gallery.ecr.aws/aws-cloudformation/cloudformation-guard)
+## <a name="docker"></a> Use Guard as a Docker Image  
+
+Guard is also published as an ECR image in [ECR public gallery](https://gallery.ecr.aws/aws-cloudformation/cloudformation-guard) and can be used as an image in a docker container.
 
 ### Prerequisites
 
@@ -541,6 +580,7 @@ We should see the evaluation result emitted out on the console.
 
 * We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
 * We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
+
 ## License
 
 This project is licensed under the Apache-2.0 License.
