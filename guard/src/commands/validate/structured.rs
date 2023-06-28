@@ -73,8 +73,9 @@ impl<'eval> StructuredEvaluator<'eval> {
                 let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
-                    self.exit_code = 5;
+                    self.exit_code = 19;
                 }
+
                 let root_record = root_scope.reset_recorder().extract();
                 let report = simplifed_json_from_root(&root_record)?;
                 file_report.combine(report);

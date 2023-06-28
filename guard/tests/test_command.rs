@@ -267,4 +267,20 @@ mod test_command_tests {
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!("resources/test-command/output-dir/functions.out", writer);
     }
+
+    #[test]
+    fn test_with_failure() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/failing_test.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
+    }
 }

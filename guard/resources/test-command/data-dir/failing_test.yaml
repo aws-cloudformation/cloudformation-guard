@@ -1,0 +1,14 @@
+- name: S3 Bucket Encryption set to SSE AES 256, PASS
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: FAIL
