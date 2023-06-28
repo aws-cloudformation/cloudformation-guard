@@ -282,6 +282,5 @@ mod test_command_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
-        // assert_output_from_file_eq!("resources/test-command/output-dir/functions.out", writer);
     }
 }
