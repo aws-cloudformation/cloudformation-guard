@@ -17,8 +17,11 @@ fn test_count_function() -> crate::rules::Result<()> {
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 1);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
+        _ => unreachable!(),
+    }
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
@@ -29,8 +32,11 @@ fn test_count_function() -> crate::rules::Result<()> {
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 0);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 0),
+        _ => unreachable!(),
+    }
 
     let value_str = r#"
     Resources:
@@ -46,13 +52,18 @@ fn test_count_function() -> crate::rules::Result<()> {
     };
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::S3::Bucket' ]"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 2);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 2),
+        _ => unreachable!(),
+    }
 
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::EC2::Instance' ]"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 0);
 
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 0),
+        _ => unreachable!(),
+    }
     Ok(())
 }
