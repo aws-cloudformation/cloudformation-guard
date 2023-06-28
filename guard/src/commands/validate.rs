@@ -439,7 +439,7 @@ or rules files.
                                     writer,
                                 )?;
 
-                                if status == 5 || status == 20 {
+                                if status != 00 {
                                     exit_code = status
                                 }
                             }
@@ -502,7 +502,7 @@ or rules files.
                             writer,
                         )?;
 
-                        if status == 5 || status == 20 {
+                        if status != 0 {
                             exit_code = status;
                         }
                     }
@@ -555,7 +555,7 @@ fn evaluate_rule(
             )?;
 
             if status == Status::FAIL {
-                return Ok(20);
+                return Ok(19);
             }
         }
     }

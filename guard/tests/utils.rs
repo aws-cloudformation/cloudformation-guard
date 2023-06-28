@@ -25,7 +25,7 @@ impl StatusCode {
     pub const INCORRECT_STATUS_ERROR: i32 = 1;
     pub const TEST_COMMAND_FAILURE: i32 = 7;
     pub const PARSING_ERROR: i32 = 5;
-    pub const VALIDATION_ERROR: i32 = 20;
+    pub const VALIDATION_ERROR: i32 = 19;
 }
 
 pub fn read_from_resource_file(path: &str) -> String {

@@ -258,13 +258,13 @@ mod validate_tests {
         vec!["template_where_resources_isnt_root.json"],
         vec!["workshop.guard"],
         "resources/validate/output-dir/failing_template_without_resources_at_root.out",
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     #[case(
         vec!["failing_template_with_slash_in_key.yaml"],
         vec!["rules-dir/s3_bucket_server_side_encryption_enabled.guard"],
         "resources/validate/output-dir/failing_template_with_slash_in_key.out",
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     fn test_single_data_file_single_rules_file_verbose(
         #[case] data_arg: Vec<&str>,
