@@ -9,7 +9,6 @@ pub(crate) fn count(args: &[QueryResult]) -> PathAwareValue {
         .filter(|query| !matches!(query, QueryResult::UnResolved(_)))
         .count();
 
-    dbg!(&args);
     match args.is_empty() {
         true => PathAwareValue::Int((Path::root(), 0)),
         false => {

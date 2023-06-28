@@ -1,0 +1,30 @@
+template.yaml Status = FAIL
+FAILED rules
+test.guard/SOME_RULE    FAIL
+---
+Evaluating data template.yaml against rules test.guard
+Number of non-compliant resources 1
+Resource = newServer {
+  Type      = AWS::New::Service
+  Rule = SOME_RULE {
+    ALL {
+      Check =  %res EQUALS  3 {
+        ComparisonError {
+          Error            = Check was not compliant as property value [Path=/Resources/newServer/Properties[L:4,C:6] Value=0] not equal to value [Path=[L:0,C:0] Value=3].
+          PropertyPath    = /Resources/newServer/Properties[L:4,C:6]
+          Operator        = EQUAL
+          Value           = 0
+          ComparedWith    = 3
+          Code:
+                2.  newServer:
+                3.    Type: AWS::New::Service
+                4.    Properties:
+                5.      Policy: |
+                6.        {
+                7.           "Principal": "*",
+
+        }
+      }
+    }
+  }
+}
