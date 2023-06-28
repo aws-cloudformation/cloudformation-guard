@@ -650,4 +650,22 @@ mod validate_tests {
 
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
+
+    #[test]
+    fn test_validate_with_failing_count_and_compare_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/test.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/functions/output/failing_count_show_summary_all.out",
+            writer
+        );
+    }
 }

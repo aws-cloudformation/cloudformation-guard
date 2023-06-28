@@ -1,10 +1,25 @@
-use crate::rules::QueryResult;
+use crate::rules::{
+    path_value::{Path, PathAwareValue},
+    QueryResult,
+};
 
-pub(crate) fn count(args: &[QueryResult]) -> u32 {
-    args.iter().fold(0, |each, entry| match entry {
-        QueryResult::Literal(_) | QueryResult::Resolved(_) => each + 1,
-        _ => each,
-    })
+pub(crate) fn count(args: &[QueryResult]) -> PathAwareValue {
+    let count = args
+        .iter()
+        .filter(|query| !matches!(query, QueryResult::UnResolved(_)))
+        .count();
+
+    match args.is_empty() {
+        true => PathAwareValue::Int((Path::root(), 0)),
+        false => {
+            let path = match &args[0] {
+                QueryResult::Literal(val) | QueryResult::Resolved(val) => val.self_path().clone(),
+                QueryResult::UnResolved(val) => val.traversed_to.self_path().clone(),
+            };
+
+            PathAwareValue::Int((path, count as i64))
+        }
+    }
 }
 
 #[cfg(test)]

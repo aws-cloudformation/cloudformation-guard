@@ -7,7 +7,7 @@ use crate::rules::functions::collections::count;
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::{MapValue, Path, PathAwareValue};
+use crate::rules::path_value::{MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -1202,7 +1202,7 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
         _ => {
             return Err(Error::ParseError(format!(
                 "no such function named {name} exists"
-            )))
+            )));
         }
     };
 
@@ -1221,10 +1221,7 @@ pub(crate) fn try_handle_function_call(
     args: &[Vec<QueryResult>],
 ) -> Result<Vec<Option<PathAwareValue>>> {
     let value = match fn_name {
-        "count" => vec![Some(PathAwareValue::Int((
-            Path::root(),
-            count(&args[0]) as i64,
-        )))],
+        "count" => vec![Some(count(&args[0]))],
         "json_parse" => json_parse(&args[0])?,
         "regex_replace" => {
             let substring_err_msg = |index| {
