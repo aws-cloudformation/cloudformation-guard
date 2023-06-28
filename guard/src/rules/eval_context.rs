@@ -1202,7 +1202,7 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
         _ => {
             return Err(Error::ParseError(format!(
                 "no such function named {name} exists"
-            )))
+            )));
         }
     };
 

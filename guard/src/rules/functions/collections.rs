@@ -4,24 +4,18 @@ use crate::rules::{
 };
 
 pub(crate) fn count(args: &[QueryResult]) -> PathAwareValue {
-    let count = args.iter().fold(0, |each, entry| match entry {
-        QueryResult::Literal(_) | QueryResult::Resolved(_) => each + 1,
-        _ => each,
-    });
-
-    let count2 = args
+    let count = args
         .iter()
         .filter(|query| !matches!(query, QueryResult::UnResolved(_)))
         .count();
 
-    assert_eq!(count, count2);
-
-    match count {
-        0 => PathAwareValue::Int((Path::root(), 0)),
-        count => {
+    dbg!(&args);
+    match args.is_empty() {
+        true => PathAwareValue::Int((Path::root(), 0)),
+        false => {
             let path = match &args[0] {
                 QueryResult::Literal(val) | QueryResult::Resolved(val) => val.self_path().clone(),
-                _ => unreachable!(),
+                QueryResult::UnResolved(val) => val.traversed_to.self_path().clone(),
             };
 
             PathAwareValue::Int((path, count as i64))
