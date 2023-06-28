@@ -439,7 +439,7 @@ or rules files.
                                     writer,
                                 )?;
 
-                                if status != 00 {
+                                if status != 0 {
                                     exit_code = status
                                 }
                             }
