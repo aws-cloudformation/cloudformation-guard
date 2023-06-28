@@ -662,7 +662,7 @@ mod validate_tests {
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
         assert_output_from_file_eq!(
             "resources/validate/functions/output/failing_count_show_summary_all.out",
             writer
