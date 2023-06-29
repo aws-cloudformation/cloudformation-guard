@@ -1,6 +1,10 @@
 # Guard built-in functions and stateful rules
 
-As of version 3.0.0 guard now supplies some builtin functions, allowing for stateful rules
+As of version 3.0.0 guard now supplies some builtin functions, allowing for stateful rules. 
+
+Built-in functions are supported only through assignment to a variable at the moment.
+
+There are some limitations with the current implementation of functions. We **do not** support inline usage yet. Please [read through more about this limitation here](./KNOWN_ISSUES.md#function-limitation).
 
 NOTE: all examples are operating off the following yaml template
 

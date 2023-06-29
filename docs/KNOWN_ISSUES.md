@@ -35,4 +35,34 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
 3. When performing `!=` comparison, if the values are incompatible like comparing a `string` to `int`, an error is thrown internally but currently suppressed and converted to `false` to satisfy the requirements of Rust’s [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html). We are tracking to release a fix for this issue soon.
 4. `exists` and `empty` checks do not display the JSON pointer path inside the document in the error messages. Both these clauses often have retrieval errors which does not maintain this traversal information today. We are tracking to resolve this issue. 
 5. Currently, for `string` literals, Guard does not support embedded escaped strings. We are tracking to resolve this issue soon.
-6. We have support for built-in functions, however, this is currently limited to assignment of the return value to a variable. For example, we can use a function and assign its result to a variable such as `let no_of_instances = count(Instances.*)` and then this variable can be used elsewhere in the conditions such as `%no_of_instances < 2`. However, we **cannot** re-write the same condition as `count(Instances.*) < 2` at this point of time.
+6. <a name="function-limitation"></a> **No support for inline functions** 
+
+   We **do not** support inline usage of functions at the moment. The support for built-in functions is currently limited to assignment of the return value to a variable. 
+   
+   Consider an example wherein our template has a node named `Instances` which is a collection. We need to author a rule that checks to ensure this collection contains a certain number of minimum items, say 2.
+
+   This is currently **NOT SUPPORTED**:
+   ```
+   # Not supported at the moment
+   
+   rule INSTANCES_COUNT_CHECK {
+      count(Instances.*) < 2
+      << Violation: We should have at least 2 instances >>
+   }
+   ```
+   While the above code snippet might be tempting to use as it's more intuitive, we haven't made the changes required to support it in our grammar yet.
+
+   > **Workaround**: Assign function value to a variable and then use this variable thereafter in all clauses that follow including the conditions.
+
+   So, our example rule now becomes:
+   ```
+   # Use this instead
+   
+   rule INSTANCES_COUNT_CHECK {
+      let no_of_instances = count(Instances.*)
+   
+      %no_of_instances < 2
+      << Violation: We should have at least 2 instances >>
+   }
+   ```
+   

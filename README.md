@@ -547,7 +547,7 @@ rule COUNT_CHECK when %server !empty {
 
 Expected outcome is that rule fails showing us the violation message since our template is non-compliant.
 
-For detailed documentation regarding all supported functions, please [follow this link](./docs/FUNCTIONS.md).
+For detailed documentation regarding all supported functions, please [follow this link](./docs/FUNCTIONS.md). For limitations of functions usage, please read [this note](./docs/KNOWN_ISSUES.md#function-limitation).
 
 ## <a name="registry"></a> AWS Rule Registry
 
