@@ -657,7 +657,7 @@ mod validate_tests {
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
-            .rules(vec!["/functions/rules/test.guard"])
+            .rules(vec!["/functions/rules/count_with_message.guard"])
             .data(vec!["/functions/data/template.yaml"])
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
@@ -665,6 +665,24 @@ mod validate_tests {
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
         assert_output_from_file_eq!(
             "resources/validate/functions/output/failing_count_show_summary_all.out",
+            writer
+        );
+    }
+
+    #[test]
+    fn test_validate_with_failing_join_and_compare_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/join_with_message.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/functions/output/failing_join_show_summary_all.out",
             writer
         );
     }

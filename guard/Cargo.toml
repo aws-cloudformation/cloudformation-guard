@@ -1,6 +1,6 @@
 [package]
 name = "cfn-guard"
-version = "3.0.0-beta"
+version = "3.0.0"
 edition = "2018"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
     "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Tyler Southwick", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]

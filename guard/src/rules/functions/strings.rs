@@ -177,13 +177,23 @@ pub(crate) fn join(args: &[QueryResult], delimiter: &str) -> crate::rules::Resul
             }
             QueryResult::UnResolved(ur) => {
                 return Err(Error::IncompatibleError(format!(
-                    "Joining non unresolved values is not allowed {}, unsatisfied part {}",
+                    "Joining unresolved values is not allowed {}, unsatisfied part {}",
                     ur.traversed_to, ur.remaining_query
                 )));
             }
         }
     }
-    Ok(PathAwareValue::String((Path::root(), aggr)))
+
+    match args.is_empty() {
+        true => Ok(PathAwareValue::String((Path::root(), aggr))),
+        false => {
+            let path = match &args[0] {
+                QueryResult::Literal(val) | QueryResult::Resolved(val) => val.self_path().clone(),
+                QueryResult::UnResolved(val) => val.traversed_to.self_path().clone(),
+            };
+            Ok(PathAwareValue::String((path, aggr)))
+        }
+    }
 }
 
 #[cfg(test)]
