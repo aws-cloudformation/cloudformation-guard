@@ -5,29 +5,20 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod validate_tests {
-    use std::fmt::format;
-    use std::fs::File;
-    use std::io::{stderr, stdout, Cursor, Read};
+    use std::io::{stderr, stdout, Cursor};
 
     use indoc::indoc;
-    use rstest::rstest;
-    use strip_ansi_escapes;
 
-    use cfn_guard;
-    use cfn_guard::commands::validate::Validate;
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
         RULES, SHOW_SUMMARY, STRUCTURED, VALIDATE, VERBOSE,
     };
-    use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, File as ReadFile, Stdin};
-    use cfn_guard::utils::reader::{ReadBuffer, Reader};
+    use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, Stdin};
+    use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
-    use crate::utils::{
-        compare_write_buffer_with_file, compare_write_buffer_with_string,
-        get_full_path_for_resource_file, CommandTestRunner, StatusCode,
-    };
+    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
 
     #[derive(Default)]
@@ -82,11 +73,13 @@ mod validate_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn alphabetical(&'args mut self) -> &'args mut ValidateTestRunner {
             self.alphabetical = true;
             self
         }
 
+        #[allow(dead_code)]
         fn last_modified(&'args mut self) -> &'args mut ValidateTestRunner {
             self.last_modified = true;
             self
@@ -97,6 +90,7 @@ mod validate_tests {
             self
         }
 
+        #[allow(dead_code)]
         fn print_json(&'args mut self) -> &'args mut ValidateTestRunner {
             self.print_json = true;
             self
@@ -189,7 +183,7 @@ mod validate_tests {
     #[case(
         vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"],
         vec!["rules-dir/s3_bucket_public_read_prohibited.guard"],
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
@@ -207,6 +201,7 @@ mod validate_tests {
     )]
     #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
@@ -257,7 +252,19 @@ mod validate_tests {
         vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"],
         vec!["rules-dir/s3_bucket_public_read_prohibited.guard"],
         "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose_non_compliant.out",
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
+    )]
+    #[case(
+        vec!["template_where_resources_isnt_root.json"],
+        vec!["workshop.guard"],
+        "resources/validate/output-dir/failing_template_without_resources_at_root.out",
+        StatusCode::VALIDATION_ERROR
+    )]
+    #[case(
+        vec!["failing_template_with_slash_in_key.yaml"],
+        vec!["rules-dir/s3_bucket_server_side_encryption_enabled.guard"],
+        "resources/validate/output-dir/failing_template_with_slash_in_key.out",
+        StatusCode::VALIDATION_ERROR
     )]
     fn test_single_data_file_single_rules_file_verbose(
         #[case] data_arg: Vec<&str>,
@@ -283,13 +290,13 @@ mod validate_tests {
         vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"],
         vec!["rules-dir/s3_bucket_public_read_prohibited.guard"],
         "resources/validate/output-dir/test_single_data_file_single_rules_file_verbose.out",
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     #[case(
         vec!["data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml"],
         vec!["rules-dir/advanced_regex_negative_lookbehind_rule.guard"],
         "resources/validate/output-dir/advanced_regex_negative_lookbehind_non_compliant.out",
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     #[case(
         vec!["data-dir/advanced_regex_negative_lookbehind_compliant.yaml"],
@@ -375,7 +382,7 @@ mod validate_tests {
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[rstest::rstest]
@@ -383,7 +390,7 @@ mod validate_tests {
         vec!["db_resource.yaml"],
         vec!["db_param_port_rule.guard"],
         vec!["input-parameters-dir/db_params.yaml"],
-        StatusCode::PARSING_ERROR
+        StatusCode::VALIDATION_ERROR
     )]
     #[case(
         vec!["db_resource.yaml"],
@@ -478,7 +485,7 @@ mod validate_tests {
             "resources/validate/output-dir/payload_verbose_non_compliant.out",
             writer
         );
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]
@@ -539,7 +546,7 @@ mod validate_tests {
             "#
         };
 
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
         assert_eq!(expected, result);
     }
 
@@ -559,7 +566,7 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!("resources/validate/output-dir/structured.json", writer);
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]
@@ -578,7 +585,7 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_output_from_file_eq!("resources/validate/output-dir/structured.yaml", writer);
-        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]
@@ -642,5 +649,41 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    #[test]
+    fn test_validate_with_failing_count_and_compare_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/count_with_message.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/functions/output/failing_count_show_summary_all.out",
+            writer
+        );
+    }
+
+    #[test]
+    fn test_validate_with_failing_join_and_compare_output() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/join_with_message.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/functions/output/failing_join_show_summary_all.out",
+            writer
+        );
     }
 }

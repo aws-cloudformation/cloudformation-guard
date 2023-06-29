@@ -3,10 +3,6 @@
 
 #[cfg(test)]
 mod functional_tests {
-    use cfn_guard;
-    use cfn_guard::commands::validate::Validate;
-    use cfn_guard::commands::{DATA, INPUT_PARAMETERS, RULES, SHOW_SUMMARY, VALIDATE};
-    use cfn_guard::utils::writer::{WriteBuffer, Writer};
 
     #[test]
     fn test_run_check() {
@@ -148,7 +144,7 @@ mod functional_tests {
                 file_name: "functional_test.json",
             },
             ValidateInput {
-                content: &rule,
+                content: rule,
                 file_name: "functional_test.rule",
             },
             verbose,

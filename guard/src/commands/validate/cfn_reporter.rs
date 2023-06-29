@@ -12,9 +12,9 @@ use crate::commands::validate::common::{
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 
-use super::EvaluationType;
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::EvaluationType;
 use crate::rules::Status;
 
 lazy_static! {
@@ -25,12 +25,6 @@ lazy_static! {
 
 #[derive(Debug)]
 pub(crate) struct CfnReporter {}
-
-impl CfnReporter {
-    pub(crate) fn new() -> Self {
-        CfnReporter {}
-    }
-}
 
 impl Reporter for CfnReporter {
     fn report(
@@ -82,7 +76,7 @@ impl Reporter for CfnReporter {
                             let (resource_name, property_path) =
                                 match CFN_RESOURCES.captures(&resource_info.path) {
                                     Ok(Some(caps)) => {
-                                        (caps["name"].to_string(), caps["rest"].replace("/", "."))
+                                        (caps["name"].to_string(), caps["rest"].replace('/', "."))
                                     }
                                     Ok(None) => (
                                         format!(
@@ -108,10 +102,7 @@ impl Reporter for CfnReporter {
         } else {
             HashMap::new()
         };
-        let as_vec = passed_or_skipped
-            .iter()
-            .map(|s| *s)
-            .collect::<Vec<&StatusContext>>();
+        let as_vec = passed_or_skipped.to_vec();
         let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
             as_vec.iter().partition(|status| match status.status {
                 // This uses the dereference deep trait of Rust
@@ -200,7 +191,7 @@ impl super::common::GenericReporter for SingleLineReporter {
         for (resource, info) in by_resource_name.iter() {
             super::common::print_name_info(
                 writer,
-                &info,
+                info,
                 longest_rule_len,
                 rules_file_name,
                 data_file_name,
@@ -210,7 +201,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                info.path,
                                data_file_name,
                                info.rule,
-                               info.message.replace("\n", ";")
+                               info.message.replace('\n', ";")
                     ))
                 },
                 |_, _, op_msg, info| {
@@ -221,7 +212,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                op_msg=op_msg,
                                template=data_file_name,
                                rule= info.rule,
-                               msg=info.message.replace("\n", ";")
+                               msg=info.message.replace('\n', ";")
                     ))
                 },
                 |_, _, msg, info| {
@@ -233,7 +224,7 @@ impl super::common::GenericReporter for SingleLineReporter {
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,
                                rule=info.rule,
-                               msg=info.message.replace("\n", ";")
+                               msg=info.message.replace('\n', ";")
                     ))
                 },
             )?;

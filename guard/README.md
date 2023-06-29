@@ -1,4 +1,4 @@
-# AWS CloudFormation Guard 2.0's Modes of Operation
+# AWS CloudFormation Guard's Modes of Operation
 
 AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 

@@ -96,6 +96,7 @@ pub fn parse_template_and_call_gen(
     gen_rules(cfn_resources)
 }
 
+#[allow(clippy::map_entry)]
 fn gen_rules(
     cfn_resources: HashMap<String, Value>,
 ) -> HashMap<String, HashMap<String, HashSet<String>>> {
@@ -145,14 +146,14 @@ fn gen_rules(
                 None => prop_val.to_string(),
             };
 
-            let mut no_newline_stripped_val = stripped_val.trim().replace("\n", "");
+            let mut no_newline_stripped_val = stripped_val.trim().replace('\n', "");
 
             // Preserve double quotes for strings.
             if prop_val.is_string() {
                 let test_str = format!("{}{}{}", "\"", no_newline_stripped_val, "\"");
                 no_newline_stripped_val = test_str;
             }
-            let resource_name = format!("{}", &cfn_resource["Type"].as_str().unwrap());
+            let resource_name = (&cfn_resource["Type"].as_str().unwrap()).to_string();
 
             if !rule_map.contains_key(&resource_name) {
                 let value_set: HashSet<String> =
@@ -176,7 +177,7 @@ fn gen_rules(
         }
     }
 
-    return rule_map;
+    rule_map
 }
 
 // Prints the generated rules data structure to stdout. If there are properties mapping to

@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::rules::path_value::Location;
+#[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
 
 pub(crate) struct Owned<T, Init = T> {

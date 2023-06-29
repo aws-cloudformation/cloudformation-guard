@@ -106,7 +106,7 @@ impl std::fmt::Display for PathAwareValue {
     }
 }
 
-impl<'value> std::fmt::Display for QueryResult {
+impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             QueryResult::Literal(l) => {

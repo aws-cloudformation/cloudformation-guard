@@ -1,0 +1,9 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+rule TEST_COLLECTION when %template !empty {
+    let collection = %template.Collection.*
+
+    let res = join(%collection, ",")
+    %res == "a,b"
+    << Violation: The joined value does not match the expected result >>
+}

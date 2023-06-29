@@ -600,7 +600,7 @@ fn test_handle_function_call() -> Result<()> {
     );
 
     // invalid fn name
-    let res = try_handle_function_call("fn", &[query_results.clone()]);
+    let res = try_handle_function_call("fn", &[query_results]);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));

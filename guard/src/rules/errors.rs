@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::rules::parser::{ParserError, Span};
 
 #[derive(Debug, Error)]
+#[allow(clippy::enum_variant_names)]
 pub enum Error {
     #[error("Error parsing incoming JSON context {0}")]
     JsonError(#[from] serde_json::Error),
@@ -44,6 +45,8 @@ pub enum Error {
     Errors(#[from] Errors),
     #[error("{0}")]
     IllegalArguments(String),
+    #[error("internal error {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, Error)]

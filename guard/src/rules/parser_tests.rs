@@ -739,7 +739,7 @@ fn test_var_name() {
     ];
 
     for (idx, text) in examples.iter().enumerate() {
-        let span = from_str2(*text);
+        let span = from_str2(text);
         let actual = var_name(span);
         assert_eq!(&actual, &expectations[idx]);
     }
@@ -798,7 +798,7 @@ fn test_var_name_access() {
     ];
 
     for (idx, text) in examples.iter().enumerate() {
-        let span = from_str2(*text);
+        let span = from_str2(text);
         let actual = var_name_access(span);
         assert_eq!(&actual, &expectations[idx]);
     }
@@ -928,7 +928,7 @@ fn test_dotted_access() {
     ];
 
     for (idx, text) in examples.iter().enumerate() {
-        let span = from_str2(*text);
+        let span = from_str2(text);
         let actual = dotted_access(span);
         println!("#{} Example = {}, Result = {:?}", idx, *text, actual);
         assert_eq!(&actual, &expectations[idx]);
@@ -1304,7 +1304,7 @@ fn test_other_operations() {
     ];
 
     for (idx, each) in examples.iter().enumerate() {
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = other_operations(span);
         assert_eq!(&result, &expectations[idx]);
     }
@@ -1423,7 +1423,7 @@ fn test_keys_keyword() {
     ];
 
     for (idx, each) in examples.iter().enumerate() {
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = map_keys_match(span);
         assert_eq!(&result, &expectations[idx]);
     }
@@ -1494,7 +1494,7 @@ fn test_value_cmp() {
     ];
 
     for (idx, each) in examples.iter().enumerate() {
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = value_cmp(span);
         assert_eq!(&result, &expectations[idx]);
     }
@@ -1540,7 +1540,7 @@ fn test_clause_success() {
         testing_access_with_cmp(
             &separators,
             &comparators,
-            *each_lhs,
+            each_lhs,
             rhs,
             || dotted.clone(),
             || rhs_access.clone(),
@@ -1565,7 +1565,7 @@ fn test_clause_success() {
         testing_access_with_cmp(
             &separators,
             &comparators,
-            *each_lhs,
+            each_lhs,
             "",
             || dotted.clone(),
             || None,
@@ -1583,7 +1583,7 @@ fn test_clause_success() {
         testing_access_with_cmp(
             &separators,
             &comparators,
-            *each_lhs,
+            each_lhs,
             " does.not.error", // this will not error,
             // the fragment you are left with is the one above and
             // the next clause fetch will error out for either no "OR" or
@@ -1610,7 +1610,7 @@ fn test_clause_success() {
         testing_access_with_cmp(
             &separators,
             &comparators,
-            *each_lhs,
+            each_lhs,
             "",
             || dotted.clone(),
             || None,
@@ -1642,12 +1642,12 @@ fn test_clause_success() {
             };
 
             let rhs_value =
-                PathAwareValue::try_from(parse_value(from_str2(*each_rhs)).unwrap().1).unwrap();
+                PathAwareValue::try_from(parse_value(from_str2(each_rhs)).unwrap().1).unwrap();
             testing_access_with_cmp(
                 &separators,
                 &comparators,
-                *each_lhs,
-                *each_rhs,
+                each_lhs,
+                each_rhs,
                 || dotted.clone(),
                 || Some(LetValue::Value(rhs_value.clone())),
             );
@@ -1875,7 +1875,7 @@ fn test_predicate_clause_success() {
 
     for (idx, each) in examples.iter().enumerate() {
         println!("Test # {}: {}", idx, *each);
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = access(span);
         println!("Result for Test # {}, {:?}", idx, result);
         assert_eq!(&result, &expectations[idx]);
@@ -2060,7 +2060,7 @@ fn test_rule_clauses() {
     ];
 
     for (idx, each) in examples.iter().enumerate() {
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = rule_clause(span);
         assert_eq!(&result, &expectations[idx]);
     }
@@ -2205,7 +2205,7 @@ fn test_clauses() {
                         query: AccessQuery {
                             query: "configurations.containers[*].image"
                                 .split('.')
-                                .map(|part| {
+                                .flat_map(|part| {
                                     if part.contains('[') {
                                         vec![
                                             QueryPart::Key("containers".to_string()),
@@ -2215,8 +2215,6 @@ fn test_clauses() {
                                         vec![QueryPart::Key(part.to_string())]
                                     }
                                 })
-                                .into_iter()
-                                .flatten()
                                 .collect(),
                             match_all: true,
                         },
@@ -2241,7 +2239,7 @@ fn test_clauses() {
 
     for (idx, each) in examples.iter().enumerate() {
         println!("Testing #{}, Case = {}", idx, each);
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = clauses(span);
         assert_eq!(&result, &expectations[idx]);
         println!("{:?}", result);
@@ -2713,7 +2711,7 @@ fn test_type_block() {
 
     for (idx, each) in examples.iter().enumerate() {
         println!("Test #{}: {}", idx, *each);
-        let span = from_str2(*each);
+        let span = from_str2(each);
         let result = type_block(span);
         println!("Result #{} = {:?}", idx, result);
         assert_eq!(&result, &expectations[idx]);
@@ -3663,7 +3661,6 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
         ["statements", "policy"]
             .iter()
             .map(|s| s.to_string())
-            .into_iter()
             .collect::<indexmap::IndexSet<String>>()
     );
 
@@ -3675,7 +3672,6 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
         ["statements"]
             .iter()
             .map(|s| s.to_string())
-            .into_iter()
             .collect::<indexmap::IndexSet<String>>()
     );
 
@@ -3687,7 +3683,6 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
         ["statements", "policy"]
             .iter()
             .map(|s| s.to_string())
-            .into_iter()
             .collect::<indexmap::IndexSet<String>>()
     );
 
@@ -4084,7 +4079,7 @@ fn does_this_work() -> Result<(), Error> {
 fn unary_parse(#[case] s: &str, #[case] expected: CmpOperator) -> Result<(), Error> {
     let parsed = value_cmp(LocatedSpan::new_extra(s, ""))?.1 .0;
     assert_eq!(expected, parsed);
-    assert_eq!(expected.is_unary(), true);
+    assert!(expected.is_unary());
     Ok(())
 }
 

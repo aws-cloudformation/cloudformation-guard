@@ -2,37 +2,15 @@ use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::rules::errors::Error;
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
     let mut file_content = String::new();
     let mut buf_reader = BufReader::new(file);
     buf_reader.read_to_string(&mut file_content)?;
     Ok(file_content)
-}
-
-pub(crate) fn get_files<F>(file: &str, sort: F) -> Result<Vec<PathBuf>, Error>
-where
-    F: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
-{
-    let path = PathBuf::from_str(file)?;
-    let input_file = File::open(file)?;
-    let metadata = input_file.metadata()?;
-    Ok(if metadata.is_file() {
-        vec![path]
-    } else {
-        let result = get_files_with_filter(file, sort, |entry| {
-            entry
-                .file_name()
-                .to_str()
-                .map(|name| !name.ends_with("/"))
-                .unwrap_or(false)
-        })?;
-        result
-    })
 }
 
 pub(crate) fn get_files_with_filter<S, F>(
@@ -44,25 +22,15 @@ where
     S: FnMut(&walkdir::DirEntry, &walkdir::DirEntry) -> Ordering + Send + Sync + 'static,
     F: Fn(&walkdir::DirEntry) -> bool,
 {
-    let mut selected = Vec::with_capacity(10);
     let walker = WalkDir::new(file).sort_by(sort).into_iter();
-    let dir_check = |entry: &DirEntry| {
-        // select directories to traverse
-        if entry.path().is_dir() {
-            return true;
-        }
-        filter(entry)
-    };
-    for each in walker.filter_entry(dir_check) {
-        //
-        // We are ignoring errors here. TODO fix this later
-        //
-        if let Ok(entry) = each {
-            if entry.path().is_file() {
-                selected.push(entry.into_path());
-            }
-        }
-    }
+
+    let selected = walker
+        .filter_entry(|entry| entry.path().is_dir() || filter(entry))
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| entry.into_path())
+        .collect::<Vec<_>>();
+
     Ok(selected)
 }
 
@@ -125,7 +93,8 @@ pub(crate) fn last_modified(first: &walkdir::DirEntry, second: &walkdir::DirEntr
             }
         }
     }
-    return Ordering::Equal;
+
+    Ordering::Equal
 }
 
 pub(crate) fn regular_ordering(

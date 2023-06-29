@@ -5,20 +5,12 @@ use crate::rules::path_value::*;
 use crate::rules::{CmpOperator, QueryResult, UnResolved};
 
 #[derive(Clone, Debug)]
-pub(crate) enum UnaryResult {
-    Success,
-    Fail,
-    SuccessWith(Rc<PathAwareValue>),
-    FailWith(Rc<PathAwareValue>),
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct LhsRhsPair {
     pub(crate) lhs: Rc<PathAwareValue>,
     pub(crate) rhs: Rc<PathAwareValue>,
 }
 
-impl<'value> LhsRhsPair {
+impl LhsRhsPair {
     fn new(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> LhsRhsPair {
         LhsRhsPair { lhs, rhs }
     }
@@ -31,7 +23,7 @@ pub(crate) struct QueryIn {
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
 }
 
-impl<'value> QueryIn {
+impl QueryIn {
     fn new(
         diff: Vec<Rc<PathAwareValue>>,
         lhs: Vec<Rc<PathAwareValue>>,
@@ -77,22 +69,10 @@ pub(crate) enum ComparisonResult {
 #[derive(Clone, Debug)]
 pub(crate) enum ValueEvalResult {
     LhsUnresolved(UnResolved),
-    UnaryResult(UnaryResult),
     ComparisonResult(ComparisonResult),
 }
 
 impl ValueEvalResult {
-    pub(crate) fn success<C>(self, c: C) -> ValueEvalResult
-    where
-        C: FnOnce(ValueEvalResult) -> ValueEvalResult,
-    {
-        if let ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) = &self {
-            c(self)
-        } else {
-            self
-        }
-    }
-
     pub(crate) fn fail<C>(self, c: C) -> ValueEvalResult
     where
         C: FnOnce(ValueEvalResult) -> ValueEvalResult,
@@ -117,26 +97,13 @@ pub(crate) struct NotComparable {
     pub(crate) pair: LhsRhsPair,
 }
 
-pub(super) fn resolved<E, R>(qr: &QueryResult, err: E) -> std::result::Result<Rc<PathAwareValue>, R>
-where
-    E: Fn(UnResolved) -> R,
-{
-    match qr {
-        QueryResult::Resolved(r) | QueryResult::Literal(r) => Ok(Rc::clone(r)),
-        QueryResult::UnResolved(ur) => Err(err(ur.clone())),
-    }
-}
-
 pub(crate) trait Comparator {
-    fn compare<'value>(
-        &self,
-        lhs: &[QueryResult],
-        rhs: &[QueryResult],
-    ) -> crate::rules::Result<EvalResult>;
+    fn compare(&self, lhs: &[QueryResult], rhs: &[QueryResult])
+        -> crate::rules::Result<EvalResult>;
 }
 
 pub(crate) trait UnaryComparator {
-    fn compare<'value>(&self, lhs: &[QueryResult]) -> crate::rules::Result<EvalResult>;
+    fn compare(&self, lhs: &[QueryResult]) -> crate::rules::Result<EvalResult>;
 }
 
 struct CommonOperator {
@@ -208,7 +175,7 @@ impl Comparator for CommonOperator {
     }
 }
 
-fn match_value<'value, C>(
+fn match_value<C>(
     each_lhs: Rc<PathAwareValue>,
     each_rhs: Rc<PathAwareValue>,
     comparator: C,
@@ -239,7 +206,7 @@ where
     }
 }
 
-fn is_literal<'value>(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
+fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
     if query_results.len() == 1 {
         if let QueryResult::Literal(p) = &query_results[0] {
             return Some(Rc::clone(p));
@@ -248,10 +215,7 @@ fn is_literal<'value>(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue
     None
 }
 
-fn string_in<'value>(
-    lhs_value: Rc<PathAwareValue>,
-    rhs_value: Rc<PathAwareValue>,
-) -> ValueEvalResult {
+fn string_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
     match (&*lhs_value, &*rhs_value) {
         (PathAwareValue::String((_, lhs)), PathAwareValue::String((_, rhs))) => {
             if rhs.contains(lhs) {
@@ -265,7 +229,7 @@ fn string_in<'value>(
     }
 }
 
-fn not_comparable<'value>(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
+fn not_comparable(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
     ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
         pair: LhsRhsPair {
             lhs: Rc::clone(&lhs),
@@ -289,10 +253,7 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
     })))
 }
 
-fn contained_in<'value>(
-    lhs_value: Rc<PathAwareValue>,
-    rhs_value: Rc<PathAwareValue>,
-) -> ValueEvalResult {
+fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
     match &*lhs_value {
         PathAwareValue::List((_, lhsl)) => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
@@ -464,11 +425,10 @@ impl Comparator for InOperation {
                 let mut diff = Vec::with_capacity(lhs_selected.len());
                 'each_lhs: for eachl in &lhs_selected {
                     for eachr in &rhs_selected {
-                        match contained_in(Rc::clone(eachl), Rc::clone(eachr)) {
-                            ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) => {
-                                continue 'each_lhs
-                            }
-                            _ => {}
+                        if let ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) =
+                            contained_in(Rc::clone(eachl), Rc::clone(eachr))
+                        {
+                            continue 'each_lhs;
                         }
                     }
 
@@ -666,12 +626,10 @@ impl Comparator for crate::rules::CmpOperator {
                 comparator: compare_ge,
             }
             .compare(lhs, rhs),
-            _ => {
-                return Err(crate::rules::Error::IncompatibleError(format!(
-                    "Operation {} NOT PERMITTED",
-                    self
-                )))
-            }
+            _ => Err(crate::rules::Error::IncompatibleError(format!(
+                "Operation {} NOT PERMITTED",
+                self
+            ))),
         }
     }
 }

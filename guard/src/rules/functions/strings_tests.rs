@@ -31,8 +31,12 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Policy"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 1);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
+        _ => unreachable!(),
+    }
+
     let json = json_parse(&results)?;
     assert_eq!(json.len(), 1);
     let path_value = json[0].as_ref().unwrap();
@@ -71,8 +75,11 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 1);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
+        _ => unreachable!(),
+    }
 
     let replaced = regex_replace(
         &results,
@@ -113,8 +120,11 @@ fn test_substring() -> crate::rules::Result<()> {
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
     let results = eval.query(&query.query)?;
-    let cnt = count(&results);
-    assert_eq!(cnt, 1);
+
+    match count(&results) {
+        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
+        _ => unreachable!(),
+    }
 
     let replaced = substring(&results, 0, 3)?;
     assert_eq!(replaced.len(), 1);

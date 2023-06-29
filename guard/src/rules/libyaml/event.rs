@@ -1,5 +1,6 @@
 use crate::rules::libyaml::{cstr, cstr::CStr, tag::Tag};
 use std::{borrow::Cow, fmt, fmt::Debug, ptr::NonNull, slice};
+#[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
 
 #[derive(Debug)]
@@ -61,6 +62,7 @@ pub(crate) unsafe fn convert_event<'input>(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct Scalar<'input> {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
@@ -70,12 +72,14 @@ pub(crate) struct Scalar<'input> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct SequenceStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct MappingStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,

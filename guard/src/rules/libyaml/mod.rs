@@ -1,3 +1,4 @@
+#![allow(clippy::all)]
 mod cstr;
 mod event;
 pub mod loader;

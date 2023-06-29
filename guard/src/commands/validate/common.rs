@@ -2,11 +2,9 @@ use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::OutputFormatType;
 use crate::rules::eval_context::{
-    simplifed_json_from_root, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
-    ValueUnResolved,
+    BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport, GuardClauseReport,
+    InComparison, UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
 };
 
 use crate::rules::values::CmpOperator;
@@ -62,6 +60,7 @@ impl<'a> Default for NameInfo<'a> {
 }
 
 pub(super) trait GenericReporter: Debug {
+    #[allow(clippy::too_many_arguments)]
     fn report(
         &self,
         writer: &mut dyn Write,
@@ -75,6 +74,7 @@ pub(super) trait GenericReporter: Debug {
 }
 
 #[derive(Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub(super) enum StructureType {
     JSON,
     YAML,
@@ -109,7 +109,7 @@ impl GenericReporter for StructuredSummary {
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
         skipped: HashSet<String>,
-        longest_rule_len: usize,
+        _: usize,
     ) -> crate::rules::Result<()> {
         let value = DataOutput {
             rules_from: rules_file_name,
@@ -156,9 +156,9 @@ pub(super) fn find_failing_clauses<'record, 'value>(
     }
 }
 
-pub(super) fn extract_name_info_from_record<'record, 'value>(
+pub(super) fn extract_name_info_from_record<'record>(
     rule_name: &'record str,
-    clause: &'record EventRecord<'value>,
+    clause: &'record EventRecord<'_>,
 ) -> crate::rules::Result<NameInfo<'record>> {
     Ok(match &clause.container {
         Some(RecordType::RuleCheck(NamedStatus {
@@ -167,7 +167,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
             ..
         })) => NameInfo {
             message: msg.clone(),
-            rule: *name,
+            rule: name,
             ..Default::default()
         },
 
@@ -250,10 +250,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                     },
                     None => None,
                 };
-                let expected = match expected {
-                    Some((_, ex)) => Some(ex),
-                    None => None,
-                };
+                let expected = expected.map(|(_, ex)| ex);
                 NameInfo {
                     rule: rule_name,
                     comparison: Some(check.comparison.into()),
@@ -265,7 +262,6 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                     provided: Some(provided),
                     expected,
                     path,
-                    ..Default::default()
                 }
             }
 
@@ -321,7 +317,7 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
                 rule: rule_name,
                 comparison: Some(Comparison {
                     not_operator_exists: incomp.comparison.1,
-                    operator: incomp.comparison.0.clone(),
+                    operator: incomp.comparison.0,
                 }),
                 provided,
                 expected: Some(serde_json::Value::Array(to)),
@@ -332,50 +328,6 @@ pub(super) fn extract_name_info_from_record<'record, 'value>(
 
         _ => unreachable!(),
     })
-}
-
-pub(crate) fn extract_event_records<'value>(
-    root_record: EventRecord<'value>,
-) -> (
-    Vec<EventRecord<'value>>,
-    Vec<EventRecord<'value>>,
-    Vec<EventRecord<'value>>,
-) {
-    let mut failed = Vec::with_capacity(root_record.children.len());
-    let mut skipped = Vec::with_capacity(root_record.children.len());
-    let mut passed = Vec::with_capacity(root_record.children.len());
-    for each_rule in root_record.children {
-        match &each_rule.container {
-            Some(RecordType::RuleCheck(NamedStatus {
-                status: Status::FAIL,
-                name,
-                message,
-            })) => {
-                let mut failed = EventRecord {
-                    container: Some(RecordType::RuleCheck(NamedStatus {
-                        status: Status::FAIL,
-                        name,
-                        message: message.clone(),
-                    })),
-                    children: vec![],
-                    context: each_rule.context,
-                };
-                //add_failed_children(&mut failed, each_rule.children)
-            }
-
-            Some(RecordType::RuleCheck(NamedStatus {
-                status: Status::SKIP,
-                ..
-            })) => {
-                skipped.push(each_rule);
-            }
-
-            rest => {
-                skipped.push(each_rule);
-            }
-        }
-    }
-    (failed, skipped, passed)
 }
 
 pub(super) fn report_from_events(
@@ -390,11 +342,7 @@ pub(super) fn report_from_events(
     let mut skipped = HashSet::new();
     let mut success = HashSet::new();
     for each_rule in &root_record.children {
-        if let Some(RecordType::RuleCheck(NamedStatus {
-            status,
-            name,
-            message,
-        })) = &each_rule.container
+        if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) = &each_rule.container
         {
             if name.len() > longest_rule_length {
                 longest_rule_length = name.len();
@@ -403,7 +351,7 @@ pub(super) fn report_from_events(
                 Status::FAIL => {
                     let mut clauses = Vec::new();
                     for each_clause in find_failing_clauses(each_rule) {
-                        clauses.push(extract_name_info_from_record(*name, each_clause)?);
+                        clauses.push(extract_name_info_from_record(name, each_clause)?);
                     }
                     failed.insert(name.to_string(), clauses);
                 }
@@ -449,10 +397,7 @@ pub(super) fn extract_name_info<'a>(
                 }
                 None => None,
             },
-            comparison: match each_failing_clause.comparator {
-                Some(input) => Some(input.into()),
-                None => None,
-            },
+            comparison: each_failing_clause.comparator.map(|input| input.into()),
             message: each_failing_clause
                 .msg
                 .as_ref()
@@ -538,7 +483,7 @@ pub(super) fn print_compliant_skipped_info(
     writer: &mut dyn Write,
     passed: &HashSet<String>,
     skipped: &HashSet<String>,
-    rules_file_name: &str,
+    _: &str,
     data_file_name: &str,
 ) -> crate::rules::Result<()> {
     if !passed.is_empty() {
@@ -564,10 +509,11 @@ pub(super) fn print_compliant_skipped_info(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn print_name_info<R, U, B>(
     writer: &mut dyn Write,
     info: &[NameInfo<'_>],
-    longest_rule_len: usize,
+    _: usize,
     rules_file_name: &str,
     data_file_name: &str,
     retrieval_error: R,
@@ -580,7 +526,7 @@ where
     B: Fn(&str, &str, &str, &NameInfo<'_>) -> crate::rules::Result<String>,
 {
     for each in info {
-        let (cmp, not) = match &each.comparison {
+        let _ = match &each.comparison {
             Some(cmp) => (Some(cmp.operator), cmp.not_operator_exists),
             None => (None, false),
         };
@@ -662,12 +608,15 @@ where
                                     } else {
                                         "was int"
                                     },
-                                IsFloat =>
-                                    if !not {
-                                        "was not a float"
-                                    } else {
-                                        "was float"
-                                    },
+                                // NOTE: This enum actually doesnt exist and this is why we are
+                                // seeing a warning for  unreachable pattern underneath....Need to figure out what
+                                // happenned here...
+                                // IsFloat =>
+                                //     if !not {
+                                //         "was not a float"
+                                //     } else {
+                                //         "was float"
+                                // },
                                 Eq | In | Gt | Lt | Le | Ge => unreachable!(),
                             },
                             each
@@ -700,25 +649,6 @@ struct DataOutputNewForm<'a, 'v> {
     report: FileReport<'v>,
 }
 
-pub(super) fn report_structured<'value>(
-    root: &EventRecord<'value>,
-    data_from: &str,
-    rules_from: &str,
-    type_output: OutputFormatType,
-) -> crate::rules::Result<String> {
-    let mut report = simplifed_json_from_root(root)?;
-    let output = DataOutputNewForm {
-        report,
-        data_from,
-        rules_from,
-    };
-    Ok(match type_output {
-        OutputFormatType::JSON => serde_json::to_string(&output)?,
-        OutputFormatType::YAML => serde_yaml::to_string(&output)?,
-        _ => unreachable!(),
-    })
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct LocalResourceAggr<'record, 'value: 'record> {
     pub(super) name: String,
@@ -747,6 +677,7 @@ impl<'key, T> PartialEq for IdentityHash<'key, T> {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(super) struct Node<'report, 'value: 'report> {
     pub(super) parent: std::rc::Rc<String>,
     pub(super) path: std::rc::Rc<String>,
@@ -824,16 +755,6 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
         }
     }
 }
-
-pub(super) type BinaryComparisonErrorFn = dyn Fn(
-    &mut dyn Write,
-    &ClauseReport<'_>,
-    &BinaryComparison,
-    String,
-) -> crate::rules::Result<()>;
-
-pub(super) type UnaryComparisonErrorFn =
-    dyn Fn(&mut dyn Write, &ClauseReport<'_>, &UnaryComparison, String) -> crate::rules::Result<()>;
 
 fn emit_messages(
     writer: &mut dyn Write,
@@ -1080,7 +1001,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                 err_writer.missing_property_msg(
                     &mut post_message,
                     clause,
-                    blk.unresolved.as_ref().map(|ur| ur),
+                    blk.unresolved.as_ref(),
                     &prefix,
                 )?,
             );
