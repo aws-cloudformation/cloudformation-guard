@@ -1,8 +1,8 @@
 template.yaml Status = FAIL
 FAILED rules
-test.guard/SOME_RULE    FAIL
+count_with_message.guard/SOME_RULE    FAIL
 ---
-Evaluating data template.yaml against rules test.guard
+Evaluating data template.yaml against rules count_with_message.guard
 Number of non-compliant resources 1
 Resource = newServer {
   Type      = AWS::New::Service
