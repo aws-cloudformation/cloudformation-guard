@@ -528,7 +528,6 @@ Resources:
     Collection:
       - a
       - b
-      - c
 ```
 ### Sample rule
 
@@ -540,8 +539,13 @@ rule COUNT_CHECK when %server !empty {
     let collection = %server.Collection.*
     let count_of_items = count(%collection)
     %count_of_items >= 3
+    <<
+      Violation: Collection should contain at least 3 items
+    >>
 }
 ```
+
+Expected outcome is that rule fails showing us the violation message since our template is non-compliant.
 
 For detailed documentation regarding all supported functions, please [follow this link](./docs/FUNCTIONS.md).
 

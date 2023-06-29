@@ -47,19 +47,27 @@ The following functions all operate on queries that resolve to string values
 
 ### json_parse
 
-The json_parse function adds support for parsing inline json strings from a given template. After parsing the string into an object,
-you can now evaluate certain properties of this struct just like with a normal json/yaml object
+The `json_parse` function adds support for parsing inline JSON strings from a given template. After parsing the string into an object,
+you can now evaluate certain properties of this struct just like with a normal JSON/YAML object
 
-This function accepts a single argument:
+#### Argument(s)
 
-- this argument can either be a query that resolves to a string or a string literal.
+1. `json_string`: Either be a query that resolves to a string or a string literal. Example, `'{"a": "basic", "json": "object"}'`
 
-The return value for this function is a query where each string that was resolved from the input is parsed into its json value
+#### Return value
 
-The following example shows how you could parse 2 fields on the above template and then write clauses on the results
+Query of JSON value(s) corresponding to every string literal resolved from input query
+
+#### Example
+
+The following example shows how you could parse 2 fields on the above template and then write clauses on the results:
 
 ```
 let template = Resources.*[ Type == 'AWS::New::Service']
+let expected = {
+        "Principal": "*",
+        "Actions": ["s3*", "ec2*"]
+    }
 rule TEST_JSON_PARSE when %template !empty {
     let policy = %template.Properties.Policy
 
@@ -67,6 +75,9 @@ rule TEST_JSON_PARSE when %template !empty {
 
     %res !empty
     %res == %expected
+    <<
+        Violation: the IAM policy does not match with the recommended policy
+    >>
 
     let policy_text = %template.BucketPolicy.PolicyText
     let res2 = json_parse(%policy_text)
@@ -76,23 +87,29 @@ rule TEST_JSON_PARSE when %template !empty {
             Effect == "Deny"
             Resource == "arn:aws:s3:::s3-test-123/*"
     }
+    
 }
 ```
 
 ### regex_replace
 
-The regex_replace function adds support for replacing one regular expression with another
+The `regex_replace` function adds support for replacing one regular expression with another
 
-This function accepts 3 arguments:
+#### Argument(s)
 
-- The first argument is a query, each string that is resolved from this query will be operated on
-- The second argument is either a query that resolves to a string or a string literal, this is the expression we are looking for to extract
+1. `base_string`:  A query, each string that is resolved from this query will be operated on. Example, `%s3_resource.Properties.BucketName`
+2. `regex_to_extract`: A regular expression that we are looking for to extract from the `base_string`
   - Note: if this string does not resolve to a valid regular expression an error will occur
-- The third argument is either a query that resolves to a string or a string literal, this is the expression we are going to use replace the extracted part of the string
+3. `regex_replacement` A regular expression that will replace the part we extracted, also supports capture groups
 
-The return value for this function is a query where each string that was resolved from the input that contains the the regex from our 2nd argument is replaced with the regex in the 3rd argument
+#### Return value
+
+A query where each string from the input has gone through the replacements
+
+#### Example
 
 In this simple example, we will re-format an ARN by moving around some sections in it.
+
 We will start with a normal ARN that has the following pattern: `arn:<Partition>:<Service>:<Region>:<AccountID>:<ResourceType>/<ResourceID>`
 and we will try to convert it to: `<Partition>/<AccountID>/<Region>/<Service>-<ResourceType>/<ResourceID>`
 
@@ -108,19 +125,24 @@ rule TEST_REGEX_REPLACE when %template !empty {
     let res = regex_replace(%arn, %arn_partition_regex, %capture_group_reordering)
 
     %res == "aws/123456789012/us-west-2/newservice-Table/extracted"
+    << Violation: Resulting reformatted ARN does not match the expected format >>
 }
 ```
 
 ### join
 
-The join function adds support to collect a query, and then join their values using the provided delimiter.
+The `join` function adds support to collect a query, and then join their values using the provided delimiter.
 
-This function accepts 2 arguments:
+#### Argument(s)
 
-- The first argument is a query, all string values resolved from this query will then be joined using the delimter argument
-- The second argument is either a query that resolves to a string/character, or a literal value that is either a string or character
+1. `collection`: A query, all string values resolved from this query are candidates of elements to be joined
+2. `delimiter`: A query or a literal value that resolves to a string or character to be used as delimiter
 
-The return value for this function is query where each string that was resolved from the input is joined with the provided delimiter
+#### Return value
+
+Query where each string that was resolved from the input is joined with the provided delimiter
+
+#### Example
 
 The following example queries the template for a Collection field on a given resource, it then provides a join on ONLY the string values that this query resolves to with a `,` delimiter
 
@@ -132,43 +154,75 @@ rule TEST_COLLECTION when %template !empty {
 
     let res = join(%collection, ",")
     %res == "a,b,c"
+    << Violation: The joined value does not match the expected result >>
 }
 ```
 
-### to_lower and to_upper
+### to_lower 
 
-Both functions accept a single argument:
+This function can be used to change the casing of the all characters in the string passed to all lowercase.
 
-- This argument is a query that resolves to a string(s) - all strings resolved will have the operation applied on them
+#### Argument(s)
 
-Both these functions are very similar, one manipulates all resolved strings from a query to lower case, and the other to upper case
+1. `base_string`: A query that resolves to string(s) 
+
+#### Return value
+
+Returns the `base_string` in all lowercase
 
 ```
 let type = Resources.newServer.Type
 
 rule STRING_MANIPULATION when %type !empty {
     let lower = to_lower(%type)
-    %lower == "aws::new::service"
-    %lower == /aws::new::service/
 
+    %lower == /aws::new::service/
+    << Violation: expected a value to be all lowercase >>
+}
+```
+
+### to_upper
+
+This function can be used to change the casing of the all characters in the string passed to all uppercase.
+
+#### Argument(s)
+
+1. `base_string`: A query that resolves to string(s)
+
+#### Return value
+
+Returns capitalized version of the `base_string`
+
+#### Example
+
+```
+let type = Resources.newServer.Type
+
+rule STRING_MANIPULATION when %type !empty {
     let upper = to_upper(%type)
+
     %upper == "AWS::NEW::SERVICE"
-    %upper == /AWS::NEW::SERVICE/
+    << Violation: expected a value to be all uppercase >>
 }
 ```
 
 ### substring
 
-The substring function adds support to collect a part of all strings resolved from a query
+The `substring` function allows to extract a part of string(s) resolved from a query
 
-This function accepts 3 arguments:
+#### Argument(s)
 
-- The first argument is a query, each string that is resolved from this query will be operated on
-- The second argument is either a query that resolves to an int or a literal int, this is the starting index for the substring (inclusive)
-- The third argument is either a query that resolves to an int or a literal int, this is the ending index for the substring (exclusive)
+1. `base_string`: A query that resolves to string(s)
+2. `start_index`:  A query that resolves to an int or a literal int, this is the starting index for the substring (inclusive)
+3. `end_index`: A query that resolves to an int or a literal int, this is the ending index for the substring (exclusive)
 
-The return value for this function takes the strings resolved from the first argument, and returns a result of substrings for each one of them:
-Note: Any string that would result in an index out of bounds from the 2nd or 3rd argument is skipped
+#### Return value
+
+A result of substrings for each `base_string` passed as input
+
+ - Note: Any string that would result in an index out of bounds from the 2nd or 3rd argument is skipped
+
+#### Example
 
 ```
 let template = Resources.*[ Type == 'AWS::New::Service']
@@ -180,18 +234,25 @@ rule TEST_SUBSTRING when %template !empty {
     let res = substring(%arn, 0, 3)
 
     %res == "arn"
+    << Violation: Substring extracted does not match with the expected outcome >>
 }
 ```
 
 ### url_decode
 
-This function accepts a single argument:
+This function can be used to transform URL encoded strings into their decoded versions
 
-- this argument can either be a query that resolves to a string or a string literal.
+#### Argument(s)
 
-The return value for this function is a query that contains each url decoded version of every string value from the input
+1. `base_string`: A query that resolves to a string or a string literal
 
-The following rule shows how you could url_decode the string `This%20string%20will%20be%20URL%20encoded`
+#### Return value
+
+A query containing URL decoded version of every string value from `base_string`
+
+#### Example
+
+The following rule shows how you could `url_decode` the string `This%20string%20will%20be%20URL%20encoded`
 
 ```
 let template = Resources.*[ Type == 'AWS::New::Service']
@@ -202,6 +263,10 @@ rule SOME_RULE when %template !empty {
 
     let res = url_decode(%encoded)
     %res == "This string will be URL encoded"
+    << 
+        Violation: The result of URL decoding does not 
+        match with the expected outcome
+    >>
 }
 ```
 
@@ -209,11 +274,15 @@ rule SOME_RULE when %template !empty {
 
 ### count
 
-The count function adds support to count the number of items that a query resolves to
+This function can be used to count the number of items that a query resolves to
 
-This function accepts a single argument:
+#### Argument(s)
 
-- This argument is a query that can resolve to any type - the number of resolved values from this query is returned as the result
+1. `collection`: A query that can resolves to any type
+
+#### Return value
+
+The number of resolved values from `collection` is returned as the result
 
 The following rules show different ways we can use the count function.
 
@@ -221,21 +290,26 @@ The following rules show different ways we can use the count function.
 - The second queries a list object, and counts the elements in the list
 - The third queries for all resources that are s3 buckets and have a PublicAcessBlockConfiguration property
 
+#### Example
+
 ```
 let template = Resources.*[ Type == 'AWS::New::Service' ]
 rule SOME_RULE when %template !empty {
     let props = %template.Properties.*
     let res = count(%props)
-    %res == 3
+    %res >= 3
+    << Violation: There must be at least 3 properties set for this service >>
 
     let collection = %template.Collection.*
     let res2 = count(%collection)
-    %res2 == 3
+    %res2 >= 3
+    << Violation: Collection should contain at least 3 items >>
 
     let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
     let b = %buckets[ Properties.PublicAccessBlockConfiguration exists ]
     let res3 = count(%b)
-    %res3 == 2
+    %res3 >= 2
+    << Violation: At least 2 buckets should have PublicAccessBlockConfiguration set  >>
 
 }
 ```
