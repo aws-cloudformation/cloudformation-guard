@@ -10,7 +10,6 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        arch: [aarch64, x86_64]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -53,6 +52,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./cfn-guard-v3-${{ matrix.arch }}-${{ matrix.os }}.tar.gz
-          asset_name: cfn-guard-v3-${{ matrix.arch }}-${{ matrix.os }}.tar.gz
+          asset_path: ./cfn-guard-v3-${{ matrix.os }}.tar.gz
+          asset_name: cfn-guard-v3-${{ matrix.os }}.tar.gz
           asset_content_type: application/octet-stream
