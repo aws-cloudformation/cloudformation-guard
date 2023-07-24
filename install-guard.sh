@@ -98,16 +98,13 @@ check_cmd() {
 
 download() {
 	if check_cmd curl; then
-		$curl -fsSL "$1"
+		curl -fsSL "$1"
 	else
 		wget -qO- "$1"
 	fi
 
 	if [ $? -ne 0 ]; then
-		echo $output
 		err "error attempting to download from the github repository"
-	else
-		echo "good stuff"
 	fi
 }
 
