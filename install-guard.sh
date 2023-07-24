@@ -29,7 +29,6 @@ main() {
 				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-"$ARCH_TYPE"-$OS_TYPE-latest.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
-			echo ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest/cfn-guard
 			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
 				err "unable to symlink to ~/.guard/bin directory"
 			~/.guard/bin/cfn-guard help ||
