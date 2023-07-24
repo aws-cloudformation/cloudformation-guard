@@ -53,7 +53,7 @@ jobs:
             cp README.md ./cfn-guard-v3-aarch64-${{ matrix.os }}/
             tar czvf ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-aarch64-${{ matrix.os }}
       - name: Upload x86 Release Asset
-        id: upload-release-asset
+        id: upload-x86_64-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,7 +63,7 @@ jobs:
           asset_name: cfn-guard-v3-x86_64-${{ matrix.os }}.tar.gz
           asset_content_type: application/octet-stream
       - name: Upload arm64 Release Asset
-        id: upload-release-asset
+        id: upload-aarch64-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
