@@ -3,7 +3,7 @@ use std::{convert::TryFrom, rc::Rc};
 use crate::rules::{
     eval_context::eval_context_tests::BasicQueryTesting,
     exprs::AccessQuery,
-    functions::converters::{parse_boolean, parse_float, parse_int, parse_string},
+    functions::converters::{parse_bool, parse_float, parse_int, parse_string},
     path_value::PathAwareValue,
     EvalContext, QueryResult,
 };
@@ -246,7 +246,7 @@ fn test_parse_boolean() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let bool = parse_boolean(&results)?;
+    let bool = parse_bool(&results)?;
     assert!(matches!(
         bool[0].as_ref().unwrap(),
         PathAwareValue::Bool((_, true))
@@ -263,7 +263,7 @@ fn test_parse_boolean() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let bool = parse_boolean(&results)?;
+    let bool = parse_bool(&results)?;
     assert!(bool[0].as_ref().is_none());
 
     let bad_value_query = AccessQuery::try_from(

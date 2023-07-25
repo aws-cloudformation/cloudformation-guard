@@ -77,7 +77,7 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
     Ok(aggr)
 }
 
-pub(crate) fn parse_boolean(
+pub(crate) fn parse_bool(
     args: &[QueryResult],
 ) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
@@ -109,9 +109,7 @@ pub(crate) fn parse_boolean(
     Ok(aggr)
 }
 
-pub(crate) fn parse_string(
-    args: &[QueryResult],
-) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_str(args: &[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
