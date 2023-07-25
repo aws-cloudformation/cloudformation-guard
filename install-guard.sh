@@ -25,7 +25,7 @@ main() {
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
 			get_os_type
-			download https://github.com/joshfried-aws/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
+			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
 				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-"$ARCH_TYPE"-$OS_TYPE-latest.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
@@ -76,7 +76,7 @@ get_arch_type() {
 }
 
 get_latest_release() {
-	download https://api.github.com/repos/joshfried-aws/cloudformation-guard/releases/latest |
+	download https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest |
 		awk -F '"' '/tag_name/ { print $4 }' |
 		awk -F '.' '{ print $1 "\n" $0 }'
 }
