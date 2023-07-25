@@ -224,7 +224,7 @@ or rules files.
                 .long(PRINT_JSON.0)
                 .short(PRINT_JSON.1)
                 .action(ArgAction::SetTrue)
-                .help("Print output in json format"))
+                .help("Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated"))
             .arg(Arg::new(PAYLOAD.0)
                 .long(PAYLOAD.0)
                 .short(PAYLOAD.1)

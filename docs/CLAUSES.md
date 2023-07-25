@@ -3,29 +3,29 @@
 Clauses are the foundational underpinning of Guard rules. Clauses are boolean statements which evaluate to a `true` (`PASS`)/ `false` (`FAIL`) and take the following format:
 
 ```
-  <query> <operator> [query|value literal] 
+  <query> <operator> [query|value literal]
 ```
 
 You must specify a `query` and an `operator` in the clause section:
 
-* `query` in its most simple form is a decimal dot (`.`) formatted expressions written to traverse hierarchical data. More information on this section of the clause can be found in the [Guard: Query and Filtering](QUERY_AND_FILTERING.md) document.
+- `query` in its most simple form is a decimal dot (`.`) formatted expressions written to traverse hierarchical data. More information on this section of the clause can be found in the [Guard: Query and Filtering](QUERY_AND_FILTERING.md) document.
 
-* `operator` can use *unary* or *binary* operators. Both of these operators will be discussed in-depth later in this document:
+- `operator` can use _unary_ or _binary_ operators. Both of these operators will be discussed in-depth later in this document:
 
-  * *Unary Operators:* `exists`, `empty`, `is_string`, `is_list`, `is_struct`, `is_bool`, `is_int`, `is_float`, `not(!)`
-  * *Binary Operators:* `==`, `!=`, `>`, `>=`, `<`, `<=`, `IN`
+  - _Unary Operators:_ `exists`, `empty`, `is_string`, `is_list`, `is_struct`, `is_bool`, `is_int`, `is_float`, `not(!)`
+  - _Binary Operators:_ `==`, `!=`, `>`, `>=`, `<`, `<=`, `IN`
 
 The `query|value literal` section of the clause is optional:
 
-* `query|value literal` the third section of a clause is needed when a binary operator is used. It can be a `query` as defined above or it can be any supported value literal like `string`, `integer(64)`, etc.
+- `query|value literal` the third section of a clause is needed when a binary operator is used. It can be a `query` as defined above or it can be any supported value literal like `string`, `integer(64)`, etc.
 
 Below are some examples for clauses:
 
-* Clauses using unary operator:
+- Clauses using unary operator:
 
 ```
 # The collection TcpBlockedPorts cannot be empty
-InputParameters.TcpBlockedPorts not empty  
+InputParameters.TcpBlockedPorts not empty
 ```
 
 ```
@@ -33,7 +33,7 @@ InputParameters.TcpBlockedPorts not empty
 Properties.ExecutionRoleArn is_string
 ```
 
-* Clauses using binary operator:
+- Clauses using binary operator:
 
 ```
 # BucketName must not contain the string "encrypt" irrespective of casing
@@ -59,8 +59,8 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
-              SSEAlgorithm: 'aws:kms'
-              KMSMasterKeyID: 'arn:aws:kms:us-east-1:123456789:key/056ea50b-1013-3907-8617-c93e474e400'
+              SSEAlgorithm: "aws:kms"
+              KMSMasterKeyID: "arn:aws:kms:us-east-1:123456789:key/056ea50b-1013-3907-8617-c93e474e400"
       Tags:
         - Key: "stage"
           Value: "prod"
@@ -72,7 +72,7 @@ Resources:
 
 #### `empty` and `exists` operators
 
-Guard introduces `empty` and `exists` operators to assist authors verify states of the `query` in a clause. You can use the  `not(!)` operator with both these operators to check the inverse state.
+Guard introduces `empty` and `exists` operators to assist authors verify states of the `query` in a clause. You can use the `not(!)` operator with both these operators to check the inverse state.
 
 `empty`- Checks if a collection is empty. It can also be used to check if a query has values in a hierarchical data as all queries result in a collection, more about queries is mentioned in the [Guard: Query and Filtering](QUERY_AND_FILTERING.md) document.
 
@@ -86,12 +86,12 @@ Resources !empty
 Resources.S3Bucket.Properties.Tags !empty
 ```
 
-The above two clauses will `PASS` for the example template. 
+The above two clauses will `PASS` for the example template.
 
-* The first clause checks to see if the template has resources defined under `Resources` , and the template has one resource with `S3Bucket` as the logical resource ID. 
-* The second clause checks to see if one or more tags are defined in `S3Bucket`. It has two tags defined under `Tags`.
+- The first clause checks to see if the template has resources defined under `Resources` , and the template has one resource with `S3Bucket` as the logical resource ID.
+- The second clause checks to see if one or more tags are defined in `S3Bucket`. It has two tags defined under `Tags`.
 
-`empty` can’t be used to check if string value queries have an empty string (`""`) defined.
+`empty` can be used to check if string value queries have an empty string (`""`) defined.
 
 `exists` - Checks if each occurrence of the query has a value and can be used in place of `!= null`.
 
@@ -102,7 +102,7 @@ Resources.S3Bucket.Properties.BucketEncryption exists
 
 The above clause will `PASS` for the example template as `BucketEncryption` is defined for `S3Bucket`.
 
-> **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true. 
+> **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true.
 
 #### `is_string`, `is_list`, `is_bool`, `is_int`, `is_float` and `is_struct` operators
 
@@ -148,7 +148,7 @@ Resources.S3Bucket.Properties.Tags is_list
 Resources.S3Bucket.Properties.BucketEncryption is_struct
 ```
 
-All the above example clauses will `PASS` for the example template. You can use the  `not(!)` operator with the above operators to check the inverse state.
+All the above example clauses will `PASS` for the example template. You can use the `not(!)` operator with the above operators to check the inverse state.
 
 ### Binary Operators
 
@@ -164,37 +164,39 @@ Below are binary operators supported in Guard. The left-hand side (LHS) to the o
   IN    In a list of form [x, y, z]
 ```
 
- A value literal can be from any of the following supported categories,
+A value literal can be from any of the following supported categories,
 
-* all primitives `string`, `integer(64)`, `float(64)`, `bool`, `char`, `regex`
-* a specialized range type for expressing `integer`, `float`, `char` ranges, expressed as,
-    *  `r[<lower_limit>, <upper_limit>]`, which translates to any value `k` that satisfies the following expression: `lower_limit` <= k <= `upper_limit`
-    *  `r[<lower_limit>, <upper_limit>)`, which translates to any value `k` that satisfies the following expression: `lower_limit` <= k < `upper_limit`
-    *  `r(<lower_limit>, <upper_limit>]`, which translates to any value `k` that satisfies the following expression: `lower_limit` < k <= `upper_limit`
-    *  `r(<lower_limit>, <upper_limit>)`, which translates to any value `k` that satisfies the following expression: `lower_limit` < k < `upper_limit`
-* associative arrays (a.k.a map) for nested key value structured data like:
+- all primitives `string`, `integer(64)`, `float(64)`, `bool`, `char`, `regex`
+- a specialized range type for expressing `integer`, `float`, `char` ranges, expressed as,
+  - `r[<lower_limit>, <upper_limit>]`, which translates to any value `k` that satisfies the following expression: `lower_limit` <= k <= `upper_limit`
+  - `r[<lower_limit>, <upper_limit>)`, which translates to any value `k` that satisfies the following expression: `lower_limit` <= k < `upper_limit`
+  - `r(<lower_limit>, <upper_limit>]`, which translates to any value `k` that satisfies the following expression: `lower_limit` < k <= `upper_limit`
+  - `r(<lower_limit>, <upper_limit>)`, which translates to any value `k` that satisfies the following expression: `lower_limit` < k < `upper_limit`
+- associative arrays (a.k.a map) for nested key value structured data like:
+
 ```
 { "my-map": { "nested-maps": [ { "key": 10, "value": 20 } ] } }
 ```
-* arrays of primitive/associative array types
+
+- arrays of primitive/associative array types
 
 Below are a couple of examples of clauses using binary operators:
 
-* Based on the Template-1 example template:
+- Based on the Template-1 example template:
 
 ```
 # Checks if BucketName does not contain the string "encrypt" irrespective of casing
 Resources.S3Bucket.Properties.BucketName != /(?i)encrypt/
 ```
 
-* Consider the following CloudFormation template:
+- Consider the following CloudFormation template:
 
 ```yaml
 # Template-2
 Resources:
   NewVolume:
     Type: AWS::EC2::Volume
-    Properties: 
+    Properties:
       Size: 100
       VolumeType: io1
       Iops: 100
@@ -233,9 +235,9 @@ You can add a custom message to a clause. A custom message is added at the end o
 `custom message` is expressed as `<<message>>` where message is any string which ideally provides information regarding the clause preceding it. This message is displayed in the verbose outputs of the validate (provide links) and test (provide links) commands and can be used to supply information helpful for understanding/debugging rules file evaluation on hierarchical data. The Template-2 example template clauses with custom message will look as follows:
 
 ```
-Resources.NewVolume.Properties.Size IN r[50,200] 
+Resources.NewVolume.Properties.Size IN r[50,200]
 <<
-    EC2Volume size must be between 50 and 200, 
+    EC2Volume size must be between 50 and 200,
     not including 50 and 200
 >>
 Resources.NewVolume.Properties.VolumeType IN [ 'io1','io2','gp3' ] <<Allowed Volume Types are io1, io2, and gp3>>
@@ -274,7 +276,7 @@ clause_K
 # (clause_L v clause_M v clause_N) ^ clause_O
 clause_L OR
 clause_M OR
-clause_N 
+clause_N
 clause_O
 ```
 
@@ -291,7 +293,7 @@ Resources.S3Bucket.Properties.Tags is_list
 Resources.S3Bucket.Properties.Tags !empty
 ```
 
-All clauses above are combined using conjunction. As you can see, there is repetition of part of the query expression in every clause. You can improve composability and remove verbosity and repetition from a set of related clauses with the same initial query path using a query block. 
+All clauses above are combined using conjunction. As you can see, there is repetition of part of the query expression in every clause. You can improve composability and remove verbosity and repetition from a set of related clauses with the same initial query path using a query block.
 
 ## Blocks
 
@@ -324,9 +326,9 @@ Blocks can be evaluated conditionally using `when` blocks; `when` blocks take th
   }
 ```
 
-* The `when` keyword designates the start of the when block.
+- The `when` keyword designates the start of the when block.
 
-* `condition` can be any Guard rule. The block is evaluated only if the evaluation of the condition results in `true` (`PASS`).
+- `condition` can be any Guard rule. The block is evaluated only if the evaluation of the condition results in `true` (`PASS`).
 
 Below is an example using the Template-1 example template:
 
@@ -347,7 +349,7 @@ Resources:
   S3Bucket:
     Type: "AWS::S3::Bucket"
     Properties:
-      BucketName: 
+      BucketName:
         Ref: S3BucketName
     ...
 ```
@@ -364,9 +366,9 @@ Named rule blocks allow for re-usability, improved composition and remove verbos
   }
 ```
 
-* The `rule` keyword designates the start of a named rule block.
+- The `rule` keyword designates the start of a named rule block.
 
-* `rule name` can be any string that is human-readable and ideally should uniquely identify a named rule block. It can be thought of as a label to the set of Guard rules it encapsulates where Guard rules is an umbrella term for clauses, query blocks, when blocks and named rule blocks. The `rule name` can be used to refer to the evaluation result of the set of Guard rules it encapsulates, this is what makes named rule blocks re-usable. It also helps provide context in the validate (provide links) and test (provide links) command output as to what exactly failed. The `rule name` is displayed along with it block’s evaluation status - `PASS`, `FAIL`, or `SKIP`, in the evaluation output of the rules file:
+- `rule name` can be any string that is human-readable and ideally should uniquely identify a named rule block. It can be thought of as a label to the set of Guard rules it encapsulates where Guard rules is an umbrella term for clauses, query blocks, when blocks and named rule blocks. The `rule name` can be used to refer to the evaluation result of the set of Guard rules it encapsulates, this is what makes named rule blocks re-usable. It also helps provide context in the validate (provide links) and test (provide links) command output as to what exactly failed. The `rule name` is displayed along with it block’s evaluation status - `PASS`, `FAIL`, or `SKIP`, in the evaluation output of the rules file:
 
 ```
 # Sample output of an evaluation where check1, check2, and check3 are rule names.
@@ -378,7 +380,7 @@ check2 **PASS**
 check3 **FAIL**
 ```
 
-* Named rule blocks can also be evaluated conditionally by specifying the `when` keyword followed with a `condition` after the `rule name`.
+- Named rule blocks can also be evaluated conditionally by specifying the `when` keyword followed with a `condition` after the `rule name`.
 
 Reiterating the `when` block example below:
 
