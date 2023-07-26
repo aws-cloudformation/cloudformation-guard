@@ -25,8 +25,8 @@ main() {
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
 			get_os_type
-			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
-				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-"$ARCH_TYPE"-$OS_TYPE-latest.tar.gz"
+			download https://github.com/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
+				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$ARCH_TYPE-$OS_TYPE-latest.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
 			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
@@ -98,13 +98,13 @@ check_cmd() {
 
 download() {
 	if check_cmd curl; then
-		curl -fsSL "$1"
+		if !(curl -fsSL "$1"); then
+			err "error attempting to download from the github repository"
+		fi
 	else
-		wget -qO- "$1"
-	fi
-
-	if [ $? -ne 0 ]; then
-		err "error attempting to download from the github repository"
+		if !(wget -qO- "$1"); then
+			err "error attempting to download from the github repository"
+		fi
 	fi
 }
 
