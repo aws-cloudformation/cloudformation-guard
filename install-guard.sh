@@ -98,11 +98,11 @@ check_cmd() {
 
 download() {
 	if check_cmd curl; then
-		if !(curl -fsSL "$1"); then
+		if ! (curl -fsSL "$1"); then
 			err "error attempting to download from the github repository"
 		fi
 	else
-		if !(wget -qO- "$1"); then
+		if ! (wget -qO- "$1"); then
 			err "error attempting to download from the github repository"
 		fi
 	fi
