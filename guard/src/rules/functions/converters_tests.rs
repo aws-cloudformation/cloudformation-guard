@@ -3,7 +3,7 @@ use std::{convert::TryFrom, rc::Rc};
 use crate::rules::{
     eval_context::eval_context_tests::BasicQueryTesting,
     exprs::AccessQuery,
-    functions::converters::{parse_bool, parse_float, parse_int, parse_string},
+    functions::converters::{parse_bool, parse_float, parse_int, parse_str},
     path_value::PathAwareValue,
     EvalContext, QueryResult,
 };
@@ -316,7 +316,7 @@ fn test_parse_string() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let string = parse_string(&results)?;
+    let string = parse_str(&results)?;
     assert!(matches!(
         string[0].as_ref().unwrap(),
         PathAwareValue::String(_)
@@ -333,13 +333,13 @@ fn test_parse_string() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let string = parse_string(&results)?;
+    let string = parse_str(&results)?;
     assert!(matches!(
         string[0].as_ref().unwrap(),
         PathAwareValue::String(_)
     ));
 
-    let string = parse_string(&results)?;
+    let string = parse_str(&results)?;
     assert!(matches!(
         string[0].as_ref().unwrap(),
         PathAwareValue::String(_)
