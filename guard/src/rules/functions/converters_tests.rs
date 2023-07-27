@@ -49,23 +49,6 @@ fn test_parse_int() -> crate::rules::Result<()> {
         PathAwareValue::Int((_, 2456))
     ));
 
-    let bool_query = AccessQuery::try_from(
-        r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.Bool"#,
-    )?;
-    let results = eval.query(&bool_query.query)?;
-    match results[0].clone() {
-        QueryResult::Literal(val) | QueryResult::Resolved(val) => {
-            assert!(matches!(&*val, PathAwareValue::Bool(_)));
-        }
-        _ => unreachable!(),
-    }
-
-    let integer = parse_int(&results)?;
-    assert!(matches!(
-        integer[0].as_ref().unwrap(),
-        PathAwareValue::Int((_, 1))
-    ));
-
     let char_query = AccessQuery::try_from(
         r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.Char"#,
     )?;

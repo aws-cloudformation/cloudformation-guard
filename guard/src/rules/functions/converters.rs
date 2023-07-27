@@ -61,9 +61,6 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                 PathAwareValue::Float((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), *val as i64))))
                 }
-                PathAwareValue::Bool((path, val)) => {
-                    aggr.push(Some(PathAwareValue::Int((path.clone(), *val as i64))))
-                }
                 _ => {
                     aggr.push(None);
                 }

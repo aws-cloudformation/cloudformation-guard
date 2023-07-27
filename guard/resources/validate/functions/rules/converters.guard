@@ -6,9 +6,6 @@ rule test_parse_int when %asg !empty {
 
     %min == 1
 
-    let new_instances = parse_int(%asg.Properties.NewInstancesProtectedFromScaleIn)
-    %new_instances == 1
-
     let default = parse_int(%asg.Properties.DefaultInstanceWarmup)
     %default == 1
 }
