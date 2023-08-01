@@ -46,6 +46,7 @@ jobs:
             cp README.md ./cfn-guard-v3-x86_64-${{ matrix.os }}/
             tar czvf ./cfn-guard-v3-x86_64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-x86_64-${{ matrix.os }}
 
+            sudo apt update
             sudo apt install gcc-aarch64-linux-gnu
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
             rustup target add aarch64-unknown-linux-musl
