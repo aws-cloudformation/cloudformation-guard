@@ -34,7 +34,7 @@ jobs:
         env:
           REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
           REGISTRY_ALIAS: ${{ secrets.REGISTRY_ALIAS }}
-          REPOSITORY: cloudformation-guard-beta
+          REPOSITORY: cloudformation-guard
         run: |
           git_tag=$(git describe --tags $(git rev-list --tags --max-count=1))
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
