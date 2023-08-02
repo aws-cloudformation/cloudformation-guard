@@ -1,4 +1,7 @@
-use crate::rules::{path_value::PathAwareValue, QueryResult};
+use crate::rules::{
+    path_value::{Path, PathAwareValue},
+    QueryResult,
+};
 
 pub(crate) fn parse_float(
     args: &[QueryResult],
@@ -25,6 +28,10 @@ pub(crate) fn parse_float(
                 PathAwareValue::Float((path, val)) => {
                     aggr.push(Some(PathAwareValue::Float((path.clone(), *val))))
                 }
+                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::Float((
+                    path.clone(),
+                    convert_char_to_number(val, path)? as f64,
+                )))),
                 _ => {
                     aggr.push(None);
                 }
@@ -36,6 +43,12 @@ pub(crate) fn parse_float(
     }
 
     Ok(aggr)
+}
+
+fn convert_char_to_number(val: &char, path: &Path) -> crate::rules::Result<u32> {
+    val.to_digit(10).ok_or(crate::Error::ParseError(format!(
+        "attempting to convert a string: {val} into a number at {path}"
+    )))
 }
 
 pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
@@ -58,6 +71,10 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                 PathAwareValue::Int((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), *val))))
                 }
+                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::Int((
+                    path.clone(),
+                    convert_char_to_number(val, path)? as i64,
+                )))),
                 PathAwareValue::Float((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), *val as i64))))
                 }
@@ -126,6 +143,10 @@ pub(crate) fn parse_str(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                 PathAwareValue::String((path, val)) => {
                     aggr.push(Some(PathAwareValue::String((path.clone(), val.clone()))))
                 }
+                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::String((
+                    path.clone(),
+                    val.to_string(),
+                )))),
                 _ => {
                     aggr.push(None);
                 }
