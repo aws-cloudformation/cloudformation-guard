@@ -47,8 +47,3 @@ jobs:
 
           docker build -t $latest_image_tag -t $guard_version_image_tag .
           docker push $guard_version_image_tag
-
-          if [ ${git_branch} == 'main' ]
-          then
-            docker push $latest_image_tag
-          fi
