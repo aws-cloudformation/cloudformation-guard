@@ -42,8 +42,7 @@ jobs:
           commit_hash=${git_branch}.${git_hash}
 
           prefix=$REGISTRY/$REGISTRY_ALIAS/$REPOSITORY
-          latest_image_tag=$prefix:latest
           guard_version_image_tag=$prefix:$git_tag
 
-          docker build -t $latest_image_tag -t $guard_version_image_tag .
+          docker build -t $guard_version_image_tag .
           docker push $guard_version_image_tag
