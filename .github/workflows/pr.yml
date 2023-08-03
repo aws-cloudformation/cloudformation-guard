@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [main, development, rogue_one]
+    branches: [main, development]
   pull_request:
-    branches: [main, development, rogue_one]
+    branches: [main, development]
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,6 +38,13 @@ jobs:
           components: rustfmt
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+  installScript:
+    name: Testing Install Script (install-guard.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test install script on ubuntu-latest
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 
   linting:
     name: Linting check (clippy)
