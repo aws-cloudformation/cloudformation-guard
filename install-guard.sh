@@ -55,25 +55,6 @@ get_os_type() {
 	esac
 }
 
-get_arch_type() {
-	_archtype="$(uname -m)"
-	case "$_archtype" in
-	arm64)
-		ARCH_TYPE="aarch64"
-		;;
-	aarch64)
-		ARCH_TYPE="aarch64"
-		;;
-	x86_64)
-		ARCH_TYPE="x86_64"
-		;;
-
-	*)
-		err "unsupported architecture type $_archtype"
-		;;
-	esac
-}
-
 get_latest_release() {
 	download https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest |
 		awk -F '"' '/tag_name/ { print $4 }' |
