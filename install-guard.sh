@@ -16,7 +16,6 @@ main() {
 	need_cmd ln
 
 	get_os_type
-	get_arch_type
 	get_latest_release |
 		while
 			read -r MAJOR_VER
@@ -25,8 +24,8 @@ main() {
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
 			get_os_type
-			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
-				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$ARCH_TYPE-$OS_TYPE-latest.tar.gz"
+			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
+				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
 			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
