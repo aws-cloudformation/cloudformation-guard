@@ -160,6 +160,55 @@ pub(crate) fn parse_str(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
     Ok(aggr)
 }
 
+pub(crate) fn parse_char(
+    args: &[QueryResult],
+) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = vec![];
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(val) | QueryResult::Resolved(val) => match &**val {
+                PathAwareValue::Int((path, val)) => {
+                    if *val < 0 || *val > 9 {
+                        return Err(crate::Error::ParseError(format!(
+                            "attempting to convert an int: {val} into a char at {path}"
+                        )));
+                    }
+
+                    let c = char::from_digit(*val as u32, 10).ok_or(crate::Error::ParseError(
+                        format!("attempting to convert an int: {val} into a char at {path}"),
+                    ))?;
+
+                    aggr.push(Some(PathAwareValue::Char((path.clone(), c))));
+                }
+
+                PathAwareValue::String((path, val)) => {
+                    if val.len() > 1 {
+                        return Err(crate::Error::ParseError(format!(
+                            "attempting to convert an string: {val} into a char at {path}"
+                        )));
+                    }
+                    match val.chars().next() {
+                        Some(c) => aggr.push(Some(PathAwareValue::Char((path.clone(), c)))),
+                        None => aggr.push(None),
+                    }
+                }
+                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::String((
+                    path.clone(),
+                    val.to_string(),
+                )))),
+                _ => {
+                    aggr.push(None);
+                }
+            },
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+
+    Ok(aggr)
+}
+
 #[cfg(test)]
 #[path = "converters_tests.rs"]
 mod converters_test;

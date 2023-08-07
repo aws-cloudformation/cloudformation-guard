@@ -3,7 +3,7 @@ use std::{convert::TryFrom, rc::Rc};
 use crate::rules::{
     eval_context::eval_context_tests::BasicQueryTesting,
     exprs::AccessQuery,
-    functions::converters::{parse_bool, parse_float, parse_int, parse_str},
+    functions::converters::{parse_bool, parse_char, parse_float, parse_int, parse_str},
     path_value::PathAwareValue,
     EvalContext, QueryResult,
 };
@@ -327,6 +327,102 @@ fn test_parse_string() -> crate::rules::Result<()> {
         string[0].as_ref().unwrap(),
         PathAwareValue::String(_)
     ));
+
+    Ok(())
+}
+
+#[test]
+fn test_parse_char() -> crate::rules::Result<()> {
+    let value_str = r#"
+{
+    "Resources": {
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "SecurityGroupIngress": {
+                    "String": "1",
+                    "Int": 1,
+                    "Char": '1',
+                    "BadValue": "123"
+                }
+            }
+        }
+    }
+}
+    "#;
+
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
+
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+
+    let string_query = AccessQuery::try_from(
+        r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.String"#,
+    )?;
+
+    let results = eval.query(&string_query.query)?;
+    match results[0].clone() {
+        QueryResult::Literal(val) | QueryResult::Resolved(val) => {
+            assert!(matches!(&*val, PathAwareValue::String(_)));
+        }
+        _ => unreachable!(),
+    }
+
+    let integer = parse_char(&results)?;
+    assert!(matches!(
+        integer[0].as_ref().unwrap(),
+        PathAwareValue::Char((_, '1'))
+    ));
+
+    let char_query = AccessQuery::try_from(
+        r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.Char"#,
+    )?;
+    let results = eval.query(&char_query.query)?;
+    match results[0].clone() {
+        QueryResult::Literal(val) | QueryResult::Resolved(val) => {
+            assert!(matches!(&*val, PathAwareValue::String(_)));
+        }
+        _ => unreachable!(),
+    }
+
+    let integer = parse_char(&results)?;
+    assert!(matches!(
+        integer[0].as_ref().unwrap(),
+        PathAwareValue::Char((_, '1'))
+    ));
+
+    let int_query = AccessQuery::try_from(
+        r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.Int"#,
+    )?;
+    let results = eval.query(&int_query.query)?;
+    match results[0].clone() {
+        QueryResult::Literal(val) | QueryResult::Resolved(val) => {
+            assert!(matches!(&*val, PathAwareValue::Int(_)));
+        }
+        _ => unreachable!(),
+    }
+
+    let integer = parse_char(&results)?;
+    assert!(matches!(
+        integer[0].as_ref().unwrap(),
+        PathAwareValue::Char((_, '1'))
+    ));
+
+    let bad_query = AccessQuery::try_from(
+        r#"Resources[ Type == 'AWS::EC2::SecurityGroup' ].Properties.SecurityGroupIngress.BadValue"#,
+    )?;
+
+    let results = eval.query(&bad_query.query)?;
+    match results[0].clone() {
+        QueryResult::Literal(val) | QueryResult::Resolved(val) => {
+            assert!(matches!(&*val, PathAwareValue::String(_)));
+        }
+        _ => unreachable!(),
+    }
+
+    assert!(parse_char(&results).is_err());
 
     Ok(())
 }
