@@ -15,7 +15,7 @@ pub(crate) fn parse_float(
                         Ok(f) => Some(PathAwareValue::Float((path.clone(), f))),
                         Err(_) => {
                             return Err(crate::Error::ParseError(format!(
-                                "attempting to convert a string: {val} into a number at {path}"
+                                "failed to convert a string: {val} into a float at {path}"
                             )))
                         }
                     };
@@ -28,10 +28,15 @@ pub(crate) fn parse_float(
                 PathAwareValue::Float((path, val)) => {
                     aggr.push(Some(PathAwareValue::Float((path.clone(), *val))))
                 }
-                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::Float((
-                    path.clone(),
-                    convert_char_to_number(val, path)? as f64,
-                )))),
+                PathAwareValue::Char((path, val)) => {
+                    aggr.push(Some(PathAwareValue::Float((path.clone(), {
+                        let path = path;
+                        val.to_digit(10).ok_or(crate::Error::ParseError(format!(
+                            "failed to convert a character: {val} into a float at {path}"
+                        )))
+                    }?
+                        as f64))))
+                }
                 _ => {
                     aggr.push(None);
                 }
@@ -45,12 +50,6 @@ pub(crate) fn parse_float(
     Ok(aggr)
 }
 
-fn convert_char_to_number(val: &char, path: &Path) -> crate::rules::Result<u32> {
-    val.to_digit(10).ok_or(crate::Error::ParseError(format!(
-        "attempting to convert a string: {val} into a number at {path}"
-    )))
-}
-
 pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
@@ -61,7 +60,7 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                         Ok(i) => Some(PathAwareValue::Int((path.clone(), i))),
                         Err(_) => {
                             return Err(crate::Error::ParseError(format!(
-                                "attempting to convert a string: {val} into a number at {path}"
+                                "failed to convert a string: {val} into an integer at {path}"
                             )))
                         }
                     };
@@ -71,10 +70,15 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                 PathAwareValue::Int((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), *val))))
                 }
-                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::Int((
-                    path.clone(),
-                    convert_char_to_number(val, path)? as i64,
-                )))),
+                PathAwareValue::Char((path, val)) => {
+                    aggr.push(Some(PathAwareValue::Int((path.clone(), {
+                        let path = path;
+                        val.to_digit(10).ok_or(crate::Error::ParseError(format!(
+                            "failed to convert a character: {val} into an integer at {path}"
+                        )))
+                    }?
+                        as i64))))
+                }
                 PathAwareValue::Float((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), *val as i64))))
                 }
@@ -106,7 +110,7 @@ pub(crate) fn parse_bool(
                     "false" => aggr.push(Some(PathAwareValue::Bool((path.clone(), false)))),
                     _ => {
                         return Err(crate::Error::ParseError(format!(
-                            "attempting to convert a string: {val} into a boolean at {path}"
+                            "failed to convert a string: {val} into a boolean at {path}"
                         )))
                     }
                 },
@@ -170,12 +174,12 @@ pub(crate) fn parse_char(
                 PathAwareValue::Int((path, val)) => {
                     if *val < 0 || *val > 9 {
                         return Err(crate::Error::ParseError(format!(
-                            "attempting to convert an int: {val} into a char at {path}"
+                            "failed to convert an int: {val} into a char at {path}"
                         )));
                     }
 
                     let c = char::from_digit(*val as u32, 10).ok_or(crate::Error::ParseError(
-                        format!("attempting to convert an int: {val} into a char at {path}"),
+                        format!("failed to convert an int: {val} into a char at {path}"),
                     ))?;
 
                     aggr.push(Some(PathAwareValue::Char((path.clone(), c))));
@@ -184,7 +188,7 @@ pub(crate) fn parse_char(
                 PathAwareValue::String((path, val)) => {
                     if val.len() > 1 {
                         return Err(crate::Error::ParseError(format!(
-                            "attempting to convert an string: {val} into a char at {path}"
+                            "failed to convert an string: {val} into a char at {path}"
                         )));
                     }
                     match val.chars().next() {
