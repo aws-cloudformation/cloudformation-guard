@@ -1,7 +1,4 @@
-use crate::rules::{
-    path_value::{Path, PathAwareValue},
-    QueryResult,
-};
+use crate::rules::{path_value::PathAwareValue, QueryResult};
 
 pub(crate) fn parse_float(
     args: &[QueryResult],
