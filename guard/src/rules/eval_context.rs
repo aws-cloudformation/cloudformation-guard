@@ -4,6 +4,9 @@ use crate::rules::exprs::{
     ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
 };
 use crate::rules::functions::collections::count;
+use crate::rules::functions::converters::{
+    parse_bool, parse_char, parse_float, parse_int, parse_str,
+};
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
@@ -1198,7 +1201,8 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
     let expected_num_args = match name {
         "join" => 2,
         "substring" | "regex_replace" => 3,
-        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" => 1,
+        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" | "parse_string"
+        | "parse_boolean" | "parse_float" | "parse_int" | "parse_char" => 1,
         _ => {
             return Err(Error::ParseError(format!(
                 "no such function named {name} exists"
@@ -1304,7 +1308,11 @@ pub(crate) fn try_handle_function_call(
             vec![Some(res)]
         }
         "url_decode" => url_decode(&args[0])?,
-
+        "parse_int" => parse_int(&args[0])?,
+        "parse_float" => parse_float(&args[0])?,
+        "parse_string" => parse_str(&args[0])?,
+        "parse_boolean" => parse_bool(&args[0])?,
+        "parse_char" => parse_char(&args[0])?,
         function => return Err(Error::ParseError(format!("No function named {function}"))),
     };
 

@@ -38,3 +38,12 @@ Resources:
     Type: AWS::S3::Bucket
   bucket4:
     Type: AWS::S3::Bucket
+  asg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MaxSize: "5.0"
+      MinSize: "1"
+      NewInstancesProtectedFromScaleIn: true
+      DefaultInstanceWarmup: 1.5
+      HealthCheckGracePeriod: 1
+      HealthCheckType: "true"

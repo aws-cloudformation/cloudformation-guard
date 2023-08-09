@@ -1,0 +1,47 @@
+let asg = Resources.*[ Type == 'AWS::AutoScaling::AutoScalingGroup' ]
+
+
+let c = '1'
+rule test_parse_int when %asg !empty {
+    let min = parse_int(%asg.Properties.MinSize)
+
+    %min == 1
+
+    let char = parse_int(%c)
+    %char == 1
+
+    let default = parse_int(%asg.Properties.DefaultInstanceWarmup)
+    %default == 1
+}
+
+rule test_parse_bool when %asg !empty {
+    let health_check = parse_boolean(%asg.Properties.HealthCheckType)
+    %health_check == true
+}
+
+rule test_parse_float when %asg !empty {
+    let max = parse_float(%asg.Properties.MaxSize)
+    %max == 5.0
+
+    let health_check_period = parse_float(%asg.Properties.HealthCheckGracePeriod)
+
+    let char = parse_float(%c)
+    %char == 1.0
+
+    %health_check_period == 1.0
+}
+
+rule test_parse_str when %asg !empty {
+    let default = parse_string(%asg.Properties.DefaultInstanceWarmup)
+
+    %default == "1.5"
+
+    let health_check = parse_string(%asg.Properties.HealthCheckGracePeriod)
+    %health_check == "1"
+
+    let char = parse_string(%c)
+    %char == "1"
+
+    let new_instances = parse_string(%asg.Properties.NewInstancesProtectedFromScaleIn)
+    %new_instances == "true"
+}
