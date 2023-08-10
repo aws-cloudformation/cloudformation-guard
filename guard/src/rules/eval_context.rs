@@ -1988,7 +1988,7 @@ fn report_all_failed_clauses_for_rules<'value>(
 
                     let custom_message = custom_message
                         .as_ref()
-                        .map_or("".to_string(), |s| s.replace('\n', ";"));
+                        .map_or(String::default(), |s| s.to_string());
 
                     let error_message = message
                         .as_ref()
@@ -2050,7 +2050,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                 }) => {
                     let custom_message = custom_message
                         .as_ref()
-                        .map_or("".to_string(), |s| s.replace('\n', ";"));
+                        .map_or(String::default(), |s| s.to_string());
 
                     let error_message = message
                         .as_ref()

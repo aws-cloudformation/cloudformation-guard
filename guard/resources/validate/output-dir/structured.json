@@ -124,7 +124,7 @@
                 "Unary": {
                   "context": " %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  ",
                   "messages": {
-                    "custom_message": ";    Violation: S3 Bucket Logging needs to be configured to enable logging.;    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.;  ",
+                    "custom_message": "\n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  ",
                     "error_message": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]."
                   },
                   "check": {
@@ -336,7 +336,7 @@
                 "Binary": {
                   "context": " %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true",
                   "messages": {
-                    "custom_message": ";    Violation: S3 Bucket Public Write Access controls need to be restricted.;    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.;  ",
+                    "custom_message": "\n    Violation: S3 Bucket Public Write Access controls need to be restricted.\n    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.\n  ",
                     "error_message": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]."
                   },
                   "check": {
