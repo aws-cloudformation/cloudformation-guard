@@ -13,7 +13,7 @@
           Binary:
             context: ' NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"'
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}].
             check:
               UnResolved:
@@ -40,7 +40,7 @@
           Binary:
             context: ' NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"'
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}].
             check:
               UnResolved:
@@ -104,7 +104,7 @@
           Unary:
             context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  '
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:
@@ -127,7 +127,7 @@
           Binary:
             context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true'
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:
@@ -150,7 +150,7 @@
           Binary:
             context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true'
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:
@@ -173,7 +173,7 @@
           Binary:
             context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true'
             messages:
-              custom_message: null
+              custom_message: ''
               error_message: Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:

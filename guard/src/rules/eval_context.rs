@@ -1986,6 +1986,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                         }
                     };
 
+                    let custom_message = custom_message
+                        .as_ref()
+                        .map_or(String::default(), |s| s.to_string());
+
                     let error_message = message
                         .as_ref()
                         .map_or("".to_string(), |s| format!("Error = [{}]", s));
@@ -2027,7 +2031,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
                         UnaryReport {
                             messages: Messages {
-                                custom_message: custom_message.to_owned(),
+                                custom_message: Some(custom_message),
                                 error_message: Some(message),
                             },
                             context: current.context.clone(),
@@ -2044,6 +2048,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                     status: Status::FAIL,
                     to,
                 }) => {
+                    let custom_message = custom_message
+                        .as_ref()
+                        .map_or(String::default(), |s| s.to_string());
+
                     let error_message = message
                         .as_ref()
                         .map_or("".to_string(), |s| format!(" Error = [{}]", s));
@@ -2061,7 +2069,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 BinaryReport {
                                     context: current.context.to_string(),
                                     messages: Messages {
-                                        custom_message: custom_message.to_owned(),
+                                        custom_message: Some(custom_message),
                                         error_message: Some(message),
                                     },
                                     check: BinaryCheck::UnResolved(ValueUnResolved {
@@ -2102,7 +2110,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 context: current.context.to_string(),
                                                 messages: Messages {
                                                     error_message: Some(message),
-                                                    custom_message: custom_message.to_owned(),
+                                                    custom_message: Some(custom_message),
                                                 },
                                             }),
                                         ))
@@ -2119,7 +2127,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                             GuardClauseReport::Binary(BinaryReport {
                                                 context: current.context.to_string(),
                                                 messages: Messages {
-                                                    custom_message: custom_message.to_owned(),
+                                                    custom_message: Some(custom_message),
                                                     error_message: Some(message),
                                                 },
                                                 check: BinaryCheck::UnResolved(ValueUnResolved {
