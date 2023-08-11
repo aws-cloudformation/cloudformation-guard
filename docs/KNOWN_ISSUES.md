@@ -31,9 +31,9 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     when %api_gws !empty { ...}
 ```
 
-3. When performing `!=` comparison, if the values are incompatible like comparing a `string` to `int`, an error is thrown internally but currently suppressed and converted to `false` to satisfy the requirements of Rust’s [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html). We are tracking to release a fix for this issue soon.
-4. `exists` and `empty` checks do not display the JSON pointer path inside the document in the error messages. Both these clauses often have retrieval errors which does not maintain this traversal information today. We are tracking to resolve this issue.
-5. <a name="function-limitation"></a> **No support for inline functions**
+2. When performing `!=` comparison, if the values are incompatible like comparing a `string` to `int`, an error is thrown internally but currently suppressed and converted to `false` to satisfy the requirements of Rust’s [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html). We are tracking to release a fix for this issue soon.
+3. `exists` and `empty` checks do not display the JSON pointer path inside the document in the error messages. Both these clauses often have retrieval errors which does not maintain this traversal information today. We are tracking to resolve this issue.
+4. <a name="function-limitation"></a> **No support for inline functions**
 
    We **do not** support inline usage of functions at the moment. The support for built-in functions is currently limited to assignment of the return value to a variable.
 
@@ -65,4 +65,27 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
       %no_of_instances < 2
       << Violation: We should have at least 2 instances >>
    }
+   ```
+
+   5. Key names containing dashes
+      Currently dashes in key names are treated as special characters. This means that if you're trying to access a key that has a dash in it, you must wrap that key in quotes.
+
+   eg: given the following sample template
+
+   ```
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          some-key: true
+   ```
+
+   if we wanted to check the `some-key` key here we would need to write a rule like so
+
+   ```
+    let root = Resources.*[ Type == "AWS::S3::Bucket" ]
+
+    rule example_with_dash_in_key when %root !empty {
+        %root.Properties."some-key" == true
+    }
    ```
