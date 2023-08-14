@@ -93,7 +93,7 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
-`exists` - Checks if each occurrence of the query has a value and can be used in place of `!= null`.
+`exists` - Checks if each occurrence of the query exists.
 
 ```
 # Checks if BucketEncryption is defined
@@ -132,6 +132,13 @@ Resources.ELBListener.Properties.Port is_bool
 ```
 # Checks if CompletionWindowMinutes is defined as a float
 Resources.BackupPlan.Properties.BackupPlan.BackupPlanRule { CompletionWindowMinutes is_float  }
+```
+
+`is_null` - Checks if each occurrence of the query is of `float` type.
+
+```
+# Checks if Resources.S3Bucket.Properties is null
+Resources.S3Bucket is_null
 ```
 
 `is_list` - Checks if each occurrence of the query is of `list` type.

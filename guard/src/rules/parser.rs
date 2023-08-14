@@ -600,10 +600,21 @@ fn is_list(input: Span) -> IResult<Span, CmpOperator> {
     value(CmpOperator::IsList, alt((tag("IS_LIST"), tag("is_list"))))(input)
 }
 
+fn is_null(input: Span) -> IResult<Span, CmpOperator> {
+    value(CmpOperator::IsNull, alt((tag("IS_NULL"), tag("is_null"))))(input)
+}
+
 fn is_struct(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsMap,
         alt((tag("IS_STRUCT"), tag("is_struct"))),
+    )(input)
+}
+
+fn is_float(input: Span) -> IResult<Span, CmpOperator> {
+    value(
+        CmpOperator::IsFloat,
+        alt((tag("IS_FLOAT"), tag("is_float"))),
     )(input)
 }
 
@@ -623,7 +634,9 @@ fn is_int(input: Span) -> IResult<Span, CmpOperator> {
 }
 
 fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
-    alt((is_string, is_list, is_struct, is_bool, is_int))(input)
+    alt((
+        is_string, is_list, is_struct, is_bool, is_int, is_null, is_float,
+    ))(input)
 }
 
 pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
