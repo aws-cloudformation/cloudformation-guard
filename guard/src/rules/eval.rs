@@ -58,7 +58,6 @@ is_type_fn!(is_string_operation, PathAwareValue::String(_));
 is_type_fn!(is_list_operation, PathAwareValue::List(_));
 is_type_fn!(is_struct_operation, PathAwareValue::Map(_));
 is_type_fn!(is_int_operation, PathAwareValue::Int(_));
-#[cfg(test)]
 is_type_fn!(is_float_operation, PathAwareValue::Float(_));
 is_type_fn!(is_bool_operation, PathAwareValue::Bool(_));
 #[cfg(test)]
@@ -67,6 +66,7 @@ is_type_fn!(is_char_range_operation, PathAwareValue::RangeChar(_));
 is_type_fn!(is_int_range_operation, PathAwareValue::RangeInt(_));
 #[cfg(test)]
 is_type_fn!(is_float_range_operation, PathAwareValue::RangeFloat(_));
+is_type_fn!(is_null_operation, PathAwareValue::Null(_));
 
 fn not_operation<O>(operation: O) -> impl Fn(&QueryResult) -> Result<bool>
 where
@@ -363,6 +363,24 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
         (CmpOperator::IsInt, is_not_int) => box_create_func!(
             is_int_operation,
             is_not_int,
+            inverse,
+            cmp,
+            eval_context,
+            context,
+            custom_message
+        ),
+        (CmpOperator::IsNull, is_not_null) => box_create_func!(
+            is_null_operation,
+            is_not_null,
+            inverse,
+            cmp,
+            eval_context,
+            context,
+            custom_message
+        ),
+        (CmpOperator::IsFloat, is_not_float) => box_create_func!(
+            is_float_operation,
+            is_not_float,
             inverse,
             cmp,
             eval_context,

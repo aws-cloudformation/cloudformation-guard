@@ -260,3 +260,79 @@ b: *numbers
 
     Ok(())
 }
+
+#[test]
+fn test_handle_null() {
+    let docs = r###"
+    Resources: NULL
+    "###;
+
+    let mut loader = Loader::new();
+    let value = loader.load(String::from(docs)).unwrap();
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!(),
+    };
+
+    let val = map
+        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .unwrap()
+        .to_owned();
+
+    assert!(matches!(val, MarkedValue::Null(_)));
+
+    let docs = r###"
+    Resources: ~
+    "###;
+
+    let value = loader.load(String::from(docs)).unwrap();
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!(),
+    };
+
+    let val = map
+        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .unwrap()
+        .to_owned();
+
+    assert!(matches!(val, MarkedValue::Null(_)));
+
+    let docs = r###"
+    Resources: "~"
+    "###;
+
+    let value = loader.load(String::from(docs)).unwrap();
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!(),
+    };
+
+    let val = map
+        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .unwrap()
+        .to_owned();
+
+    assert!(matches!(val, MarkedValue::String(..)));
+
+    let docs = r###"
+    Resources: "null"
+    "###;
+
+    let value = loader.load(String::from(docs)).unwrap();
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!(),
+    };
+
+    let val = map
+        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .unwrap()
+        .to_owned();
+
+    assert!(matches!(val, MarkedValue::String(..)));
+}
