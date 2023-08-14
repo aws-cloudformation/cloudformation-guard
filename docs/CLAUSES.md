@@ -93,7 +93,7 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
-`exists` - Checks if each occurrence of the query has a value and can be used in place of `!= null`.
+`exists` - Checks if each occurrence of the query exists.
 
 ```
 # Checks if BucketEncryption is defined
@@ -146,6 +146,13 @@ Resources.S3Bucket.Properties.Tags is_list
 ```
 # Checks if BucketEncryption is defined as a structured data
 Resources.S3Bucket.Properties.BucketEncryption is_struct
+```
+
+`is_null` - Checks if each occurrence of the query is of `float` type.
+
+```
+# Checks if Resources.S3Bucket.Properties is null
+Resources.S3Bucket is_null
 ```
 
 All the above example clauses will `PASS` for the example template. You can use the `not(!)` operator with the above operators to check the inverse state.

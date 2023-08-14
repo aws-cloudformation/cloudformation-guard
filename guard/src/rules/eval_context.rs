@@ -1728,6 +1728,34 @@ pub(crate) fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
                     "IS STRING"
                 }
             }
+            CmpOperator::IsFloat => {
+                if not {
+                    "NOT FLOAT"
+                } else {
+                    "IS FLOAT"
+                }
+            }
+            CmpOperator::IsNull => {
+                if not {
+                    "NOT NULL"
+                } else {
+                    "IS NULL"
+                }
+            }
+            CmpOperator::IsBool => {
+                if not {
+                    "NOT BOOL"
+                } else {
+                    "IS BOOl"
+                }
+            }
+            CmpOperator::IsInt => {
+                if not {
+                    "NOT INT"
+                } else {
+                    "IS INT"
+                }
+            }
             _ => unreachable!(),
         }
     } else {
