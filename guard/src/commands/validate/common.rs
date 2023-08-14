@@ -608,18 +608,15 @@ where
                                     } else {
                                         "was int"
                                     },
-                                IsNull =>
-                                    if !not {
-                                        "was not null"
-                                    } else {
-                                        "was null"
-                                    },
-                                IsFloat =>
-                                    if !not {
-                                        "was not a float"
-                                    } else {
-                                        "was float"
-                                    },
+                                // NOTE: This enum actually doesnt exist and this is why we are
+                                // seeing a warning for  unreachable pattern underneath....Need to figure out what
+                                // happenned here...
+                                // IsFloat =>
+                                //     if !not {
+                                //         "was not a float"
+                                //     } else {
+                                //         "was float"
+                                // },
                                 Eq | In | Gt | Lt | Le | Ge => unreachable!(),
                             },
                             each

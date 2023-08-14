@@ -55,10 +55,10 @@ macro_rules! is_type_fn {
 }
 
 is_type_fn!(is_string_operation, PathAwareValue::String(_));
-is_type_fn!(is_null_operation, PathAwareValue::Null(_));
 is_type_fn!(is_list_operation, PathAwareValue::List(_));
 is_type_fn!(is_struct_operation, PathAwareValue::Map(_));
 is_type_fn!(is_int_operation, PathAwareValue::Int(_));
+#[cfg(test)]
 is_type_fn!(is_float_operation, PathAwareValue::Float(_));
 is_type_fn!(is_bool_operation, PathAwareValue::Bool(_));
 #[cfg(test)]
@@ -369,25 +369,6 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             context,
             custom_message
         ),
-        (CmpOperator::IsNull, is_not_null) => box_create_func!(
-            is_null_operation,
-            is_not_null,
-            inverse,
-            cmp,
-            eval_context,
-            context,
-            custom_message
-        ),
-        (CmpOperator::IsFloat, is_not_float) => box_create_func!(
-            is_float_operation,
-            is_not_float,
-            inverse,
-            cmp,
-            eval_context,
-            context,
-            custom_message
-        ),
-
         (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
     };
     let mut status = Vec::with_capacity(lhs.len());

@@ -41,7 +41,6 @@ fn test_all_unary_functions() -> Result<()> {
     let char_range_value = PathAwareValue::try_from(r#"r[a, d)"#)?;
     let int_range_value = PathAwareValue::try_from(r#"r(10, 20)"#)?;
     let float_range_value = PathAwareValue::try_from(r#"r(10.0, 20.5]"#)?;
-    let null_value = PathAwareValue::Null(path_value::Path::root());
 
     type UnaryTest<'test> = Vec<(
         Box<dyn Fn(&QueryResult) -> Result<bool>>,
@@ -180,7 +179,7 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_float_operation),
             // Success Case
-            vec![QueryResult::Resolved(Rc::new(float_value.clone()))],
+            vec![QueryResult::Resolved(Rc::new(float_value))],
             // Failure Cases
             vec![
                 QueryResult::Resolved(Rc::new(path_value.clone())),
@@ -238,26 +237,7 @@ fn test_all_unary_functions() -> Result<()> {
         (
             Box::new(is_float_range_operation),
             // Success Case
-            vec![QueryResult::Resolved(Rc::new(float_range_value.clone()))],
-            // Failure Cases
-            vec![
-                QueryResult::Resolved(Rc::new(path_value.clone())),
-                QueryResult::Resolved(Rc::new(list_value.clone())),
-                QueryResult::Resolved(Rc::new(string_value.clone())),
-                QueryResult::Resolved(Rc::new(int_value.clone())),
-                QueryResult::Resolved(Rc::new(non_empty_path_value.clone())),
-                QueryResult::Resolved(Rc::new(char_range_value.clone())),
-                QueryResult::UnResolved(UnResolved {
-                    traversed_to: Rc::new(path_value.clone()),
-                    reason: None,
-                    remaining_query: "".to_string(),
-                }),
-            ],
-        ),
-        (
-            Box::new(is_null_operation),
-            // Success Case
-            vec![QueryResult::Resolved(Rc::new(null_value.clone()))],
+            vec![QueryResult::Resolved(Rc::new(float_range_value))],
             // Failure Cases
             vec![
                 QueryResult::Resolved(Rc::new(path_value.clone())),
@@ -265,9 +245,8 @@ fn test_all_unary_functions() -> Result<()> {
                 QueryResult::Resolved(Rc::new(string_value)),
                 QueryResult::Resolved(Rc::new(int_value)),
                 QueryResult::Resolved(Rc::new(non_empty_path_value)),
+                QueryResult::Resolved(Rc::new(char_range_value.clone())),
                 QueryResult::Resolved(Rc::new(char_range_value)),
-                QueryResult::Resolved(Rc::new(float_value)),
-                QueryResult::Resolved(Rc::new(float_range_value)),
                 QueryResult::UnResolved(UnResolved {
                     traversed_to: Rc::new(path_value),
                     reason: None,

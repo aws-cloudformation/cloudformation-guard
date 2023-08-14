@@ -89,10 +89,7 @@ impl Loader {
                     Ok(f) => MarkedValue::Float(f, location),
                     Err(_) => match val.parse::<bool>() {
                         Ok(b) => MarkedValue::Bool(b, location),
-                        Err(_) => match val.to_lowercase().as_str() {
-                            "~" | "null" => MarkedValue::Null(location),
-                            _ => MarkedValue::String(val, location),
-                        },
+                        Err(_) => MarkedValue::String(val, location),
                     },
                 },
             }
