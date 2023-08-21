@@ -2005,6 +2005,13 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 "was not bool"
                             }
                         }
+                        IsNull => {
+                            if *not {
+                                "was null"
+                            } else {
+                                "was not null"
+                            }
+                        }
                         _ => {
                             if *not {
                                 "was float"
