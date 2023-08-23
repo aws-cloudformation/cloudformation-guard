@@ -987,7 +987,7 @@ where
                                 (Some(LetValue::Value(PathAwareValue::try_from(rhs).unwrap())), msg.map(String::from).or(None))
                             }),
                        map(tuple((
-                            preceded(zero_or_more_ws_or_comment, function_expr), 
+                            preceded(zero_or_more_ws_or_comment, function_expr),
                             preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             |(rhs, msg)| {
                                 (Some(LetValue::FunctionCall(rhs)), msg.map(String::from).or(None))
