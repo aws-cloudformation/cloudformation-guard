@@ -986,12 +986,19 @@ where
                             move |(rhs, msg)| {
                                 (Some(LetValue::Value(PathAwareValue::try_from(rhs).unwrap())), msg.map(String::from).or(None))
                             }),
+                       map(tuple((
+                            preceded(zero_or_more_ws_or_comment, function_expr), 
+                            preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
+                            |(rhs, msg)| {
+                                (Some(LetValue::FunctionCall(rhs)), msg.map(String::from).or(None))
+                            }),
                         map(tuple((
                             preceded(zero_or_more_ws_or_comment, access),
                             preceded(zero_or_more_ws_or_comment, opt(custom_message)))),
                             |(rhs, msg)| {
                                 (Some(LetValue::AccessClause(rhs)), msg.map(String::from).or(None))
                             }),
+
                     ))))(rest)?;
         Ok((
             rest,
@@ -1067,8 +1074,8 @@ pub(crate) fn let_value(input: Span) -> IResult<Span, LetValue> {
             map(parse_value, |val| {
                 LetValue::Value(PathAwareValue::try_from(val).unwrap())
             }),
-            map(access, LetValue::AccessClause),
             map(function_expr, LetValue::FunctionCall),
+            map(access, LetValue::AccessClause),
         )),
     )(input)
 }

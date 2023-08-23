@@ -10,6 +10,8 @@ rule SOME_RULE when %template !empty {
 
     let res = json_parse(%policy)
 
+    %expected == json_parse(%policy)
+
     %res !empty
     %res == %expected
 
@@ -22,4 +24,5 @@ rule SOME_RULE when %template !empty {
             Resource == "arn:aws:s3:::s3-test-123/*"
     }
 }
+
 

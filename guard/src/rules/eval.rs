@@ -1,7 +1,7 @@
 use super::exprs::*;
 use super::*;
 use crate::rules::eval::operators::Comparator;
-use crate::rules::eval_context::{block_scope, ValueScope};
+use crate::rules::eval_context::{block_scope, resolve_function, ValueScope};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
 
@@ -1112,9 +1112,23 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         return Err(e);
                     }
                 },
-                LetValue::FunctionCall(_) => todo!(),
+                LetValue::FunctionCall(FunctionExpr {
+                    parameters, name, ..
+                }) => match resolve_function(name, parameters, resolver) {
+                    Ok(result) => (result, false),
+                    Err(e) => {
+                        resolver.end_record(
+                            &blk_context,
+                            RecordType::GuardClauseBlockCheck(BlockCheck {
+                                status: Status::FAIL,
+                                at_least_one_matches: !all,
+                                message: Some(format!("Error {e} when handling clause, bailing")),
+                            }),
+                        )?;
+                        return Err(e);
+                    }
+                },
             },
-
             None => {
                 resolver.end_record(
                     &blk_context,
@@ -1587,8 +1601,12 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
                     resolver.query(&query.query)?,
                 );
             }
-            // TODO: when we add inline function support
-            LetValue::FunctionCall(_) => unimplemented!(),
+            LetValue::FunctionCall(FunctionExpr {
+                parameters, name, ..
+            }) => {
+                let result = resolve_function(name, parameters, resolver)?;
+                resolved_parameters.insert((param_rule.parameter_names[idx]).as_str(), result);
+            }
         }
     }
     let mut eval = ResolvedParameterContext {

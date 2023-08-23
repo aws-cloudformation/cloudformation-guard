@@ -1,0 +1,22 @@
+rule compare_number_of_buckets(expected) {
+    %expected == 5
+}
+
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule COMBINED_FUNCTION_AND_PARAMETERIZED_RULES when %buckets !empty {
+    let number_of_buckets = count(%buckets)
+    compare_number_of_buckets(%number_of_buckets)
+}
+
+rule compare_result_of_regex_replace(replaced, expected) {
+    %replaced == %expected
+}
+
+let template = Resources.*[ Type == 'AWS::New::Service'] 
+
+rule PARAMETERIZED_RULE_WITH_FUNCTION_CALL_IN_PARAMS when %template exists {
+    let arn = %template.Properties.Arn 
+    let expected = "aws/123456789012/us-west-2/newservice-Table/extracted"
+    compare_result_of_regex_replace(regex_replace(%arn, "^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$", "${1}/${4}/${3}/${2}-${5}"), %expected)
+}

@@ -5,5 +5,8 @@ rule TEST_COLLECTION when %template !empty {
 
     let res = join(%collection, ",")
     %res == "a,b"
+
+    "a,b" == join(%collection, ",")
     << Violation: The joined value does not match the expected result >>
 }
+
