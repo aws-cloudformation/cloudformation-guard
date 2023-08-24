@@ -6,7 +6,7 @@ use crate::rules::parser::{rules_file, Span};
 use std::convert::TryFrom;
 use std::fs::File;
 
-const RULES_FILES_EXAMPLE: &str = r###"
+const RULES_FILES_EXAMPLE: &str = r#"
 rule iam_role_exists {
     Resources.*[ Type == "AWS::IAM::Role" ] EXISTS
 }
@@ -19,7 +19,7 @@ rule iam_role_lambda_compliance when iam_role_exists {
     %select_lambda_service EMPTY or
     %select_lambda_service.Action.* == /sts:AssumeRole/
 }
-"###;
+"#;
 
 fn parse_rules<'c>(rules: &'c str, name: &'c str) -> Result<RulesFile<'c>> {
     let span = Span::new_extra(rules, name);
@@ -131,7 +131,7 @@ fn rule_clause_tests() -> Result<()> {
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(Status::PASS, status);
 
-    let r = r###"
+    let r = r"
     rule iam_basic_checks {
   AWS::IAM::Role {
     Properties.AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
@@ -139,7 +139,7 @@ fn rule_clause_tests() -> Result<()> {
     Properties.Tags[*].Value == /[a-zA-Z0-9]+/
     Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
   }
-}"###;
+}";
     let _rule = Rule::try_from(r)?;
     Ok(())
 }
@@ -176,7 +176,7 @@ impl<'r> EvaluationContext for Reporter<'r> {
 
 #[test]
 fn rules_file_tests() -> Result<()> {
-    let file = r###"
+    let file = r#"
 let iam_resources = Resources.*[ Type == "AWS::IAM::Role" ]
 rule iam_resources_exists {
     %iam_resources !EMPTY
@@ -191,9 +191,9 @@ rule iam_basic_checks when iam_resources_exists {
         %iam_resources.Properties.Tags.Value == /[a-zA-Z0-9]+/
         %iam_resources.Properties.Tags.Key   == /[a-zA-Z0-9]+/
     }
-}"###;
+}"#;
 
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -213,7 +213,7 @@ rule iam_basic_checks when iam_resources_exists {
             }
         }
     }
-    "###;
+    "#;
 
     let root = Value::try_from(value)?;
     let root = PathAwareValue::try_from(root)?;
@@ -237,7 +237,7 @@ fn rules_not_in_tests() -> Result<()> {
     Ok(())
 }
 
-const SAMPLE: &str = r###"
+const SAMPLE: &str = r#"
     {
         "Statement": [
             {
@@ -260,11 +260,11 @@ const SAMPLE: &str = r###"
             }
         ]
     }
-    "###;
+    "#;
 
 #[test]
 fn test_iam_statement_clauses() -> Result<()> {
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -288,7 +288,7 @@ fn test_iam_statement_clauses() -> Result<()> {
             }
         ]
     }
-    "###;
+    "#;
     let value = Value::try_from(sample)?;
     let value = PathAwareValue::try_from(value)?;
 
@@ -322,7 +322,7 @@ fn test_iam_statement_clauses() -> Result<()> {
 
 #[test]
 fn test_api_gateway() -> Result<()> {
-    let rule = r###"
+    let rule = r#"
 rule check_rest_api_private {
   AWS::ApiGateway::RestApi {
     # Endpoint configuration must only be private
@@ -332,11 +332,11 @@ rule check_rest_api_private {
     Properties.Policy.Statement[ Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] !EMPTY
   }
 }
-    "###;
+    "#;
 
     let rule = Rule::try_from(rule)?;
 
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "apigatewayapi": {
@@ -370,7 +370,7 @@ rule check_rest_api_private {
                 }
             }
         }
-    }"###;
+    }"#;
 
     let value = Value::try_from(resources)?;
     let value = PathAwareValue::try_from(value)?;
@@ -383,7 +383,7 @@ rule check_rest_api_private {
 
 #[test]
 fn testing_iam_role_prov_serve() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "CounterTaskDefExecutionRole5959CB2D": {
@@ -409,9 +409,9 @@ fn testing_iam_role_prov_serve() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 let ecs_tasks = Resources.*[ Type == "AWS::ECS::TaskDefinition" ]
 
@@ -432,7 +432,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     } or
     %task_role == /aws:arn/ # either a direct string or
 }
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
@@ -447,7 +447,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
 
 #[test]
 fn testing_sg_rules_pro_serve() -> Result<()> {
-    let sgs = r###"
+    let sgs = r#"
     [{
     "Resources": {
     "CounterServiceSecurityGroupF41A3908": {
@@ -532,9 +532,9 @@ fn testing_sg_rules_pro_serve() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let sgs = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
 
 rule deny_egress when %sgs NOT EMPTY {
@@ -544,7 +544,7 @@ rule deny_egress when %sgs NOT EMPTY {
                                          CidrIpv6 == "::/0" ] EMPTY
 }
 
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
 
@@ -563,7 +563,7 @@ rule deny_egress when %sgs NOT EMPTY {
 
     let sample = r#"{ "Resources": {} }"#;
     let value = PathAwareValue::try_from(sample)?;
-    let rule = r###"
+    let rule = r#"
 rule deny_egress {
     # Ensure that none of the security group contain a rule
     # that has Cidr Ip set to any
@@ -571,7 +571,7 @@ rule deny_egress {
         .Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
                                          CidrIpv6 == "::/0" ] EMPTY
 }
-    "###;
+    "#;
 
     let dummy = DummyEval {};
     let rule_parsed = Rule::try_from(rule)?;
@@ -583,7 +583,7 @@ rule deny_egress {
 
 #[test]
 fn test_s3_bucket_pro_serv() -> Result<()> {
-    let values = r###"
+    let values = r#"
     [
 {
     "Resources": {
@@ -734,14 +734,14 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
     let parsed_values = match PathAwareValue::try_from(values)? {
         PathAwareValue::List((_, v)) => v,
         _ => unreachable!(),
     };
 
-    let rule = r###"
+    let rule = r#"
     rule deny_s3_public_bucket {
     AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
         Properties.BlockPublicAcls NOT EXISTS or
@@ -756,7 +756,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }
 
-    "###;
+    "#;
 
     let s3_rule = Rule::try_from(rule)?;
     let dummy = DummyEval {};
@@ -770,7 +770,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
 #[test]
 fn ecs_iam_role_relationship_assetions() -> Result<()> {
-    let _template = r###"
+    let _template = r#"
     # deny_task_role_no_permission_boundary is expected to be false so negate it to pass test
 {    "Resources": {
     "CounterTaskDef1468734E": {
@@ -891,7 +891,7 @@ fn ecs_iam_role_relationship_assetions() -> Result<()> {
     }
     }
 }
-    "###;
+    "#;
     Ok(())
 }
 
@@ -934,7 +934,7 @@ impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
 
 #[test]
 fn test_iam_subselections() -> Result<()> {
-    let template = r###"
+    let template = r#"
     {
         Resources: {
             # NOT SELECTED
@@ -986,7 +986,7 @@ fn test_iam_subselections() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
     let value = Value::try_from(template)?;
     let value = PathAwareValue::try_from(value)?;
@@ -1049,7 +1049,7 @@ fn test_iam_subselections() -> Result<()> {
     assert_eq!(selected[0], &expected);
     assert_eq!(selected[1], &expected2);
 
-    let rules_file = r###"
+    let rules_file = r#"
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 
 rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
@@ -1060,7 +1060,7 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
         Properties.PermissionsBoundary !EXISTS
     ] !EMPTY
 }
-    "###;
+    "#;
 
     let rules = RulesFile::try_from(rules_file)?;
     let root_scope = RootScope::new(&rules, &value)?;
@@ -1278,7 +1278,7 @@ fn double_projection_tests() -> Result<()> {
     }
     "###;
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs: {
@@ -1304,14 +1304,14 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let dummy = DummyEval {};
     let rule = Rule::try_from(rule_str)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs2: {
@@ -1322,7 +1322,7 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let status = rule.evaluate(&value, &dummy)?;
     println!("{}", status);
@@ -1501,12 +1501,12 @@ fn test_compare_lists() -> Result<()> {
 
 #[test]
 fn test_compare_rulegen() -> Result<()> {
-    let rulegen_created = r###"
+    let rulegen_created = r#"
 let aws_ec2_securitygroup_resources = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
 rule aws_ec2_securitygroup when %aws_ec2_securitygroup_resources !empty {
   %aws_ec2_securitygroup_resources.Properties.SecurityGroupEgress == [{"CidrIp":"0.0.0.0/0","IpProtocol":-1},{"CidrIpv6":"::/0","IpProtocol":-1}]
-}"###;
-    let template = r###"
+}"#;
+    let template = r#"
 Resources:
 
   # SecurityGroups
@@ -1523,7 +1523,7 @@ Resources:
         - CidrIpv6: "::/0"
           IpProtocol: -1
       VpcId: vpc-123abc
-    "###;
+    "#;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let root = RootScope::new(&rules, &value)?;
@@ -1734,7 +1734,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
 
 }"###;
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1756,7 +1756,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
           RouteTableId: { Ref: rt }
       gw:
         Type: 'AWS::EC2::InternetGateway'
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
@@ -1765,7 +1765,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1787,7 +1787,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
           RouteTableId: { Ref: rt }
       gw:
         Type: 'AWS::EC2::TransitGateway'
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
@@ -1796,7 +1796,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1816,7 +1816,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
         Properties:
           GatewayId: { Ref: gw }
           RouteTableId: { Ref: rt }
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
@@ -2321,7 +2321,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
                 - !GetAtt Infra1.PrivateIp
     "###;
 
-    let rules = r###"
+    let rules = r#"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
@@ -2332,7 +2332,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
       %aws_route53_recordset_resources.Properties.TTL == "900"
       %aws_route53_recordset_resources.Properties.HostedZoneName == "HostedZoneName"
     }
-    "###;
+    "#;
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
