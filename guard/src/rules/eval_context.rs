@@ -840,7 +840,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         vec![QueryResult::Literal(Rc::new(path_value.clone()))]
                     }
 
-                    LetValue::FunctionCall(_) => todo!(),
+                    LetValue::FunctionCall(FunctionExpr {
+                        parameters, name, ..
+                    }) => resolve_function(name, parameters, resolver)?,
                 };
 
                 let lhs = map
@@ -1122,33 +1124,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
-            validate_number_of_params(name, parameters.len())?;
-            let args = parameters.iter().try_fold(
-                vec![],
-                |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
-                    match param {
-                        LetValue::Value(value) => {
-                            args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
-                        }
-                        LetValue::AccessClause(clause) => {
-                            let resolved_query = self.query(&clause.query)?;
-                            args.push(resolved_query);
-                        }
-                        // TODO: when we add inline function call support
-                        _ => unimplemented!(),
-                    }
-
-                    Ok(args)
-                },
-            )?;
-
-            let result = try_handle_function_call(name, &args)?
-                .into_iter()
-                .flatten()
-                .map(Rc::new)
-                .map(QueryResult::Resolved)
-                .collect::<Vec<_>>();
-
+            let result = resolve_function(name, parameters, self)?;
             self.scope
                 .resolved_variables
                 .insert(variable_name, result.clone());
@@ -1405,33 +1381,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
-            validate_number_of_params(name, parameters.len())?;
-            let args = parameters.iter().try_fold(
-                vec![],
-                |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
-                    match param {
-                        LetValue::Value(value) => {
-                            args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
-                        }
-                        LetValue::AccessClause(clause) => {
-                            let resolved_query = self.query(&clause.query)?;
-                            args.push(resolved_query);
-                        }
-                        // TODO: when we add inline function call support
-                        _ => unimplemented!(),
-                    }
-
-                    Ok(args)
-                },
-            )?;
-
-            let result = try_handle_function_call(name, &args)?
-                .into_iter()
-                .flatten()
-                .map(Rc::new)
-                .map(QueryResult::Resolved)
-                .collect::<Vec<_>>();
-
+            let result = resolve_function(name, parameters, self)?;
             self.scope
                 .resolved_variables
                 .insert(variable_name, result.clone());
@@ -2262,6 +2212,43 @@ pub(crate) fn simplifed_json_from_root<'value>(
         }
         _ => unreachable!(),
     })
+}
+
+pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
+    name: &str,
+    parameters: &'value Vec<LetValue<'loc>>,
+    resolver: &'eval mut dyn EvalContext<'value, 'loc>,
+) -> Result<Vec<QueryResult>> {
+    validate_number_of_params(name, parameters.len())?;
+    let args =
+        parameters
+            .iter()
+            .try_fold(vec![], |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
+                match param {
+                    LetValue::Value(value) => {
+                        args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
+                    }
+                    LetValue::AccessClause(clause) => {
+                        let resolved_query = resolver.query(&clause.query)?;
+                        args.push(resolved_query);
+                    }
+                    LetValue::FunctionCall(FunctionExpr {
+                        parameters, name, ..
+                    }) => {
+                        let result = resolve_function(name, parameters, resolver)?;
+                        args.push(result);
+                    }
+                }
+
+                Ok(args)
+            })?;
+
+    Ok(try_handle_function_call(name, &args)?
+        .into_iter()
+        .flatten()
+        .map(Rc::new)
+        .map(QueryResult::Resolved)
+        .collect::<Vec<_>>())
 }
 
 #[cfg(test)]

@@ -638,6 +638,7 @@ mod validate_tests {
     #[case("join.guard")]
     #[case("count.guard")]
     #[case("converters.guard")]
+    #[case("complex_rules.guard")]
     fn test_validate_with_fn_expr_success(#[case] rule: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -666,6 +667,23 @@ mod validate_tests {
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
         assert_output_from_file_eq!(
             "resources/validate/functions/output/failing_count_show_summary_all.out",
+            writer
+        );
+    }
+
+    #[test]
+    fn test_validate_with_failing_complex_rule() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/failing_complex_rule.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/functions/output/failing_complex_rule.out",
             writer
         );
     }

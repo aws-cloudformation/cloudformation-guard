@@ -1,0 +1,34 @@
+template.yaml Status = FAIL
+FAILED rules
+failing_complex_rule.guard/PARAMETERIZED_RULE_WITH_FUNCTION_CALL_IN_PARAMS    FAIL
+---
+Evaluating data template.yaml against rules failing_complex_rule.guard
+Number of non-compliant resources 1
+Resource = newServer {
+  Type      = AWS::New::Service
+  Rule = PARAMETERIZED_RULE_WITH_FUNCTION_CALL_IN_PARAMS {
+    ALL {
+      Rule = compare_result_of_regex_replace {
+        ALL {
+          Check =  %expected EQUALS  %replaced {
+            ComparisonError {
+              Error            = Check was not compliant as property [/Resources/newServer/Properties/Arn[L:9,C:11]] was not present in [(resolved, Path=/Resources/newServer/Properties/Arn[L:9,C:11] Value="aws/123456789012/us-west-2/newservice-Table/extracted")]
+            }
+              PropertyPath    = /Resources/newServer/Properties/Arn[L:9,C:11]
+              Operator        = EQUAL
+              Value           = "aws/123456789012/us-west-2/newservice-Table/extracted"
+              ComparedWith    = ["aws/123456789012/us-west-2/newservice-Table/extracted"]
+              Code:
+                    7.           "Principal": "*",
+                    8.           "Actions": ["s3*", "ec2*"]
+                    9.        }
+                   10.      Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
+                   11.      Encoded: This%20string%20will%20be%20URL%20encoded
+                   12.    Collection:
+
+          }
+        }
+      }
+    }
+  }
+}

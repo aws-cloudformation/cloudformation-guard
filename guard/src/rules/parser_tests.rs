@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::WithinRange;
 use crate::rules::{EvaluationContext, EvaluationType, Status};
@@ -4236,7 +4238,8 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
                    Type == 'AWS::IAM::ManagedPolicy' ]
            .Properties.PolicyDocument.Statement[*],
         %var.Properties.Tags,
-        "hardcoded"
+        "hardcoded",
+        count(%var)
        )"#;
 
     let parameterized_guard_clause = ParameterizedNamedRuleClause::try_from(guard_clause)?;
@@ -4317,7 +4320,93 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
             LetValue::Value(PathAwareValue::try_from(Value::String(
                 "hardcoded".to_string(),
             ))?),
+            LetValue::FunctionCall(FunctionExpr {
+                parameters: vec![LetValue::AccessClause(AccessQuery {
+                    query: vec![QueryPart::Key("%var".to_string())],
+                    match_all: true,
+                })],
+                name: "count".to_string(),
+                location: FileLocation {
+                    line: 7,
+                    column: 9,
+                    file_name: "",
+                },
+            }),
         ],
+    };
+    assert_eq!(parameterized_guard_clause, expected);
+    Ok(())
+}
+
+#[test]
+fn parameterized_rule_single_param_function_with_one_argument() -> Result<(), Error> {
+    let guard_clause = r#"not iam_disallowed_attributes_check(count(%var))"#;
+
+    let parameterized_guard_clause = ParameterizedNamedRuleClause::try_from(guard_clause)?;
+    let expected = ParameterizedNamedRuleClause {
+        named_rule: GuardNamedRuleClause {
+            location: FileLocation {
+                file_name: "",
+                line: 1,
+                column: 1,
+            },
+            custom_message: None,
+            negation: true,
+            dependent_rule: "iam_disallowed_attributes_check".to_string(),
+        },
+        parameters: vec![LetValue::FunctionCall(FunctionExpr {
+            parameters: vec![LetValue::AccessClause(AccessQuery {
+                query: vec![QueryPart::Key("%var".to_string())],
+                match_all: true,
+            })],
+            name: "count".to_string(),
+            location: FileLocation {
+                line: 1,
+                column: 37,
+                file_name: "",
+            },
+        })],
+    };
+    assert_eq!(parameterized_guard_clause, expected);
+    Ok(())
+}
+
+#[test]
+fn parameterized_rule_single_param_function_with_multiple_arguments() -> Result<(), Error> {
+    let guard_clause = r#"not iam_disallowed_attributes_check(regex_replace(%var, "^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$", "${1}/${4}/${3}/${2}-${5}"))"#;
+
+    let parameterized_guard_clause = ParameterizedNamedRuleClause::try_from(guard_clause)?;
+    let expected = ParameterizedNamedRuleClause {
+        named_rule: GuardNamedRuleClause {
+            location: FileLocation {
+                file_name: "",
+                line: 1,
+                column: 1,
+            },
+            custom_message: None,
+            negation: true,
+            dependent_rule: "iam_disallowed_attributes_check".to_string(),
+        },
+        parameters: vec![LetValue::FunctionCall(FunctionExpr {
+            parameters: vec![
+                LetValue::AccessClause(AccessQuery {
+                    query: vec![QueryPart::Key("%var".to_string())],
+                    match_all: true,
+                }),
+                LetValue::Value(PathAwareValue::try_from(Value::String(
+                    r#"^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$"#.to_string(),
+                ))?),
+                LetValue::Value(PathAwareValue::try_from(Value::String(
+                    "${1}/${4}/${3}/${2}-${5}".to_string(),
+                ))?),
+            ],
+            name: "regex_replace".to_string(),
+            location: FileLocation {
+                line: 1,
+                column: 37,
+                file_name: "",
+            },
+        })],
     };
     assert_eq!(parameterized_guard_clause, expected);
     Ok(())

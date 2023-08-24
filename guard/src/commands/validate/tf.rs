@@ -51,12 +51,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
         output_type: OutputFormatType,
     ) -> crate::rules::Result<()> {
         let root = data.root().unwrap();
-        let is_tf_plan = match data.at("/resource_changes", root) {
-            Ok(_resource_changes) => matches!(data.at("/terraform_version", root), Ok(_)),
-            _ => false,
-        };
-
-        if is_tf_plan {
+        if data.at("/resource_changes", root).is_ok() {
             let failure_report = simplifed_json_from_root(root_record)?;
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
