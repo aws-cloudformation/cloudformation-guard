@@ -57,7 +57,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    }
    ```
 
-   While the above code snippet might be tempting to use as it's more intuitive, we haven't made the changes required to support it in our grammar yet.
+   While the above code snippet might be tempting to use we haven't made the changes required to support it in our grammar yet.
 
    > **Workaround**:
    > When working with unary operators. assign the result of the function to a variable.
