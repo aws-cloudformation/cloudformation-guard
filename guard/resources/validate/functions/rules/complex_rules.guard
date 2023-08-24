@@ -5,8 +5,7 @@ rule compare_number_of_buckets(expected) {
 let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
 
 rule COMBINED_FUNCTION_AND_PARAMETERIZED_RULES when %buckets !empty {
-    let number_of_buckets = count(%buckets)
-    compare_number_of_buckets(%number_of_buckets)
+    compare_number_of_buckets(count(%buckets))
 }
 
 rule compare_result_of_regex_replace(replaced, expected) {
