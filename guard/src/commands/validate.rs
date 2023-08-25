@@ -540,7 +540,7 @@ fn evaluate_rule(
             return Ok(5);
         }
 
-        Ok(rule) => {
+        Ok(Some(rule)) => {
             let status = evaluate_against_data_input(
                 data_type,
                 output,
@@ -558,6 +558,7 @@ fn evaluate_rule(
                 return Ok(19);
             }
         }
+        Ok(None) => return Ok(0),
     }
 
     Ok(0)
@@ -577,7 +578,10 @@ fn deserialize_payload(payload: &str) -> Result<Payload> {
     }
 }
 
-fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Result<RulesFile<'r>> {
+fn parse_rules<'r>(
+    rules_file_content: &'r str,
+    rules_file_name: &'r str,
+) -> Result<Option<RulesFile<'r>>> {
     let span = crate::rules::parser::Span::new_extra(rules_file_content, rules_file_name);
     crate::rules::parser::rules_file(span)
 }

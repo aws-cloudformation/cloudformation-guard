@@ -218,7 +218,7 @@ or failure testing.
                             writeln!(writer, "Parse Error on ruleset file {e}",)?;
                             exit_code = 1;
                         }
-                        Ok(rules) => {
+                        Ok(Some(rules)) => {
                             let data_test_files = each_rule_file
                                 .test_files
                                 .iter()
@@ -232,6 +232,7 @@ or failure testing.
                                 exit_code
                             }
                         }
+                        Ok(None) => {}
                     }
                     writeln!(writer, "---")?;
                 }
@@ -283,13 +284,14 @@ or failure testing.
                                 writeln!(writer, "Parse Error on ruleset file {e}")?;
                                 exit_code = 1;
                             }
-                            Ok(rules) => {
+                            Ok(Some(rules)) => {
                                 let curr_exit_code =
                                     test_with_data(&data_test_files, &rules, verbose, writer)?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
                             }
+                            Ok(None) => {}
                         }
                     }
                 }
