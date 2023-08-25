@@ -216,7 +216,7 @@ fn test_query_on_value() -> Result<()> {
     //
     // Making it work with variable references
     //
-    let block = r###"
+    let block = r#"
     AWS::IAM::Role {
         let statements = Properties.Policies.*.PolicyDocument.Statement[ Effect == "Allow" ]
 
@@ -226,7 +226,7 @@ fn test_query_on_value() -> Result<()> {
         %statements.Resource != "*" # OR
         # %statements.Resource.* != "*"
     }
-    "###;
+    "#;
     let type_block = TypeBlock::try_from(block)?;
     let status = type_block.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
@@ -265,7 +265,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
     }
     let dummy = DummyResolver {};
 
-    let block = r###"
+    let block = r#"
     rule check_subnets when Resources.*[ Type == "AWS::EC2::VPC" ] !EMPTY {
         # Ensure that Zone is always set
         AWS::EC2::Subnet Properties.AvailabilityZone NOT EMPTY
@@ -284,7 +284,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
             Properties.Ipv6CidrBlock NOT EXISTS
         }
     }
-    "###;
+    "#;
     let rule = Rule::try_from(block)?;
     let status = rule.evaluate(&value, &dummy)?;
     println!("Status = {:?}", status);
@@ -315,7 +315,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
     println!("Status = {:?}", status);
     assert_eq!(status, Status::PASS);
 
-    let content = r###"
+    let content = r#"
     {
        "Resources": {
            "subnet": {
@@ -328,13 +328,13 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
            }
        }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(content)?;
     let status = rule.evaluate(&value, &dummy)?;
     println!("Status = {:?}", status);
     assert_eq!(status, Status::FAIL);
 
-    let content = r###"
+    let content = r#"
     {
        "Resources": {
            "subnet": {
@@ -346,7 +346,7 @@ fn test_type_block_with_var_query_evaluation() -> Result<()> {
            }
        }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(content)?;
     let status = rule.evaluate(&value, &dummy)?;
     println!("Status = {:?}", status);
@@ -374,7 +374,7 @@ fn test_yaml_json_mapping() -> Result<()> {
           memory: 10
     "###;
 
-    let resources_json = r###"{
+    let resources_json = r#"{
         "Resources": {
             "s3": {
                "Type": "AWS::S3::Bucket",
@@ -384,7 +384,7 @@ fn test_yaml_json_mapping() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
     let value = super::read_from(resources)?;
     println!("{:?}", value);
@@ -400,7 +400,7 @@ fn test_yaml_json_mapping() -> Result<()> {
 
 #[test]
 fn test_yaml_json_mapping_2() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
 MyNotCondition:
     !Not [!Equals [!Ref EnvironmentType, prod]]
 Resources:
@@ -422,7 +422,7 @@ Resources:
       Others: !Select [ "1", [ "apples", "grapes", "oranges", "mangoes" ] ]
       TestJoin: !Join [ ":", [ a, b, c ] ]
       TestJoinWithRef: !Join [ ":", [ !Ref A, b, c ] ]
-      "###;
+      "#;
 
     let value = super::read_from(resources)?;
     println!("{:?}", value);

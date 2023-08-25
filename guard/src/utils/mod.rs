@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn read_cursor_test() {
-        let resources = r###"
+        let resources = r#"
     Resources:
       s3:
         Type: AWS::S3::Bucket
@@ -90,7 +90,7 @@ mod tests {
           PolicyDocument:
             Statement:
               Resource:
-                Fn::Sub: "aws:arn:s3::${s3}""###;
+                Fn::Sub: "aws:arn:s3::${s3}""#;
 
         let mut cursor = ReadCursor::new(resources);
         while let Some(line) = cursor.next() {

@@ -383,7 +383,7 @@ fn test_map_success() {
     assert_eq!(
         map.get("aurora").unwrap(),
         &Value::List(
-            vec!["audit", "error", "general", "slowquery"]
+            ["audit", "error", "general", "slowquery"]
                 .iter()
                 .map(|s| Value::String((*s).to_string()))
                 .collect::<Vec<Value>>()
@@ -535,12 +535,12 @@ fn test_parse_value_with_comments() {
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 2, "", "") };
     assert_eq!(parse_value(from_str2(s)), Ok((cmp, Value::Int(1234i64))));
 
-    let s = r###"
+    let s = r#"
 
         # this comment is skipped
         # this one too
         [ "value1", # this one is skipped as well
-          "value2" ]"###;
+          "value2" ]"#;
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 6, "", "") };
     assert_eq!(
         parse_value(from_str2(s)),
@@ -553,12 +553,12 @@ fn test_parse_value_with_comments() {
         ))
     );
 
-    let s = r###"{
+    let s = r#"{
         # this comment is skipped
         # this one as well
         key: # how about this
            "Value"
-        }"###;
+        }"#;
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 6, "", "") };
     assert_eq!(
         parse_value(from_str2(s)),
@@ -1681,8 +1681,7 @@ fn testing_access_with_cmp<'loc, A, C>(
             println!("Testing Access pattern = {}", access_pattern);
             let span = from_str2(&access_pattern);
             let result = clause(span);
-            if let Err(..) = result {
-                let parser_error = &result.unwrap_err();
+            if let Err(parser_error) = result {
                 let parser_error = match parser_error {
                     nom::Err::Error(p) | nom::Err::Failure(p) => {
                         format!("ParserError = {} fragment = {}", p, *p.span.fragment())
@@ -2392,16 +2391,16 @@ fn test_clauses() {
             }
 
 )))]
-#[case(r##"let ENGINE_LOGS = {
+#[case(r#"let ENGINE_LOGS = {
     'mariadb':       ["audit", "error", "general", "slowquery"],
     'aurora-postgresql': ["postgresql", "upgrade"]
-}"##, Ok((
+}"#, Ok((
         unsafe {
             Span::new_from_raw_offset(
-r##"let ENGINE_LOGS = {
+r#"let ENGINE_LOGS = {
     'mariadb':       ["audit", "error", "general", "slowquery"],
     'aurora-postgresql': ["postgresql", "upgrade"]
-}"##.len(),
+}"#.len(),
                 4,
                 "",
                 ""
@@ -2409,12 +2408,12 @@ r##"let ENGINE_LOGS = {
         },
         LetExpr {
             var: String::from("ENGINE_LOGS"),
-            value: LetValue::Value(PathAwareValue::try_from(r##"
+            value: LetValue::Value(PathAwareValue::try_from(r#"
         {
             'mariadb':       ["audit", "error", "general", "slowquery"],
             'aurora-postgresql': ["postgresql", "upgrade"]
         }
-                "##).unwrap())
+                "#).unwrap())
         }
         )))]
 fn test_assignments(#[case] each: &str, #[case] expected: IResult<Span, LetExpr>) {
@@ -3099,7 +3098,7 @@ fn test_rule_block() {
 
 #[test]
 fn test_rules_file() -> Result<(), Error> {
-    let s = r###"
+    let s = r#"
 #
 #  this is the set of rules for secure S3 bucket
 #  it must not be public AND
@@ -3128,7 +3127,7 @@ let kms_keys := [
 
 let encrypted := false
 let latest := "ami-6458235"
-        "###;
+        "#;
 
     let _rules_files = rules_file(from_str2(s))?;
     Ok(())
@@ -3153,12 +3152,12 @@ fn test_try_from_access() -> Result<(), Error> {
 
 #[test]
 fn test_try_from_rule_block() -> Result<(), Error> {
-    let rule = r###"
+    let rule = r#"
     rule s3_secure_exception {
         s3_secure or
         AWS::S3::Bucket tags.*.key in ["ExternalS3Approved"]
     }
-    "###;
+    "#;
     let rule_statement = Rule::try_from(rule)?;
     let expected = Rule {
         rule_name: String::from("s3_secure_exception"),
@@ -3251,7 +3250,7 @@ fn test_try_from_rule_block() -> Result<(), Error> {
 
 #[test]
 fn parse_list_of_map() -> Result<(), Error> {
-    let s = r###"let allowlist = [
+    let s = r#"let allowlist = [
      {
          "serviceAccount": "analytics",
          "images": ["banzaicloud/allspark:0.1.2", "banzaicloud/istio-proxyv2:1.7.0-bzc"],
@@ -3261,7 +3260,7 @@ fn parse_list_of_map() -> Result<(), Error> {
      }
  ]
 
-  "###;
+  "#;
 
     let value = assignment(from_str2(s))?.1;
     println!("{:?}", value);
@@ -3270,13 +3269,13 @@ fn parse_list_of_map() -> Result<(), Error> {
 
 #[test]
 fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
-    let r = r###"
+    let r = r#"
     rule is_service_account_operation_valid {
      request.kind.kind == "Pod"
      request.operation == "CREATE"
      let service_name = request.object.spec.serviceAccountName
      %allowlist[ this.serviceAccount == %service_name ] !EMPTY
- }"###;
+ }"#;
     let rule = Rule::try_from(r)?;
     println!("{:?}", rule);
 
@@ -3294,7 +3293,7 @@ fn parse_rule_block_with_mixed_assignment() -> Result<(), Error> {
 
 #[test]
 fn parse_regex_tests() -> Result<(), Error> {
-    let inner = r#"(\d{4})-(\d{2})-(\d{2})"#;
+    let inner = "(\\d{4})-(\\d{2})-(\\d{2})";
     let regex = format!("/{}/", inner);
     let value = Value::try_from(regex.as_str())?;
     assert_eq!(Value::Regex(inner.to_string()), value);
@@ -3412,11 +3411,11 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
 
 #[test]
 fn test_rules_file_default_rules() -> Result<(), Error> {
-    let s = r###"
+    let s = r#"
     AWS::AmazonMQ::Broker Properties.AutoMinorVersionUpgrade == false <<Version upgrades should be enabled to receive security updates>>
     AWS::AmazonMQ::Broker Properties.EncryptionOptions.UseAwsOwnedKey == false <<CMKs should be used instead of AWS-provided KMS keys>>
     AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBot.RootResourceId" <<Should be root resource id>> or  AWS::ApiGateway::Method Properties.ResourceId == "ApiGatewayBadBotResource"
-    "###;
+    "#;
     let default_rule = Rule {
         rule_name: String::from("default"),
         conditions: None,
@@ -4394,7 +4393,7 @@ fn parameterized_rule_single_param_function_with_multiple_arguments() -> Result<
                     match_all: true,
                 }),
                 LetValue::Value(PathAwareValue::try_from(Value::String(
-                    r#"^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$"#.to_string(),
+                    "^arn:(\\w+):(\\w+):([\\w0-9-]+):(\\d+):(.+)$".to_string(),
                 ))?),
                 LetValue::Value(PathAwareValue::try_from(Value::String(
                     "${1}/${4}/${3}/${2}-${5}".to_string(),
@@ -4435,7 +4434,7 @@ fn paramterized_clause_errors() -> Result<(), Error> {
 
 #[test]
 fn parameterized_clause_in_when_condition() -> Result<(), Error> {
-    let rule_when_clause = r###"rule call_parameterized when parameterized(%x) {
+    let rule_when_clause = r#"rule call_parameterized when parameterized(%x) {
         Resources[ Type == /IAM::Role/ ] {
             check_iam_statements(Properties.PolicyDocument.Statement[*], "some-hardcoded-param")
             when check_required_tags_present(Properties.Tags)
@@ -4444,7 +4443,7 @@ fn parameterized_clause_in_when_condition() -> Result<(), Error> {
                 some Properties.PolicyDocument.Statement[*].Principal == '*'
             }
         }
-    }"###;
+    }"#;
 
     let rule = Rule::try_from(rule_when_clause)?;
     assert_eq!(rule.rule_name.as_str(), "call_parameterized");
@@ -4614,7 +4613,7 @@ fn test_parse_regex_inner_when_regex_is_not_valid() {
 
 #[test]
 fn test_parse_regex_inner_when_regex_is_valid() {
-    let valid = r#"\w+/"#;
+    let valid = "\\w+/";
     let valid_cmp = unsafe { Span::new_from_raw_offset(valid.len(), 5, valid, "") };
 
     assert!(parse_regex_inner(valid_cmp).is_ok())

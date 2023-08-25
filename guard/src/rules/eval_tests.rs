@@ -891,12 +891,12 @@ fn binary_comparisons_lt_le() -> Result<()> {
 
 #[test]
 fn test_compare_rulegen() -> Result<()> {
-    let rulegen_created = r###"
+    let rulegen_created = r#"
 let aws_ec2_securitygroup_resources = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
 rule aws_ec2_securitygroup when %aws_ec2_securitygroup_resources !empty {
   %aws_ec2_securitygroup_resources.Properties.SecurityGroupEgress == [{"CidrIp":"0.0.0.0/0","IpProtocol":-1},{"CidrIpv6":"::/0","IpProtocol":-1}]
-}"###;
-    let template = r###"
+}"#;
+    let template = r#"
 Resources:
 
   # SecurityGroups
@@ -913,7 +913,7 @@ Resources:
         - CidrIpv6: "::/0"
           IpProtocol: -1
       VpcId: vpc-123abc
-    "###;
+    "#;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let mut root = root_scope(&rules, Rc::new(value))?;
@@ -1916,7 +1916,7 @@ fn test_in_comparison_operator_for_list_of_lists(
         resource_records_arg,
     };
 
-    let rules = r###"
+    let rules = r#"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       let targets = [{"Fn::Join": ["",[{"Ref": "SubdomainMaster"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainWild"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": 'SubdomainInternal'},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainDefault"},".", {"Ref": "HostedZoneName"}]]}]
@@ -1927,7 +1927,7 @@ fn test_in_comparison_operator_for_list_of_lists(
       %aws_route53_recordset_resources.Properties.TTL == "900"
       %aws_route53_recordset_resources.Properties.HostedZoneName == {"Ref": "HostedZoneName"}
     }
-    "###;
+    "#;
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
@@ -1956,12 +1956,12 @@ fn test_type_conversions(#[case] ttl_arg: &str, #[case] status_arg: Status) -> R
         ttl_arg,
     };
 
-    let rules = r###"
+    let rules = r#"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       %aws_route53_recordset_resources.Properties.TTL == "900"
     }
-    "###;
+    "#;
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
@@ -1993,11 +1993,11 @@ fn is_bool() -> Result<()> {
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         foo: "false"
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, Rc::new(value))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
@@ -2027,11 +2027,11 @@ fn is_int() -> Result<()> {
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         foo: "1"
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, Rc::new(value))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
@@ -2065,7 +2065,7 @@ fn double_projection_tests() -> Result<()> {
     }
     "###;
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs: {
@@ -2091,7 +2091,7 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
     let value = PathAwareValue::try_from(resources_str)?;
     let rules_file = RulesFile::try_from(rule_str)?;
@@ -2099,7 +2099,7 @@ fn double_projection_tests() -> Result<()> {
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
     assert_eq!(status, Status::PASS);
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs2: {
@@ -2110,7 +2110,7 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let mut eval = root_scope(&rules_file, Rc::new(value))?;
     let status = eval_rules_file(&rules_file, &mut eval, None)?;
@@ -2804,7 +2804,7 @@ fn rule_clause_tests() -> Result<()> {
 
 #[test]
 fn rule_test_type_blocks() -> Result<()> {
-    let r = r###"
+    let r = r"
     rule iam_basic_checks {
   AWS::IAM::Role {
     Properties.AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
@@ -2812,9 +2812,9 @@ fn rule_test_type_blocks() -> Result<()> {
     Properties.Tags[*].Value == /[a-zA-Z0-9]+/
     Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
   }
-}"###;
+}";
 
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -2852,7 +2852,7 @@ fn rule_test_type_blocks() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
     let root = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
     let rules_file = RulesFile::try_from(r)?;
@@ -2884,7 +2884,7 @@ fn rule_test_type_blocks() -> Result<()> {
 
 #[test]
 fn rules_file_tests_the_unituitive_all_clause_that_skips() -> Result<()> {
-    let file = r###"
+    let file = r#"
 let iam_resources = Resources.*[ Type == "AWS::IAM::Role" ]
 rule iam_resources_exists {
     %iam_resources !EMPTY
@@ -2905,9 +2905,9 @@ rule iam_basic_checks when iam_resources_exists {
         %iam_resources.Properties.Tags[*].Value == /[a-zA-Z0-9]+/
         %iam_resources.Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
     }
-}"###;
+}"#;
 
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -2945,7 +2945,7 @@ rule iam_basic_checks when iam_resources_exists {
             }
         }
     }
-    "###;
+    "#;
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
@@ -2958,7 +2958,7 @@ rule iam_basic_checks when iam_resources_exists {
 
 #[test]
 fn rules_file_tests_simpler_correct_form_using_newer_constructs() -> Result<()> {
-    let file = r###"
+    let file = r"
 rule iam_basic_checks {
     Resources[ Type == 'AWS::IAM::Role' ] {
         Properties {
@@ -2970,12 +2970,12 @@ rule iam_basic_checks {
             }
         }
     }
-}"###;
+}";
 
     //
     // Missing Tag properties
     //
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -3013,7 +3013,7 @@ rule iam_basic_checks {
             }
         }
     }
-    "###;
+    "#;
 
     let root = PathAwareValue::try_from(value)?;
     let rules_file = RulesFile::try_from(file)?;
@@ -3043,7 +3043,7 @@ rule iam_basic_checks {
     //
     // Empty Tag properties
     //
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -3082,7 +3082,7 @@ rule iam_basic_checks {
             }
         }
     }
-    "###;
+    "#;
 
     let root = PathAwareValue::try_from(value)?;
     let mut root_context = root_context.reset_root(Rc::new(root))?;
@@ -3119,7 +3119,7 @@ rule iam_basic_checks {
     Ok(())
 }
 
-const SAMPLE: &str = r###"
+const SAMPLE: &str = r#"
     {
         "Statement": [
             {
@@ -3142,11 +3142,11 @@ const SAMPLE: &str = r###"
             }
         ]
     }
-    "###;
+    "#;
 
 #[test]
 fn test_iam_statement_clauses() -> Result<()> {
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -3170,7 +3170,7 @@ fn test_iam_statement_clauses() -> Result<()> {
             }
         ]
     }
-    "###;
+    "#;
     let values = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
         root: Rc::new(values),
@@ -3198,7 +3198,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(Status::PASS, status);
 
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -3207,7 +3207,7 @@ fn test_iam_statement_clauses() -> Result<()> {
                 "Action": "s3:PutObject"
             }
         ]
-    }"###;
+    }"#;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
@@ -3216,7 +3216,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -3228,7 +3228,7 @@ fn test_iam_statement_clauses() -> Result<()> {
                 }
             }
         ]
-    }"###;
+    }"#;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
@@ -3237,7 +3237,7 @@ fn test_iam_statement_clauses() -> Result<()> {
     let status = eval_guard_clause(&parsed, &mut eval)?;
     assert_eq!(status, Status::FAIL);
 
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -3250,7 +3250,7 @@ fn test_iam_statement_clauses() -> Result<()> {
                 }
             }
         ]
-    }"###;
+    }"#;
     let value = PathAwareValue::try_from(sample)?;
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
@@ -3273,7 +3273,7 @@ fn test_iam_statement_clauses() -> Result<()> {
 
 #[test]
 fn test_api_gateway() -> Result<()> {
-    let rule = r###"
+    let rule = r#"
 rule check_rest_api_private {
   AWS::ApiGateway::RestApi {
     # Endpoint configuration must only be private
@@ -3283,11 +3283,11 @@ rule check_rest_api_private {
     Properties.Policy.Statement[ Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] !EMPTY
   }
 }
-    "###;
+    "#;
 
     let rule = Rule::try_from(rule)?;
 
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "apigatewayapi": {
@@ -3321,7 +3321,7 @@ rule check_rest_api_private {
                 }
             }
         }
-    }"###;
+    }"#;
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
@@ -3336,7 +3336,7 @@ rule check_rest_api_private {
 
 #[test]
 fn test_api_gateway_cleaner_model() -> Result<()> {
-    let rule = r###"
+    let rule = r#"
 rule check_rest_api_private {
   AWS::ApiGateway::RestApi {
     Properties {
@@ -3348,11 +3348,11 @@ rule check_rest_api_private {
     }
   }
 }
-    "###;
+    "#;
 
     let rule = Rule::try_from(rule)?;
 
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "apigatewayapi": {
@@ -3386,7 +3386,7 @@ rule check_rest_api_private {
                 }
             }
         }
-    }"###;
+    }"#;
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
@@ -3396,7 +3396,7 @@ rule check_rest_api_private {
     let status = eval_rule(&rule, &mut eval)?;
     assert_eq!(status, Status::PASS);
 
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "apigatewayapi": {
@@ -3430,7 +3430,7 @@ rule check_rest_api_private {
                 }
             }
         }
-    }"###;
+    }"#;
 
     let values = PathAwareValue::try_from(resources)?;
     let mut eval = BasicQueryTesting {
@@ -3445,7 +3445,7 @@ rule check_rest_api_private {
 
 #[test]
 fn testing_iam_role_prov_serve() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "CounterTaskDefExecutionRole5959CB2D": {
@@ -3471,9 +3471,9 @@ fn testing_iam_role_prov_serve() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 let ecs_tasks = Resources.*[ Type == "AWS::ECS::TaskDefinition" ]
 
@@ -3494,7 +3494,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     } or
     %task_role == /aws:arn/ # either a direct string or
 }
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
@@ -3507,7 +3507,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
 
 #[test]
 fn testing_sg_rules_pro_serve() -> Result<()> {
-    let sgs = r###"
+    let sgs = r#"
     [{
     "Resources": {
     "CounterServiceSecurityGroupF41A3908": {
@@ -3592,9 +3592,9 @@ fn testing_sg_rules_pro_serve() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let sgs = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
 
 rule deny_egress when %sgs NOT EMPTY {
@@ -3604,7 +3604,7 @@ rule deny_egress when %sgs NOT EMPTY {
                                          CidrIpv6 == "::/0" ] EMPTY
 }
 
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
 
@@ -3625,7 +3625,7 @@ rule deny_egress when %sgs NOT EMPTY {
 
 #[test]
 fn test_s3_bucket_pro_serv() -> Result<()> {
-    let values = r###"
+    let values = r#"
     [
 {
     "Resources": {
@@ -3776,14 +3776,14 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
     let parsed_values = match PathAwareValue::try_from(values)? {
         PathAwareValue::List((_, v)) => v,
         _ => unreachable!(),
     };
 
-    let rule = r###"
+    let rule = r#"
     rule deny_s3_public_bucket {
     AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
         Properties.BlockPublicAcls NOT EXISTS or
@@ -3798,7 +3798,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }
 
-    "###;
+    "#;
 
     let s3_rule = RulesFile::try_from(rule)?;
     let expectations = [
@@ -3960,7 +3960,7 @@ fn using_resource_names_for_assessment() -> Result<()> {
 #[test]
 #[ignore]
 fn test_string_in_comparison() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
     Resources:
       s3:
         Type: AWS::S3::Bucket
@@ -3971,7 +3971,7 @@ fn test_string_in_comparison() -> Result<()> {
             Statement:
               Resource:
                 Fn::Sub: "aws:arn:s3::${s3}"
-    "###;
+    "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
 
     let rules = r###"
@@ -3995,7 +3995,7 @@ fn test_string_in_comparison() -> Result<()> {
 
 #[test]
 fn test_searcher() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
     Resources:
       s3:
         Type: AWS::S3::Bucket
@@ -4006,7 +4006,7 @@ fn test_searcher() -> Result<()> {
             Statement:
               Resource:
                 Fn::Sub: "aws:arn:s3::${s3}"
-    "###;
+    "#;
 
     use grep_matcher::Matcher;
     use grep_regex::RegexMatcher;

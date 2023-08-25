@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 
 #[test]
 fn extraction_test() -> Result<()> {
-    let rules_files = r###"
+    let rules_files = r#"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
@@ -16,7 +16,7 @@ fn extraction_test() -> Result<()> {
       %aws_route53_recordset_resources.Properties.TTL == "900"
       %aws_route53_recordset_resources.Properties.HostedZoneName == "HostedZoneName"
     }
-    "###;
+    "#;
 
     let rules = RulesFile::try_from(rules_files)?;
     let path_value = PathAwareValue::try_from("{}")?;
