@@ -50,7 +50,8 @@ impl<'eval> StructuredEvaluator<'eval> {
                         ))?;
                         self.exit_code = 5;
                     }
-                    Ok(rule) => rules.push(rule),
+                    Ok(Some(rule)) => rules.push(rule),
+                    Ok(None) => {}
                 }
                 Ok(rules)
             },

@@ -23,7 +23,7 @@ rule iam_role_lambda_compliance when iam_role_exists {
 
 fn parse_rules<'c>(rules: &'c str, name: &'c str) -> Result<RulesFile<'c>> {
     let span = Span::new_extra(rules, name);
-    rules_file(span)
+    Ok(rules_file(span)?.unwrap())
 }
 
 fn read_data(file: File) -> Result<Value> {

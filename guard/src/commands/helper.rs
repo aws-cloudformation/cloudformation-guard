@@ -49,7 +49,7 @@ pub fn validate_and_return_json(
 
     let rules_file_name = rules.file_name;
     return match crate::rules::parser::rules_file(span) {
-        Ok(rules) => {
+        Ok(Some(rules)) => {
             let mut write_output = BufWriter::new(Vec::new());
             let root = input_data.path_value;
             let traversal = Traversal::from(&root);
@@ -79,6 +79,7 @@ pub fn validate_and_return_json(
                 Err(e) => Err(Error::ParseError(e.to_string())),
             }
         }
+        Ok(None) => Ok(String::default()),
         Err(e) => Err(Error::ParseError(e.to_string())),
     };
 }

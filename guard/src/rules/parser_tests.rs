@@ -3643,11 +3643,11 @@ fn test_rules_file_default_rules() -> Result<(), Error> {
     let rules_file = rules_file(from_str2(s))?;
     assert_eq!(
         rules_file,
-        RulesFile {
+        Some(RulesFile {
             assignments: vec![],
             guard_rules: vec![default_rule],
             parameterized_rules: vec![],
-        }
+        })
     );
     Ok(())
 }

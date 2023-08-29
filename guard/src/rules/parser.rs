@@ -1790,7 +1790,18 @@ pub(crate) fn get_rule_name<'b>(rule_file_name: &str, rule_name: &'b str) -> &'b
 //
 // Rules File
 //
-pub(crate) fn rules_file(input: Span) -> Result<RulesFile, Error> {
+pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
+    let input = match zero_or_more_ws_or_comment(input) {
+        Ok(input) => {
+            if input.0.is_empty() {
+                return Ok(None);
+            }
+
+            input.0
+        }
+        Err(_) => input,
+    };
+
     let exprs = all_consuming(fold_many1(
         remove_whitespace_comments(alt((
             map(assignment, Exprs::Assignment),
@@ -1866,11 +1877,11 @@ pub(crate) fn rules_file(input: Span) -> Result<RulesFile, Error> {
         named_rules.insert(0, default_rule);
     }
 
-    Ok(RulesFile {
+    Ok(Some(RulesFile {
         assignments: global_assignments,
         guard_rules: named_rules,
         parameterized_rules,
-    })
+    }))
 }
 
 //
@@ -1986,7 +1997,7 @@ impl<'a> TryFrom<&'a str> for RulesFile<'a> {
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let span = from_str2(value);
-        rules_file(span)
+        Ok(rules_file(span)?.unwrap())
     }
 }
 
