@@ -43,6 +43,7 @@ rstest = "0.15.0"
 fancy-regex = "0.13.0"
 indoc = "1.0.8"
 thiserror = "1.0.38"
+quick-xml = "0.30.0"
 
 [dependencies.serde_json]
 version = "1.0.85"
