@@ -33,6 +33,7 @@ fn get_code(e: &Error) -> ErrorCode {
         //that use both the regular cli, and the ffi
         Error::XMLError(_) => 20,
         Error::InternalError(_) => unreachable!(),
+        Error::XMLError(_) => todo!(),
     };
     ErrorCode::new(code)
 }
