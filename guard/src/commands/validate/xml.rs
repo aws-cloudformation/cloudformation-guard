@@ -1,9 +1,4 @@
-use std::{
-    fs::File,
-    path::Path,
-    rc::Rc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{rc::Rc, time::Instant};
 
 use colored::Colorize;
 use quick_xml::{
@@ -33,19 +28,25 @@ pub struct JunitReport<'report> {
 }
 
 impl<'report> JunitReport<'report> {
-    pub fn serialize(&self, writer: &mut impl std::io::Write) -> crate::rules::Result<()> {
+    pub fn serialize(
+        &self,
+        writer: &'report mut crate::utils::writer::Writer,
+    ) -> crate::rules::Result<()> {
         let mut writer = Writer::new_with_indent(writer, b' ', 4);
         let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
+
         writer.write_event(Event::Decl(decl))?;
         self.serialize_test_suites(&mut writer)?;
 
         Ok(writer.write_indent()?)
     }
+
     fn serialize_test_suites(
         &self,
         writer: &mut Writer<impl std::io::Write>,
     ) -> crate::rules::Result<()> {
         let mut suite_tag = BytesStart::new("testsuites");
+
         suite_tag.extend_attributes([
             ("name", self.name.as_str()),
             ("tests", self.tests.to_string().as_str()),
@@ -54,9 +55,11 @@ impl<'report> JunitReport<'report> {
         ]);
         serialize_time(&mut suite_tag, self.duration);
         writer.write_event(Event::Start(suite_tag))?;
+
         for test_suite in &self.test_suites {
             test_suite.serialize(writer)?;
         }
+
         serialize_end_event("testsuites", writer)?;
 
         Ok(writer.write_event(Event::Eof)?)
@@ -122,7 +125,6 @@ pub struct JunitReporter<'reporter> {
     pub(crate) rule_info: &'reporter [RuleFileInfo],
     pub(crate) input_params: &'reporter Option<PathAwareValue>,
     pub(crate) data: &'reporter Vec<DataFile>,
-    pub(crate) junit_report: &'reporter Option<String>,
     pub(crate) writer: &'reporter mut crate::utils::writer::Writer,
 }
 
@@ -166,7 +168,7 @@ impl<'reporter> JunitReporter<'reporter> {
         })
     }
 
-    pub fn generate_junit_report(&mut self) -> crate::rules::Result<()> {
+    pub fn generate_junit_report(&mut self) -> crate::rules::Result<i32> {
         let now = Instant::now();
         let rules = self.get_rules()?;
         let merged_data = self.merge_input_params_with_data();
@@ -201,7 +203,7 @@ impl<'reporter> JunitReporter<'reporter> {
                                             name: None,
                                             messages: vec![],
                                         },
-                                        |mut f, failure| {
+                                        |mut test_case, failure| {
                                             failure.get_message().into_iter().for_each(|e| {
                                                 if let rules::eval_context::ClauseReport::Rule(
                                                     rule,
@@ -214,11 +216,11 @@ impl<'reporter> JunitReporter<'reporter> {
                                                             .collect::<Vec<&str>>()[1],
                                                         false => rule.name,
                                                     };
-                                                    f.name = Some(name.to_string());
+                                                    test_case.name = Some(name.to_string());
                                                 };
-                                                f.messages.push(e);
+                                                test_case.messages.push(e);
                                             });
-                                            f
+                                            test_case
                                         },
                                     );
 
@@ -277,6 +279,14 @@ impl<'reporter> JunitReporter<'reporter> {
             suites.push(suite);
         }
 
+        let exit_code = if total_errors > 0 {
+            5
+        } else if total_failures > 0 {
+            19
+        } else {
+            0
+        };
+
         let report = JunitReport {
             name: String::from("cfn-guard validate report"),
             test_suites: suites,
@@ -286,25 +296,9 @@ impl<'reporter> JunitReporter<'reporter> {
             duration: std::time::Instant::now().elapsed().as_secs_f32(),
         };
 
-        let path = match self.junit_report {
-            None => "/dev/null".to_string(),
-            Some(path) => match path.ends_with(".xml") {
-                true => path.to_string(),
-                false => {
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-                        .to_string();
-                    format!("{path}/cfn-guard-{now}.xml")
-                }
-            },
-        };
+        report.serialize(self.writer)?;
 
-        dbg!(&path);
-        let mut writer = File::create(path)?;
-
-        report.serialize(&mut writer)
+        Ok(exit_code)
     }
 }
 

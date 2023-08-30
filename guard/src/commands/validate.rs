@@ -20,9 +20,9 @@ use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
 use crate::commands::validate::xml::JunitReporter;
 use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, JUNIT_REPORT,
-    LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
+    OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
+    SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -72,6 +72,7 @@ pub(crate) enum OutputFormatType {
     SingleLineSummary,
     JSON,
     YAML,
+    Junit,
 }
 
 impl From<&str> for OutputFormatType {
@@ -79,6 +80,7 @@ impl From<&str> for OutputFormatType {
         match value {
             "single-line-summary" => OutputFormatType::SingleLineSummary,
             "json" => OutputFormatType::JSON,
+            "junit" => OutputFormatType::Junit,
             _ => OutputFormatType::YAML,
         }
     }
@@ -132,7 +134,7 @@ impl Validate {
     }
 }
 
-const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
+const OUTPUT_FORMAT_VALUE_TYPE: [&str; 4] = ["json", "yaml", "single-line-summary", "junit"];
 const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
 
@@ -240,11 +242,6 @@ or rules files.
                 .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
                 .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0])
                 .action(ArgAction::SetTrue))
-            .arg(Arg::new(JUNIT_REPORT.0)
-                .long(JUNIT_REPORT.0)
-                .short(JUNIT_REPORT.1)
-                .help("a path for where the junit report will be written to")
-                .action(ArgAction::Set))
             .group(ArgGroup::new(REQUIRED_FLAGS)
                 .args([RULES.0, PAYLOAD.0])
                 .required(true))
@@ -408,17 +405,22 @@ or rules files.
                 }
             }
 
-            if let Some(junit_report) = app.get_one::<String>(JUNIT_REPORT.0) {
+            if matches!(output_type, OutputFormatType::Junit) {
+                if !summary_type.is_empty() {
+                    return Err(Error::IllegalArguments(String::from(
+                        "Cannot provide a summary-type other than `none` when the `junit` output format is selected",
+                    )));
+                }
+
                 let rule_info = get_rule_info(&rules, writer)?;
                 let mut reporter = JunitReporter {
                     rule_info: &rule_info,
                     input_params: &extra_data,
                     data: &data_files,
                     writer,
-                    junit_report: &Some(junit_report.to_string()),
                 };
 
-                reporter.generate_junit_report()?;
+                return reporter.generate_junit_report();
             }
 
             exit_code = match structured {
