@@ -26,6 +26,9 @@ Guard can be used for the following domains:
 
 ![Guard In Action](images/guard-demo.gif)
 
+**Customer Feedback**
+Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl0) to provide feedback about cfn-guard
+
 ## Table of Contents
 
 * [FAQs](#faqs)
