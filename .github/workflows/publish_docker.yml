@@ -6,6 +6,7 @@ on:
 
 jobs:
   build:
+    if: github.repository == "aws-cloudformation/cloudformation-guard"
     name: Build Image for Latest Commit
     runs-on: ubuntu-latest
     permissions:
