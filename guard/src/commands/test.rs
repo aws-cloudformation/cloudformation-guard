@@ -105,6 +105,13 @@ or failure testing.
                     .action(ArgAction::SetTrue)
                     .help("Verbose logging"),
             )
+            .arg(
+                Arg::new("junit")
+                    .long("junit")
+                    .short('j')
+                    .action(ArgAction::SetTrue)
+                    .help("Print test results as a junit report"),
+            )
             .arg_required_else_help(true)
     }
 
