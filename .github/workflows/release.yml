@@ -31,6 +31,10 @@ jobs:
             cp ./target/x86_64-apple-darwin/release/cfn-guard ./cfn-guard-v3-x86_64-${{ matrix.os }}/
             cp README.md ./cfn-guard-v3-x86_64-${{ matrix.os }}/
             tar czvf ./cfn-guard-v3-x86_64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-x86_64-${{ matrix.os }}
+            mkdir cfn-guard-v3-${{ matrix.os }}
+            cp ./target/x86_64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-${{ matrix.os }}/
+            cp README.md ./cfn-guard-v3-${{ matrix.os }}/
+            tar czvf ./cfn-guard-v3-${{ matrix.os }}.tar.gz ./cfn-guard-v3-${{ matrix.os }}
 
             rustup target add aarch64-apple-darwin
             cargo build --release --target aarch64-apple-darwin
