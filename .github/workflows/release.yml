@@ -83,3 +83,13 @@ jobs:
           asset_path: ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz
           asset_name: cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz
           asset_content_type: application/octet-stream
+      - name: Upload Release Asset (Legacy)
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./cfn-guard-v3-${{ matrix.os }}.tar.gz
+          asset_name: cfn-guard-v3-${{ matrix.os }}.tar.gz
+          asset_content_type: application/octet-stream
