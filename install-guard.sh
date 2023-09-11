@@ -16,6 +16,7 @@ main() {
 	need_cmd ln
 
 	get_os_type
+	get_arch_type
 	get_latest_release |
 		while
 			read -r MAJOR_VER
@@ -24,11 +25,11 @@ main() {
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
 			get_os_type
-			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
-				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest.tar.gz"
+			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
+				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$ARCH_TYPE-$OS_TYPE-latest.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
-			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
+			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
 				err "unable to symlink to ~/.guard/bin directory"
 			~/.guard/bin/cfn-guard help ||
 				err "cfn-guard was not installed properly"
@@ -86,6 +87,25 @@ download() {
 			err "error attempting to download from the github repository"
 		fi
 	fi
+}
+
+get_arch_type() {
+	_archtype="$(uname -m)"
+	case "$_archtype" in
+	arm64)
+		ARCH_TYPE="aarch64"
+		;;
+	aarch64)
+		ARCH_TYPE="aarch64"
+		;;
+	x86_64)
+		ARCH_TYPE="x86_64"
+		;;
+
+	*)
+		err "unsupported architecture type $_archtype"
+		;;
+	esac
 }
 
 main
