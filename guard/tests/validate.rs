@@ -195,13 +195,13 @@ mod validate_tests {
     #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(
         vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"],
-        vec!["s3_bucket_server_side_encryption_enabled_2.guard"],
-        StatusCode::INTERNAL_FAILURE
-    )]
+        vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
+    #[case(vec!["nested_crash.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::VALIDATION_ERROR)]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
