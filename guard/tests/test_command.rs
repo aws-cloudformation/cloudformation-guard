@@ -104,8 +104,6 @@ mod test_command_tests {
                 args.push(String::from(self.rules_and_test_file.unwrap()));
             }
 
-            if self.directory_only {}
-
             if self.alphabetical {
                 args.push(format!("-{}", ALPHABETICAL.1));
             }

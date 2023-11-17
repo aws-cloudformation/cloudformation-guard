@@ -154,7 +154,7 @@ or failure testing.
                                     .parent()
                                     .map_or("".to_string(), |p| format!("{}", p.display())),
                             )
-                            .or_insert(vec![])
+                            .or_default()
                             .push(GuardFile {
                                 prefix,
                                 file,
@@ -356,14 +356,15 @@ fn test_with_data(
                         eval_rules_file(rules, &mut root_scope, None)?; // we never use data file name in the output
                         let top = root_scope.reset_recorder().extract();
 
-                        let by_rules = top.children.iter().fold(HashMap::new(), |mut acc, rule| {
-                            if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
-                                rule.container
-                            {
-                                acc.entry(name).or_insert(vec![]).push(&rule.container)
-                            }
-                            acc
-                        });
+                        let by_rules: HashMap<&str, Vec<&Option<RecordType<'_>>>> =
+                            top.children.iter().fold(HashMap::new(), |mut acc, rule| {
+                                if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
+                                    rule.container
+                                {
+                                    acc.entry(name).or_default().push(&rule.container)
+                                }
+                                acc
+                            });
 
                         for (rule_name, rule) in by_rules {
                             let expected = match each.expectations.rules.get(rule_name) {
