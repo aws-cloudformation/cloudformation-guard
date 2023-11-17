@@ -157,8 +157,10 @@ impl Loader {
             let value = key_values.remove(0);
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
+                MarkedValue::Map(..) => continue,
                 _ => unreachable!(),
             };
+
             map.insert(key_str, value);
         }
     }
