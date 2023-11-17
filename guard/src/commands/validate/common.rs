@@ -709,12 +709,12 @@ pub(super) fn insert_into_trees<'report, 'value: 'report>(
 
     if let Some(from) = clause.value_from() {
         let path = from.self_path().0.to_string();
-        path_tree.entry(path).or_insert(vec![]).push(node.clone());
+        path_tree.entry(path).or_default().push(node.clone());
     }
 
     if let Some(from) = clause.value_to() {
         let path = from.self_path().0.to_string();
-        path_tree.entry(path).or_insert(vec![]).push(node);
+        path_tree.entry(path).or_default().push(node);
     }
 }
 

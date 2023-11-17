@@ -27,7 +27,6 @@ pub(crate) fn parse_float(
                 }
                 PathAwareValue::Char((path, val)) => {
                     aggr.push(Some(PathAwareValue::Float((path.clone(), {
-                        let path = path;
                         val.to_digit(10).ok_or(crate::Error::ParseError(format!(
                             "failed to convert a character: {val} into a float at {path}"
                         )))
@@ -69,7 +68,6 @@ pub(crate) fn parse_int(args: &[QueryResult]) -> crate::rules::Result<Vec<Option
                 }
                 PathAwareValue::Char((path, val)) => {
                     aggr.push(Some(PathAwareValue::Int((path.clone(), {
-                        let path = path;
                         val.to_digit(10).ok_or(crate::Error::ParseError(format!(
                             "failed to convert a character: {val} into an integer at {path}"
                         )))

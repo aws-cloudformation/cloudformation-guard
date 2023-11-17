@@ -393,7 +393,7 @@ fn merge_values_test() -> Result<(), Error> {
         _ => unreachable!(),
     };
     assert_eq!(resources_map.values.len(), 2);
-    assert!(matches!(resources_map.values.get("PARAMETERS"), Some(_)),);
+    assert!(resources_map.values.get("PARAMETERS").is_some());
 
     let parameters = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
         r#"
