@@ -5,15 +5,18 @@
 Resources:
   MyBucket:
     Type: AWS::S3::Bucket
+    NULL:
     Properties:
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+        null:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: { { CRASH } }
       VersioningConfiguration:
         Status: Enabled
+        ~:
