@@ -90,7 +90,7 @@ impl Loader {
                     Err(_) => match val.parse::<bool>() {
                         Ok(b) => MarkedValue::Bool(b, location),
                         Err(_) => match val.to_lowercase().as_str() {
-                            "~" | "null" => MarkedValue::Null(location),
+                            "~" | "null" => MarkedValue::Null(Some(val), location),
                             _ => MarkedValue::String(val, location),
                         },
                     },
@@ -158,6 +158,7 @@ impl Loader {
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
                 MarkedValue::Map(..) => continue,
+                MarkedValue::Null(val, loc) => (val.unwrap_or(String::from("null")), loc),
                 _ => unreachable!(),
             };
 
@@ -193,7 +194,7 @@ fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedV
         let fn_ref = short_form_to_long(fn_ref);
         map.insert(
             (fn_ref.to_string(), loc.clone()),
-            MarkedValue::Null(loc.clone()),
+            MarkedValue::Null(None, loc.clone()),
         );
 
         return Some(MarkedValue::Map(map, loc));
@@ -217,7 +218,7 @@ fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
             Ok(v) => MarkedValue::Float(v, loc),
         },
         "tag:yaml.org,2002:null" => match val.as_ref() {
-            "~" | "null" => MarkedValue::Null(loc),
+            "~" | "null" => MarkedValue::Null(Some(val), loc),
             _ => MarkedValue::BadValue(val, loc),
         },
         _ => MarkedValue::String(val, loc),

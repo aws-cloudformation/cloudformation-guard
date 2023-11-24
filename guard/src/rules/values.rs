@@ -389,7 +389,7 @@ impl<'a> TryFrom<&'a str> for Value {
 #[derive(PartialEq, Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum MarkedValue {
-    Null(Location),
+    Null(Option<String>, Location),
     BadValue(String, Location),
     String(String, Location),
     Regex(String, Location),
@@ -410,7 +410,7 @@ pub(crate) enum MarkedValue {
 impl MarkedValue {
     pub(crate) fn location(&self) -> &Location {
         match self {
-            Self::Null(loc)
+            Self::Null(_, loc)
             | Self::BadValue(_, loc)
             | Self::String(_, loc)
             | Self::Regex(_, loc)

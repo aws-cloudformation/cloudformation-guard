@@ -280,7 +280,7 @@ fn test_handle_null() {
         .unwrap()
         .to_owned();
 
-    assert!(matches!(val, MarkedValue::Null(_)));
+    assert!(matches!(val, MarkedValue::Null(..)));
 
     let docs = r###"
     Resources: ~
@@ -298,7 +298,7 @@ fn test_handle_null() {
         .unwrap()
         .to_owned();
 
-    assert!(matches!(val, MarkedValue::Null(_)));
+    assert!(matches!(val, MarkedValue::Null(..)));
 
     let docs = r###"
     Resources: "~"
