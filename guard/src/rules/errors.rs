@@ -45,8 +45,16 @@ pub enum Error {
     Errors(#[from] Errors),
     #[error("{0}")]
     IllegalArguments(String),
+    #[error("{0}")]
+    InternalError(InternalError),
+}
+
+#[derive(Debug, Error)]
+pub enum InternalError {
+    #[error("non string type detected for key in a map, cfn-guard only supports keys that are string types")]
+    InvalidKeyType,
     #[error("internal error {0}")]
-    InternalError(String),
+    UnresolvedKeyForReporter(String),
 }
 
 #[derive(Debug, Error)]

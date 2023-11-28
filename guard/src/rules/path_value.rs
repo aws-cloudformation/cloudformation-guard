@@ -436,7 +436,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 Ok(PathAwareValue::RangeFloat((path.with_location(loc), r)))
             }
             MarkedValue::Bool(b, loc) => Ok(PathAwareValue::Bool((path.with_location(loc), b))),
-            MarkedValue::Null(_, loc) => Ok(PathAwareValue::Null(path.with_location(loc))),
+            MarkedValue::Null(loc) => Ok(PathAwareValue::Null(path.with_location(loc))),
             MarkedValue::List(v, _) => {
                 let mut result: Vec<PathAwareValue> = Vec::with_capacity(v.len());
 

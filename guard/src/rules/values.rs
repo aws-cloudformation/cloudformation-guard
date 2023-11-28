@@ -389,7 +389,7 @@ impl<'a> TryFrom<&'a str> for Value {
 #[derive(PartialEq, Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum MarkedValue {
-    Null(Option<String>, Location),
+    Null(Location),
     BadValue(String, Location),
     String(String, Location),
     Regex(String, Location),
@@ -410,7 +410,7 @@ pub(crate) enum MarkedValue {
 impl MarkedValue {
     pub(crate) fn location(&self) -> &Location {
         match self {
-            Self::Null(_, loc)
+            Self::Null(loc)
             | Self::BadValue(_, loc)
             | Self::String(_, loc)
             | Self::Regex(_, loc)
@@ -431,7 +431,10 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::ParseError(format!("{}", e))),
+        Err(e) => match e {
+            Error::InternalError(..) => Err(e),
+            _ => Err(Error::ParseError(format!("{}", e))),
+        },
     }
 }
 
