@@ -220,6 +220,8 @@ mod validate_tests {
     #[case("SSEAlgorithm: {{CRASH}}")]
     #[case("~:")]
     #[case("[1, 2, 3]: foo")]
+    #[case("1: foo")]
+    #[case("1.0: foo")]
     fn test_graceful_handling_when_yaml_file_has_non_string_type_key(#[case] input: &str) {
         let bytes = input.as_bytes();
         let mut reader = Reader::new(ReadCursor(Cursor::new(bytes.to_vec())));
