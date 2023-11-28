@@ -201,7 +201,6 @@ mod validate_tests {
     #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
-    #[case(vec!["nested_crash.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::VALIDATION_ERROR)]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
@@ -215,6 +214,24 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(expected_status_code, status_code);
+    }
+
+    #[rstest::rstest]
+    #[case("SSEAlgorithm: {{CRASH}}")]
+    #[case("~:")]
+    #[case("[1, 2, 3]: foo")]
+    #[case("1: foo")]
+    #[case("1.0: foo")]
+    fn test_graceful_handling_when_yaml_file_has_non_string_type_key(#[case] input: &str) {
+        let bytes = input.as_bytes();
+        let mut reader = Reader::new(ReadCursor(Cursor::new(bytes.to_vec())));
+        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["s3_bucket_server_side_encryption_enabled_2.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
     #[test]

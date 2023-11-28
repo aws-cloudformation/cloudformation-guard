@@ -431,7 +431,10 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     let mut loader = Loader::new();
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
-        Err(e) => Err(Error::ParseError(format!("{}", e))),
+        Err(e) => match e {
+            Error::InternalError(..) => Err(e),
+            _ => Err(Error::ParseError(format!("{}", e))),
+        },
     }
 }
 

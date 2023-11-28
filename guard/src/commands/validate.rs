@@ -23,7 +23,7 @@ use crate::commands::{
     OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
     SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
 };
-use crate::rules::errors::Error;
+use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::exprs::RulesFile;
@@ -688,7 +688,11 @@ fn build_data_file(content: String, name: String) -> Result<DataFile> {
 
     let path_value = match crate::rules::values::read_from(&content) {
         Ok(value) => PathAwareValue::try_from(value)?,
-        Err(_) => {
+        Err(e) => {
+            if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
+                return Err(Error::ParseError(e.to_string()));
+            }
+
             let str_len: usize = cmp::min(content.len(), 100);
             return Err(Error::ParseError(format!(
                 "Error encountered while parsing data file: {name}, data beginning with \n{}\n ...",

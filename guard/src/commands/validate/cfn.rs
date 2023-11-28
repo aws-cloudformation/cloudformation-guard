@@ -23,6 +23,7 @@ use crate::{
     rules::{
         self,
         display::ValueOnlyDisplay,
+        errors::InternalError::UnresolvedKeyForReporter,
         eval_context::{
             simplifed_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
             InComparison, RuleReport, UnaryComparison,
@@ -197,9 +198,13 @@ fn single_line(
             let resource_name = match CFN_RESOURCES.captures(key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
                 _ => {
-                    return Err(crate::Error::InternalError(String::from(
-                        "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
-                    )));
+                    return Err(crate::Error::InternalError(
+                        UnresolvedKeyForReporter(
+                            String::from(
+                                "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
+                            )
+                        )
+                    ));
                 }
             };
 

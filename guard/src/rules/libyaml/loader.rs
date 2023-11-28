@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::rules::{
     self,
-    errors::Error,
+    errors::{Error, InternalError::InvalidKeyType},
     libyaml::{
         event::{Event, Scalar, ScalarStyle, SequenceStart},
         parser::Parser,
@@ -43,7 +43,7 @@ impl Loader {
                         return Ok(self.documents.pop().unwrap());
                     }
                     Event::MappingStart(..) => self.handle_mapping_start(location),
-                    Event::MappingEnd => self.handle_mapping_end(),
+                    Event::MappingEnd => self.handle_mapping_end()?,
                     Event::SequenceStart(sequence_start) => {
                         self.handle_sequence_start(sequence_start, location)
                     }
@@ -145,7 +145,7 @@ impl Loader {
         self.last_container_index.push(self.stack.len() - 1);
     }
 
-    fn handle_mapping_end(&mut self) {
+    fn handle_mapping_end(&mut self) -> crate::rules::Result<()> {
         let map_index = self.last_container_index.pop().unwrap();
         let mut key_values: Vec<MarkedValue> = self.stack.drain(map_index + 1..).collect();
         let map = match self.stack.last_mut().unwrap() {
@@ -157,12 +157,17 @@ impl Loader {
             let value = key_values.remove(0);
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
-                MarkedValue::Map(..) => continue,
-                _ => unreachable!(),
+                val => {
+                    return Err(Error::InternalError(InvalidKeyType(
+                        val.location().to_string(),
+                    )));
+                }
             };
 
             map.insert(key_str, value);
         }
+
+        Ok(())
     }
 
     fn handle_mapping_start(&mut self, location: Location) {
