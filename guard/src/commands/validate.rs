@@ -689,7 +689,7 @@ fn build_data_file(content: String, name: String) -> Result<DataFile> {
     let path_value = match crate::rules::values::read_from(&content) {
         Ok(value) => PathAwareValue::try_from(value)?,
         Err(e) => {
-            if matches!(e, Error::InternalError(InternalError::InvalidKeyType)) {
+            if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
                 return Err(Error::ParseError(e.to_string()));
             }
 

@@ -157,7 +157,11 @@ impl Loader {
             let value = key_values.remove(0);
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
-                _ => return Err(Error::InternalError(InvalidKeyType)),
+                val => {
+                    return Err(Error::InternalError(InvalidKeyType(
+                        val.location().to_string(),
+                    )));
+                }
             };
 
             map.insert(key_str, value);
