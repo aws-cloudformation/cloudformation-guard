@@ -292,7 +292,7 @@ or rules files.
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                    for file in walkdir::WalkDir::new(base).into_iter().flatten() {
                         if file.path().is_file() {
                             let name = file
                                 .file_name()
@@ -334,7 +334,7 @@ or rules files.
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
 
-                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                    for file in walkdir::WalkDir::new(base).into_iter().flatten() {
                         if file.path().is_file() {
                             let name = file
                                 .file_name()
@@ -381,7 +381,7 @@ or rules files.
                 if base.is_file() {
                     rules.push(base.clone())
                 } else {
-                    for entry in walkdir::WalkDir::new(base.clone())
+                    for entry in walkdir::WalkDir::new(base)
                         .sort_by(cmp)
                         .into_iter()
                         .flatten()
