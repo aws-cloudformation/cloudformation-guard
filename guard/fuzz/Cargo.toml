@@ -1,0 +1,27 @@
+[package]
+name = "cfn-guard-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.cfn-guard]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_run_checks"
+path = "fuzz_targets/fuzz_run_checks.rs"
+test = false
+doc = false
