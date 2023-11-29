@@ -221,10 +221,7 @@ fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
             Err(_) => MarkedValue::BadValue(val, loc),
             Ok(v) => MarkedValue::Float(v, loc),
         },
-        "tag:yaml.org,2002:null" => match val.as_ref() {
-            "~" | "null" => MarkedValue::Null(loc),
-            _ => MarkedValue::BadValue(val, loc),
-        },
+        "tag:yaml.org,2002:null" => MarkedValue::Null(loc),
         _ => MarkedValue::String(val, loc),
     }
 }
