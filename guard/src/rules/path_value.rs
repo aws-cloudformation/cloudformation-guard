@@ -26,7 +26,7 @@ use std::hash::{Hash, Hasher};
 //
 // crate level
 //
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub(crate) struct Location {
     pub(crate) line: usize,
     pub(crate) col: usize,
@@ -122,7 +122,7 @@ impl Path {
         let mut copy = self.0.clone();
         copy.push('/');
         copy.push_str(part);
-        Path(copy, self.1.clone())
+        Path(copy, self.1)
     }
 
     pub(crate) fn extend_string(&self, part: &str) -> Path {
@@ -442,7 +442,7 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
 
                 for (idx, each) in v.into_iter().enumerate() {
                     let sub_path = path.extend_usize(idx);
-                    let loc = each.location().clone();
+                    let loc = *each.location();
                     let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
                     result.push(value);
                 }
@@ -455,11 +455,11 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 let mut values = indexmap::IndexMap::with_capacity(map.len());
                 for ((each_key, loc), each_value) in map {
                     let sub_path = path.extend_string(&each_key);
-                    let sub_path = sub_path.with_location(each_value.location().clone());
+                    let sub_path = sub_path.with_location(*each_value.location());
                     let value = PathAwareValue::try_from((each_value, sub_path))?;
                     values.insert(each_key.to_owned(), value);
                     keys.push(PathAwareValue::String((
-                        path.with_location(loc.clone()),
+                        path.with_location(loc),
                         each_key.to_string(),
                     )));
                 }

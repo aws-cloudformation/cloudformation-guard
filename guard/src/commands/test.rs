@@ -261,7 +261,7 @@ or failure testing.
 
             let path = PathBuf::try_from(file)?;
 
-            let rule_file = File::open(path.clone())?;
+            let rule_file = File::open(&path)?;
             if !rule_file.metadata()?.is_file() {
                 return Err(Error::IoError(std::io::Error::from(
                     std::io::ErrorKind::InvalidInput,
