@@ -9,8 +9,11 @@ use indexmap::map::IndexMap;
 use nom::lib::std::fmt::Formatter;
 
 use crate::rules::{
-    errors::Error, libyaml::loader::Loader, parser::Span, path_value::Location, short_form_to_long,
-    SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
+    errors::{Error, InternalError},
+    libyaml::loader::Loader,
+    parser::Span,
+    path_value::Location,
+    short_form_to_long, SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
 };
 
 use serde::{Deserialize, Serialize};
@@ -303,7 +306,18 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
             serde_yaml::Value::Mapping(mapping) => Ok(Value::Map(mapping.iter().try_fold(
                 IndexMap::with_capacity(mapping.len()),
                 |mut res, (key, val)| -> Result<IndexMap<String, Self>, Self::Error> {
-                    res.insert(key.as_str().unwrap().to_owned(), Value::try_from(val)?);
+                    match key {
+                        serde_yaml::Value::String(key) => {
+                            res.insert(key.to_string(), Value::try_from(val)?);
+                        }
+                        _ => {
+                            // NOTE: can't provide a location for our error here since serde_yaml
+                            // doesn't provide that for us
+                            return Err(Error::InternalError(InternalError::InvalidKeyType(
+                                String::default(),
+                            )));
+                        }
+                    }
                     Ok(res)
                 },
             )?)),
