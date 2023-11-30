@@ -172,6 +172,15 @@ fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
             if frag.ends_with('\\') {
                 completed.push_str(frag.slice(0..frag.len() - 1));
                 completed.push(ch);
+
+                if remainder.is_empty() {
+                    return Err(nom::Err::Error(ParserError {
+                        context: String::from("Could not parse string"),
+                        kind: ErrorKind::Char,
+                        span: input,
+                    }));
+                }
+
                 span = remainder.slice(1..);
                 continue;
             }
