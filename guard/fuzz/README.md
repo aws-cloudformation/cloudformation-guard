@@ -5,10 +5,10 @@ uses [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) to find bugs
 ## How to use:
 
 1. setup rustup using the steps [here](https://rustup.rs/)
-1. setup a c compiler (cc needs to be available in the PATH)
-1. setup cargo-fuzz using the steps [here](https://rust-fuzz.github.io/book/cargo-fuzz/setup.html)
-1. locate the fuzz target of your choosing using `cargo fuzz list`
-1. lastly run the fuzzer using `cargo fuzz run <name of the fuzz target>`
+2. setup a c compiler (cc needs to be available in the PATH)
+3. setup cargo-fuzz using the steps [here](https://rust-fuzz.github.io/book/cargo-fuzz/setup.html)
+4. locate the fuzz target of your choosing using `cargo fuzz list`
+5. lastly run the fuzzer using `cargo fuzz run <name of the fuzz target>`
 
 the following is the example of a `cargo fuzz run` output
 ```
