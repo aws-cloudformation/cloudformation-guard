@@ -49,6 +49,10 @@ fn test_parse_string() {
         parse_string(from_str2(s)),
         Ok((cmp, Value::String("Hi there".to_string())))
     );
+
+    let s = r#""\"#;
+    let res = parse_string(from_str2(s));
+    assert!(res.is_err());
 }
 
 #[test]
