@@ -257,8 +257,7 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
         regex.push_str(fragment);
 
-        let validate_regex = Regex::new(regex.as_str());
-        return match validate_regex {
+        return match Regex::try_from(regex.as_str()) {
             Ok(_) => Ok((remainder, Value::Regex(regex))),
             Err(e) => Err(nom::Err::Error(ParserError {
                 context: format!("Could not parse regular expression: {}", e),
