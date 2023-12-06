@@ -4638,8 +4638,6 @@ fn test_parse_regex_when_regex_contains_complete_group_structure_and_escaped_ope
     let invalid = r#"/!w\(?()"Kuz>/"#;
 
     let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
-    let res = parse_regex(invalid_cmp);
-    dbg!(&res);
     assert!(parse_regex(invalid_cmp).is_ok());
 }
 
