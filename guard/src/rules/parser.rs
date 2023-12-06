@@ -257,6 +257,16 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
         regex.push_str(fragment);
 
+        for c in regex.chars() {
+            if c.is_control() {
+                return Err(nom::Err::Error(ParserError {
+                    context: "Could not parse regular expression".to_string(),
+                    kind: ErrorKind::RegexpMatch,
+                    span: input,
+                }));
+            }
+        }
+
         return match Regex::try_from(regex.as_str()) {
             Ok(_) => Ok((remainder, Value::Regex(regex))),
             Err(e) => Err(nom::Err::Error(ParserError {
