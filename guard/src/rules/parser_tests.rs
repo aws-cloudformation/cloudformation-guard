@@ -4624,6 +4624,16 @@ fn test_parse_regex_inner_when_regex_is_valid() {
 }
 
 #[test]
+fn test_parse_regex_when_regex_contains_control_characters() {
+    let invalid = r#"t(/(FF      ()!t	(?(
+{),:?t.+
+                    "#;
+
+    let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
+    assert!(parse_regex_inner(invalid_cmp).is_err());
+}
+
+#[test]
 fn test_parse_value_when_strings_are_randomly_generated() {
     let values = vec!["weifhasidhhfasidf77627&^&*^**", "IiI+L1w="];
 
