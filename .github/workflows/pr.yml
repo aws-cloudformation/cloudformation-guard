@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FUZZ_TIME: 420
 
 jobs:
   build:
@@ -38,6 +39,7 @@ jobs:
           components: rustfmt
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+
   installScript:
     name: Testing Install Script (install-guard.sh)
     runs-on: ubuntu-latest
@@ -59,8 +61,30 @@ jobs:
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
           args: -- -D warnings
+
+  fuzz:
+    strategy:
+      matrix:
+        target: ["guard_dsl", "yaml"]
+    runs-on: ubuntu-latest
+    name: Run Fuzz Checks
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+      - uses: actions-rs/cargo@v1
+        name: Install cargo-fuzz
+        with:
+          command: install
+          args: cargo-fuzz
+      - name: fuzz ${{ matrix.target }}
+        run: |
+          cd guard/fuzz
+          for job in `cargo +nightly fuzz list`; do
+            cargo +nightly fuzz run fuzz_${job} -- -max_total_time=${{ env.FUZZ_TIME }}
+          done
 
   aws-guard-rules-registry-integration-tests-linux:
     strategy:
