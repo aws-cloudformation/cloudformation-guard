@@ -21,7 +21,13 @@ members = ["."]
 debug = 1
 
 [[bin]]
-name = "fuzz_run_checks"
-path = "fuzz_targets/fuzz_run_checks.rs"
+name = "fuzz_yaml"
+path = "fuzz_targets/fuzz_yaml.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_guard_dsl"
+path = "fuzz_targets/fuzz_guard_dsl.rs"
 test = false
 doc = false
