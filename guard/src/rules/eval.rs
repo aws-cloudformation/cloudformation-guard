@@ -1778,8 +1778,24 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     }
                 }
             }
+            QueryResult::UnResolved(ur) => {
+                resolver.end_record(
+                    &context,
+                    RecordType::TypeCheck(TypeBlockCheck {
+                        type_name: &type_block.type_name,
+                        block: BlockCheck {
+                            at_least_one_matches: false,
+                            status: Status::FAIL,
+                            message: ur.reason.clone(),
+                        },
+                    }),
+                )?;
 
-            QueryResult::UnResolved(_) => unreachable!(),
+                return Err(Error::MissingValue(format!(
+                    "Unable to resolve type block query: {}",
+                    type_block.type_name,
+                )));
+            }
         }
     }
 
