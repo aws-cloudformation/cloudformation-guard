@@ -82,9 +82,7 @@ jobs:
       - name: fuzz ${{ matrix.target }}
         run: |
           cd guard/fuzz
-          for job in `cargo +nightly fuzz list`; do
-            cargo +nightly fuzz run ${job} -- -max_total_time=${{ env.FUZZ_TIME }}
-          done
+          cargo +nightly fuzz run fuzz_${{ matrix.target }} -- -max_total_time=${{ env.FUZZ_TIME }}
 
   aws-guard-rules-registry-integration-tests-linux:
     strategy:
