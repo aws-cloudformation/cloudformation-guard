@@ -4624,6 +4624,24 @@ fn test_parse_regex_inner_when_regex_is_valid() {
 }
 
 #[test]
+fn test_parse_regex_when_regex_contains_incomplete_group_structure() {
+    std::env::set_var("RUST_BACKTRACE", "1");
+
+    let invalid = r#"/!w(?()"Kuz>/"#;
+
+    let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
+    assert!(parse_regex(invalid_cmp).is_err());
+}
+
+#[test]
+fn test_parse_regex_when_regex_contains_complete_group_structure_and_escaped_opening_paren() {
+    let invalid = r#"/!w\(?()"Kuz>/"#;
+
+    let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
+    assert!(parse_regex(invalid_cmp).is_ok());
+}
+
+#[test]
 fn test_parse_regex_when_regex_contains_control_characters() {
     let invalid = r#"t(/(FF      ()!t	(?(
 {),:?t.+

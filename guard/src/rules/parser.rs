@@ -257,7 +257,10 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
         regex.push_str(fragment);
 
-        for c in regex.chars() {
+        let mut stack = vec![];
+        let chars = regex.chars().collect::<Vec<_>>();
+
+        for (i, c) in chars.iter().enumerate() {
             if c.is_control() {
                 return Err(nom::Err::Error(ParserError {
                     context: "Could not parse regular expression".to_string(),
@@ -265,6 +268,28 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
                     span: input,
                 }));
             }
+            if *c == '(' {
+                if i == 0 || *chars.get(i - 1).unwrap() != '\\' {
+                    stack.push(c);
+                }
+            } else if *c == ')'
+                && (i == 0 || *chars.get(i - 1).unwrap() != '\\')
+                && stack.pop().is_none()
+            {
+                return Err(nom::Err::Error(ParserError {
+                    context: "Could not parse regular expression".to_string(),
+                    kind: ErrorKind::RegexpMatch,
+                    span: input,
+                }));
+            }
+        }
+
+        if !stack.is_empty() {
+            return Err(nom::Err::Error(ParserError {
+                context: "Could not parse regular expression".to_string(),
+                kind: ErrorKind::RegexpMatch,
+                span: input,
+            }));
         }
 
         return match Regex::try_from(regex.as_str()) {
