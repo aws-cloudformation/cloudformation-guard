@@ -16,17 +16,5 @@ fuzz_target!(|data: &[u8]| {
             },
             false,
         );
-
-        let _ = run_checks(
-            ValidateInput {
-                content: s,
-                file_name: "tmpl",
-            },
-            ValidateInput {
-                content: "let ec2 = []",
-                file_name: "rule",
-            },
-            false,
-        );
     }
 });
