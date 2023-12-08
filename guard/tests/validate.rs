@@ -537,6 +537,18 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_with_payload_failing_type_block() {
+        let payload = r#"{"data": [ "{}" ], "rules" : [ "d1z::Y\n\t\tm<0m<03333333" ]}"#;
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
+
+    #[test]
     fn test_with_payload_flag_fail() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"SomeRandomString\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
