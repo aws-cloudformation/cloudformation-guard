@@ -53,6 +53,7 @@ jobs:
     steps:
       - name: Test install script on ${{ matrix.os }}
         run: |
+          cd guard
           sh install-guard.sh
 
   linting:
