@@ -57,6 +57,7 @@ jobs:
           path: cloudformation-guard
       - name: Test install script on ${{ matrix.os }}
         run: |
+          set -e
           cd cloudformation-guard
           sh install-guard.sh
 
