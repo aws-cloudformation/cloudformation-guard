@@ -13,12 +13,16 @@ env:
 jobs:
   build:
     name: Build all crates & run unit tests
-    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
-      - name: Build all crates
+      - name: Build all crates on ${{ matrix.os }}
         run: cargo build --release --verbose
-      - name: Run unit tests
+      - name: Run unit tests ${{ matrix.os }}
         run: cargo test --verbose
 
   shellcheck:
