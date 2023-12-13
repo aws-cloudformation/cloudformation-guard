@@ -45,12 +45,21 @@ jobs:
         uses: actions-rust-lang/rustfmt@v1
 
   installScript:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-13-xlarge]
+    runs-on: ${{ matrix.os }}
     name: Testing Install Script (install-guard.sh)
-    runs-on: ubuntu-latest
     steps:
-      - name: Test install script on ubuntu-latest
+      - uses: actions/checkout@v3
+        name: Checkout cfn-guard
+        with:
+          path: cloudformation-guard
+      - name: Test install script on ${{ matrix.os }}
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
+          set -e
+          cd cloudformation-guard
+          sh install-guard.sh
 
   linting:
     name: Linting check (clippy)
