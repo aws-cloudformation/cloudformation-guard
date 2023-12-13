@@ -97,10 +97,10 @@ jobs:
           cd guard/fuzz
           cargo +nightly fuzz run fuzz_${{ matrix.target }} -- -max_total_time=${{ env.FUZZ_TIME }}
 
-  aws-guard-rules-registry-integration-tests-linux:
+  aws-guard-rules-registry-integration-tests-linux-and-macos:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, macos-13-xlarge]
     runs-on: ${{ matrix.os }}
     name: Integration tests against aws-guard-rules-registry
     steps:
