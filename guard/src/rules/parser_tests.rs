@@ -1673,7 +1673,7 @@ fn testing_access_with_cmp<'loc, A, C>(
     C: Fn() -> Option<LetValue<'loc>>,
 {
     for (lhs_sep, rhs_sep) in separators {
-        for (_idx, (each_op, value_cmp)) in comparators.iter().enumerate() {
+        for (each_op, value_cmp) in comparators.iter() {
             let access_pattern = format!(
                 "{lhs}{lhs_sep}{op}{rhs_sep}{rhs}",
                 lhs = lhs,

@@ -259,7 +259,7 @@ or failure testing.
                     .unwrap_or(false)
             })?;
 
-            let path = PathBuf::try_from(file)?;
+            let path = PathBuf::from(file);
 
             let rule_file = File::open(&path)?;
             if !rule_file.metadata()?.is_file() {
