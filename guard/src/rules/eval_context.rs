@@ -160,7 +160,7 @@ fn accumulate<'value, 'loc: 'value>(
     }
 
     let mut accumulated = Vec::with_capacity(elements.len());
-    for (_index, each) in elements.iter().enumerate() {
+    for each in elements.iter() {
         accumulated.extend(query_retrieval_with_converter(
             query_index + 1,
             query,

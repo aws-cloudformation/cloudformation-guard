@@ -65,10 +65,10 @@ pub(crate) fn regex_replace(
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
                 if let PathAwareValue::String((path, val)) = &**v {
-                    let regex = Regex::new(extract_expr)?;
+                    let regex = Regex::try_from(extract_expr).map_err(Box::new)?;
                     let mut replaced = String::with_capacity(replace_expr.len() * 2);
                     for cap in regex.captures_iter(val) {
-                        cap?.expand(replace_expr, &mut replaced);
+                        cap.map_err(Box::new)?.expand(replace_expr, &mut replaced);
                     }
                     aggr.push(Some(PathAwareValue::String((path.clone(), replaced))));
                 } else {

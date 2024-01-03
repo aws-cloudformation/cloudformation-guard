@@ -120,7 +120,7 @@ fn single_line(
         let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(key) {
             Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
             Ok(None) => unreachable!(),
-            Err(e) => return Err(Error::from(e)),
+            Err(e) => return Err(Error::from(Box::new(e))),
         };
 
         let address = format!("/resource_changes/{}", resource_ptr);

@@ -27,9 +27,9 @@ fn extraction_test() -> Result<()> {
         root_scope
             .rules
             .get("aws_route53_recordset")
-            .map(|s| s.get(0))
+            .map(|s| s.first())
             .and_then(|s| s.copied()),
-        rules.guard_rules.get(0)
+        rules.guard_rules.first()
     );
 
     Ok(())

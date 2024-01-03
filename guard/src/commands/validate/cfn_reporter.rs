@@ -85,7 +85,7 @@ impl Reporter for CfnReporter {
                                         ),
                                         "".to_string(),
                                     ),
-                                    Err(e) => return Err(Error::from(e)),
+                                    Err(e) => return Err(Error::from(Box::new(e))),
                                 };
                             resource_info.path = property_path;
                             by_resource_name

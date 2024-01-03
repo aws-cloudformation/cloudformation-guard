@@ -1071,10 +1071,10 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
 pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
     let (reg, s) = match (first, second) {
         (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-            (Regex::new(r.as_str())?, s.as_str())
+            (Regex::try_from(r.as_str()).map_err(Box::new)?, s.as_str())
         }
         (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-            (Regex::new(r.as_str())?, s.as_str())
+            (Regex::try_from(r.as_str()).map_err(Box::new)?, s.as_str())
         }
 
         (PathAwareValue::String((_, s1)), PathAwareValue::String((_, s2))) => return Ok(s1 == s2),
@@ -1147,7 +1147,7 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     let match_result = reg.is_match(s);
     match match_result {
         Ok(is_match) => Ok(is_match),
-        Err(error) => Err(Error::from(error)),
+        Err(error) => Err(Error::from(Box::new(error))),
     }
 }
 
