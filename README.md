@@ -229,7 +229,7 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 3.0.2
+cfn-guard 3.0.3
 
   Guard is a general-purpose tool that provides a simple declarative syntax to define
   policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
