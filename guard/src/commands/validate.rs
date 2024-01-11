@@ -18,11 +18,10 @@ use crate::commands::tracker::StatusContext;
 use crate::commands::validate::structured::StructuredEvaluator;
 use crate::commands::validate::summary_table::SummaryType;
 use crate::commands::validate::tf::TfAware;
-use crate::commands::validate::xml::JunitReporter;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
     OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
-    SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
+    SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE, VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -374,7 +373,7 @@ or rules files.
 
         let print_json = app.get_flag(PRINT_JSON.0);
 
-        let mut exit_code = 0;
+        let mut exit_code = SUCCESS_STATUS_CODE;
 
         if app.contains_id(RULES.0) {
             let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();
@@ -403,24 +402,6 @@ or rules files.
                         }
                     }
                 }
-            }
-
-            if matches!(output_type, OutputFormatType::Junit) {
-                if !summary_type.is_empty() {
-                    return Err(Error::IllegalArguments(String::from(
-                        "Cannot provide a summary-type other than `none` when the `junit` output format is selected",
-                    )));
-                }
-
-                let rule_info = get_rule_info(&rules, writer)?;
-                let mut reporter = JunitReporter {
-                    rule_info: &rule_info,
-                    input_params: &extra_data,
-                    data: &data_files,
-                    writer,
-                };
-
-                return reporter.generate_junit_report();
             }
 
             exit_code = match structured {

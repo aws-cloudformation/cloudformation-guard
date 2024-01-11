@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
+use crate::commands::validate::xml::JunitReporter;
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
+use crate::commands::{ERROR_STATUS_CODE, FAILURE_STATUS_CODE};
 use crate::rules;
 use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, simplifed_json_from_root, FileReport};
@@ -20,8 +22,28 @@ pub struct StructuredEvaluator<'eval> {
 }
 
 impl<'eval> StructuredEvaluator<'eval> {
-    fn merge_input_params_with_data(&mut self) -> Vec<DataFile> {
-        self.data.iter().fold(vec![], |mut res, file| {
+    pub(crate) fn evaluate(&mut self) -> rules::Result<i32> {
+        let rules = self.rule_info.iter().try_fold(
+            vec![],
+            |mut rules,
+             RuleFileInfo { file_name, content }|
+             -> rules::Result<Vec<(RulesFile, &str)>> {
+                match parse_rules(content, file_name) {
+                    Err(e) => {
+                        self.writer.write_err(format!(
+                            "Parsing error handling rule file = {}, Error = {e}\n---",
+                            file_name.underline()
+                        ))?;
+                        self.exit_code = ERROR_STATUS_CODE;
+                    }
+                    Ok(Some(rule)) => rules.push((rule, file_name)),
+                    Ok(None) => {}
+                }
+                Ok(rules)
+            },
+        )?;
+
+        let merged_data = self.data.iter().fold(vec![], |mut res, file| {
             let each = match &self.input_params {
                 Some(data) => data.clone().merge(file.path_value.clone()).unwrap(),
                 None => file.path_value.clone(),
@@ -30,51 +52,55 @@ impl<'eval> StructuredEvaluator<'eval> {
             let merged_file_data = DataFile {
                 path_value: each,
                 name: file.name.to_owned(),
-                content: "".to_string(), // not used later on
+                content: String::default(),
             };
 
             res.push(merged_file_data);
             res
-        })
+        });
+
+        match self.output {
+            OutputFormatType::Junit => JunitReporter {
+                data: merged_data,
+                rules,
+                writer: self.writer,
+                exit_code: self.exit_code,
+            }
+            .report(),
+            _ => CommonStructuredReporter {
+                rules,
+                data: merged_data,
+                writer: self.writer,
+                exit_code: self.exit_code,
+                output: self.output,
+            }
+            .report(),
+        }
     }
+}
 
-    fn get_rules(&mut self) -> rules::Result<Vec<RulesFile<'eval>>> {
-        self.rule_info.iter().try_fold(
-            vec![],
-            |mut rules, RuleFileInfo { file_name, content }| -> rules::Result<Vec<RulesFile>> {
-                match parse_rules(content, file_name) {
-                    Err(e) => {
-                        self.writer.write_err(format!(
-                            "Parsing error handling rule file = {}, Error = {e}\n---",
-                            file_name.underline()
-                        ))?;
-                        self.exit_code = 5;
-                    }
-                    Ok(Some(rule)) => rules.push(rule),
-                    Ok(None) => {}
-                }
-                Ok(rules)
-            },
-        )
-    }
+pub struct CommonStructuredReporter<'reporter> {
+    pub(crate) rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
+    pub(crate) data: Vec<DataFile>,
+    pub writer: &'reporter mut crate::utils::writer::Writer,
+    pub exit_code: i32,
+    pub output: OutputFormatType,
+}
 
-    pub(crate) fn evaluate(&mut self) -> rules::Result<i32> {
-        let rules = self.get_rules()?;
-        let merged_data = self.merge_input_params_with_data();
-
+impl<'reporter> CommonStructuredReporter<'reporter> {
+    pub fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
-
-        for each in &merged_data {
+        for each in &self.data {
             let mut file_report: FileReport = FileReport {
                 name: &each.name,
                 ..Default::default()
             };
 
-            for rule in &rules {
-                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
+            for (rule, _) in &self.rules {
+                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
-                    self.exit_code = 19;
+                    self.exit_code = FAILURE_STATUS_CODE;
                 }
 
                 let root_record = root_scope.reset_recorder().extract();

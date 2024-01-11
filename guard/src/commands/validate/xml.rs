@@ -1,25 +1,23 @@
 use std::{rc::Rc, time::Instant};
 
-use colored::Colorize;
 use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
     Writer,
 };
 
 use crate::{
-    commands::validate::{parse_rules, DataFile, RuleFileInfo},
+    commands::{validate::DataFile, ERROR_STATUS_CODE, FAILURE_STATUS_CODE},
     rules::{
         self,
         eval::eval_rules_file,
         eval_context::{root_scope, simplifed_json_from_root, FileReport, Messages},
         exprs::RulesFile,
-        path_value::PathAwareValue,
         Status,
     },
 };
 
 pub struct JunitReport<'report> {
-    pub(crate) name: String,
+    pub(crate) name: &'report str,
     pub(crate) test_suites: Vec<TestSuite<'report>>,
     pub(crate) failures: usize,
     pub(crate) errors: usize,
@@ -48,7 +46,7 @@ impl<'report> JunitReport<'report> {
         let mut suite_tag = BytesStart::new("testsuites");
 
         suite_tag.extend_attributes([
-            ("name", self.name.as_str()),
+            ("name", self.name),
             ("tests", self.tests.to_string().as_str()),
             ("failures", self.failures.to_string().as_str()),
             ("errors", self.errors.to_string().as_str()),
@@ -122,62 +120,21 @@ impl<'test> TestCase<'test> {
 }
 
 pub struct JunitReporter<'reporter> {
-    pub(crate) rule_info: &'reporter [RuleFileInfo],
-    pub(crate) input_params: &'reporter Option<PathAwareValue>,
-    pub(crate) data: &'reporter Vec<DataFile>,
-    pub(crate) writer: &'reporter mut crate::utils::writer::Writer,
+    pub(crate) rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
+    pub(crate) data: Vec<DataFile>,
+    pub writer: &'reporter mut crate::utils::writer::Writer,
+    pub exit_code: i32,
 }
 
 impl<'reporter> JunitReporter<'reporter> {
-    fn get_rules(&mut self) -> rules::Result<Vec<(RulesFile<'reporter>, &'reporter str)>> {
-        self.rule_info.iter().try_fold(
-            vec![],
-            |mut rules,
-             RuleFileInfo { file_name, content }|
-             -> rules::Result<Vec<(RulesFile<'reporter>, &'reporter str)>> {
-                match parse_rules(content, file_name) {
-                    Err(e) => {
-                        self.writer.write_err(format!(
-                            "Parsing error handling rule file = {}, Error = {e}\n---",
-                            file_name.underline()
-                        ))?;
-                    }
-                    Ok(Some(rule)) => rules.push((rule, file_name)),
-                    Ok(None) => {}
-                }
-                Ok(rules)
-            },
-        )
-    }
-
-    fn merge_input_params_with_data(&mut self) -> Vec<DataFile> {
-        self.data.iter().fold(vec![], |mut res, file| {
-            let each = match &self.input_params {
-                Some(data) => data.clone().merge(file.path_value.clone()).unwrap(),
-                None => file.path_value.clone(),
-            };
-
-            let merged_file_data = DataFile {
-                path_value: each,
-                name: file.name.to_owned(),
-                content: "".to_string(), // not used later on
-            };
-
-            res.push(merged_file_data);
-            res
-        })
-    }
-
-    pub fn generate_junit_report(&mut self) -> crate::rules::Result<i32> {
+    pub fn report(&mut self) -> rules::Result<i32> {
         let now = Instant::now();
-        let rules = self.get_rules()?;
-        let merged_data = self.merge_input_params_with_data();
         let mut suites = vec![];
         let mut total_errors = 0;
         let mut total_failures = 0;
         let mut tests = 0;
 
-        for each in merged_data {
+        for each in &self.data {
             let file_report = FileReport {
                 name: &each.name,
                 ..Default::default()
@@ -185,85 +142,22 @@ impl<'reporter> JunitReporter<'reporter> {
 
             let mut failures = 0;
             let mut errors = 0;
-            let mut test_cases = vec![];
-            for (rule, name) in &rules {
-                let now = Instant::now();
-                let tc = match root_scope(rule, Rc::new(each.path_value.clone())) {
-                    Ok(mut root_scope) => {
-                        let status = eval_rules_file(rule, &mut root_scope, Some(&each.name))?;
-                        let root_record = root_scope.reset_recorder().extract();
-                        let time = now.elapsed().as_secs_f32();
-                        match simplifed_json_from_root(&root_record) {
-                            Ok(report) => match status {
-                                Status::FAIL => {
-                                    failures += 1;
 
-                                    let status = report.not_compliant.iter().fold(
-                                        FailingTestCase {
-                                            name: None,
-                                            messages: vec![],
-                                        },
-                                        |mut test_case, failure| {
-                                            failure.get_message().into_iter().for_each(|e| {
-                                                if let rules::eval_context::ClauseReport::Rule(
-                                                    rule,
-                                                ) = failure
-                                                {
-                                                    let name = match rule.name.contains(".guard/") {
-                                                        true => rule
-                                                            .name
-                                                            .split(".guard/")
-                                                            .collect::<Vec<&str>>()[1],
-                                                        false => rule.name,
-                                                    };
-                                                    test_case.name = Some(name.to_string());
-                                                };
-                                                test_case.messages.push(e);
-                                            });
-                                            test_case
-                                        },
-                                    );
-
-                                    TestCase {
-                                        name,
-                                        time,
-                                        status: TestCaseStatus::Fail(status),
-                                    }
-                                }
-                                _ => TestCase {
-                                    name,
-                                    time,
-                                    status: match status {
-                                        Status::PASS => TestCaseStatus::Pass,
-                                        Status::SKIP => TestCaseStatus::Skip,
-                                        _ => unreachable!(),
-                                    },
-                                },
-                            },
-
-                            Err(error) => {
-                                errors += 1;
-                                TestCase {
-                                    name,
-                                    time,
-                                    status: TestCaseStatus::Error { error },
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
+            let test_cases = self.rules.iter().try_fold(
+                vec![],
+                |mut test_cases, (rule, name)| -> rules::Result<Vec<TestCase<'_>>> {
+                    let tc = get_test_case(each, rule, name)?;
+                    if matches!(tc.status, TestCaseStatus::Fail(_)) {
+                        failures += 1;
+                    } else if matches!(tc.status, TestCaseStatus::Error { .. }) {
                         errors += 1;
-                        TestCase {
-                            name,
-                            time: now.elapsed().as_secs_f32(),
-                            status: TestCaseStatus::Error { error },
-                        }
                     }
-                };
-                test_cases.push(tc);
-            }
 
-            tests += test_cases.len();
+                    tests += 1;
+                    test_cases.push(tc);
+                    Ok(test_cases)
+                },
+            )?;
 
             let suite = TestSuite {
                 name: file_report.name.to_string(),
@@ -279,27 +173,107 @@ impl<'reporter> JunitReporter<'reporter> {
             suites.push(suite);
         }
 
-        let exit_code = if total_errors > 0 {
-            5
+        if total_errors > 0 {
+            self.update_exit_code(ERROR_STATUS_CODE)
         } else if total_failures > 0 {
-            19
-        } else {
-            0
-        };
+            self.update_exit_code(FAILURE_STATUS_CODE)
+        }
 
         let report = JunitReport {
-            name: String::from("cfn-guard validate report"),
+            name: "cfn-guard validate report",
             test_suites: suites,
             failures: total_failures,
             errors: total_errors,
             tests,
-            duration: std::time::Instant::now().elapsed().as_secs_f32(),
+            duration: now.elapsed().as_secs_f32(),
         };
 
         report.serialize(self.writer)?;
 
-        Ok(exit_code)
+        Ok(self.exit_code)
     }
+
+    /// Update exit code only if code takes more presedence than current exit code
+    fn update_exit_code(&mut self, code: i32) {
+        if code == ERROR_STATUS_CODE
+            || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
+        {
+            self.exit_code = code;
+        }
+    }
+}
+
+fn get_test_case<'rule>(
+    data: &DataFile,
+    rule: &RulesFile<'_>,
+    name: &'rule str,
+) -> crate::rules::Result<TestCase<'rule>> {
+    let now = Instant::now();
+    let tc = match root_scope(rule, Rc::new(data.path_value.clone())) {
+        Ok(mut root_scope) => {
+            let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
+            let root_record = root_scope.reset_recorder().extract();
+            let time = now.elapsed().as_secs_f32();
+
+            let tc = match simplifed_json_from_root(&root_record) {
+                Ok(report) => match status {
+                    Status::FAIL => {
+                        let status = report.not_compliant.iter().fold(
+                            FailingTestCase {
+                                name: None,
+                                messages: vec![],
+                            },
+                            |mut test_case, failure| {
+                                failure.get_message().into_iter().for_each(|e| {
+                                    if let rules::eval_context::ClauseReport::Rule(rule) = failure {
+                                        let name = match rule.name.contains(".guard/") {
+                                            true => {
+                                                rule.name.split(".guard/").collect::<Vec<&str>>()[1]
+                                            }
+                                            false => rule.name,
+                                        };
+                                        test_case.name = Some(String::from(name));
+                                    };
+                                    test_case.messages.push(e);
+                                });
+                                test_case
+                            },
+                        );
+
+                        TestCase {
+                            name,
+                            time,
+                            status: TestCaseStatus::Fail(status),
+                        }
+                    }
+                    _ => TestCase {
+                        name,
+                        time,
+                        status: match status {
+                            Status::PASS => TestCaseStatus::Pass,
+                            Status::SKIP => TestCaseStatus::Skip,
+                            _ => unreachable!(),
+                        },
+                    },
+                },
+
+                Err(error) => TestCase {
+                    name,
+                    time,
+                    status: TestCaseStatus::Error { error },
+                },
+            };
+
+            tc
+        }
+        Err(error) => TestCase {
+            name,
+            time: now.elapsed().as_secs_f32(),
+            status: TestCaseStatus::Error { error },
+        },
+    };
+
+    Ok(tc)
 }
 
 pub struct TestCase<'test> {

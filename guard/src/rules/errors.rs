@@ -46,6 +46,8 @@ pub enum Error {
     #[error("{0}")]
     IllegalArguments(String),
     #[error("{0}")]
+    XMLError(#[from] quick_xml::Error),
+    #[error("{0}")]
     InternalError(InternalError),
 }
 
