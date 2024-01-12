@@ -1,5 +1,3 @@
-pub mod xml;
-
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
