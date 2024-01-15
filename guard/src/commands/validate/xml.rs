@@ -92,6 +92,7 @@ impl<'test> TestCase<'test> {
         suite_tag.extend_attributes([("name", self.name)]);
 
         serialize_time(&mut suite_tag, self.time);
+
         match &self.status {
             TestCaseStatus::Fail(failure) => {
                 writer.write_event(Event::Start(suite_tag))?;
@@ -101,7 +102,9 @@ impl<'test> TestCase<'test> {
             TestCaseStatus::Error { error } => {
                 writer.write_event(Event::Start(suite_tag))?;
                 let error_tag = BytesStart::new("error");
+
                 writer.write_event(Event::Start(error_tag))?;
+
                 serialize_text_event(&error.to_string(), writer)?;
                 serialize_end_event("error", writer)?;
                 serialize_end_event("testcase", writer)
@@ -112,6 +115,7 @@ impl<'test> TestCase<'test> {
                     TestCaseStatus::Pass => "pass",
                     _ => unreachable!(),
                 };
+
                 suite_tag.extend_attributes([("status", status)]);
                 serialize_empty_event(suite_tag, writer)
             }
@@ -147,6 +151,7 @@ impl<'reporter> JunitReporter<'reporter> {
                 vec![],
                 |mut test_cases, (rule, name)| -> rules::Result<Vec<TestCase<'_>>> {
                     let tc = get_test_case(each, rule, name)?;
+
                     if matches!(tc.status, TestCaseStatus::Fail(_)) {
                         failures += 1;
                     } else if matches!(tc.status, TestCaseStatus::Error { .. }) {
