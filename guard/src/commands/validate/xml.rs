@@ -327,9 +327,11 @@ fn serialize_failure(
     writer: &mut Writer<impl std::io::Write>,
 ) -> crate::rules::Result<()> {
     let mut failure_tag = BytesStart::new("failure");
+
     if let Some(rule_name) = &failure.name {
         failure_tag.extend_attributes([("message", rule_name.as_str())]);
     }
+
     match failure.messages.is_empty() {
         false => {
             writer.write_event(Event::Start(failure_tag))?;
@@ -343,6 +345,7 @@ fn serialize_failure(
                     serialize_text_event(error_message, writer)?;
                 }
             }
+
             serialize_end_event("failure", writer)
         }
         true => serialize_empty_event(failure_tag, writer),
