@@ -53,7 +53,7 @@ pub fn validate_and_return_json(
             let mut write_output = BufWriter::new(Vec::new());
             let root = input_data.path_value;
             let traversal = Traversal::from(&root);
-            let mut root_scope = root_scope(&rules, Rc::new(root.clone()))?;
+            let mut root_scope = root_scope(&rules, Rc::new(root.clone()));
             let status = eval_rules_file(&rules, &mut root_scope, Some(&input_data.name))?;
             let root_record = root_scope.reset_recorder().extract();
 

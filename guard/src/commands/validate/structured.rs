@@ -71,7 +71,7 @@ impl<'eval> StructuredEvaluator<'eval> {
             };
 
             for rule in &rules {
-                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
+                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
                     self.exit_code = 19;

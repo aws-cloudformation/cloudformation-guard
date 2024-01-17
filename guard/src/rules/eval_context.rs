@@ -50,7 +50,7 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
     #[cfg(test)]
-    pub fn reset_root(self, new_root: Rc<PathAwareValue>) -> Result<RootScope<'value, 'loc>> {
+    pub fn reset_root(self, new_root: Rc<PathAwareValue>) -> RootScope<'value, 'loc> {
         root_scope_with(
             self.scope.literals,
             self.scope.variable_queries,
@@ -82,15 +82,15 @@ pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
     pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
-type ExtractVariableResult<'value, 'loc> = Result<(
+type ExtractedStatements<'value, 'loc> = (
     HashMap<&'value str, Rc<PathAwareValue>>,
     HashMap<&'value str, &'value AccessQuery<'loc>>,
     HashMap<&'value str, &'value FunctionExpr<'loc>>,
-)>;
+);
 
 fn extract_variables<'value, 'loc: 'value>(
     expressions: &'value Vec<LetExpr<'loc>>,
-) -> ExtractVariableResult<'value, 'loc> {
+) -> ExtractedStatements<'value, 'loc> {
     let mut literals = HashMap::with_capacity(expressions.len());
     let mut queries = HashMap::with_capacity(expressions.len());
     let mut functions = HashMap::with_capacity(expressions.len());
@@ -109,7 +109,7 @@ fn extract_variables<'value, 'loc: 'value>(
         }
     }
 
-    Ok((literals, queries, functions))
+    (literals, queries, functions)
 }
 
 fn retrieve_index(
@@ -923,8 +923,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 pub(crate) fn root_scope<'value, 'loc: 'value>(
     rules_file: &'value RulesFile<'loc>,
     root: Rc<PathAwareValue>,
-) -> Result<RootScope<'value, 'loc>> {
-    let (literals, queries, function_expressions) = extract_variables(&rules_file.assignments)?;
+) -> RootScope<'value, 'loc> {
+    let (literals, queries, function_expressions) = extract_variables(&rules_file.assignments);
     let mut lookup_cache = HashMap::with_capacity(rules_file.guard_rules.len());
     for rule in &rules_file.guard_rules {
         lookup_cache
@@ -954,8 +954,8 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     function_expressions: HashMap<&'value str, &'value FunctionExpr<'loc>>,
     root: Rc<PathAwareValue>,
-) -> Result<RootScope<'value, 'loc>> {
-    Ok(RootScope {
+) -> RootScope<'value, 'loc> {
+    RootScope {
         scope: Scope {
             root,
             literals,
@@ -971,16 +971,16 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
             final_event: None,
             events: vec![],
         },
-    })
+    }
 }
 
 pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
     root: Rc<PathAwareValue>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
-) -> Result<BlockScope<'value, 'loc, 'eval>> {
-    let (literals, variable_queries, function_expressions) = extract_variables(&block.assignments)?;
-    Ok(BlockScope {
+) -> BlockScope<'value, 'loc, 'eval> {
+    let (literals, variable_queries, function_expressions) = extract_variables(&block.assignments);
+    BlockScope {
         scope: Scope {
             literals,
             variable_queries,
@@ -990,7 +990,7 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
             function_expressions,
         },
         parent,
-    })
+    }
 }
 
 pub(crate) struct RecordTracker<'value> {

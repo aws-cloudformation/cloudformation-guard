@@ -1296,7 +1296,7 @@ pub(in crate::rules) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
 where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
 {
-    let mut block_scope = block_scope(block, resolver.root(), resolver)?;
+    let mut block_scope = block_scope(block, resolver.root(), resolver);
     eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn)
 }
 
