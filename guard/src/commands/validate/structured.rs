@@ -70,13 +70,15 @@ impl<'eval> StructuredEvaluator<'eval> {
                 writer: self.writer,
                 exit_code: self.exit_code,
             }) as Box<dyn StructuredReporter>,
-            _ => Box::new(CommonStructuredReporter {
+            OutputFormatType::JSON | OutputFormatType::YAML => Box::new(CommonStructuredReporter {
                 rules,
                 data: merged_data,
                 writer: self.writer,
                 exit_code: self.exit_code,
                 output: self.output,
-            }) as Box<dyn StructuredReporter>,
+            })
+                as Box<dyn StructuredReporter>,
+            OutputFormatType::SingleLineSummary => unreachable!(),
         };
 
         reporter.report()
