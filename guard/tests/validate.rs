@@ -579,8 +579,11 @@ mod validate_tests {
         assert_eq!(expected, result);
     }
 
-    #[test]
-    fn test_structured_output() {
+    #[rstest::rstest]
+    #[case("yaml")]
+    #[case("json")]
+    #[case("junit")]
+    fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
 
@@ -590,30 +593,14 @@ mod validate_tests {
                 "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
             ])
             .show_summary(vec!["none"])
-            .output_format(Option::from("json"))
+            .output_format(Option::from(output))
             .structured()
             .run(&mut writer, &mut reader);
 
-        assert_output_from_file_eq!("resources/validate/output-dir/structured.json", writer);
-        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
-    }
-
-    #[test]
-    fn test_structured_output_yaml() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-
-        let status_code = ValidateTestRunner::default()
-            .rules(vec!["/rules-dir"])
-            .data(vec![
-                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-            ])
-            .show_summary(vec!["none"])
-            .output_format(Option::from("yaml"))
-            .structured()
-            .run(&mut writer, &mut reader);
-
-        assert_output_from_file_eq!("resources/validate/output-dir/structured.yaml", writer);
+        assert_output_from_file_eq!(
+            &format!("resources/validate/output-dir/structured.{output}"),
+            writer
+        );
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
@@ -640,7 +627,21 @@ mod validate_tests {
 
     #[rstest::rstest]
     #[case("json", "all")]
+    #[case("json", "pass")]
+    #[case("json", "fail")]
+    #[case("json", "skip")]
+    #[case("yaml", "all")]
+    #[case("yaml", "pass")]
+    #[case("yaml", "fail")]
+    #[case("yaml", "skip")]
+    #[case("junit", "all")]
+    #[case("junit", "pass")]
+    #[case("junit", "fail")]
+    #[case("junit", "skip")]
     #[case("single-line-summary", "none")]
+    #[case("single-line-summary", "all")]
+    #[case("single-line-summary", "skip")]
+    #[case("single-line-summary", "pass")]
     fn test_structured_output_with_show_summary(#[case] output: &str, #[case] show_summary: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));

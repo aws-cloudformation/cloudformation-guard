@@ -4,6 +4,7 @@ use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
     Writer,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{validate::DataFile, ERROR_STATUS_CODE, FAILURE_STATUS_CODE},
@@ -22,7 +23,7 @@ pub struct JunitReport<'report> {
     pub(crate) failures: usize,
     pub(crate) errors: usize,
     pub(crate) tests: usize,
-    pub(crate) duration: f32,
+    pub(crate) duration: u128,
 }
 
 impl<'report> JunitReport<'report> {
@@ -167,7 +168,7 @@ impl<'reporter> JunitReporter<'reporter> {
             let suite = TestSuite {
                 name: file_report.name.to_string(),
                 test_cases,
-                time: now.elapsed().as_secs_f32(),
+                time: now.elapsed().as_millis(),
                 errors,
                 failures,
             };
@@ -190,7 +191,7 @@ impl<'reporter> JunitReporter<'reporter> {
             failures: total_failures,
             errors: total_errors,
             tests,
-            duration: now.elapsed().as_secs_f32(),
+            duration: now.elapsed().as_millis(),
         };
 
         report.serialize(self.writer)?;
@@ -218,7 +219,7 @@ fn get_test_case<'rule>(
         Ok(mut root_scope) => {
             let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
             let root_record = root_scope.reset_recorder().extract();
-            let time = now.elapsed().as_secs_f32();
+            let time = now.elapsed().as_millis();
 
             let tc = match simplifed_json_from_root(&root_record) {
                 Ok(report) => match status {
@@ -265,7 +266,9 @@ fn get_test_case<'rule>(
                 Err(error) => TestCase {
                     name,
                     time,
-                    status: TestCaseStatus::Error { error },
+                    status: TestCaseStatus::Error {
+                        error: error.to_string(),
+                    },
                 },
             };
 
@@ -273,35 +276,40 @@ fn get_test_case<'rule>(
         }
         Err(error) => TestCase {
             name,
-            time: now.elapsed().as_secs_f32(),
-            status: TestCaseStatus::Error { error },
+            time: now.elapsed().as_millis(),
+            status: TestCaseStatus::Error {
+                error: error.to_string(),
+            },
         },
     };
 
     Ok(tc)
 }
 
+#[derive(Deserialize, Serialize, Debug)]
 pub struct TestCase<'test> {
     pub name: &'test str,
-    pub time: f32,
+    pub time: u128,
     pub(crate) status: TestCaseStatus,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) enum TestCaseStatus {
     Pass,
     Skip,
     Fail(FailingTestCase),
-    Error { error: crate::rules::errors::Error },
+    Error { error: String },
 }
 
 pub struct TestSuite<'suite> {
     pub name: String,
     pub(crate) test_cases: Vec<TestCase<'suite>>,
-    pub time: f32,
+    pub time: u128,
     pub errors: usize,
     pub failures: usize,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct FailingTestCase {
     pub(crate) name: Option<String>,
     pub(crate) messages: Vec<Messages>,
@@ -359,6 +367,6 @@ fn serialize_empty_event(
     Ok(writer.write_event(Event::Empty(tag))?)
 }
 
-fn serialize_time(tag: &mut BytesStart<'_>, time: f32) {
+fn serialize_time(tag: &mut BytesStart<'_>, time: u128) {
     tag.push_attribute(("time", format!("{:.3}", time).as_str()))
 }
