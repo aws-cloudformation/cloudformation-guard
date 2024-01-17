@@ -21,7 +21,7 @@ use crate::rules::{
 };
 use inflector::cases::*;
 use lazy_static::lazy_static;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -1431,7 +1431,7 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'l
     }
 }
 
-#[derive(Clone, Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub(crate) struct Messages {
     pub(crate) custom_message: Option<String>,
     pub(crate) error_message: Option<String>,

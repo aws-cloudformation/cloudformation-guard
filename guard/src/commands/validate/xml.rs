@@ -215,68 +215,54 @@ fn get_test_case<'rule>(
     name: &'rule str,
 ) -> crate::rules::Result<TestCase<'rule>> {
     let now = Instant::now();
-    let tc = match root_scope(rule, Rc::new(data.path_value.clone())) {
-        Ok(mut root_scope) => {
-            let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
-            let root_record = root_scope.reset_recorder().extract();
-            let time = now.elapsed().as_millis();
+    let mut root_scope = root_scope(rule, Rc::new(data.path_value.clone()));
+    let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
+    let root_record = root_scope.reset_recorder().extract();
+    let time = now.elapsed().as_millis();
 
-            let tc = match simplifed_json_from_root(&root_record) {
-                Ok(report) => match status {
-                    Status::FAIL => {
-                        let status = report.not_compliant.iter().fold(
-                            FailingTestCase {
-                                name: None,
-                                messages: vec![],
-                            },
-                            |mut test_case, failure| {
-                                failure.get_message().into_iter().for_each(|e| {
-                                    if let rules::eval_context::ClauseReport::Rule(rule) = failure {
-                                        let name = match rule.name.contains(".guard/") {
-                                            true => {
-                                                rule.name.split(".guard/").collect::<Vec<&str>>()[1]
-                                            }
-                                            false => rule.name,
-                                        };
-                                        test_case.name = Some(String::from(name));
-                                    };
-                                    test_case.messages.push(e);
-                                });
-                                test_case
-                            },
-                        );
-
-                        TestCase {
-                            name,
-                            time,
-                            status: TestCaseStatus::Fail(status),
-                        }
-                    }
-                    _ => TestCase {
-                        name,
-                        time,
-                        status: match status {
-                            Status::PASS => TestCaseStatus::Pass,
-                            Status::SKIP => TestCaseStatus::Skip,
-                            _ => unreachable!(),
-                        },
+    let tc = match simplifed_json_from_root(&root_record) {
+        Ok(report) => match status {
+            Status::FAIL => {
+                let status = report.not_compliant.iter().fold(
+                    FailingTestCase {
+                        name: None,
+                        messages: vec![],
                     },
-                },
+                    |mut test_case, failure| {
+                        failure.get_message().into_iter().for_each(|e| {
+                            if let rules::eval_context::ClauseReport::Rule(rule) = failure {
+                                let name = match rule.name.contains(".guard/") {
+                                    true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
+                                    false => rule.name,
+                                };
+                                test_case.name = Some(String::from(name));
+                            };
+                            test_case.messages.push(e);
+                        });
+                        test_case
+                    },
+                );
 
-                Err(error) => TestCase {
+                TestCase {
                     name,
                     time,
-                    status: TestCaseStatus::Error {
-                        error: error.to_string(),
-                    },
+                    status: TestCaseStatus::Fail(status),
+                }
+            }
+            _ => TestCase {
+                name,
+                time,
+                status: match status {
+                    Status::PASS => TestCaseStatus::Pass,
+                    Status::SKIP => TestCaseStatus::Skip,
+                    _ => unreachable!(),
                 },
-            };
+            },
+        },
 
-            tc
-        }
         Err(error) => TestCase {
             name,
-            time: now.elapsed().as_millis(),
+            time,
             status: TestCaseStatus::Error {
                 error: error.to_string(),
             },

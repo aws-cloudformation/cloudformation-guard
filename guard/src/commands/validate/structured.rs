@@ -97,7 +97,7 @@ impl<'reporter> CommonStructuredReporter<'reporter> {
             };
 
             for (rule, _) in &self.rules {
-                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()))?;
+                let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
                     self.exit_code = FAILURE_STATUS_CODE;
