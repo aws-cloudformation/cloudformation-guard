@@ -1632,10 +1632,7 @@ impl<'value> ClauseReport<'value> {
     pub fn get_message(&self) -> Vec<Messages> {
         match self {
             ClauseReport::Rule(rule) => rule.checks.iter().fold(vec![], |mut messages, report| {
-                for message in report.get_message() {
-                    messages.push(message);
-                }
-
+                messages.append(&mut report.get_message());
                 messages
             }),
             ClauseReport::Block(block) => vec![block.messages.clone()],
