@@ -12,6 +12,10 @@ use crate::rules::Status;
 use crate::utils::writer::Writer;
 use colored::Colorize;
 
+pub trait StructuredReporter {
+    fn report(&mut self) -> rules::Result<i32>;
+}
+
 pub struct StructuredEvaluator<'eval> {
     pub(crate) rule_info: &'eval [RuleFileInfo],
     pub(crate) input_params: Option<PathAwareValue>,
@@ -59,23 +63,23 @@ impl<'eval> StructuredEvaluator<'eval> {
             res
         });
 
-        match self.output {
-            OutputFormatType::Junit => JunitReporter {
+        let mut reporter = match self.output {
+            OutputFormatType::Junit => Box::new(JunitReporter {
                 data: merged_data,
                 rules,
                 writer: self.writer,
                 exit_code: self.exit_code,
-            }
-            .report(),
-            _ => CommonStructuredReporter {
+            }) as Box<dyn StructuredReporter>,
+            _ => Box::new(CommonStructuredReporter {
                 rules,
                 data: merged_data,
                 writer: self.writer,
                 exit_code: self.exit_code,
                 output: self.output,
-            }
-            .report(),
-        }
+            }) as Box<dyn StructuredReporter>,
+        };
+
+        reporter.report()
     }
 }
 
@@ -87,8 +91,8 @@ pub struct CommonStructuredReporter<'reporter> {
     pub output: OutputFormatType,
 }
 
-impl<'reporter> CommonStructuredReporter<'reporter> {
-    pub fn report(&mut self) -> rules::Result<i32> {
+impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
+    fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
         for each in &self.data {
             let mut file_report: FileReport = FileReport {

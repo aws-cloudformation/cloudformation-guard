@@ -7,7 +7,10 @@ use quick_xml::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    commands::{validate::DataFile, ERROR_STATUS_CODE, FAILURE_STATUS_CODE},
+    commands::{
+        validate::{structured::StructuredReporter, DataFile},
+        ERROR_STATUS_CODE, FAILURE_STATUS_CODE,
+    },
     rules::{
         self,
         eval::eval_rules_file,
@@ -132,7 +135,18 @@ pub struct JunitReporter<'reporter> {
 }
 
 impl<'reporter> JunitReporter<'reporter> {
-    pub fn report(&mut self) -> rules::Result<i32> {
+    /// Update exit code only if code takes more presedence than current exit code
+    fn update_exit_code(&mut self, code: i32) {
+        if code == ERROR_STATUS_CODE
+            || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
+        {
+            self.exit_code = code;
+        }
+    }
+}
+
+impl<'reporter> StructuredReporter for JunitReporter<'reporter> {
+    fn report(&mut self) -> rules::Result<i32> {
         let now = Instant::now();
         let mut suites = vec![];
         let mut total_errors = 0;
@@ -197,15 +211,6 @@ impl<'reporter> JunitReporter<'reporter> {
         report.serialize(self.writer)?;
 
         Ok(self.exit_code)
-    }
-
-    /// Update exit code only if code takes more presedence than current exit code
-    fn update_exit_code(&mut self, code: i32) {
-        if code == ERROR_STATUS_CODE
-            || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
-        {
-            self.exit_code = code;
-        }
     }
 }
 
