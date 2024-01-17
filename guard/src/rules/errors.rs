@@ -55,8 +55,6 @@ pub enum Error {
 pub enum InternalError {
     #[error("non string type detected for key in a map at {0}, cfn-guard only supports keys that are string types")]
     InvalidKeyType(String),
-    #[error("reporter error {0}")]
-    XMLError(#[from] quick_xml::Error),
     #[error("internal error {0}")]
     UnresolvedKeyForReporter(String),
 }
