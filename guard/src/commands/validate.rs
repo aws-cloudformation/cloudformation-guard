@@ -288,6 +288,12 @@ or rules files.
             )));
         }
 
+        if matches!(output_type, OutputFormatType::Junit) && !structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to junit",
+            )));
+        }
+
         let data_files = match app.get_many::<String>(DATA.0) {
             Some(list_of_file_or_dir) => {
                 let mut streams = Vec::new();

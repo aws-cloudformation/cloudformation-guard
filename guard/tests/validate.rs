@@ -598,7 +598,6 @@ mod validate_tests {
             .structured()
             .run(&mut writer, &mut reader);
 
-
         // NOTE: since junit records time elapsed we must mock the time we report
         // otherwise this test will be extremely flakey since time will usually not be the same
         let writer = if output == "junit" {
@@ -669,6 +668,23 @@ mod validate_tests {
             .show_summary(vec![show_summary])
             .output_format(Option::from(output))
             .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
+
+    #[test]
+    fn test_junit_without_structured_flag() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("junit"))
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
