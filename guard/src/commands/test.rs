@@ -352,7 +352,7 @@ fn test_with_data(
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
                         let mut root_scope =
-                            crate::rules::eval_context::root_scope(rules, Rc::new(root.clone()))?;
+                            crate::rules::eval_context::root_scope(rules, Rc::new(root.clone()));
                         eval_rules_file(rules, &mut root_scope, None)?; // we never use data file name in the output
                         let top = root_scope.reset_recorder().extract();
 

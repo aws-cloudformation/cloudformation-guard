@@ -20,7 +20,7 @@ fn extraction_test() -> Result<()> {
 
     let rules = RulesFile::try_from(rules_files)?;
     let path_value = PathAwareValue::try_from("{}")?;
-    let root_scope = root_scope(&rules, Rc::new(path_value))?;
+    let root_scope = root_scope(&rules, Rc::new(path_value));
     assert_eq!(rules.guard_rules.len(), 1);
     assert_eq!(root_scope.rules.len(), 1);
     assert_eq!(

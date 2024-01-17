@@ -644,7 +644,7 @@ fn evaluate_against_data_input<'r>(
             None => file.path_value.clone(),
         };
         let traversal = Traversal::from(&each);
-        let mut root_scope = root_scope(rules, Rc::new(each.clone()))?;
+        let mut root_scope = root_scope(rules, Rc::new(each.clone()));
         let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
 
         let root_record = root_scope.reset_recorder().extract();
