@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="cfn-guard validate report" tests="4" failures="3" errors="0" time="50">
-    <testsuite name="s3-public-read-prohibited-template-non-compliant.yaml" errors="0" failures="3" time="50">
-        <testcase name="advanced_regex_negative_lookbehind_rule.guard" time="47">
+<testsuites name="cfn-guard validate report" tests="4" failures="3" errors="0" time="0">
+    <testsuite name="s3-public-read-prohibited-template-non-compliant.yaml" errors="0" failures="3" time="0">
+        <testcase name="advanced_regex_negative_lookbehind_rule.guard" time="0">
             <failure message="default">Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={&quot;Resources&quot;:{&quot;MyBucket&quot;:{&quot;Type&quot;:&quot;AWS::S3::Bucket&quot;,&quot;Properties&quot;:{&quot;BucketEncryption&quot;:{&quot;ServerSideEncryptionConfiguration&quot;:[{&quot;ServerSideEncryptionByDefault&quot;:{&quot;SSEAlgorithm&quot;:&quot;AES256&quot;}}]},&quot;VersioningConfiguration&quot;:{&quot;Status&quot;:&quot;Enabled&quot;}}}}}].Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={&quot;Resources&quot;:{&quot;MyBucket&quot;:{&quot;Type&quot;:&quot;AWS::S3::Bucket&quot;,&quot;Properties&quot;:{&quot;BucketEncryption&quot;:{&quot;ServerSideEncryptionConfiguration&quot;:[{&quot;ServerSideEncryptionByDefault&quot;:{&quot;SSEAlgorithm&quot;:&quot;AES256&quot;}}]},&quot;VersioningConfiguration&quot;:{&quot;Status&quot;:&quot;Enabled&quot;}}}}}].</failure>
         </testcase>
-        <testcase name="s3_bucket_logging_enabled.guard" time="2">
+        <testcase name="s3_bucket_logging_enabled.guard" time="0">
             <failure message="S3_BUCKET_LOGGING_ENABLED">
     Violation: S3 Bucket Logging needs to be configured to enable logging.
     Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.

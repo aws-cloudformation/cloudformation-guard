@@ -6,6 +6,7 @@ pub(crate) mod utils;
 mod validate_tests {
     use std::io::{stderr, stdout, Cursor};
 
+    use fancy_regex::Regex;
     use indoc::indoc;
 
     use cfn_guard::commands::{
@@ -582,7 +583,7 @@ mod validate_tests {
     #[rstest::rstest]
     #[case("yaml")]
     #[case("json")]
-    // #[case("junit")]
+    #[case("junit")]
     fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -597,11 +598,25 @@ mod validate_tests {
             .structured()
             .run(&mut writer, &mut reader);
 
+
+        // NOTE: since junit records time elapsed we must mock the time we report
+        // otherwise this test will be extremely flakey since time will usually not be the same
+        let writer = if output == "junit" {
+            let buf = writer.stripped().unwrap();
+
+            let rgx = Regex::new(r#"time="\d+""#).unwrap();
+            let res = rgx.replace_all(&buf, r#"time="0""#);
+
+            Writer::new(WBVec(res.as_bytes().to_vec()), WBVec(vec![]))
+        } else {
+            writer
+        };
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
         assert_output_from_file_eq!(
             &format!("resources/validate/output-dir/structured.{output}"),
             writer
         );
-        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]
