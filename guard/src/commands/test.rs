@@ -1,4 +1,4 @@
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -15,9 +15,10 @@ use crate::commands::files::{
     alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
+use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_VALUE_TYPE};
 use crate::commands::{
-    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
-    RULES_FILE, TEST, TEST_DATA, VERBOSE,
+    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, OUTPUT_FORMAT,
+    RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
 };
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;
@@ -105,6 +106,16 @@ or failure testing.
                     .action(ArgAction::SetTrue)
                     .help("Verbose logging"),
             )
+            .arg(
+                Arg::new(OUTPUT_FORMAT.0)
+                    .long(OUTPUT_FORMAT.0)
+                    .short(OUTPUT_FORMAT.1)
+                    .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
+                    .default_value("single-line-summary")
+                    .action(ArgAction::Set)
+                    .value_hint(ValueHint::Other)
+                    .help("Specify the format in which the output should be displayed"),
+            )
             .arg_required_else_help(true)
     }
 
@@ -116,6 +127,11 @@ or failure testing.
             last_modified
         } else {
             regular_ordering
+        };
+
+        let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
+            Some(o) => OutputFormatType::from(o.as_str()),
+            None => OutputFormatType::SingleLineSummary,
         };
 
         let verbose = app.get_flag(VERBOSE.0);
@@ -227,8 +243,13 @@ or failure testing.
                                 .iter()
                                 .map(|de| de.path().to_path_buf())
                                 .collect::<Vec<PathBuf>>();
-                            let test_exit_code =
-                                test_with_data(&data_test_files, &rules, verbose, writer)?;
+                            let test_exit_code = test_with_data(
+                                &data_test_files,
+                                &rules,
+                                verbose,
+                                writer,
+                                output_type,
+                            )?;
                             exit_code = if exit_code == 0 {
                                 test_exit_code
                             } else {
@@ -288,8 +309,13 @@ or failure testing.
                                 exit_code = 1;
                             }
                             Ok(Some(rules)) => {
-                                let curr_exit_code =
-                                    test_with_data(&data_test_files, &rules, verbose, writer)?;
+                                let curr_exit_code = test_with_data(
+                                    &data_test_files,
+                                    &rules,
+                                    verbose,
+                                    writer,
+                                    output_type,
+                                )?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -306,15 +332,15 @@ or failure testing.
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct TestExpectations {
-    rules: HashMap<String, String>,
+pub struct TestExpectations {
+    pub rules: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct TestSpec {
-    name: Option<String>,
-    input: serde_yaml::Value,
-    expectations: TestExpectations,
+pub struct TestSpec {
+    pub name: Option<String>,
+    pub input: serde_yaml::Value,
+    pub expectations: TestExpectations,
 }
 
 #[allow(clippy::never_loop)]
@@ -323,6 +349,7 @@ fn test_with_data(
     rules: &RulesFile<'_>,
     verbose: bool,
     writer: &mut Writer,
+    output: OutputFormatType,
 ) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
@@ -348,15 +375,18 @@ fn test_with_data(
                 for each in specs {
                     writeln!(writer, "Test Case #{test_counter}")?;
                     if each.name.is_some() {
-                        writeln!(writer, "Name: {}", each.name.unwrap())?;
+                        writeln!(writer, "Name: {}", each.name.unwrap_or_default())?;
                     }
 
                     let by_result = {
                         let mut by_result = HashMap::new();
                         let root = PathAwareValue::try_from(each.input)?;
+
                         let mut root_scope =
-                            crate::rules::eval_context::root_scope(rules, Rc::new(root.clone()));
+                            crate::rules::eval_context::root_scope(rules, Rc::new(root));
+
                         eval_rules_file(rules, &mut root_scope, None)?; // we never use data file name in the output
+
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules: HashMap<&str, Vec<&Option<RecordType<'_>>>> =
