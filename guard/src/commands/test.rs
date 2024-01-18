@@ -166,17 +166,20 @@ or failure testing.
                     }
                 }
             }
+
             for file in non_guard {
                 let name = file
                     .file_name()
                     .to_str()
                     .map_or("".to_string(), |s| s.to_string());
+
                 if name.ends_with(".yaml")
                     || name.ends_with(".yml")
                     || name.ends_with(".json")
                     || name.ends_with(".jsn")
                 {
                     let parent = file.path().parent();
+
                     if parent.map_or(false, |p| p.ends_with("tests")) {
                         if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
                             let grand = format!("{}", grand.display());
@@ -193,7 +196,7 @@ or failure testing.
                 }
             }
 
-            for (_dir, guard_files) in ordered_guard_files {
+            for (_, guard_files) in ordered_guard_files {
                 for each_rule_file in guard_files {
                     if each_rule_file.test_files.is_empty() {
                         writeln!(

@@ -29,6 +29,9 @@ fn get_code(e: &Error) -> ErrorCode {
         Error::MissingValue(_err) => 16,
         Error::FileNotFoundError(_) => 17,
         Error::IllegalArguments(_) => 18,
+        //NOTE: skipping 19 since we already use that for something and dont want to confuse users
+        //that use both the regular cli, and the ffi
+        Error::XMLError(_) => 20,
         Error::InternalError(_) => unreachable!(),
     };
     ErrorCode::new(code)

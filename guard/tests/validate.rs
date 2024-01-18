@@ -6,6 +6,7 @@ pub(crate) mod utils;
 mod validate_tests {
     use std::io::{stderr, stdout, Cursor};
 
+    use fancy_regex::Regex;
     use indoc::indoc;
 
     use cfn_guard::commands::{
@@ -579,8 +580,11 @@ mod validate_tests {
         assert_eq!(expected, result);
     }
 
-    #[test]
-    fn test_structured_output() {
+    #[rstest::rstest]
+    #[case("yaml")]
+    #[case("json")]
+    #[case("junit")]
+    fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
 
@@ -590,31 +594,28 @@ mod validate_tests {
                 "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
             ])
             .show_summary(vec!["none"])
-            .output_format(Option::from("json"))
+            .output_format(Option::from(output))
             .structured()
             .run(&mut writer, &mut reader);
 
-        assert_output_from_file_eq!("resources/validate/output-dir/structured.json", writer);
+        // NOTE: since junit records time elapsed we must mock the time we report
+        // otherwise this test will be extremely flakey since time will usually not be the same
+        let writer = if output == "junit" {
+            let buf = writer.stripped().unwrap();
+
+            let rgx = Regex::new(r#"time="\d+""#).unwrap();
+            let res = rgx.replace_all(&buf, r#"time="0""#);
+
+            Writer::new(WBVec(res.as_bytes().to_vec()), WBVec(vec![]))
+        } else {
+            writer
+        };
+
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
-    }
-
-    #[test]
-    fn test_structured_output_yaml() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-
-        let status_code = ValidateTestRunner::default()
-            .rules(vec!["/rules-dir"])
-            .data(vec![
-                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
-            ])
-            .show_summary(vec!["none"])
-            .output_format(Option::from("yaml"))
-            .structured()
-            .run(&mut writer, &mut reader);
-
-        assert_output_from_file_eq!("resources/validate/output-dir/structured.yaml", writer);
-        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            &format!("resources/validate/output-dir/structured.{output}"),
+            writer
+        );
     }
 
     #[test]
@@ -640,7 +641,21 @@ mod validate_tests {
 
     #[rstest::rstest]
     #[case("json", "all")]
+    #[case("json", "pass")]
+    #[case("json", "fail")]
+    #[case("json", "skip")]
+    #[case("yaml", "all")]
+    #[case("yaml", "pass")]
+    #[case("yaml", "fail")]
+    #[case("yaml", "skip")]
+    #[case("junit", "all")]
+    #[case("junit", "pass")]
+    #[case("junit", "fail")]
+    #[case("junit", "skip")]
     #[case("single-line-summary", "none")]
+    #[case("single-line-summary", "all")]
+    #[case("single-line-summary", "skip")]
+    #[case("single-line-summary", "pass")]
     fn test_structured_output_with_show_summary(#[case] output: &str, #[case] show_summary: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -653,6 +668,23 @@ mod validate_tests {
             .show_summary(vec![show_summary])
             .output_format(Option::from(output))
             .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
+
+    #[test]
+    fn test_junit_without_structured_flag() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("junit"))
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);

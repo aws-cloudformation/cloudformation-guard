@@ -21,7 +21,7 @@ use crate::rules::{
 };
 use inflector::cases::*;
 use lazy_static::lazy_static;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -1431,7 +1431,7 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'l
     }
 }
 
-#[derive(Clone, Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub(crate) struct Messages {
     pub(crate) custom_message: Option<String>,
     pub(crate) error_message: Option<String>,
@@ -1558,6 +1558,15 @@ pub(crate) enum GuardClauseReport {
     Binary(BinaryReport),
 }
 
+impl GuardClauseReport {
+    fn get_message(&self) -> Messages {
+        match self {
+            GuardClauseReport::Unary(unary_report) => unary_report.messages.clone(),
+            GuardClauseReport::Binary(binary_report) => binary_report.messages.clone(),
+        }
+    }
+}
+
 pub(crate) trait ValueComparisons {
     fn value_from(&self) -> Option<Rc<PathAwareValue>>;
     fn value_to(&self) -> Option<Rc<PathAwareValue>> {
@@ -1617,6 +1626,26 @@ impl<'value> ClauseReport<'value> {
             Self::Block(_) => format!("{}/B[{:p}]", parent, self),
             Self::Disjunctions(_) => format!("{}/Or[{:p}]", parent, self),
             Self::Clause(_) => format!("{}/C[{:p}]", parent, self),
+        }
+    }
+
+    pub fn get_message(&self) -> Vec<Messages> {
+        match self {
+            ClauseReport::Rule(rule) => rule.checks.iter().fold(vec![], |mut messages, report| {
+                messages.append(&mut report.get_message());
+                messages
+            }),
+            ClauseReport::Block(block) => vec![block.messages.clone()],
+            ClauseReport::Disjunctions(disjunctions) => {
+                disjunctions
+                    .checks
+                    .iter()
+                    .fold(vec![], |mut messages, report| {
+                        messages.append(&mut report.get_message());
+                        messages
+                    })
+            }
+            ClauseReport::Clause(clause) => vec![clause.get_message()],
         }
     }
 }

@@ -59,6 +59,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
                 OutputFormatType::SingleLineSummary => {
                     single_line(write, data_file, rules_file, data, root, failure_report)?
                 }
+                OutputFormatType::Junit => unreachable!(),
             };
 
             Ok(())

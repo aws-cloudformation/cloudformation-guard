@@ -43,6 +43,7 @@ impl Reporter for GenericSummary {
                     as Box<dyn GenericReporter>,
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
                     as Box<dyn GenericReporter>,
+                OutputFormatType::Junit => unreachable!(),
             };
         let failed = if !failed_rules.is_empty() {
             let mut by_rule = HashMap::with_capacity(failed_rules.len());
@@ -131,6 +132,7 @@ impl Reporter for GenericSummary {
                 rules_file,
                 &(SingleLineSummary {}),
             )?,
+            OutputFormatType::Junit => unreachable!(),
         };
 
         Ok(())
