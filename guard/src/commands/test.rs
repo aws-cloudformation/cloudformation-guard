@@ -386,7 +386,7 @@ fn handle_structured_directory_report(
             let content = match get_rule_content(path) {
                 Ok(content) => content,
                 Err(e) => {
-                    exit_code = 1;
+                    exit_code = TEST_ERROR_STATUS_CODE;
                     test_results.push(TestResult::Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
@@ -399,7 +399,7 @@ fn handle_structured_directory_report(
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
-                    exit_code = 1;
+                    exit_code = TEST_ERROR_STATUS_CODE;
                     test_results.push(TestResult::Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
@@ -491,7 +491,7 @@ fn test_with_data(
         match specs {
             Err(e) => {
                 writeln!(writer, "Error processing {e}")?;
-                exit_code = 1;
+                exit_code = TEST_ERROR_STATUS_CODE;
             }
             Ok(specs) => {
                 for each in specs {
@@ -580,7 +580,7 @@ fn test_with_data(
                                         .insert(format!(
                                             "{rule_name}: Expected = {expected}, Evaluated = {statues:?}"
                                         ));
-                                    exit_code = 7;
+                                    exit_code = TEST_FAILURE_STATUS_CODE;
                                 }
                             }
                         }
