@@ -48,8 +48,6 @@ pub enum Error {
     #[error("Error occured while attempting to write junit report")]
     XMLError(#[from] quick_xml::Error),
     #[error("{0}")]
-    XMLError(#[from] quick_xml::Error),
-    #[error("{0}")]
     InternalError(InternalError),
 }
 
