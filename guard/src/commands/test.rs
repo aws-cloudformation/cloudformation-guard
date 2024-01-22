@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use walkdir::DirEntry;
 
@@ -15,6 +15,7 @@ use crate::commands::files::{
     alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
+use crate::commands::test_reporters::{ContextAwareRule, StructuredTestReporter, TestResult};
 use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_VALUE_TYPE};
 use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, OUTPUT_FORMAT,
@@ -31,7 +32,21 @@ use crate::utils::writer::Writer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Test {}
+#[derive(Debug)]
+pub(crate) struct GuardFile {
+    prefix: String,
+    file: DirEntry,
+    test_files: Vec<DirEntry>,
+}
 
+impl GuardFile {
+    fn get_test_files(&self) -> Vec<PathBuf> {
+        self.test_files
+            .iter()
+            .map(|de| de.path().to_path_buf())
+            .collect::<Vec<PathBuf>>()
+    }
+}
 #[allow(clippy::new_without_default)]
 impl Test {
     pub fn new() -> Self {
@@ -137,11 +152,6 @@ or failure testing.
         let verbose = app.get_flag(VERBOSE.0);
 
         if app.contains_id(DIRECTORY_ONLY) {
-            struct GuardFile {
-                prefix: String,
-                file: DirEntry,
-                test_files: Vec<DirEntry>,
-            }
             let dir = app.get_one::<String>(DIRECTORY.0).unwrap();
             validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
@@ -212,54 +222,71 @@ or failure testing.
                 }
             }
 
-            for (_, guard_files) in ordered_guard_files {
-                for each_rule_file in guard_files {
-                    if each_rule_file.test_files.is_empty() {
-                        writeln!(
-                            writer,
-                            "Guard File {} did not have any tests associated, skipping.",
-                            each_rule_file.file.path().display()
-                        )?;
-                        writeln!(writer, "---")?;
-                        continue;
-                    }
-                    writeln!(
-                        writer,
-                        "Testing Guard File {}",
-                        each_rule_file.file.path().display()
-                    )?;
-                    let rule_file = File::open(each_rule_file.file.path())?;
-                    let content = read_file_content(rule_file)?;
-                    let span =
-                        crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
-                    match crate::rules::parser::rules_file(span) {
-                        Err(e) => {
-                            writeln!(writer, "Parse Error on ruleset file {e}",)?;
-                            exit_code = 1;
-                        }
-                        Ok(Some(rules)) => {
-                            let data_test_files = each_rule_file
-                                .test_files
-                                .iter()
-                                .map(|de| de.path().to_path_buf())
-                                .collect::<Vec<PathBuf>>();
-                            let test_exit_code = test_with_data(
-                                &data_test_files,
-                                &rules,
-                                verbose,
-                                writer,
-                                output_type,
-                            )?;
-                            exit_code = if exit_code == 0 {
-                                test_exit_code
-                            } else {
-                                exit_code
+            match output_type {
+                OutputFormatType::SingleLineSummary => {
+                    for (_, guard_files) in ordered_guard_files {
+                        for each_rule_file in guard_files {
+                            if each_rule_file.test_files.is_empty() {
+                                writeln!(
+                                    writer,
+                                    "Guard File {} did not have any tests associated, skipping.",
+                                    each_rule_file.file.path().display()
+                                )?;
+                                writeln!(writer, "---")?;
+                                continue;
                             }
+
+                            writeln!(
+                                writer,
+                                "Testing Guard File {}",
+                                each_rule_file.file.path().display()
+                            )?;
+
+                            let path = each_rule_file.file.path();
+                            let content = get_rule_content(path)?;
+                            let span = crate::rules::parser::Span::new_extra(
+                                &content,
+                                &each_rule_file.prefix,
+                            );
+
+                            match crate::rules::parser::rules_file(span) {
+                                Err(e) => {
+                                    writeln!(writer, "Parse Error on ruleset file {e}",)?;
+                                    exit_code = 1;
+                                }
+                                Ok(Some(rules)) => {
+                                    let data_test_files = each_rule_file
+                                        .test_files
+                                        .iter()
+                                        .map(|de| de.path().to_path_buf())
+                                        .collect::<Vec<PathBuf>>();
+                                    let test_exit_code =
+                                        test_with_data(&data_test_files, &rules, verbose, writer)?;
+
+                                    exit_code = if exit_code == 0 {
+                                        test_exit_code
+                                    } else {
+                                        exit_code
+                                    };
+                                }
+                                Ok(None) => {}
+                            }
+                            writeln!(writer, "---")?;
                         }
-                        Ok(None) => {}
                     }
-                    writeln!(writer, "---")?;
                 }
+                OutputFormatType::JSON | OutputFormatType::YAML => {
+                    let test_exit_code =
+                        handle_structured_output(ordered_guard_files, writer, output_type)?;
+                    exit_code = if exit_code == 0 {
+                        test_exit_code
+                    } else {
+                        exit_code
+                    };
+
+                    return Ok(exit_code);
+                }
+                OutputFormatType::Junit => todo!(),
             }
         } else {
             let file = app.get_one::<String>(RULES_FILE.0).unwrap();
@@ -309,13 +336,8 @@ or failure testing.
                                 exit_code = 1;
                             }
                             Ok(Some(rules)) => {
-                                let curr_exit_code = test_with_data(
-                                    &data_test_files,
-                                    &rules,
-                                    verbose,
-                                    writer,
-                                    output_type,
-                                )?;
+                                let curr_exit_code =
+                                    test_with_data(&data_test_files, &rules, verbose, writer)?;
                                 if curr_exit_code != 0 {
                                     exit_code = curr_exit_code;
                                 }
@@ -329,6 +351,89 @@ or failure testing.
 
         Ok(exit_code)
     }
+}
+
+fn get_rule_content(path: &Path) -> Result<String> {
+    let rule_file = File::open(path)?;
+    read_file_content(rule_file)
+}
+
+pub(crate) fn handle_structured_output(
+    ordered_guard_files: BTreeMap<String, Vec<GuardFile>>,
+    writer: &mut Writer,
+    output: OutputFormatType,
+) -> Result<i32> {
+    let mut test_results = vec![];
+    let mut exit_code = 0;
+    for (_, guard_files) in ordered_guard_files {
+        for each_rule_file in guard_files {
+            if each_rule_file.test_files.is_empty() {
+                continue;
+            }
+
+            let path = each_rule_file.file.path();
+            let content = match get_rule_content(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    exit_code = 1;
+                    test_results.push(TestResult::Err {
+                        rule_file: path.to_str().unwrap().to_string(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+            };
+
+            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+
+            match crate::rules::parser::rules_file(span) {
+                Err(e) => {
+                    exit_code = 1;
+                    test_results.push(TestResult::Err {
+                        rule_file: path.to_str().unwrap().to_string(),
+                        error: e.to_string(),
+                    })
+                }
+                Ok(Some(rules)) => {
+                    let data_test_files = each_rule_file.get_test_files();
+
+                    let mut reporter = StructuredTestReporter {
+                        data_test_files: &data_test_files,
+                        output,
+                        rules: ContextAwareRule {
+                            rule: rules,
+                            name: path.to_str().unwrap().to_string(),
+                        },
+                    };
+
+                    let test = reporter.evaluate();
+                    let test_exit_code = test.get_exit_code();
+
+                    // TODO: clean this up...
+                    exit_code = match exit_code == 0 {
+                        true => test_exit_code,
+                        false => match exit_code == 7 && test_exit_code != 0 {
+                            true => test_exit_code,
+                            false => exit_code,
+                        },
+                    };
+
+                    test_results.push(test);
+                }
+                Ok(None) => {}
+            }
+        }
+    }
+
+    match output {
+        OutputFormatType::YAML => serde_yaml::to_writer(writer, &test_results)?,
+        OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &test_results)?,
+        OutputFormatType::Junit => todo!(), // TODO:
+        // NOTE: safe since output type is checked prior to calling this function
+        OutputFormatType::SingleLineSummary => unreachable!(),
+    }
+
+    Ok(exit_code)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -349,7 +454,6 @@ fn test_with_data(
     rules: &RulesFile<'_>,
     verbose: bool,
     writer: &mut Writer,
-    output: OutputFormatType,
 ) -> Result<i32> {
     let mut exit_code = 0;
     let mut test_counter = 1;
