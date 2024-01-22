@@ -156,139 +156,22 @@ or failure testing.
             let dir = app.get_one::<String>(DIRECTORY.0).unwrap();
             validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
-            let mut non_guard: Vec<DirEntry> = vec![];
-            let mut ordered_guard_files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
-            for file in walk
-                .follow_links(true)
-                .sort_by_file_name()
-                .into_iter()
-                .flatten()
-            {
-                if file.path().is_file() {
-                    let name = file
-                        .file_name()
-                        .to_str()
-                        .map_or("".to_string(), |s| s.to_string());
-                    if name.ends_with(".guard") || name.ends_with(".ruleset") {
-                        let prefix = name
-                            .strip_suffix(".guard")
-                            .or_else(|| name.strip_suffix(".ruleset"))
-                            .unwrap()
-                            .to_string();
-                        ordered_guard_files
-                            .entry(
-                                file.path()
-                                    .parent()
-                                    .map_or("".to_string(), |p| format!("{}", p.display())),
-                            )
-                            .or_default()
-                            .push(GuardFile {
-                                prefix,
-                                file,
-                                test_files: vec![],
-                            });
-                        continue;
-                    } else {
-                        non_guard.push(file);
-                    }
-                }
-            }
-
-            for file in non_guard {
-                let name = file
-                    .file_name()
-                    .to_str()
-                    .map_or("".to_string(), |s| s.to_string());
-
-                if name.ends_with(".yaml")
-                    || name.ends_with(".yml")
-                    || name.ends_with(".json")
-                    || name.ends_with(".jsn")
-                {
-                    let parent = file.path().parent();
-
-                    if parent.map_or(false, |p| p.ends_with("tests")) {
-                        if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
-                            let grand = format!("{}", grand.display());
-                            ordered_guard_files.get_mut(&grand)
-                        }) {
-                            for guard_file in candidates {
-                                if name.starts_with(&guard_file.prefix) {
-                                    guard_file.test_files.push(file);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let ordered_directory = OrderedTestDirectory::from(walk);
 
             match output_type {
                 OutputFormatType::SingleLineSummary => {
-                    for (_, guard_files) in ordered_guard_files {
-                        for each_rule_file in guard_files {
-                            if each_rule_file.test_files.is_empty() {
-                                writeln!(
-                                    writer,
-                                    "Guard File {} did not have any tests associated, skipping.",
-                                    each_rule_file.file.path().display()
-                                )?;
-                                writeln!(writer, "---")?;
-                                continue;
-                            }
-
-                            writeln!(
-                                writer,
-                                "Testing Guard File {}",
-                                each_rule_file.file.path().display()
-                            )?;
-
-                            let path = each_rule_file.file.path();
-                            let content = get_rule_content(path)?;
-                            let span = crate::rules::parser::Span::new_extra(
-                                &content,
-                                &each_rule_file.prefix,
-                            );
-
-                            match crate::rules::parser::rules_file(span) {
-                                Err(e) => {
-                                    writeln!(writer, "Parse Error on ruleset file {e}",)?;
-                                    exit_code = 1;
-                                }
-                                Ok(Some(rules)) => {
-                                    let data_test_files = each_rule_file
-                                        .test_files
-                                        .iter()
-                                        .map(|de| de.path().to_path_buf())
-                                        .collect::<Vec<PathBuf>>();
-                                    let test_exit_code =
-                                        test_with_data(&data_test_files, &rules, verbose, writer)?;
-
-                                    exit_code = if exit_code == 0 {
-                                        test_exit_code
-                                    } else {
-                                        exit_code
-                                    };
-                                }
-                                Ok(None) => {}
-                            }
-                            writeln!(writer, "---")?;
-                        }
-                    }
+                    handle_plaintext_directory(ordered_directory, writer, verbose)
                 }
                 OutputFormatType::JSON | OutputFormatType::YAML => {
-                    let test_exit_code = handle_structured_directory_report(
-                        ordered_guard_files,
-                        writer,
-                        output_type,
-                    )?;
+                    let test_exit_code =
+                        handle_structured_directory_report(ordered_directory, writer, output_type)?;
                     exit_code = if exit_code == 0 {
                         test_exit_code
                     } else {
                         exit_code
                     };
 
-                    return Ok(exit_code);
+                    Ok(exit_code)
                 }
                 OutputFormatType::Junit => todo!(),
             }
@@ -342,9 +225,64 @@ or failure testing.
                 _ => todo!(),
             };
         }
-
-        Ok(exit_code)
     }
+}
+
+fn handle_plaintext_directory(
+    directory: OrderedTestDirectory,
+    writer: &mut Writer,
+    verbose: bool,
+) -> Result<i32> {
+    let mut exit_code = 0;
+
+    for (_, guard_files) in directory.0 {
+        for each_rule_file in guard_files {
+            if each_rule_file.test_files.is_empty() {
+                writeln!(
+                    writer,
+                    "Guard File {} did not have any tests associated, skipping.",
+                    each_rule_file.file.path().display()
+                )?;
+                writeln!(writer, "---")?;
+                continue;
+            }
+
+            writeln!(
+                writer,
+                "Testing Guard File {}",
+                each_rule_file.file.path().display()
+            )?;
+
+            let path = each_rule_file.file.path();
+            let content = get_rule_content(path)?;
+            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+
+            match crate::rules::parser::rules_file(span) {
+                Err(e) => {
+                    writeln!(writer, "Parse Error on ruleset file {e}",)?;
+                    exit_code = TEST_FAILURE_STATUS_CODE;
+                }
+                Ok(Some(rules)) => {
+                    let data_test_files = each_rule_file
+                        .test_files
+                        .iter()
+                        .map(|de| de.path().to_path_buf())
+                        .collect::<Vec<PathBuf>>();
+                    let test_exit_code = test_with_data(&data_test_files, &rules, verbose, writer)?;
+
+                    exit_code = if exit_code == 0 {
+                        test_exit_code
+                    } else {
+                        exit_code
+                    };
+                }
+                Ok(None) => {}
+            }
+            writeln!(writer, "---")?;
+        }
+    }
+
+    Ok(exit_code)
 }
 
 fn handle_plaintext_single_file(
@@ -430,14 +368,15 @@ pub(crate) fn handle_structured_single_report(
     Ok(exit_code)
 }
 
-pub(crate) fn handle_structured_directory_report(
-    ordered_guard_files: BTreeMap<String, Vec<GuardFile>>,
+fn handle_structured_directory_report(
+    directory: OrderedTestDirectory,
     writer: &mut Writer,
     output: OutputFormatType,
 ) -> Result<i32> {
     let mut test_results = vec![];
     let mut exit_code = 0;
-    for (_, guard_files) in ordered_guard_files {
+
+    for (_, guard_files) in directory.0 {
         for each_rule_file in guard_files {
             if each_rule_file.test_files.is_empty() {
                 continue;
@@ -658,6 +597,83 @@ fn test_with_data(
         }
     }
     Ok(exit_code)
+}
+
+struct OrderedTestDirectory(BTreeMap<String, Vec<GuardFile>>);
+
+impl From<walkdir::WalkDir> for OrderedTestDirectory {
+    fn from(walk: walkdir::WalkDir) -> Self {
+        let mut non_guard: Vec<DirEntry> = vec![];
+        let mut files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
+        for file in walk
+            .follow_links(true)
+            .sort_by_file_name()
+            .into_iter()
+            .flatten()
+        {
+            if file.path().is_file() {
+                let name = file
+                    .file_name()
+                    .to_str()
+                    .map_or("".to_string(), |s| s.to_string());
+
+                if name.ends_with(".guard") || name.ends_with(".ruleset") {
+                    let prefix = name
+                        .strip_suffix(".guard")
+                        .or_else(|| name.strip_suffix(".ruleset"))
+                        .unwrap()
+                        .to_string();
+
+                    files
+                        .entry(
+                            file.path()
+                                .parent()
+                                .map_or("".to_string(), |p| format!("{}", p.display())),
+                        )
+                        .or_default()
+                        .push(GuardFile {
+                            prefix,
+                            file,
+                            test_files: vec![],
+                        });
+                    continue;
+                } else {
+                    non_guard.push(file);
+                }
+            }
+        }
+
+        for file in non_guard {
+            let name = file
+                .file_name()
+                .to_str()
+                .map_or("".to_string(), |s| s.to_string());
+
+            if name.ends_with(".yaml")
+                || name.ends_with(".yml")
+                || name.ends_with(".json")
+                || name.ends_with(".jsn")
+            {
+                let parent = file.path().parent();
+
+                if parent.map_or(false, |p| p.ends_with("tests")) {
+                    if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
+                        let grand = format!("{}", grand.display());
+                        files.get_mut(&grand)
+                    }) {
+                        for guard_file in candidates {
+                            if name.starts_with(&guard_file.prefix) {
+                                guard_file.test_files.push(file);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        OrderedTestDirectory(files)
+    }
 }
 
 pub(crate) fn print_test_case_report(
