@@ -277,8 +277,11 @@ or failure testing.
                     }
                 }
                 OutputFormatType::JSON | OutputFormatType::YAML => {
-                    let test_exit_code =
-                        handle_structured_report(ordered_guard_files, writer, output_type)?;
+                    let test_exit_code = handle_structured_directory_report(
+                        ordered_guard_files,
+                        writer,
+                        output_type,
+                    )?;
                     exit_code = if exit_code == 0 {
                         test_exit_code
                     } else {
@@ -320,46 +323,114 @@ or failure testing.
                 )));
             }
 
-            let ruleset = vec![path];
-            for rules in iterate_over(&ruleset, |content, file| {
-                Ok((content, file.to_str().unwrap_or("").to_string()))
-            }) {
-                match rules {
-                    Err(e) => {
-                        write!(writer, "Unable to read rule file content {e}")?;
-                        exit_code = 1;
-                    }
-                    Ok((context, path)) => {
-                        let span = crate::rules::parser::Span::new_extra(&context, &path);
-                        match crate::rules::parser::rules_file(span) {
-                            Err(e) => {
-                                writeln!(writer, "Parse Error on ruleset file {e}")?;
-                                exit_code = 1;
-                            }
-                            Ok(Some(rules)) => {
-                                let curr_exit_code =
-                                    test_with_data(&data_test_files, &rules, verbose, writer)?;
-                                if curr_exit_code != 0 {
-                                    exit_code = curr_exit_code;
-                                }
-                            }
-                            Ok(None) => {}
-                        }
-                    }
-                }
-            }
+            return match output_type {
+                OutputFormatType::SingleLineSummary => handle_plaintext_single_file(
+                    rule_file,
+                    path.as_path(),
+                    writer,
+                    &data_test_files,
+                    verbose,
+                ),
+
+                OutputFormatType::YAML | OutputFormatType::JSON => handle_structured_single_report(
+                    rule_file,
+                    path.as_path(),
+                    writer,
+                    &data_test_files,
+                    output_type,
+                ),
+                _ => todo!(),
+            };
         }
 
         Ok(exit_code)
     }
 }
 
+fn handle_plaintext_single_file(
+    rule_file: File,
+    path: &Path,
+    writer: &mut Writer,
+    data_test_files: &[PathBuf],
+    verbose: bool,
+) -> Result<i32> {
+    match read_file_content(rule_file) {
+        Err(e) => {
+            write!(writer, "Unable to read rule file content {e}")?;
+            Ok(TEST_ERROR_STATUS_CODE)
+        }
+        Ok(content) => {
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
+            match crate::rules::parser::rules_file(span) {
+                Err(e) => {
+                    writeln!(writer, "Parse Error on ruleset file {e}")?;
+                    Ok(TEST_ERROR_STATUS_CODE)
+                }
+                Ok(Some(rules)) => test_with_data(data_test_files, &rules, verbose, writer),
+                Ok(None) => Ok(SUCCESS_STATUS_CODE),
+            }
+        }
+    }
+}
 fn get_rule_content(path: &Path) -> Result<String> {
     let rule_file = File::open(path)?;
     read_file_content(rule_file)
 }
 
-pub(crate) fn handle_structured_report(
+pub(crate) fn handle_structured_single_report(
+    rule_file: File,
+    path: &Path,
+    writer: &mut Writer,
+    data_test_files: &[PathBuf],
+    output: OutputFormatType,
+) -> Result<i32> {
+    let mut exit_code = 0;
+
+    let result = match read_file_content(rule_file) {
+        Err(e) => TestResult::Err {
+            rule_file: path.to_str().unwrap_or("").to_string(),
+            error: e.to_string(),
+        },
+
+        Ok(content) => {
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
+            match crate::rules::parser::rules_file(span) {
+                Err(e) => TestResult::Err {
+                    rule_file: path.to_str().unwrap_or("").to_string(),
+                    error: e.to_string(),
+                },
+                Ok(Some(rule)) => {
+                    let mut reporter = StructuredTestReporter {
+                        data_test_files,
+                        output,
+                        rules: ContextAwareRule {
+                            rule,
+                            name: path.to_str().unwrap_or("").to_string(),
+                        },
+                    };
+
+                    let test = reporter.evaluate()?;
+                    let test_code = test.get_exit_code();
+                    exit_code = get_exit_code(exit_code, test_code);
+
+                    test
+                }
+                Ok(None) => return Ok(exit_code),
+            }
+        }
+    };
+
+    match output {
+        OutputFormatType::YAML => serde_yaml::to_writer(writer, &result)?,
+        OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &result)?,
+        OutputFormatType::Junit => todo!(),
+        OutputFormatType::SingleLineSummary => unreachable!(),
+    }
+
+    Ok(exit_code)
+}
+
+pub(crate) fn handle_structured_directory_report(
     ordered_guard_files: BTreeMap<String, Vec<GuardFile>>,
     writer: &mut Writer,
     output: OutputFormatType,
