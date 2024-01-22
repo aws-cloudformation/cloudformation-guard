@@ -60,3 +60,5 @@ pub(crate) const RULE_FILE_SUPPORTED_EXTENSIONS: [&str; 2] = [".guard", ".rulese
 pub const FAILURE_STATUS_CODE: i32 = 19;
 pub const SUCCESS_STATUS_CODE: i32 = 0;
 pub const ERROR_STATUS_CODE: i32 = 5;
+pub const TEST_ERROR_STATUS_CODE: i32 = 1;
+pub const TEST_FAILURE_STATUS_CODE: i32 = 7;

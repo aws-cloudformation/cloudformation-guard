@@ -97,7 +97,7 @@ struct TestData {
 }
 
 impl<'reporter> StructuredTestReporter<'reporter> {
-    pub fn evaluate(&mut self) -> TestResult {
+    pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let mut result = TestResult::Ok {
             rule_file: file.to_owned(),
@@ -120,32 +120,19 @@ impl<'reporter> StructuredTestReporter<'reporter> {
         ) {
             match specs {
                 Err(e) => {
-                    return TestResult::Err {
+                    return Ok(TestResult::Err {
                         rule_file: file.to_owned(),
                         error: e.to_string(),
-                    }
+                    })
                 }
                 Ok(spec) => {
-                    let test_data = match get_test_data(spec) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            return TestResult::Err {
-                                rule_file: file.to_owned(),
-                                error: e.to_string(),
-                            }
-                        }
-                    };
+                    let test_data = get_test_data(spec)?;
 
                     for each in &test_data {
                         let mut root_scope =
                             eval_context::root_scope(rule, Rc::clone(&each.path_value));
 
-                        if let Err(e) = eval_rules_file(rule, &mut root_scope, None) {
-                            return TestResult::Err {
-                                rule_file: file.to_owned(),
-                                error: e.to_string(),
-                            };
-                        }
+                        eval_rules_file(rule, &mut root_scope, None)?;
 
                         let top = root_scope.reset_recorder().extract();
 
@@ -170,10 +157,10 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                 Some(exp) => match Status::try_from(exp.as_str()) {
                                     Ok(exp) => exp,
                                     Err(e) => {
-                                        return TestResult::Err {
+                                        return Ok(TestResult::Err {
                                             rule_file: file.to_owned(),
                                             error: e.to_string(),
-                                        }
+                                        })
                                     }
                                 },
                                 None => {
@@ -196,7 +183,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
             }
         }
 
-        result
+        Ok(result)
     }
 }
 

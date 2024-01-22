@@ -1,3 +1,4 @@
+use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -277,7 +278,7 @@ or failure testing.
                 }
                 OutputFormatType::JSON | OutputFormatType::YAML => {
                     let test_exit_code =
-                        handle_structured_output(ordered_guard_files, writer, output_type)?;
+                        handle_structured_report(ordered_guard_files, writer, output_type)?;
                     exit_code = if exit_code == 0 {
                         test_exit_code
                     } else {
@@ -358,7 +359,7 @@ fn get_rule_content(path: &Path) -> Result<String> {
     read_file_content(rule_file)
 }
 
-pub(crate) fn handle_structured_output(
+pub(crate) fn handle_structured_report(
     ordered_guard_files: BTreeMap<String, Vec<GuardFile>>,
     writer: &mut Writer,
     output: OutputFormatType,
@@ -406,17 +407,9 @@ pub(crate) fn handle_structured_output(
                         },
                     };
 
-                    let test = reporter.evaluate();
-                    let test_exit_code = test.get_exit_code();
-
-                    // TODO: clean this up...
-                    exit_code = match exit_code == 0 {
-                        true => test_exit_code,
-                        false => match exit_code == 7 && test_exit_code != 0 {
-                            true => test_exit_code,
-                            false => exit_code,
-                        },
-                    };
+                    let test = reporter.evaluate()?;
+                    let test_code = test.get_exit_code();
+                    exit_code = get_exit_code(exit_code, test_code);
 
                     test_results.push(test);
                 }
@@ -434,6 +427,21 @@ pub(crate) fn handle_structured_output(
     }
 
     Ok(exit_code)
+}
+
+fn get_exit_code(exit_code: i32, test_code: i32) -> i32 {
+    match exit_code {
+        SUCCESS_STATUS_CODE => test_code,
+        TEST_ERROR_STATUS_CODE => exit_code,
+        TEST_FAILURE_STATUS_CODE => {
+            if test_code == TEST_ERROR_STATUS_CODE {
+                TEST_ERROR_STATUS_CODE
+            } else {
+                TEST_FAILURE_STATUS_CODE
+            }
+        }
+        _ => unreachable!(),
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
