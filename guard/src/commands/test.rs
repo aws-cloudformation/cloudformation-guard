@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Instant;
 use walkdir::DirEntry;
 
 use validate::validate_path;
@@ -331,11 +332,13 @@ pub(crate) fn handle_structured_single_report(
     output: OutputFormatType,
 ) -> Result<i32> {
     let mut exit_code = 0;
+    let now = Instant::now();
 
     let result = match read_file_content(rule_file) {
         Err(e) => TestResult::Err {
             rule_file: path.to_str().unwrap_or("").to_string(),
             error: e.to_string(),
+            time: now.elapsed().as_millis(),
         },
 
         Ok(content) => {
@@ -344,6 +347,7 @@ pub(crate) fn handle_structured_single_report(
                 Err(e) => TestResult::Err {
                     rule_file: path.to_str().unwrap_or("").to_string(),
                     error: e.to_string(),
+                    time: now.elapsed().as_millis(),
                 },
                 Ok(Some(rule)) => {
                     let mut reporter = StructuredTestReporter {
@@ -386,6 +390,8 @@ fn handle_structured_directory_report(
 
     for (_, guard_files) in directory.0 {
         for each_rule_file in guard_files {
+            let now = Instant::now();
+
             if each_rule_file.test_files.is_empty() {
                 continue;
             }
@@ -398,6 +404,7 @@ fn handle_structured_directory_report(
                     test_results.push(TestResult::Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
+                        time: now.elapsed().as_millis(),
                     });
                     continue;
                 }
@@ -411,6 +418,7 @@ fn handle_structured_directory_report(
                     test_results.push(TestResult::Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
+                        time: now.elapsed().as_millis(),
                     })
                 }
                 Ok(Some(rules)) => {

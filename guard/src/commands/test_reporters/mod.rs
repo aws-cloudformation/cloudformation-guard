@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::test::TestExpectations;
 use serde::{Deserialize, Serialize};
@@ -29,10 +29,14 @@ pub enum TestResult {
     Ok {
         rule_file: String,
         test_cases: Vec<TestCase>,
+        #[serde(skip_serializing)] // NOTE: Only using this for junit
+        time: u128,
     },
     Err {
         rule_file: String,
         error: String,
+        #[serde(skip_serializing)] // NOTE: Only using this for junit
+        time: u128,
     },
 }
 
@@ -63,6 +67,8 @@ pub struct TestCase {
     passed_rules: Vec<PassedRule>,
     failed_rules: Vec<FailedRule>,
     skipped_rules: Vec<SkippedRule>,
+    #[serde(skip_serializing)] // NOTE: Only using this for junit
+    time: u128,
 }
 
 impl TestCase {
@@ -99,9 +105,11 @@ struct TestData {
 impl<'reporter> StructuredTestReporter<'reporter> {
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
+        let now = Instant::now();
         let mut result = TestResult::Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
+            time: 0,
         };
 
         for specs in iterate_over(
@@ -123,12 +131,14 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     return Ok(TestResult::Err {
                         rule_file: file.to_owned(),
                         error: e.to_string(),
+                        time: now.elapsed().as_millis(),
                     })
                 }
                 Ok(spec) => {
                     let test_data = get_test_data(spec)?;
 
                     for each in &test_data {
+                        let now = Instant::now();
                         let mut root_scope =
                             eval_context::root_scope(rule, Rc::clone(&each.path_value));
 
@@ -160,6 +170,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                         return Ok(TestResult::Err {
                                             rule_file: file.to_owned(),
                                             error: e.to_string(),
+                                            time: now.elapsed().as_millis(),
                                         })
                                     }
                                 },
@@ -177,6 +188,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                             }
                         }
 
+                        test_case.time = now.elapsed().as_millis();
                         result.insert_test_case(test_case);
                     }
                 }
