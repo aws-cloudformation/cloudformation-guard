@@ -152,6 +152,14 @@ or failure testing.
 
         let verbose = app.get_flag(VERBOSE.0);
 
+        if output_type.is_structured() && verbose {
+            return Err(Error::IllegalArguments(String::from("Cannot provide an output_type of JSON, YAML, or JUnit while the verbose flag is set")));
+        } else if matches!(output_type, OutputFormatType::Junit) {
+            return Err(Error::IllegalArguments(String::from(
+                "JUnit reporters is not yet implemented for the test command",
+            )));
+        }
+
         if app.contains_id(DIRECTORY_ONLY) {
             let dir = app.get_one::<String>(DIRECTORY.0).unwrap();
             validate_path(dir)?;

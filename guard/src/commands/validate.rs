@@ -74,6 +74,12 @@ pub(crate) enum OutputFormatType {
     Junit,
 }
 
+impl OutputFormatType {
+    pub(crate) fn is_structured(&self) -> bool {
+        !matches!(self, Self::SingleLineSummary)
+    }
+}
+
 impl From<&str> for OutputFormatType {
     fn from(value: &str) -> Self {
         match value {
