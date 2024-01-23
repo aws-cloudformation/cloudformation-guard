@@ -244,7 +244,7 @@ fn handle_plaintext_directory(
 ) -> Result<i32> {
     let mut exit_code = 0;
 
-    for (_, guard_files) in directory.0 {
+    for (_, guard_files) in directory {
         for each_rule_file in guard_files {
             if each_rule_file.test_files.is_empty() {
                 writeln!(
@@ -388,7 +388,7 @@ fn handle_structured_directory_report(
     let mut test_results = vec![];
     let mut exit_code = 0;
 
-    for (_, guard_files) in directory.0 {
+    for (_, guard_files) in directory {
         for each_rule_file in guard_files {
             let now = Instant::now();
 
@@ -616,6 +616,15 @@ fn test_with_data(
 }
 
 struct OrderedTestDirectory(BTreeMap<String, Vec<GuardFile>>);
+
+impl IntoIterator for OrderedTestDirectory {
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+
+    type IntoIter = std::collections::btree_map::IntoIter<String, Vec<GuardFile>>;
+    type Item = (String, Vec<GuardFile>);
+}
 
 impl From<walkdir::WalkDir> for OrderedTestDirectory {
     fn from(walk: walkdir::WalkDir) -> Self {
