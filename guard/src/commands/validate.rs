@@ -21,7 +21,7 @@ use crate::commands::validate::tf::TfAware;
 use crate::commands::{
     ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
     OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
-    SHOW_SUMMARY, STRUCTURED, TYPE, VALIDATE, VERBOSE,
+    SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE, VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -41,6 +41,7 @@ pub(crate) mod generic_summary;
 mod structured;
 mod summary_table;
 mod tf;
+pub mod xml;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
@@ -70,6 +71,13 @@ pub(crate) enum OutputFormatType {
     SingleLineSummary,
     JSON,
     YAML,
+    Junit,
+}
+
+impl OutputFormatType {
+    pub(crate) fn is_structured(&self) -> bool {
+        !matches!(self, Self::SingleLineSummary)
+    }
 }
 
 impl From<&str> for OutputFormatType {
@@ -77,6 +85,7 @@ impl From<&str> for OutputFormatType {
         match value {
             "single-line-summary" => OutputFormatType::SingleLineSummary,
             "json" => OutputFormatType::JSON,
+            "junit" => OutputFormatType::Junit,
             _ => OutputFormatType::YAML,
         }
     }
@@ -130,7 +139,7 @@ impl Validate {
     }
 }
 
-const OUTPUT_FORMAT_VALUE_TYPE: [&str; 3] = ["json", "yaml", "single-line-summary"];
+pub const OUTPUT_FORMAT_VALUE_TYPE: [&str; 4] = ["json", "yaml", "single-line-summary", "junit"];
 const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
 
@@ -285,6 +294,12 @@ or rules files.
             )));
         }
 
+        if matches!(output_type, OutputFormatType::Junit) && !structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to junit",
+            )));
+        }
+
         let data_files = match app.get_many::<String>(DATA.0) {
             Some(list_of_file_or_dir) => {
                 let mut streams = Vec::new();
@@ -370,7 +385,7 @@ or rules files.
 
         let print_json = app.get_flag(PRINT_JSON.0);
 
-        let mut exit_code = 0;
+        let mut exit_code = SUCCESS_STATUS_CODE;
 
         if app.contains_id(RULES.0) {
             let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();

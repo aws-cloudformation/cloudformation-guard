@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::rules::errors::Error;
 use walkdir::WalkDir;
 
-pub(crate) fn read_file_content(file: File) -> Result<String, std::io::Error> {
+pub(crate) fn read_file_content(file: File) -> crate::rules::Result<String> {
     let mut file_content = String::new();
     let mut buf_reader = BufReader::new(file);
     buf_reader.read_to_string(&mut file_content)?;
@@ -62,7 +62,7 @@ where
         };
         let content = match read_file_content(file) {
             Ok(content) => content,
-            Err(e) => return Some(Err(Error::from(e))),
+            Err(e) => return Some(Err(e)),
         };
         Some((self.converter)(content, next))
     }

@@ -115,6 +115,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                         Err(e) => return Err(e),
                     }
                 }
+                OutputFormatType::Junit => unreachable!(),
             };
 
             Ok(())
