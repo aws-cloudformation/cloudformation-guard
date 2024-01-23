@@ -599,7 +599,7 @@ mod validate_tests {
     #[rstest::rstest]
     #[case("yaml")]
     #[case("json")]
-    // #[case("junit")]
+    #[case("junit")]
     fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
