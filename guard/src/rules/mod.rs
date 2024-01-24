@@ -19,7 +19,7 @@ use crate::rules::values::CmpOperator;
 use colored::*;
 use lazy_static::lazy_static;
 use nom::lib::std::convert::TryFrom;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::rc::Rc;
@@ -85,7 +85,7 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone, PartialEq, Copy, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub(crate) enum Status {
     PASS,

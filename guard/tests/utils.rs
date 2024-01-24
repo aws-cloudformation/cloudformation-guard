@@ -52,7 +52,7 @@ pub fn compare_write_buffer_with_file(
         get_full_path_for_resource_file(expected_output_relative_file_path);
     let expected_output = read_from_resource_file(&expected_output_full_file_path);
     let actual_output = actual_output_writer.stripped().unwrap();
-    assert_eq!(expected_output, actual_output)
+    assert_eq!(actual_output, expected_output)
 }
 
 #[allow(dead_code)]

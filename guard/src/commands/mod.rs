@@ -3,6 +3,7 @@ pub(crate) mod helper;
 pub mod parse_tree;
 pub mod rulegen;
 pub mod test;
+pub(crate) mod test_reporters;
 pub mod validate;
 
 mod aws_meta_appender;
@@ -59,3 +60,5 @@ pub(crate) const RULE_FILE_SUPPORTED_EXTENSIONS: [&str; 2] = [".guard", ".rulese
 pub const FAILURE_STATUS_CODE: i32 = 19;
 pub const SUCCESS_STATUS_CODE: i32 = 0;
 pub const ERROR_STATUS_CODE: i32 = 5;
+pub const TEST_ERROR_STATUS_CODE: i32 = 1;
+pub const TEST_FAILURE_STATUS_CODE: i32 = 7;

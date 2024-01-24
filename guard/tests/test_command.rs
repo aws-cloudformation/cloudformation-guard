@@ -10,8 +10,8 @@ mod test_command_tests {
 
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{
-        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA,
-        VERBOSE,
+        ALPHABETICAL, DIRECTORY, LAST_MODIFIED, OUTPUT_FORMAT, RULES_AND_TEST_FILE, RULES_FILE,
+        TEST, TEST_DATA, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
@@ -26,6 +26,7 @@ mod test_command_tests {
         rules: Option<&'args str>,
         directory: Option<&'args str>,
         rules_and_test_file: Option<&'args str>,
+        output_format: Option<&'args str>,
         directory_only: bool,
         alphabetical: bool,
         last_modified: bool,
@@ -78,6 +79,11 @@ mod test_command_tests {
             self.verbose = true;
             self
         }
+
+        fn output_format(&'args mut self, args: &'args str) -> &'args mut TestCommandTestRunner {
+            self.output_format = Some(args);
+            self
+        }
     }
 
     impl<'args> CommandTestRunner for TestCommandTestRunner<'args> {
@@ -114,6 +120,11 @@ mod test_command_tests {
 
             if self.verbose {
                 args.push(format!("-{}", VERBOSE.1));
+            }
+
+            if let Some(output_format) = self.output_format {
+                args.push(format!("-{}", OUTPUT_FORMAT.1));
+                args.push(String::from(output_format));
             }
 
             args
@@ -247,6 +258,79 @@ mod test_command_tests {
             "resources/test-command/output-dir/test_data_dir_verbose.out",
             writer
         );
+    }
+
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    fn test_structured_single_report(#[case] output: &str) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                format!(
+                "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.{output}"
+            )
+                .as_str(),
+            ))
+            .rules(Option::from(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/structured_single_report_{output}.out")
+                .as_str(),
+            writer
+        );
+    }
+
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    fn test_structured_directory_report(#[case] output: &str) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from("resources/test-command/dir"))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/structured_directory_report_{output}.out")
+                .as_str(),
+            writer
+        );
+    }
+
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    fn test_structured_report_with_illegal_args(#[case] output: &str) {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from("resources/test-command/dir"))
+            .output_format(output)
+            .verbose()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
+
+    #[test]
+    fn test_structured_fails_with_junit_output_format() {
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from("resources/test-command/dir"))
+            .output_format("junit")
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
     #[test]

@@ -1,5 +1,3 @@
-
-
 rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_2 when %s3_buckets_server_side_encryption_2 !empty {
   %s3_buckets_server_side_encryption_2.Properties.BucketEncryption exists
   %s3_buckets_server_side_encryption_2.Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm in ["aws:kms","AES256"]

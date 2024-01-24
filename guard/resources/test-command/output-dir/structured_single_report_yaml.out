@@ -1,0 +1,38 @@
+rule_file: resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard
+test_cases:
+- name: Empty, SKIP
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: SKIP
+  failed_rules: []
+  skipped_rules: []
+- name: No resources, SKIP
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: SKIP
+  failed_rules: []
+  skipped_rules: []
+- name: S3 Bucket Encryption set to SSE AES 256, PASS
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: PASS
+  failed_rules: []
+  skipped_rules: []
+- name: S3 Bucket Encryption set to SSE AWS KMS key, PASS
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: PASS
+  failed_rules: []
+  skipped_rules: []
+- name: S3 Bucket Encryption not set, FAIL
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: FAIL
+  failed_rules: []
+  skipped_rules: []
+- name: S3 Bucket Encryption not set but rule is suppressed, SKIP
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: SKIP
+  failed_rules: []
+  skipped_rules: []

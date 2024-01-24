@@ -74,6 +74,12 @@ pub(crate) enum OutputFormatType {
     Junit,
 }
 
+impl OutputFormatType {
+    pub(crate) fn is_structured(&self) -> bool {
+        !matches!(self, Self::SingleLineSummary)
+    }
+}
+
 impl From<&str> for OutputFormatType {
     fn from(value: &str) -> Self {
         match value {
@@ -133,7 +139,7 @@ impl Validate {
     }
 }
 
-const OUTPUT_FORMAT_VALUE_TYPE: [&str; 4] = ["json", "yaml", "single-line-summary", "junit"];
+pub const OUTPUT_FORMAT_VALUE_TYPE: [&str; 4] = ["json", "yaml", "single-line-summary", "junit"];
 const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
 
