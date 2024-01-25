@@ -1,6 +1,12 @@
+pub mod xml;
+
 use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::test::TestExpectations;
+use crate::commands::validate::xml::{
+    FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
+};
+use crate::rules::eval_context::Messages;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,14 +30,17 @@ pub struct StructuredTestReporter<'reporter> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Ok {
+    pub rule_file: String,
+    pub test_cases: Vec<TestCase>,
+    #[serde(skip_serializing)] // NOTE: Only using this for junit
+    pub time: u128,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TestResult {
-    Ok {
-        rule_file: String,
-        test_cases: Vec<TestCase>,
-        #[serde(skip_serializing)] // NOTE: Only using this for junit
-        time: u128,
-    },
+    Ok(Ok),
     Err {
         rule_file: String,
         error: String,
@@ -44,7 +53,7 @@ impl TestResult {
     pub fn get_exit_code(&self) -> i32 {
         match self {
             TestResult::Err { .. } => 1,
-            TestResult::Ok { test_cases, .. } => {
+            TestResult::Ok(Ok { test_cases, .. }) => {
                 match test_cases.iter().any(|test_case| test_case.has_failures()) {
                     true => 7,
                     false => 0,
@@ -53,10 +62,60 @@ impl TestResult {
         }
     }
 
+    pub fn build_test_suite(&self) -> TestSuite {
+        let mut failures = 0;
+        let mut time = 0;
+
+        match self {
+            TestResult::Err {
+                rule_file: name,
+                error,
+                time: test_result_time,
+            } => TestSuite {
+                name: name.to_string(),
+                test_cases: vec![JunitTestCase {
+                    id: None,
+                    name,
+                    time: *test_result_time,
+                    status: TestCaseStatus::Error {
+                        error: error.to_string(),
+                    },
+                }],
+                time: *test_result_time,
+                errors: 1,
+                failures: 0,
+            },
+            TestResult::Ok(Ok {
+                rule_file: name,
+                test_cases,
+                ..
+            }) => {
+                let test_cases = test_cases.iter().fold(vec![], |mut acc, tc| {
+                    let mut test_cases = tc.build_junit_test_cases();
+                    failures += tc.number_of_failures();
+                    time += tc.time;
+                    acc.append(&mut test_cases);
+                    acc
+                });
+
+                TestSuite {
+                    name: name.to_string(),
+                    test_cases,
+                    time,
+                    errors: 0,
+                    failures,
+                }
+            }
+        }
+    }
+
     fn insert_test_case(&mut self, tc: TestCase) {
         match self {
             TestResult::Err { .. } => unreachable!(),
-            TestResult::Ok { test_cases, .. } => test_cases.push(tc),
+            TestResult::Ok(result) => {
+                result.time += tc.time;
+                result.test_cases.push(tc);
+            }
         }
     }
 }
@@ -74,6 +133,54 @@ pub struct TestCase {
 impl TestCase {
     fn has_failures(&self) -> bool {
         !self.failed_rules.is_empty()
+    }
+
+    fn number_of_failures(&self) -> usize {
+        self.failed_rules.len()
+    }
+
+    fn build_junit_test_cases(&self) -> Vec<JunitTestCase> {
+        let mut test_cases = vec![];
+
+        for test_case in &self.passed_rules {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Pass,
+                name: &test_case.name,
+                time: self.time,
+            })
+        }
+
+        for test_case in &self.failed_rules {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Fail(FailingTestCase {
+                    name: None,
+                    messages: vec![Messages {
+                        custom_message: None,
+                        error_message: Some(format!(
+                            "Expected = {}, Evaluated = [{}]",
+                            test_case.expected,
+                            test_case
+                                .evaluated
+                                .iter()
+                                .fold(String::new(), |mut acc, status| {
+                                    if !acc.is_empty() {
+                                        acc.push_str(&format!(", {status}",))
+                                    } else {
+                                        acc.push_str(&format!("{status}"))
+                                    }
+                                    acc
+                                })
+                        )),
+                    }],
+                }),
+                name: &test_case.name,
+                time: self.time,
+            })
+        }
+
+        test_cases
     }
 }
 
@@ -106,11 +213,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let now = Instant::now();
-        let mut result = TestResult::Ok {
+        let mut result = TestResult::Ok(Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
             time: 0,
-        };
+        });
 
         for specs in iterate_over(
             self.data_test_files,

@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use cfn_guard::utils;
 use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
+use cfn_guard::utils::writer::WriteBuffer::Vec as WBVec;
 use cfn_guard::utils::writer::Writer;
+use fancy_regex::Regex;
 
 #[non_exhaustive]
 pub struct StatusCode;
@@ -36,6 +38,18 @@ pub fn read_from_resource_file(path: &str) -> String {
     reader.read_to_string(&mut content).unwrap();
 
     content
+}
+
+// NOTE: since junit records time elapsed we must mock the time we report
+// otherwise this test will be extremely flakey since time will usually not be the same
+#[allow(dead_code)]
+pub fn sanitize_junit_writer(writer: Writer) -> Writer {
+    let buf = writer.stripped().unwrap();
+
+    let rgx = Regex::new(r#"time="\d+""#).unwrap();
+    let res = rgx.replace_all(&buf, r#"time="0""#);
+
+    Writer::new(WBVec(res.as_bytes().to_vec()), WBVec(vec![]))
 }
 
 pub fn get_full_path_for_resource_file(path: &str) -> String {

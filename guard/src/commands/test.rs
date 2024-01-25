@@ -1,3 +1,4 @@
+use crate::commands::validate::xml::JunitReport;
 use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
@@ -155,10 +156,6 @@ or failure testing.
 
         if output_type.is_structured() && verbose {
             return Err(Error::IllegalArguments(String::from("Cannot provide an output_type of JSON, YAML, or JUnit while the verbose flag is set")));
-        } else if matches!(output_type, OutputFormatType::Junit) {
-            return Err(Error::IllegalArguments(String::from(
-                "JUnit reporters is not yet implemented for the test command",
-            )));
         }
 
         if app.contains_id(DIRECTORY_ONLY) {
@@ -171,7 +168,7 @@ or failure testing.
                 OutputFormatType::SingleLineSummary => {
                     handle_plaintext_directory(ordered_directory, writer, verbose)
                 }
-                OutputFormatType::JSON | OutputFormatType::YAML => {
+                OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Junit => {
                     let test_exit_code =
                         handle_structured_directory_report(ordered_directory, writer, output_type)?;
                     exit_code = if exit_code == 0 {
@@ -182,7 +179,6 @@ or failure testing.
 
                     Ok(exit_code)
                 }
-                OutputFormatType::Junit => todo!(),
             }
         } else {
             let file = app.get_one::<String>(RULES_FILE.0).unwrap();
@@ -215,7 +211,7 @@ or failure testing.
                 )));
             }
 
-            return match output_type {
+            match output_type {
                 OutputFormatType::SingleLineSummary => handle_plaintext_single_file(
                     rule_file,
                     path.as_path(),
@@ -224,15 +220,16 @@ or failure testing.
                     verbose,
                 ),
 
-                OutputFormatType::YAML | OutputFormatType::JSON => handle_structured_single_report(
-                    rule_file,
-                    path.as_path(),
-                    writer,
-                    &data_test_files,
-                    output_type,
-                ),
-                _ => todo!(),
-            };
+                OutputFormatType::YAML | OutputFormatType::JSON | OutputFormatType::Junit => {
+                    handle_structured_single_report(
+                        rule_file,
+                        path.as_path(),
+                        writer,
+                        &data_test_files,
+                        output_type,
+                    )
+                }
+            }
         }
     }
 }
@@ -373,7 +370,23 @@ pub(crate) fn handle_structured_single_report(
     match output {
         OutputFormatType::YAML => serde_yaml::to_writer(writer, &result)?,
         OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &result)?,
-        OutputFormatType::Junit => todo!(),
+        OutputFormatType::Junit => {
+            let suite = result.build_test_suite();
+            let failures = suite.failures;
+            let tests = suite.test_cases.len();
+            let errors = suite.errors;
+            let time = suite.time;
+
+            JunitReport {
+                name: "cfn-guard test report",
+                test_suites: vec![suite],
+                failures,
+                errors,
+                tests,
+                duration: time,
+            }
+            .serialize(writer)?;
+        }
         OutputFormatType::SingleLineSummary => unreachable!(),
     }
 
@@ -447,7 +460,35 @@ fn handle_structured_directory_report(
     match output {
         OutputFormatType::YAML => serde_yaml::to_writer(writer, &test_results)?,
         OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &test_results)?,
-        OutputFormatType::Junit => todo!(), // TODO:
+        OutputFormatType::Junit => {
+            let mut errors = 0;
+            let mut failures = 0;
+            let mut tests = 0;
+            let mut time = 0;
+
+            let test_suites = test_results.iter().fold(vec![], |mut acc, result| {
+                let suite = result.build_test_suite();
+
+                time += suite.time;
+                errors += suite.errors;
+                failures += suite.failures;
+                tests += suite.test_cases.len();
+
+                acc.push(suite);
+                acc
+            });
+
+            let report = JunitReport {
+                name: "cfn-guard test report",
+                test_suites,
+                failures,
+                errors,
+                tests,
+                duration: time,
+            };
+
+            report.serialize(writer)?;
+        }
         // NOTE: safe since output type is checked prior to calling this function
         OutputFormatType::SingleLineSummary => unreachable!(),
     }
