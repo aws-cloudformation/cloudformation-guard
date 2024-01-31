@@ -1,6 +1,8 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use enumflags2::BitFlags;
+
 use crate::commands::validate::generic_summary::GenericSummary;
 use crate::commands::validate::{DataFile, OutputFormatType, Reporter};
 use crate::rules::errors::Error;
@@ -61,7 +63,7 @@ pub fn validate_and_return_json(
                 return Ok(serde_json::to_string_pretty(&root_record)?);
             }
 
-            let reporter = &GenericSummary::new() as &dyn Reporter;
+            let reporter = &GenericSummary::new(BitFlags::empty()) as &dyn Reporter;
 
             reporter.report_eval(
                 &mut write_output,

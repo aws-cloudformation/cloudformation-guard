@@ -224,7 +224,7 @@ fn single_line(
 
     writeln!(
         writer,
-        "Evaluating data {} against rules {}",
+        "Evaluating data {} against rules {} another",
         data_file, rules_file
     )?;
     let num_of_resources = format!("{}", by_resources.len()).bold();

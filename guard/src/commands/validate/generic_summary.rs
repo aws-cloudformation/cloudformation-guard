@@ -1,23 +1,33 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
+use std::iter::Sum;
+
+use enumflags2::BitFlags;
 
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::common::find_all_failing_clauses;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::{EvaluationType, Status};
 
-use super::common::*;
+use super::{common::*, summary_table};
+use super::summary_table::{SummaryTable, SummaryType};
 use crate::rules::eval_context::{simplifed_json_from_root, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 
 #[derive(Debug)]
-pub(crate) struct GenericSummary {}
+pub(crate) struct GenericSummary {
+    summary_table: BitFlags<SummaryType>
+}
 
 impl GenericSummary {
-    pub(crate) fn new() -> Self {
-        GenericSummary {}
+    pub(crate) fn new(
+        summary_table: BitFlags<SummaryType>
+    ) -> Self {
+        GenericSummary {
+            summary_table
+        }
     }
 }
 
@@ -37,7 +47,7 @@ impl Reporter for GenericSummary {
         let renderer =
             match output_format_type {
                 OutputFormatType::SingleLineSummary => {
-                    Box::new(SingleLineSummary {}) as Box<dyn GenericReporter>
+                    Box::new(SingleLineSummary { summary_table: self.summary_table }) as Box<dyn GenericReporter>
                 }
                 OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON))
                     as Box<dyn GenericReporter>,
@@ -130,7 +140,7 @@ impl Reporter for GenericSummary {
                 writer,
                 data_file,
                 rules_file,
-                &(SingleLineSummary {}),
+                &(SingleLineSummary { summary_table: self.summary_table }),
             )?,
             OutputFormatType::Junit => unreachable!(),
         };
@@ -140,7 +150,32 @@ impl Reporter for GenericSummary {
 }
 
 #[derive(Debug)]
-struct SingleLineSummary {}
+struct SingleLineSummary {
+    summary_table: BitFlags<SummaryType>
+}
+
+impl SingleLineSummary {
+    fn is_reportable(
+        &self,
+        failed: &HashMap<String, Vec<NameInfo<'_>>>,
+        passed: &HashSet<String>,
+        skipped: &HashSet<String>,
+    ) -> bool {
+        if self.summary_table.is_empty() {
+            return false;
+        }
+
+        if self.summary_table.contains(SummaryType::FAIL) {
+            return !failed.is_empty()
+        }
+
+        if self.summary_table.contains(SummaryType::PASS) {
+            return !passed.is_empty()
+        }
+
+        !skipped.is_empty() && self.summary_table.contains(SummaryType::SKIP)
+    }
+}
 
 fn retrieval_error_message(
     _: &str,
@@ -206,6 +241,22 @@ fn binary_error_message(
     ))
 }
 
+fn print_rules_output(
+    writer: &mut dyn Write,
+    rules: HashSet<String>,
+    descriptor: &str,
+    data_file_name: &str,
+) -> crate::rules::Result<()> {
+    if !rules.is_empty() {
+        writeln!(writer, "--")?;
+    }
+    for rule in rules {
+        writeln!(writer, "Rule [{rule}] is {descriptor} for template [{data_file_name}]")?;
+    }
+
+    Ok(())
+}
+
 impl GenericReporter for SingleLineSummary {
     fn report(
         &self,
@@ -217,33 +268,37 @@ impl GenericReporter for SingleLineSummary {
         skipped: HashSet<String>,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()> {
+        if !self.is_reportable(&failed, &passed, &skipped) {
+            return Ok(())
+        }
         writeln!(
             writer,
             "Evaluation of rules {} against data {}",
             rules_file_name, data_file_name
         )?;
-        if !failed.is_empty() {
-            writeln!(writer, "--")?;
+        if self.summary_table.contains(SummaryType::FAIL) {
+            if !failed.is_empty() {
+                writeln!(writer, "--")?;
+            }
+            for (_rule, clauses) in failed {
+                super::common::print_name_info(
+                    writer,
+                    &clauses,
+                    longest_rule_len,
+                    rules_file_name,
+                    data_file_name,
+                    retrieval_error_message,
+                    unary_error_message,
+                    binary_error_message,
+                )?;
+            }
         }
-        for (_rule, clauses) in failed {
-            super::common::print_name_info(
-                writer,
-                &clauses,
-                longest_rule_len,
-                rules_file_name,
-                data_file_name,
-                retrieval_error_message,
-                unary_error_message,
-                binary_error_message,
-            )?;
+        if self.summary_table.contains(SummaryType::PASS) {
+            print_rules_output(writer, passed, "compliant", data_file_name)?;
         }
-        super::common::print_compliant_skipped_info(
-            writer,
-            &passed,
-            &skipped,
-            rules_file_name,
-            data_file_name,
-        )?;
+        if self.summary_table.contains(SummaryType::SKIP) {
+            print_rules_output(writer, skipped, "not applicable", data_file_name)?;
+        }
         writeln!(writer, "--")?;
         Ok(())
     }

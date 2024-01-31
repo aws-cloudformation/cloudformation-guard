@@ -15,7 +15,7 @@ use std::io::Write;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialOrd, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
-pub(super) enum SummaryType {
+pub enum SummaryType {
     PASS = 0b0001,
     FAIL = 0b0010,
     SKIP = 0b0100,
