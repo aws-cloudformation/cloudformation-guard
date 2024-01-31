@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::commands::validate::xml::JunitReporter;
+use crate::commands::reporters::JunitReporter;
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
 use crate::commands::{ERROR_STATUS_CODE, FAILURE_STATUS_CODE};
 use crate::rules;

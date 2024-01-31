@@ -1,4 +1,5 @@
-use crate::commands::validate::xml::JunitReport;
+use crate::commands::reporters::test::{ContextAwareRule, StructuredTestReporter, TestResult};
+use crate::commands::reporters::JunitReport;
 use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,6 @@ use crate::commands::files::{
     alpabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
-use crate::commands::test_reporters::{ContextAwareRule, StructuredTestReporter, TestResult};
 use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_VALUE_TYPE};
 use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, OUTPUT_FORMAT,

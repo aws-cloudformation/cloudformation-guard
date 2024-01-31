@@ -1,9 +1,9 @@
 use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
-use crate::commands::test::TestExpectations;
-use crate::commands::validate::xml::{
+use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
 };
+use crate::commands::test::TestExpectations;
 use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use crate::rules::eval_context::Messages;
 use serde::{Deserialize, Serialize};
@@ -67,25 +67,25 @@ impl TestResult {
 
         match self {
             TestResult::Err {
-                rule_file: name,
+                rule_file,
                 error,
                 time: test_result_time,
-            } => TestSuite {
-                name: name.to_string(),
-                test_cases: vec![JunitTestCase {
+            } => TestSuite::new(
+                rule_file.to_string(),
+                vec![JunitTestCase {
                     id: None,
-                    name,
+                    name: rule_file,
                     time: *test_result_time,
                     status: TestCaseStatus::Error {
                         error: error.to_string(),
                     },
                 }],
-                time: *test_result_time,
-                errors: 1,
-                failures: 0,
-            },
+                *test_result_time,
+                1,
+                0,
+            ),
             TestResult::Ok(Ok {
-                rule_file: name,
+                rule_file,
                 test_cases,
                 ..
             }) => {
@@ -97,13 +97,7 @@ impl TestResult {
                     acc
                 });
 
-                TestSuite {
-                    name: name.to_string(),
-                    test_cases,
-                    time,
-                    errors: 0,
-                    failures,
-                }
+                TestSuite::new(rule_file.to_string(), test_cases, time, 0, failures)
             }
         }
     }
