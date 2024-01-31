@@ -65,9 +65,6 @@ impl TestResult {
     }
 
     pub fn build_test_suite(&self) -> TestSuite {
-        let mut failures = 0;
-        let mut time = 0;
-
         match self {
             TestResult::Err(Err {
                 rule_file,
@@ -92,6 +89,8 @@ impl TestResult {
                 test_cases,
                 ..
             }) => {
+                let mut failures = 0;
+                let mut time = 0;
                 let test_cases = test_cases.iter().fold(vec![], |mut acc, tc| {
                     let mut test_cases = tc.build_junit_test_cases();
                     failures += tc.number_of_failures();
