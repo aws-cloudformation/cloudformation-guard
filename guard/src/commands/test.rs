@@ -1,4 +1,4 @@
-use crate::commands::reporters::test::{ContextAwareRule, StructuredTestReporter, TestResult};
+use crate::commands::reporters::test::{ContextAwareRule, Err, StructuredTestReporter, TestResult};
 use crate::commands::reporters::JunitReport;
 use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
@@ -332,20 +332,20 @@ pub(crate) fn handle_structured_single_report(
     let now = Instant::now();
 
     let result = match read_file_content(rule_file) {
-        Err(e) => TestResult::Err {
+        Err(e) => TestResult::Err(Err {
             rule_file: path.to_str().unwrap_or("").to_string(),
             error: e.to_string(),
             time: now.elapsed().as_millis(),
-        },
+        }),
 
         Ok(content) => {
             let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
             match crate::rules::parser::rules_file(span) {
-                Err(e) => TestResult::Err {
+                Err(e) => TestResult::Err(Err {
                     rule_file: path.to_str().unwrap_or("").to_string(),
                     error: e.to_string(),
                     time: now.elapsed().as_millis(),
-                },
+                }),
                 Ok(Some(rule)) => {
                     let mut reporter = StructuredTestReporter {
                         data_test_files,
@@ -414,11 +414,11 @@ fn handle_structured_directory_report(
                 Ok(content) => content,
                 Err(e) => {
                     exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err {
+                    test_results.push(TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    });
+                    }));
                     continue;
                 }
             };
@@ -428,11 +428,11 @@ fn handle_structured_directory_report(
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
                     exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err {
+                    test_results.push(TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    })
+                    }))
                 }
                 Ok(Some(rules)) => {
                     let data_test_files = each_rule_file.get_test_files();

@@ -37,21 +37,24 @@ pub struct Ok {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Err {
+    pub rule_file: String,
+    pub error: String,
+    #[serde(skip_serializing)] // NOTE: Only using this for junit
+    pub time: u128,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TestResult {
     Ok(Ok),
-    Err {
-        rule_file: String,
-        error: String,
-        #[serde(skip_serializing)] // NOTE: Only using this for junit
-        time: u128,
-    },
+    Err(Err),
 }
 
 impl TestResult {
     pub fn get_exit_code(&self) -> i32 {
         match self {
-            TestResult::Err { .. } => TEST_ERROR_STATUS_CODE,
+            TestResult::Err(Err { .. }) => TEST_ERROR_STATUS_CODE,
             TestResult::Ok(Ok { test_cases, .. }) => {
                 match test_cases.iter().any(|test_case| test_case.has_failures()) {
                     true => TEST_FAILURE_STATUS_CODE,
@@ -66,11 +69,11 @@ impl TestResult {
         let mut time = 0;
 
         match self {
-            TestResult::Err {
+            TestResult::Err(Err {
                 rule_file,
                 error,
                 time: test_result_time,
-            } => TestSuite::new(
+            }) => TestSuite::new(
                 rule_file.to_string(),
                 vec![JunitTestCase {
                     id: None,
@@ -104,7 +107,7 @@ impl TestResult {
 
     fn insert_test_case(&mut self, tc: TestCase) {
         match self {
-            TestResult::Err { .. } => unreachable!(),
+            TestResult::Err(Err { .. }) => unreachable!(),
             TestResult::Ok(result) => {
                 result.time += tc.time;
                 result.test_cases.push(tc);
@@ -228,11 +231,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
         ) {
             match specs {
                 Err(e) => {
-                    return Ok(TestResult::Err {
+                    return Ok(TestResult::Err(Err {
                         rule_file: file.to_owned(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    })
+                    }))
                 }
                 Ok(spec) => {
                     let test_data = get_test_data(spec)?;
@@ -267,11 +270,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                 Some(exp) => match Status::try_from(exp.as_str()) {
                                     Ok(exp) => exp,
                                     Err(e) => {
-                                        return Ok(TestResult::Err {
+                                        return Ok(TestResult::Err(Err {
                                             rule_file: file.to_owned(),
                                             error: e.to_string(),
                                             time: now.elapsed().as_millis(),
-                                        })
+                                        }))
                                     }
                                 },
                                 None => {
