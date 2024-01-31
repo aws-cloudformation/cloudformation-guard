@@ -4,6 +4,7 @@ use crate::commands::test::TestExpectations;
 use crate::commands::validate::xml::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
 };
+use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use crate::rules::eval_context::Messages;
 use serde::{Deserialize, Serialize};
 
@@ -50,11 +51,11 @@ pub enum TestResult {
 impl TestResult {
     pub fn get_exit_code(&self) -> i32 {
         match self {
-            TestResult::Err { .. } => 1,
+            TestResult::Err { .. } => TEST_ERROR_STATUS_CODE,
             TestResult::Ok(Ok { test_cases, .. }) => {
                 match test_cases.iter().any(|test_case| test_case.has_failures()) {
-                    true => 7,
-                    false => 0,
+                    true => TEST_FAILURE_STATUS_CODE,
+                    false => SUCCESS_STATUS_CODE,
                 }
             }
         }
