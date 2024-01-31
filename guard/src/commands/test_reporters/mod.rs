@@ -1,5 +1,3 @@
-pub mod xml;
-
 use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::test::TestExpectations;
