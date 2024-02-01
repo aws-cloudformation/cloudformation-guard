@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Write;
-use std::iter::Sum;
 
 use enumflags2::BitFlags;
 
@@ -10,8 +9,8 @@ use crate::commands::validate::common::find_all_failing_clauses;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::{EvaluationType, Status};
 
-use super::{common::*, summary_table};
-use super::summary_table::{SummaryTable, SummaryType};
+use super::common::*;
+use super::summary_table::SummaryType;
 use crate::rules::eval_context::{simplifed_json_from_root, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
