@@ -224,15 +224,18 @@ fn single_line(
 
     writeln!(
         writer,
-        "Evaluating data {} against rules {} another",
+        "Evaluating data {} against rules {}",
         data_file, rules_file
     )?;
+
     let num_of_resources = format!("{}", by_resources.len()).bold();
+
     writeln!(
         writer,
         "Number of non-compliant resources {}",
         num_of_resources
     )?;
+
     for (_resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
         let prefix = String::from("  ");
