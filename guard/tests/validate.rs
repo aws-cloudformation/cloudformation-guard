@@ -403,6 +403,22 @@ mod validate_tests {
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
+    #[test]
+    fn test_updated_summary_output() {
+        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
+        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["data-dir"])
+            .rules(vec!["rules-dir"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_output_from_file_eq!(
+            "resources/validate/output-dir/rules_dir_against_data_dir.out",
+            writer
+        )
+    }
+
     #[rstest::rstest]
     #[case(
         vec!["db_resource.yaml"],
