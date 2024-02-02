@@ -17,16 +17,12 @@ use crate::rules::values::CmpOperator;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary {
-    summary_table: BitFlags<SummaryType>
+    summary_table: BitFlags<SummaryType>,
 }
 
 impl GenericSummary {
-    pub(crate) fn new(
-        summary_table: BitFlags<SummaryType>
-    ) -> Self {
-        GenericSummary {
-            summary_table
-        }
+    pub(crate) fn new(summary_table: BitFlags<SummaryType>) -> Self {
+        GenericSummary { summary_table }
     }
 }
 
@@ -43,17 +39,18 @@ impl Reporter for GenericSummary {
         _: &Traversal<'_>,
         output_format_type: OutputFormatType,
     ) -> crate::rules::Result<()> {
-        let renderer =
-            match output_format_type {
-                OutputFormatType::SingleLineSummary => {
-                    Box::new(SingleLineSummary { summary_table: self.summary_table }) as Box<dyn GenericReporter>
-                }
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON))
-                    as Box<dyn GenericReporter>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
-                    as Box<dyn GenericReporter>,
-                OutputFormatType::Junit => unreachable!(),
-            };
+        let renderer = match output_format_type {
+            OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary {
+                summary_table: self.summary_table,
+            }) as Box<dyn GenericReporter>,
+            OutputFormatType::JSON => {
+                Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>
+            }
+            OutputFormatType::YAML => {
+                Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>
+            }
+            OutputFormatType::Junit => unreachable!(),
+        };
         let failed = if !failed_rules.is_empty() {
             let mut by_rule = HashMap::with_capacity(failed_rules.len());
             for each_failed_rule in failed_rules {
@@ -139,7 +136,9 @@ impl Reporter for GenericSummary {
                 writer,
                 data_file,
                 rules_file,
-                &(SingleLineSummary { summary_table: self.summary_table }),
+                &(SingleLineSummary {
+                    summary_table: self.summary_table,
+                }),
             )?,
             OutputFormatType::Junit => unreachable!(),
         };
@@ -150,7 +149,7 @@ impl Reporter for GenericSummary {
 
 #[derive(Debug)]
 struct SingleLineSummary {
-    summary_table: BitFlags<SummaryType>
+    summary_table: BitFlags<SummaryType>,
 }
 
 impl SingleLineSummary {
@@ -165,11 +164,11 @@ impl SingleLineSummary {
         }
 
         if self.summary_table.contains(SummaryType::FAIL) {
-            return !failed.is_empty()
+            return !failed.is_empty();
         }
 
         if self.summary_table.contains(SummaryType::PASS) {
-            return !passed.is_empty()
+            return !passed.is_empty();
         }
 
         !skipped.is_empty() && self.summary_table.contains(SummaryType::SKIP)
@@ -250,7 +249,10 @@ fn print_rules_output(
         writeln!(writer, "--")?;
     }
     for rule in rules {
-        writeln!(writer, "Rule [{rule}] is {descriptor} for template [{data_file_name}]")?;
+        writeln!(
+            writer,
+            "Rule [{rule}] is {descriptor} for template [{data_file_name}]"
+        )?;
     }
 
     Ok(())
@@ -268,7 +270,7 @@ impl GenericReporter for SingleLineSummary {
         longest_rule_len: usize,
     ) -> crate::rules::Result<()> {
         if !self.is_reportable(&failed, &passed, &skipped) {
-            return Ok(())
+            return Ok(());
         }
         writeln!(
             writer,
