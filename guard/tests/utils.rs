@@ -39,6 +39,12 @@ pub fn read_from_resource_file(path: &str) -> String {
 }
 
 pub fn get_full_path_for_resource_file(path: &str) -> String {
+    let path = if cfg!(windows) {
+        path.replace('/', r#"\"#)
+    } else {
+        path.to_string()
+    };
+
     let mut resource = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     resource.push(path);
     return resource.display().to_string();
