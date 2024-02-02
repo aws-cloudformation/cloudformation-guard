@@ -19,6 +19,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, macos-13-xlarge, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: set git to use LF
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@v2
       - name: Build all crates on ${{ matrix.os }}
         run: cargo build --release --verbose
