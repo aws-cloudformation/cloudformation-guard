@@ -13,7 +13,7 @@ use enumflags2::BitFlags;
 use serde::Deserialize;
 
 use crate::command::Command;
-use crate::commands::files::{alpabetical, iterate_over, last_modified};
+use crate::commands::files::{alpabetical, iterate_over, last_modified, walk_dir};
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::structured::StructuredEvaluator;
 use crate::commands::validate::summary_table::SummaryType;
@@ -307,7 +307,7 @@ or rules files.
                 for file_or_dir in list_of_file_or_dir {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
-                    for file in walkdir::WalkDir::new(base).into_iter().flatten() {
+                    for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
                                 .file_name()
@@ -349,7 +349,7 @@ or rules files.
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
 
-                    for file in walkdir::WalkDir::new(base).into_iter().flatten() {
+                    for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
                                 .file_name()
@@ -396,11 +396,7 @@ or rules files.
                 if base.is_file() {
                     rules.push(base.clone())
                 } else {
-                    for entry in walkdir::WalkDir::new(base)
-                        .sort_by(cmp)
-                        .into_iter()
-                        .flatten()
-                    {
+                    for entry in walk_dir(base, cmp) {
                         if entry.path().is_file()
                             && entry
                                 .path()

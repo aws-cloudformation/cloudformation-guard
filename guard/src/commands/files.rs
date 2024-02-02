@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -102,4 +102,14 @@ pub(crate) fn regular_ordering(
     _second: &walkdir::DirEntry,
 ) -> Ordering {
     Ordering::Equal
+}
+
+pub(crate) fn walk_dir(
+    base: PathBuf,
+    cmp: fn(&walkdir::DirEntry, &walkdir::DirEntry) -> cmp::Ordering,
+) -> std::iter::Flatten<walkdir::IntoIter> {
+    walkdir::WalkDir::new(base)
+        .sort_by(cmp)
+        .into_iter()
+        .flatten()
 }
