@@ -134,7 +134,7 @@ or failure testing.
     }
 
     fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let mut exit_code = 0;
+        let mut exit_code = SUCCESS_STATUS_CODE;
         let cmp = if app.get_flag(ALPHABETICAL.0) {
             alpabetical
         } else if app.get_flag(LAST_MODIFIED.0) {
@@ -167,7 +167,7 @@ or failure testing.
                 OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Junit => {
                     let test_exit_code =
                         handle_structured_directory_report(ordered_directory, writer, output_type)?;
-                    exit_code = if exit_code == 0 {
+                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
                         test_exit_code
                     } else {
                         exit_code
@@ -235,7 +235,7 @@ fn handle_plaintext_directory(
     writer: &mut Writer,
     verbose: bool,
 ) -> Result<i32> {
-    let mut exit_code = 0;
+    let mut exit_code = SUCCESS_STATUS_CODE;
 
     for (_, guard_files) in directory {
         for each_rule_file in guard_files {
@@ -280,7 +280,7 @@ fn handle_plaintext_directory(
 
                     let test_exit_code = reporter.report()?;
 
-                    exit_code = if exit_code == 0 {
+                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
                         test_exit_code
                     } else {
                         exit_code
@@ -342,7 +342,7 @@ pub(crate) fn handle_structured_single_report(
     data_test_files: &[PathBuf],
     output: OutputFormatType,
 ) -> Result<i32> {
-    let mut exit_code = 0;
+    let mut exit_code = SUCCESS_STATUS_CODE;
     let now = Instant::now();
 
     let result = match read_file_content(rule_file) {
@@ -397,7 +397,7 @@ fn handle_structured_directory_report(
     output: OutputFormatType,
 ) -> Result<i32> {
     let mut test_results = vec![];
-    let mut exit_code = 0;
+    let mut exit_code = SUCCESS_STATUS_CODE;
 
     for (_, guard_files) in directory {
         for each_rule_file in guard_files {

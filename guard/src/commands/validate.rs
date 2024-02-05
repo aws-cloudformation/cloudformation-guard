@@ -20,9 +20,10 @@ use crate::commands::reporters::validate::tf::TfAware;
 use crate::commands::reporters::validate::{cfn, generic_summary};
 use crate::commands::tracker::StatusContext;
 use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
-    SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE, VERBOSE,
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE, FAILURE_STATUS_CODE,
+    INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE,
+    VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -441,7 +442,7 @@ or rules files.
                                     writer,
                                 )?;
 
-                                if status != 0 {
+                                if status != SUCCESS_STATUS_CODE {
                                     exit_code = status
                                 }
                             }
@@ -504,7 +505,7 @@ or rules files.
                             writer,
                         )?;
 
-                        if status != 0 {
+                        if status != SUCCESS_STATUS_CODE {
                             exit_code = status;
                         }
                     }
@@ -539,7 +540,7 @@ fn evaluate_rule(
                 file_name.underline(),
             ))?;
 
-            return Ok(5);
+            return Ok(ERROR_STATUS_CODE);
         }
 
         Ok(Some(rule)) => {
@@ -557,13 +558,13 @@ fn evaluate_rule(
             )?;
 
             if status == Status::FAIL {
-                return Ok(19);
+                return Ok(FAILURE_STATUS_CODE);
             }
         }
-        Ok(None) => return Ok(0),
+        Ok(None) => return Ok(SUCCESS_STATUS_CODE),
     }
 
-    Ok(0)
+    Ok(SUCCESS_STATUS_CODE)
 }
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
