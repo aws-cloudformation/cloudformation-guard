@@ -635,7 +635,7 @@ fn evaluate_against_data_input<'r>(
 ) -> Result<Status> {
     let mut overall = Status::PASS;
     let generic: Box<dyn Reporter> =
-        Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+        Box::new(generic_summary::GenericSummary::new(summary_table)) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> =
         Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
