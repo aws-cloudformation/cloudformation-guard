@@ -10,7 +10,10 @@ use quick_xml::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    commands::{validate::DataFile, ERROR_STATUS_CODE, FAILURE_STATUS_CODE},
+    commands::{
+        reporters::test::structured::TestResult, validate::DataFile, ERROR_STATUS_CODE,
+        FAILURE_STATUS_CODE,
+    },
     rules::{
         self,
         eval::eval_rules_file,
@@ -27,6 +30,36 @@ pub struct JunitReport<'report> {
     pub errors: usize,
     pub tests: usize,
     pub duration: u128,
+}
+
+impl<'report> From<&'report Vec<TestResult>> for JunitReport<'report> {
+    fn from(value: &'report Vec<TestResult>) -> Self {
+        let mut errors = 0;
+        let mut failures = 0;
+        let mut tests = 0;
+        let mut time = 0;
+
+        let test_suites = value.iter().fold(vec![], |mut acc, result| {
+            let suite = result.build_test_suite();
+
+            time += suite.time;
+            errors += suite.errors;
+            failures += suite.failures;
+            tests += suite.test_cases.len();
+
+            acc.push(suite);
+            acc
+        });
+
+        JunitReport {
+            name: "cfn-guard test report",
+            test_suites,
+            failures,
+            errors,
+            tests,
+            duration: time,
+        }
+    }
 }
 
 impl<'report> JunitReport<'report> {
@@ -143,6 +176,7 @@ pub struct TestCase<'test> {
     pub time: u128,
     pub(crate) status: TestCaseStatus,
 }
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) enum TestCaseStatus {
     Pass,
@@ -150,6 +184,7 @@ pub(crate) enum TestCaseStatus {
     Fail(FailingTestCase),
     Error { error: String },
 }
+
 #[derive(Debug, Clone)]
 pub struct TestSuite<'suite> {
     pub name: String,
@@ -158,6 +193,7 @@ pub struct TestSuite<'suite> {
     pub errors: usize,
     pub failures: usize,
 }
+
 impl<'suite> TestSuite<'suite> {
     pub fn new(
         name: String,
@@ -175,16 +211,19 @@ impl<'suite> TestSuite<'suite> {
         }
     }
 }
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct FailingTestCase {
     pub(crate) name: Option<String>,
     pub(crate) messages: Vec<Messages>,
 }
+
 #[derive(Default, Debug)]
 struct Failure<'report> {
     name: Option<&'report String>,
     messages: Vec<&'report String>,
 }
+
 #[derive(Default, Debug)]
 pub struct TestSuites<'report, 'se: 'report> {
     pub name: &'report str,
@@ -194,6 +233,7 @@ pub struct TestSuites<'report, 'se: 'report> {
     pub time: u128,
     pub test_suites: &'se [TestSuite<'report>],
 }
+
 #[derive(Debug)]
 enum EventType<'report, 'se: 'report> {
     Failure(Failure<'report>),
@@ -202,6 +242,7 @@ enum EventType<'report, 'se: 'report> {
     TestSuite(&'se TestSuite<'report>),
     TestSuites(TestSuites<'report, 'se>),
 }
+
 impl<'report, 'se: 'report> EventType<'report, 'se> {
     fn serialize_start_event(
         &self,
@@ -267,6 +308,7 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
             }
         }
     }
+
     fn serialize(&self, writer: &mut Writer<impl std::io::Write>) -> crate::rules::Result<()> {
         let mut tag = self.start_tag();
         self.extend_attributes(&mut tag);
