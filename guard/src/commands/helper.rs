@@ -3,7 +3,7 @@
 
 use enumflags2::BitFlags;
 
-use crate::commands::validate::generic_summary::GenericSummary;
+use crate::commands::reporters::validate::generic_summary::GenericSummary;
 use crate::commands::validate::{DataFile, OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 use crate::rules::eval::eval_rules_file;

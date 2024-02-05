@@ -5,7 +5,6 @@ use std::io::Write;
 use enumflags2::BitFlags;
 
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::common::find_all_failing_clauses;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::{EvaluationType, Status};
 
