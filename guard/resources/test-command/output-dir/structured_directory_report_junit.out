@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="cfn-guard test report" tests="11" failures="0" errors="0" time="0">
+    <testsuite name="resources/test-command/dir/s3_bucket_logging_enabled.guard" errors="0" failures="0" time="0">
+        <testcase id="Empty, SKIP" name="S3_BUCKET_LOGGING_ENABLED" time="0" status="pass"/>
+        <testcase id="No resources, SKIP" name="S3_BUCKET_LOGGING_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket with Logging Configuration present in resource, PASS" name="S3_BUCKET_LOGGING_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket with Logging Configuration missing, FAIL" name="S3_BUCKET_LOGGING_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket with Logging Configuration missing with suppression, SKIP" name="S3_BUCKET_LOGGING_ENABLED" time="0" status="pass"/>
+    </testsuite>
+    <testsuite name="resources/test-command/dir/s3_bucket_server_side_encryption_enabled.guard" errors="0" failures="0" time="0">
+        <testcase id="Empty, SKIP" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+        <testcase id="No resources, SKIP" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket Encryption set to SSE AES 256, PASS" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket Encryption set to SSE AWS KMS key, PASS" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket Encryption not set, FAIL" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+        <testcase id="S3 Bucket Encryption not set but rule is suppressed, SKIP" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
+    </testsuite>
+</testsuites>

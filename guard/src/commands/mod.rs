@@ -3,12 +3,12 @@ pub(crate) mod helper;
 pub mod parse_tree;
 pub mod rulegen;
 pub mod test;
-pub(crate) mod test_reporters;
 pub mod validate;
 
 mod aws_meta_appender;
 mod common_test_helpers;
 pub mod completions;
+pub mod reporters;
 mod tracker;
 
 //

@@ -5,10 +5,10 @@ use std::io::Write;
 use fancy_regex::Regex;
 use lazy_static::*;
 
-use crate::commands::tracker::StatusContext;
-use crate::commands::validate::common::{
+use crate::commands::reporters::validate::common::{
     find_all_failing_clauses, GenericReporter, NameInfo, StructureType, StructuredSummary,
 };
+use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
 

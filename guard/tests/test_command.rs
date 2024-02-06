@@ -17,7 +17,7 @@ mod test_command_tests {
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
 
-    use crate::utils::{CommandTestRunner, StatusCode};
+    use crate::utils::{sanitize_junit_writer, CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
@@ -262,21 +262,25 @@ mod test_command_tests {
     #[rstest]
     #[case("json")]
     #[case("yaml")]
+    #[case("junit")]
     fn test_structured_single_report(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
-                format!(
-                "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.{output}"
-            )
-                .as_str(),
+                "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
             ))
             .rules(Option::from(
                 "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
             ))
             .output_format(output)
             .run(&mut writer, &mut reader);
+
+        let writer = if output == "junit" {
+            sanitize_junit_writer(writer)
+        } else {
+            writer
+        };
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
@@ -289,6 +293,7 @@ mod test_command_tests {
     #[rstest]
     #[case("json")]
     #[case("yaml")]
+    #[case("junit")]
     fn test_structured_directory_report(#[case] output: &str) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
@@ -296,6 +301,12 @@ mod test_command_tests {
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
             .run(&mut writer, &mut reader);
+
+        let writer = if output == "junit" {
+            sanitize_junit_writer(writer)
+        } else {
+            writer
+        };
 
         assert_eq!(StatusCode::SUCCESS, status_code);
         assert_output_from_file_eq!(
@@ -315,18 +326,6 @@ mod test_command_tests {
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
             .verbose()
-            .run(&mut writer, &mut reader);
-
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
-    }
-
-    #[test]
-    fn test_structured_fails_with_junit_output_format() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
-        let status_code = TestCommandTestRunner::default()
-            .directory(Option::from("resources/test-command/dir"))
-            .output_format("junit")
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
