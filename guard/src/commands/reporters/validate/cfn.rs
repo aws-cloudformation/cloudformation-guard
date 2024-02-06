@@ -11,14 +11,11 @@ use lazy_static::lazy_static;
 
 use crate::{
     commands::{
-        tracker::StatusContext,
-        validate::{
-            common::{
-                populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree,
-                RuleHierarchy,
-            },
-            OutputFormatType, Reporter,
+        reporters::validate::common::{
+            populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
         },
+        tracker::StatusContext,
+        validate::{OutputFormatType, Reporter},
     },
     rules::{
         self,
@@ -460,7 +457,7 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     root: &'value Node<'_>,
     name: String,
     by_resources: &mut HashMap<String, LocalResourceAggr<'record, 'value>>,
-    value: &[Rc<crate::commands::validate::common::Node<'record, 'value>>],
+    value: &[Rc<crate::commands::reporters::validate::common::Node<'record, 'value>>],
 ) -> Option<()> {
     let path = format!("/Resources/{}", name);
     let resource = match data.at(&path, root) {

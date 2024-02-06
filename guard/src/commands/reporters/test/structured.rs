@@ -1,13 +1,20 @@
-use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+
+use crate::commands::reporters::test::{get_by_rules, get_status_result};
+use crate::commands::reporters::{
+    FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
+};
 
 use crate::commands::test::TestExpectations;
+use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
+use crate::rules::eval_context::Messages;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{files::iterate_over, test::TestSpec, validate::OutputFormatType},
     rules::{
         errors::Error, eval::eval_rules_file, eval_context, exprs::RulesFile,
-        path_value::PathAwareValue, NamedStatus, RecordType, Status,
+        path_value::PathAwareValue, Status,
     },
 };
 
@@ -24,39 +31,88 @@ pub struct StructuredTestReporter<'reporter> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Ok {
+    pub rule_file: String,
+    pub test_cases: Vec<TestCase>,
+    #[serde(skip_serializing)] // NOTE: Only using this for junit
+    pub time: u128,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Err {
+    pub rule_file: String,
+    pub error: String,
+    #[serde(skip_serializing)] // NOTE: Only using this for junit
+    pub time: u128,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TestResult {
-    Ok {
-        rule_file: String,
-        test_cases: Vec<TestCase>,
-        #[serde(skip_serializing)] // NOTE: Only using this for junit
-        time: u128,
-    },
-    Err {
-        rule_file: String,
-        error: String,
-        #[serde(skip_serializing)] // NOTE: Only using this for junit
-        time: u128,
-    },
+    Ok(Ok),
+    Err(Err),
 }
 
 impl TestResult {
     pub fn get_exit_code(&self) -> i32 {
         match self {
-            TestResult::Err { .. } => 1,
-            TestResult::Ok { test_cases, .. } => {
+            TestResult::Err(Err { .. }) => TEST_ERROR_STATUS_CODE,
+            TestResult::Ok(Ok { test_cases, .. }) => {
                 match test_cases.iter().any(|test_case| test_case.has_failures()) {
-                    true => 7,
-                    false => 0,
+                    true => TEST_FAILURE_STATUS_CODE,
+                    false => SUCCESS_STATUS_CODE,
                 }
+            }
+        }
+    }
+
+    pub fn build_test_suite(&self) -> TestSuite {
+        match self {
+            TestResult::Err(Err {
+                rule_file,
+                error,
+                time: test_result_time,
+            }) => TestSuite::new(
+                rule_file.to_string(),
+                vec![JunitTestCase {
+                    id: None,
+                    name: rule_file,
+                    time: *test_result_time,
+                    status: TestCaseStatus::Error {
+                        error: error.to_string(),
+                    },
+                }],
+                *test_result_time,
+                1,
+                0,
+            ),
+            TestResult::Ok(Ok {
+                rule_file,
+                test_cases,
+                ..
+            }) => {
+                let mut failures = 0;
+                let mut time = 0;
+                let test_cases = test_cases.iter().fold(vec![], |mut acc, tc| {
+                    let mut test_cases = tc.build_junit_test_cases();
+                    failures += tc.number_of_failures();
+                    time += tc.time;
+                    acc.append(&mut test_cases);
+                    acc
+                });
+
+                TestSuite::new(rule_file.to_string(), test_cases, time, 0, failures)
             }
         }
     }
 
     fn insert_test_case(&mut self, tc: TestCase) {
         match self {
-            TestResult::Err { .. } => unreachable!(),
-            TestResult::Ok { test_cases, .. } => test_cases.push(tc),
+            TestResult::Err(Err { .. }) => unreachable!(),
+            TestResult::Ok(result) => {
+                result.time += tc.time;
+                result.test_cases.push(tc);
+            }
         }
     }
 }
@@ -74,6 +130,54 @@ pub struct TestCase {
 impl TestCase {
     fn has_failures(&self) -> bool {
         !self.failed_rules.is_empty()
+    }
+
+    fn number_of_failures(&self) -> usize {
+        self.failed_rules.len()
+    }
+
+    fn build_junit_test_cases(&self) -> Vec<JunitTestCase> {
+        let mut test_cases = vec![];
+
+        for test_case in &self.passed_rules {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Pass,
+                name: &test_case.name,
+                time: self.time,
+            })
+        }
+
+        for test_case in &self.failed_rules {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Fail(FailingTestCase {
+                    name: None,
+                    messages: vec![Messages {
+                        custom_message: None,
+                        error_message: Some(format!(
+                            "Expected = {}, Evaluated = [{}]",
+                            test_case.expected,
+                            test_case
+                                .evaluated
+                                .iter()
+                                .fold(String::new(), |mut acc, status| {
+                                    if !acc.is_empty() {
+                                        acc.push_str(&format!(", {status}",))
+                                    } else {
+                                        acc.push_str(&format!("{status}"))
+                                    }
+                                    acc
+                                })
+                        )),
+                    }],
+                }),
+                name: &test_case.name,
+                time: self.time,
+            })
+        }
+
+        test_cases
     }
 }
 
@@ -106,11 +210,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let now = Instant::now();
-        let mut result = TestResult::Ok {
+        let mut result = TestResult::Ok(Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
             time: 0,
-        };
+        });
 
         for specs in iterate_over(
             self.data_test_files,
@@ -128,11 +232,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
         ) {
             match specs {
                 Err(e) => {
-                    return Ok(TestResult::Err {
+                    return Ok(TestResult::Err(Err {
                         rule_file: file.to_owned(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    })
+                    }))
                 }
                 Ok(spec) => {
                     let test_data = get_test_data(spec)?;
@@ -146,17 +250,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
 
                         let top = root_scope.reset_recorder().extract();
 
-                        let by_rules: HashMap<&str, Vec<&Option<RecordType<'_>>>> =
-                            top.children.iter().fold(HashMap::new(), |mut acc, rule| {
-                                if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
-                                    rule.container
-                                {
-                                    acc.entry(name).or_default().push(&rule.container)
-                                }
-
-                                acc
-                            });
-
+                        let by_rules = get_by_rules(&top);
                         let mut test_case = TestCase {
                             name: each.name.to_string(),
                             ..Default::default()
@@ -167,11 +261,11 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                 Some(exp) => match Status::try_from(exp.as_str()) {
                                     Ok(exp) => exp,
                                     Err(e) => {
-                                        return Ok(TestResult::Err {
+                                        return Ok(TestResult::Err(Err {
                                             rule_file: file.to_owned(),
                                             error: e.to_string(),
                                             time: now.elapsed().as_millis(),
-                                        })
+                                        }))
                                     }
                                 },
                                 None => {
@@ -182,9 +276,17 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                 }
                             };
 
-                            match evaluate_result(records, expected, rule_name) {
-                                RecordResult::Pass(test) => test_case.passed_rules.push(test),
-                                RecordResult::Fail(test) => test_case.failed_rules.push(test),
+                            match get_status_result(expected, records) {
+                                (Some(status), _) => test_case.passed_rules.push(PassedRule {
+                                    name: rule_name.to_string(),
+                                    evaluated: status,
+                                }),
+
+                                (None, statuses) => test_case.failed_rules.push(FailedRule {
+                                    name: rule_name.to_string(),
+                                    evaluated: statuses,
+                                    expected,
+                                }),
                             }
                         }
 
@@ -196,65 +298,6 @@ impl<'reporter> StructuredTestReporter<'reporter> {
         }
 
         Ok(result)
-    }
-}
-
-enum RecordResult {
-    Pass(PassedRule),
-    Fail(FailedRule),
-}
-
-#[allow(clippy::never_loop)]
-fn evaluate_result(
-    records: Vec<&Option<RecordType<'_>>>,
-    expected: Status,
-    rule_name: &str,
-) -> RecordResult {
-    let mut statuses = Vec::with_capacity(records.len());
-
-    let matched = 'matched: loop {
-        let mut all_skipped = 0;
-
-        for each in records.iter().copied().flatten() {
-            if let RecordType::RuleCheck(NamedStatus {
-                status: got_status, ..
-            }) = each
-            {
-                match expected {
-                    Status::SKIP => {
-                        if *got_status == Status::SKIP {
-                            all_skipped += 1;
-                        }
-                    }
-
-                    rest => {
-                        if *got_status == rest {
-                            break 'matched Some(expected);
-                        }
-                    }
-                }
-                statuses.push(*got_status)
-            }
-        }
-
-        if expected == Status::SKIP && all_skipped == records.len() {
-            break 'matched Some(expected);
-        }
-
-        break 'matched None;
-    };
-
-    match matched {
-        Some(status) => RecordResult::Pass(PassedRule {
-            name: rule_name.to_string(),
-            evaluated: status,
-        }),
-
-        None => RecordResult::Fail(FailedRule {
-            name: rule_name.to_string(),
-            evaluated: statuses,
-            expected,
-        }),
     }
 }
 

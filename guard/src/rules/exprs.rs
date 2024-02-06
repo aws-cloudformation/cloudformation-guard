@@ -272,7 +272,7 @@ pub(crate) struct ParameterizedRule<'loc> {
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RulesFile<'loc> {
+pub struct RulesFile<'loc> {
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) assignments: Vec<LetExpr<'loc>>,
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]

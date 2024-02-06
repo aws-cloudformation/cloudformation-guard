@@ -1,5 +1,5 @@
+use crate::commands::reporters::validate::common::colored_string;
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::common::colored_string;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::EventRecord;
 use crate::rules::parser::get_rule_name;
@@ -22,7 +22,7 @@ pub enum SummaryType {
 }
 
 #[derive(Debug)]
-pub(super) struct SummaryTable<'reporter> {
+pub struct SummaryTable<'reporter> {
     summary_type: BitFlags<SummaryType>,
     next: &'reporter dyn Reporter,
 }

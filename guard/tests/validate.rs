@@ -6,7 +6,6 @@ pub(crate) mod utils;
 mod validate_tests {
     use std::io::{stderr, stdout, Cursor};
 
-    use fancy_regex::Regex;
     use indoc::indoc;
 
     use cfn_guard::commands::{
@@ -18,7 +17,9 @@ mod validate_tests {
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
+    use crate::utils::{
+        get_full_path_for_resource_file, sanitize_junit_writer, CommandTestRunner, StatusCode,
+    };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
 
     #[derive(Default)]
@@ -614,15 +615,8 @@ mod validate_tests {
             .structured()
             .run(&mut writer, &mut reader);
 
-        // NOTE: since junit records time elapsed we must mock the time we report
-        // otherwise this test will be extremely flakey since time will usually not be the same
         let writer = if output == "junit" {
-            let buf = writer.stripped().unwrap();
-
-            let rgx = Regex::new(r#"time="\d+""#).unwrap();
-            let res = rgx.replace_all(&buf, r#"time="0""#);
-
-            Writer::new(WBVec(res.as_bytes().to_vec()), WBVec(vec![]))
+            sanitize_junit_writer(writer)
         } else {
             writer
         };

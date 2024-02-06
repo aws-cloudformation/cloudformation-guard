@@ -14,14 +14,16 @@ use serde::Deserialize;
 
 use crate::command::Command;
 use crate::commands::files::{alpabetical, iterate_over, last_modified, walk_dir};
+use crate::commands::reporters::validate::structured::StructuredEvaluator;
+use crate::commands::reporters::validate::summary_table::{self, SummaryType};
+use crate::commands::reporters::validate::tf::TfAware;
+use crate::commands::reporters::validate::{cfn, generic_summary};
 use crate::commands::tracker::StatusContext;
-use crate::commands::validate::structured::StructuredEvaluator;
-use crate::commands::validate::summary_table::SummaryType;
-use crate::commands::validate::tf::TfAware;
 use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS,
-    SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE, VERBOSE,
+    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE, FAILURE_STATUS_CODE,
+    INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE,
+    VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -32,16 +34,6 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-
-mod cfn;
-mod cfn_reporter;
-mod common;
-mod console_reporter;
-pub(crate) mod generic_summary;
-mod structured;
-mod summary_table;
-mod tf;
-pub mod xml;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
@@ -67,7 +59,7 @@ impl From<&str> for Type {
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
-pub(crate) enum OutputFormatType {
+pub enum OutputFormatType {
     SingleLineSummary,
     JSON,
     YAML,
@@ -450,7 +442,7 @@ or rules files.
                                     writer,
                                 )?;
 
-                                if status != 0 {
+                                if status != SUCCESS_STATUS_CODE {
                                     exit_code = status
                                 }
                             }
@@ -513,7 +505,7 @@ or rules files.
                             writer,
                         )?;
 
-                        if status != 0 {
+                        if status != SUCCESS_STATUS_CODE {
                             exit_code = status;
                         }
                     }
@@ -548,7 +540,7 @@ fn evaluate_rule(
                 file_name.underline(),
             ))?;
 
-            return Ok(5);
+            return Ok(ERROR_STATUS_CODE);
         }
 
         Ok(Some(rule)) => {
@@ -566,13 +558,13 @@ fn evaluate_rule(
             )?;
 
             if status == Status::FAIL {
-                return Ok(19);
+                return Ok(FAILURE_STATUS_CODE);
             }
         }
-        Ok(None) => return Ok(0),
+        Ok(None) => return Ok(SUCCESS_STATUS_CODE),
     }
 
-    Ok(0)
+    Ok(SUCCESS_STATUS_CODE)
 }
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
@@ -589,7 +581,7 @@ fn deserialize_payload(payload: &str) -> Result<Payload> {
     }
 }
 
-fn parse_rules<'r>(
+pub fn parse_rules<'r>(
     rules_file_content: &'r str,
     rules_file_name: &'r str,
 ) -> Result<Option<RulesFile<'r>>> {
