@@ -1,5 +1,6 @@
-use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
+use crate::commands::reporters::test::{get_by_rules, get_status_result};
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
 };
@@ -13,7 +14,7 @@ use crate::{
     commands::{files::iterate_over, test::TestSpec, validate::OutputFormatType},
     rules::{
         errors::Error, eval::eval_rules_file, eval_context, exprs::RulesFile,
-        path_value::PathAwareValue, NamedStatus, RecordType, Status,
+        path_value::PathAwareValue, Status,
     },
 };
 
@@ -249,17 +250,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
 
                         let top = root_scope.reset_recorder().extract();
 
-                        let by_rules: HashMap<&str, Vec<&Option<RecordType<'_>>>> =
-                            top.children.iter().fold(HashMap::new(), |mut acc, rule| {
-                                if let Some(RecordType::RuleCheck(NamedStatus { name, .. })) =
-                                    rule.container
-                                {
-                                    acc.entry(name).or_default().push(&rule.container)
-                                }
-
-                                acc
-                            });
-
+                        let by_rules = get_by_rules(&top);
                         let mut test_case = TestCase {
                             name: each.name.to_string(),
                             ..Default::default()
@@ -285,9 +276,17 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                                 }
                             };
 
-                            match evaluate_result(records, expected, rule_name) {
-                                RecordResult::Pass(test) => test_case.passed_rules.push(test),
-                                RecordResult::Fail(test) => test_case.failed_rules.push(test),
+                            match get_status_result(expected, records) {
+                                (Some(status), _) => test_case.passed_rules.push(PassedRule {
+                                    name: rule_name.to_string(),
+                                    evaluated: status,
+                                }),
+
+                                (None, statuses) => test_case.failed_rules.push(FailedRule {
+                                    name: rule_name.to_string(),
+                                    evaluated: statuses,
+                                    expected,
+                                }),
                             }
                         }
 
@@ -299,65 +298,6 @@ impl<'reporter> StructuredTestReporter<'reporter> {
         }
 
         Ok(result)
-    }
-}
-
-enum RecordResult {
-    Pass(PassedRule),
-    Fail(FailedRule),
-}
-
-#[allow(clippy::never_loop)]
-fn evaluate_result(
-    records: Vec<&Option<RecordType<'_>>>,
-    expected: Status,
-    rule_name: &str,
-) -> RecordResult {
-    let mut statuses = Vec::with_capacity(records.len());
-
-    let matched = 'matched: loop {
-        let mut all_skipped = 0;
-
-        for each in records.iter().copied().flatten() {
-            if let RecordType::RuleCheck(NamedStatus {
-                status: got_status, ..
-            }) = each
-            {
-                match expected {
-                    Status::SKIP => {
-                        if *got_status == Status::SKIP {
-                            all_skipped += 1;
-                        }
-                    }
-
-                    rest => {
-                        if *got_status == rest {
-                            break 'matched Some(expected);
-                        }
-                    }
-                }
-                statuses.push(*got_status)
-            }
-        }
-
-        if expected == Status::SKIP && all_skipped == records.len() {
-            break 'matched Some(expected);
-        }
-
-        break 'matched None;
-    };
-
-    match matched {
-        Some(status) => RecordResult::Pass(PassedRule {
-            name: rule_name.to_string(),
-            evaluated: status,
-        }),
-
-        None => RecordResult::Fail(FailedRule {
-            name: rule_name.to_string(),
-            evaluated: statuses,
-            expected,
-        }),
     }
 }
 
