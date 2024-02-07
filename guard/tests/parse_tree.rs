@@ -122,19 +122,13 @@ mod parse_tree_tests {
     }
 
     #[rstest::rstest]
-    #[case(
-        "validate/rules-dir/dne.guard",
-        "Error occurred I/O error when reading No such file or directory (os error 2)\n",
-        StatusCode::INTERNAL_FAILURE
-    )]
+    #[case("validate/rules-dir/dne.guard", StatusCode::INTERNAL_FAILURE)]
     #[case(
         "validate/rules-dir/malformed-rule.guard",
-        "Error occurred I/O error when reading No such file or directory (os error 2)\n",
         StatusCode::INTERNAL_FAILURE
     )]
     fn test_yaml_output_with_expected_failures(
         #[case] rules_arg: &str,
-        #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
@@ -143,7 +137,14 @@ mod parse_tree_tests {
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
 
+        let expected_writer_output = if cfg!(windows) {
+            "Error occurred I/O error when reading The system cannot find the file specified. (os error 2)\n"
+        } else {
+            "Error occurred I/O error when reading No such file or directory (os error 2)\n"
+        };
+
         assert_eq!(expected_status_code, status_code);
+
         assert_eq!(expected_writer_output, writer.err_to_stripped().unwrap());
     }
 
