@@ -138,7 +138,7 @@ mod parse_tree_tests {
             .run(&mut writer, &mut reader);
 
         let expected_writer_output = if cfg!(windows) {
-            "Error occured I/O error when reading The system cannot find the file specified. (os error 2)\n"
+            "Error occurred I/O error when reading The system cannot find the file specified. (os error 2)\n"
         } else {
             "Error occurred I/O error when reading No such file or directory (os error 2)\n"
         };
