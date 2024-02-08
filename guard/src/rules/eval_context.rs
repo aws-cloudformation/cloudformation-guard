@@ -2245,7 +2245,7 @@ pub(crate) fn simplifed_json_from_root<'value>(
 
 pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
     name: &str,
-    parameters: &'value Vec<LetValue<'loc>>,
+    parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Vec<QueryResult>> {
     validate_number_of_params(name, parameters.len())?;
