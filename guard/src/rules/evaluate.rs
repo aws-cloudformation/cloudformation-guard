@@ -219,9 +219,9 @@ fn merge_mixed_results<'a>(incoming: &'a [&PathAwareValue]) -> Vec<&'a PathAware
 
 #[allow(clippy::type_complexity)]
 fn compare<F>(
-    lhs: &Vec<&PathAwareValue>,
+    lhs: &[&PathAwareValue],
     _lhs_query: &[QueryPart<'_>],
-    rhs: &Vec<&PathAwareValue>,
+    rhs: &[&PathAwareValue],
     _rhs_query: Option<&[QueryPart<'_>]>,
     compare: F,
     any: bool,
