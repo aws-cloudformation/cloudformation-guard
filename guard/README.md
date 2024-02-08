@@ -74,7 +74,7 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 
 `validate` (like the example above) validates data against rules.
 
-````bash
+```bash
 Usage: cfn-guard validate [OPTIONS] <--rules [<rules>...]|--payload>
 
 Options:
@@ -143,7 +143,7 @@ FLAGS:
 OPTIONS:
     -o, --output <output>        Write to output file
     -t, --template <template>    Provide path to a CloudFormation template file in JSON or YAML
-````
+```
 
 For example, using the same template (template.json) from the above example:
 
