@@ -1,9 +1,8 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 #[cfg(test)]
 mod functional_tests {
-
+    use pretty_assertions::assert_eq;
     #[test]
     fn test_run_check() {
         let data = String::from(

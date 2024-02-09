@@ -1,13 +1,12 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 pub(crate) mod utils;
 #[cfg(test)]
 mod validate_tests {
-    use std::io::{stderr, stdout, Cursor};
-
     use fancy_regex::Regex;
     use indoc::indoc;
+    use pretty_assertions::assert_eq;
+    use std::io::{stderr, stdout, Cursor};
 
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,

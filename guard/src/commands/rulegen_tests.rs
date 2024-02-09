@@ -1,6 +1,7 @@
 use crate::commands::rulegen;
 use crate::utils::writer::WriteBuffer;
 use crate::utils::writer::Writer;
+use pretty_assertions::assert_eq;
 use std::io::{stderr, stdout};
 
 #[test]
