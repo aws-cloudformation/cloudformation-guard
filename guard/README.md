@@ -74,7 +74,7 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 
 `validate` (like the example above) validates data against rules.
 
-````bash
+```bash
 Usage: cfn-guard validate [OPTIONS] <--rules [<rules>...]|--payload>
 
 Options:
@@ -143,12 +143,12 @@ FLAGS:
 OPTIONS:
     -o, --output <output>        Write to output file
     -t, --template <template>    Provide path to a CloudFormation template file in JSON or YAML
-````
+```
 
 For example, using the same template (template.json) from the above example:
 
 ```bash
-$ cfn-guard rulegen --data template.json
+$ cfn-guard rulegen --template template.json
 let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
     %aws_ec2_volume_resources.Properties.Size IN [500, 100]
@@ -160,7 +160,7 @@ rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
 Given the potential for hundreds or even thousands of rules to emerge, we recommend using the `--output` flag to write the generated rules to a file:
 
 ```
-cfn-guard rulegen --data template.json --output rules.guard
+cfn-guard rulegen --template template.json --output rules.guard
 ```
 
 ### Parse Tree
