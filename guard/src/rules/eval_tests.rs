@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::io::{stderr, stdout};
-
 use crate::utils::writer::Writer;
 use grep_searcher::SearcherBuilder;
 use indoc::formatdoc;
+use pretty_assertions::{assert_eq, assert_ne};
+use std::collections::HashMap;
+use std::io::{stderr, stdout};
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
@@ -1911,7 +1911,7 @@ fn test_in_comparison_operator_for_list_of_lists(
                     Type: A
                     TTL: "900"
                     ResourceRecords:
-                    - !GetAtt '{}'"###, 
+                    - !GetAtt '{}'"###,
         name_arg,
         resource_records_arg,
     };

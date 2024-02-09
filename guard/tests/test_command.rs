@@ -1,11 +1,10 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 pub(crate) mod utils;
 
 #[cfg(test)]
 mod test_command_tests {
-
+    use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     use crate::assert_output_from_file_eq;

@@ -3,6 +3,7 @@ use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::exprs::AccessQuery;
 use crate::rules::path_value::*;
 use crate::rules::EvalContext;
+use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
 use std::rc::Rc;
 

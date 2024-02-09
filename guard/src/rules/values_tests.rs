@@ -1,9 +1,9 @@
-use std::convert::{TryFrom, TryInto};
-
 use super::*;
 use crate::rules::exprs::{AccessQuery, GuardClause};
 use crate::rules::exprs::{Rule, TypeBlock};
+use pretty_assertions::assert_eq;
 use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
 use std::fs::read_to_string;
 
 use crate::rules::path_value::traversal::{Traversal, TraversalResult};
