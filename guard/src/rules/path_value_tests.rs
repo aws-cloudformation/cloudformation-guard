@@ -1,6 +1,7 @@
 use crate::rules::exprs::{
     AccessClause, AccessQuery, FileLocation, GuardAccessClause, GuardClause, LetExpr, LetValue,
 };
+use pretty_assertions::assert_eq;
 
 use super::*;
 

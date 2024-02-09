@@ -3,6 +3,7 @@ use super::super::path_value::Path;
 use super::*;
 use crate::commands::files::read_file_content;
 use crate::rules::parser::{rules_file, Span};
+use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
 use std::fs::File;
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::rules::exprs::*;
 use crate::rules::path_value::*;
+use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
 
 #[test]

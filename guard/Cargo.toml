@@ -45,6 +45,9 @@ indoc = "1.0.8"
 thiserror = "1.0.38"
 quick-xml = "0.30.0"
 
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+
 [dependencies.serde_json]
 version = "1.0.85"
 features = ["preserve_order"]

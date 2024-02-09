@@ -1,17 +1,16 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 pub(crate) mod utils;
 
 #[cfg(test)]
 mod rulegen_tests {
-
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{OUTPUT, RULEGEN, TEMPLATE};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
+    use pretty_assertions::assert_eq;
 
     use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
 
