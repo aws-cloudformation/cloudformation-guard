@@ -305,8 +305,7 @@ or rules files.
                                 .path()
                                 // path output occasionally includes double slashes '//'
                                 // without calling canonicalize()
-                                .canonicalize()
-                                .unwrap()
+                                .canonicalize()?
                                 .to_str()
                                 .map_or("".to_string(), String::from);
 
