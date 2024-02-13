@@ -1,3 +1,13 @@
+use clap::{Parser, Subcommand};
+
+use crate::{
+    commands::{
+        completions::Completions, parse_tree::ParseTree, rulegen::Rulegen, test::Test,
+        validate::Validate,
+    },
+    utils::{reader::Reader, writer::Writer},
+};
+
 pub(crate) mod files;
 pub(crate) mod helper;
 pub mod parse_tree;
@@ -16,15 +26,10 @@ mod tracker;
 //
 // Application metadata
 pub const APP_NAME: &str = "cfn-guard";
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-// Commands
-pub const PARSE_TREE: &str = "parse-tree";
-pub const RULEGEN: &str = "rulegen";
-pub const TEST: &str = "test";
-pub const VALIDATE: &str = "validate";
-pub const COMPLETIONS: &str = "completions";
+
 // Arguments for validate
 pub const ALPHABETICAL: (&str, char) = ("alphabetical", 'a');
+#[allow(dead_code)]
 pub const DATA: (&str, char) = ("data", 'd');
 pub const LAST_MODIFIED: (&str, char) = ("last-modified", 'm');
 pub const OUTPUT_FORMAT: (&str, char) = ("output-format", 'o');
@@ -37,6 +42,7 @@ pub const VERBOSE: (&str, char) = ("verbose", 'v');
 // Arguments for validate, parse tree
 pub const RULES: (&str, char) = ("rules", 'r');
 // Arguments for parse-tree, rulegen
+#[allow(dead_code)]
 pub const OUTPUT: (&str, char) = ("output", 'o');
 // Arguments for parse-tree
 pub const PRINT_YAML: (&str, char) = ("print-yaml", 'y');
@@ -45,6 +51,7 @@ pub const RULES_FILE: (&str, char) = ("rules-file", 'r');
 pub const TEST_DATA: (&str, char) = ("test-data", 't');
 pub const DIRECTORY: (&str, char) = ("dir", 'd');
 // Arguments for rulegen
+#[allow(dead_code)]
 pub const TEMPLATE: (&str, char) = ("template", 't');
 // Arg group for validate
 pub(crate) const REQUIRED_FLAGS: &str = "required_flags";
@@ -62,3 +69,45 @@ pub const SUCCESS_STATUS_CODE: i32 = 0;
 pub const ERROR_STATUS_CODE: i32 = 5;
 pub const TEST_ERROR_STATUS_CODE: i32 = 1;
 pub const TEST_FAILURE_STATUS_CODE: i32 = 7;
+
+const ABOUT: &str = r#"
+Guard is a general-purpose tool that provides a simple declarative syntax to define
+policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
+Rules are composed of clauses expressed using Conjunctive Normal Form
+(fancy way of saying it is a logical AND of OR clauses). Guard has deep
+integration with CloudFormation templates for evaluation but is a general tool
+that equally works for any JSON- and YAML- data."#;
+
+#[derive(Debug, Parser)]
+#[command(name=APP_NAME)]
+#[command(about=ABOUT)]
+#[command(version)]
+pub struct CfnGuard {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    Validate(Validate),
+    Test(Test),
+    ParseTree(ParseTree),
+    Rulegen(Rulegen),
+    Completions(Completions),
+}
+
+pub trait Executable {
+    fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> crate::rules::Result<i32>;
+}
+
+impl Executable for Commands {
+    fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> crate::rules::Result<i32> {
+        match self {
+            Commands::Validate(cmd) => cmd.execute(writer, reader),
+            Commands::Test(cmd) => cmd.execute(writer, reader),
+            Commands::ParseTree(cmd) => cmd.execute(writer, reader),
+            Commands::Rulegen(cmd) => cmd.execute(writer, reader),
+            Commands::Completions(cmd) => cmd.execute(),
+        }
+    }
+}

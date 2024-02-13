@@ -1,11 +1,7 @@
-use crate::command::Command;
-use crate::commands::{APP_NAME, APP_VERSION, COMPLETIONS};
-use crate::utils::reader::Reader;
-use crate::utils::writer::Writer;
-use crate::{rules, utils};
-use clap::{Arg, ArgAction, ArgMatches};
+use crate::{commands::CfnGuard, rules};
+use clap::{Args, CommandFactory, ValueEnum};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum Shell {
     Bash,
     Zsh,
@@ -23,44 +19,19 @@ impl From<String> for Shell {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct Completions {}
+#[derive(Debug, Args)]
+pub struct Completions {
+    #[arg(short, long, value_enum)]
+    shell: Shell,
+}
 
-const SHELL_TYPES: [&str; 3] = ["bash", "zsh", "fish"];
-const SHELL: (&str, char) = ("shell", 's');
-
-impl Command for Completions {
-    fn name(&self) -> &'static str {
-        COMPLETIONS
-    }
-
-    fn command(&self) -> clap::Command {
-        clap::Command::new(COMPLETIONS)
-            .about("Generate auto-completions for all the sub-commands in shell.")
-            .arg(
-                Arg::new(SHELL.0)
-                    .long(SHELL.0)
-                    .short(SHELL.1)
-                    .required(true)
-                    .value_parser(SHELL_TYPES)
-                    .action(ArgAction::Set),
-            )
-    }
-
-    fn execute(&self, args: &ArgMatches, _: &mut Writer, _: &mut Reader) -> rules::Result<i32> {
-        let mut app = clap::Command::new(APP_NAME).version(APP_VERSION);
-
-        let commands = utils::get_guard_commands();
-
-        for each in &commands {
-            app = app.subcommand(each.command());
-        }
-
-        match args.get_one::<String>(SHELL.0).unwrap().as_str() {
-            "bash" => generate(clap_complete::shells::Bash, &mut app),
-            "zsh" => generate(clap_complete::shells::Zsh, &mut app),
-            "fish" => generate(clap_complete::shells::Fish, &mut app),
-            _ => unreachable!(),
+impl Completions {
+    pub fn execute(&self) -> rules::Result<i32> {
+        let mut app = CfnGuard::command();
+        match &self.shell {
+            Shell::Bash => generate(clap_complete::shells::Bash, &mut app),
+            Shell::Zsh => generate(clap_complete::shells::Zsh, &mut app),
+            Shell::Fish => generate(clap_complete::shells::Fish, &mut app),
         }
 
         Ok(0)

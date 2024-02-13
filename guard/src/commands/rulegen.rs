@@ -1,59 +1,42 @@
 use std::fs;
 use std::process;
 
-use crate::command::Command;
-use crate::commands::{OUTPUT, RULEGEN, TEMPLATE};
+use crate::commands::Executable;
+use crate::commands::SUCCESS_STATUS_CODE;
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{Arg, ArgMatches, ValueHint};
+use clap::Args;
 use itertools::Itertools;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use string_builder::Builder;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Rulegen {}
+const ABOUT: &str = "Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)";
+const TEMPLATE_HELP: &str = "Provide path to a CloudFormation template file in JSON or YAML";
+const OUTPUT_HELP: &str = "Write to output file";
 
-#[allow(clippy::new_without_default)]
-impl Rulegen {
-    pub fn new() -> Self {
-        Rulegen {}
-    }
+#[derive(Debug, Clone, Eq, PartialEq, Args, Serialize, Deserialize)]
+#[clap(arg_required_else_help = true)]
+#[clap(about=ABOUT)]
+pub struct Rulegen {
+    #[arg(short, long, help=OUTPUT_HELP)]
+    pub(crate) output: Option<String>,
+    #[arg(short, long, help=TEMPLATE_HELP)]
+    pub(crate) template: String,
 }
 
-impl Command for Rulegen {
-    fn name(&self) -> &'static str {
-        RULEGEN
-    }
-
-    fn command(&self) -> clap::Command {
-        clap::Command::new(RULEGEN)
-            .about("Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)")
-            .arg(Arg::new(TEMPLATE.0)
-                .long(TEMPLATE.0)
-                .short(TEMPLATE.1)
-                .value_hint(ValueHint::FilePath)
-                .help("Provide path to a CloudFormation template file in JSON or YAML")
-                .required(true))
-            .arg(Arg::new(OUTPUT.0)
-                .long(OUTPUT.0)
-                .short(OUTPUT.1)
-                .value_hint(ValueHint::FilePath)
-                .help("Write to output file")
-                .required(false))
-            .arg_required_else_help(true)
-    }
-
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let file = app.get_one::<String>(TEMPLATE.0).unwrap(); // safe because this is a required arg
-        let template_contents = fs::read_to_string(file)?;
+impl Executable for Rulegen {
+    fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
+        let template_contents = fs::read_to_string(&self.template)?;
 
         let result = parse_template_and_call_gen(&template_contents, writer);
         print_rules(result, writer)?;
 
-        Ok(0_i32)
+        Ok(SUCCESS_STATUS_CODE)
     }
 }
 

@@ -5,14 +5,14 @@ pub(crate) mod utils;
 #[cfg(test)]
 mod rulegen_tests {
     use crate::assert_output_from_file_eq;
-    use cfn_guard::commands::{OUTPUT, RULEGEN, TEMPLATE};
+    use cfn_guard::commands::{OUTPUT, TEMPLATE};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use pretty_assertions::assert_eq;
 
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
+    use crate::utils::{get_full_path_for_resource_file, Command, CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct RulegenTestRunner<'args> {
@@ -35,7 +35,7 @@ mod rulegen_tests {
 
     impl<'args> CommandTestRunner for RulegenTestRunner<'args> {
         fn build_args(&self) -> Vec<String> {
-            let mut args = vec![String::from(RULEGEN)];
+            let mut args = vec![Command::Rulegen.to_string()];
 
             if self.template.is_some() {
                 args.push(format!("-{}", TEMPLATE.1));

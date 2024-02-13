@@ -9,7 +9,7 @@ mod validate_tests {
 
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
-        RULES, SHOW_SUMMARY, STRUCTURED, VALIDATE, VERBOSE,
+        RULES, SHOW_SUMMARY, STRUCTURED, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, Stdin};
     use cfn_guard::utils::reader::Reader;
@@ -17,7 +17,8 @@ mod validate_tests {
     use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{
-        get_full_path_for_resource_file, sanitize_junit_writer, CommandTestRunner, StatusCode,
+        get_full_path_for_resource_file, sanitize_junit_writer, Command, CommandTestRunner,
+        StatusCode,
     };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
 
@@ -104,7 +105,7 @@ mod validate_tests {
 
     impl<'args> CommandTestRunner for ValidateTestRunner<'args> {
         fn build_args(&self) -> Vec<String> {
-            let mut args = vec![String::from(VALIDATE)];
+            let mut args = vec![Command::Validate.to_string()];
 
             if !self.data.is_empty() {
                 args.push(format!("-{}", DATA.1));
