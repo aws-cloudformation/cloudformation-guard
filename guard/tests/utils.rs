@@ -110,7 +110,7 @@ pub fn compare_write_buffer_with_file(
 
     let actual_output = actual_output_writer.stripped().unwrap();
 
-    assert_eq!(sanitize_path(actual_output), sanitize_path(expected_output))
+    assert_eq!(sanitize_path(actual_output), expected_output)
 }
 
 #[allow(dead_code)]
