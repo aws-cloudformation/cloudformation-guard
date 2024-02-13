@@ -302,7 +302,11 @@ or rules files.
                     for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
-                                .file_name()
+                                .path()
+                                // path output occasionally includes double slashes '//'
+                                // without calling canonicalize()
+                                .canonicalize()
+                                .unwrap()
                                 .to_str()
                                 .map_or("".to_string(), String::from);
 
