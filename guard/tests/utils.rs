@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -64,6 +65,37 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
+pub fn replace_home_directory_with_tilde(text: String) -> String {
+    let home_dir_string = match env::var("HOME") {
+        Ok(home_path) => home_path,
+        Err(_) => panic!("HOME variable required for tests!"),
+    };
+
+    text.replace(&home_dir_string, "~")
+}
+
+pub fn replace_path_with_filenames(text: String) -> String {
+    let extensions = ["yaml", "yml", "json"];
+    // pattern to match anything between "~/" and any of the extensions
+    let pattern = format!(
+        r#"~/(?:[\w/\-]+/)?([\w/\-]+\.(?:{}))"#,
+        extensions.join("|")
+    );
+    let re = Regex::new(&pattern).unwrap();
+    // replace the entire match with match group 1 (the file name)
+    let replaced_filenames = re.replace_all(&text, "$1");
+
+    replaced_filenames.to_string()
+}
+
+pub fn sanitize_path(string_to_sanitize: String) -> String {
+    // replace the home directory to avoid regex issues with path matches beyond the
+    // leading forward slash for example '[/Users/...' or 'name="/User...'
+    let replaced_home_directory = replace_home_directory_with_tilde(string_to_sanitize);
+    // return the blob of text with full path replaced with just the filename
+    replace_path_with_filenames(replaced_home_directory)
+}
+
 pub fn compare_write_buffer_with_file(
     expected_output_relative_file_path: &str,
     actual_output_writer: Writer,
@@ -75,8 +107,10 @@ pub fn compare_write_buffer_with_file(
     let expected_output_full_file_path =
         get_full_path_for_resource_file(expected_output_relative_file_path);
     let expected_output = read_from_resource_file(&expected_output_full_file_path);
+
     let actual_output = actual_output_writer.stripped().unwrap();
-    assert_eq!(actual_output, expected_output)
+
+    assert_eq!(sanitize_path(actual_output), expected_output)
 }
 
 #[allow(dead_code)]
@@ -86,7 +120,7 @@ pub fn compare_write_buffer_with_string(expected_output: &str, actual_output_wri
     }
 
     let actual_output = actual_output_writer.stripped().unwrap();
-    assert_eq!(expected_output, actual_output)
+    assert_eq!(expected_output, sanitize_path(actual_output))
 }
 
 pub trait CommandTestRunner {
