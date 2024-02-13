@@ -158,7 +158,7 @@ pub struct Validate {
         default_value_t=OutputFormatType::SingleLineSummary
     )]
     pub(crate) output_format: OutputFormatType,
-    #[arg(name=SHOW_SUMMARY.0, short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum)]
+    #[arg(name=SHOW_SUMMARY.0, short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
     pub(crate) show_summary: Vec<ShowSummaryType>,
     #[arg(name=ALPHABETICAL.0, short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
