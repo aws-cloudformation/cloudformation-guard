@@ -20,12 +20,6 @@ pub trait CommandBuilder<T: Executable> {
     fn try_build(self) -> crate::rules::Result<T>;
 }
 
-impl ParseTree {
-    pub fn builder() -> ParseTreeBuilder {
-        ParseTreeBuilder::default()
-    }
-}
-
 #[derive(Default, Debug)]
 pub struct ParseTreeBuilder {
     rules: Option<String>,
@@ -79,12 +73,6 @@ impl ParseTreeBuilder {
         self.print_yaml = arg;
 
         self
-    }
-}
-
-impl Validate {
-    pub fn builder() -> ValidateBuilder {
-        ValidateBuilder::default()
     }
 }
 
@@ -274,12 +262,6 @@ impl ValidateBuilder {
     }
 }
 
-impl Test {
-    pub fn builder() -> TestBuilder {
-        TestBuilder::default()
-    }
-}
-
 #[derive(Default, Debug)]
 pub struct TestBuilder {
     rules: Option<String>,
@@ -368,12 +350,6 @@ impl TestBuilder {
         self.output_format = output;
 
         self
-    }
-}
-
-impl Rulegen {
-    pub fn builder() -> RulegenBuilder {
-        RulegenBuilder::default()
     }
 }
 

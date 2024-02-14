@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
-use cfn_guard::commands::{CfnGuard, Commands, Executable};
+use cfn_guard::commands::CfnGuard;
 use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::WriteBuffer::Vec as WBVec;
@@ -161,15 +161,7 @@ pub trait CommandTestRunner {
 
         let cfn_guard = CfnGuard::parse_from(command_options);
 
-        let exit_code = match cfn_guard.command {
-            Commands::Validate(cmd) => cmd.execute(writer, reader),
-            Commands::Test(cmd) => cmd.execute(writer, reader),
-            Commands::ParseTree(cmd) => cmd.execute(writer, reader),
-            Commands::Rulegen(cmd) => cmd.execute(writer, reader),
-            _ => unreachable!(),
-        };
-
-        match exit_code {
+        match cfn_guard.execute(writer, reader) {
             Err(e) => {
                 writer
                     .write_err(format!("Error occurred {e}"))

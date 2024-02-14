@@ -32,7 +32,9 @@ pub const ALPHABETICAL: (&str, char) = ("alphabetical", 'a');
 #[allow(dead_code)]
 pub const DATA: (&str, char) = ("data", 'd');
 pub const LAST_MODIFIED: (&str, char) = ("last-modified", 'm');
+#[allow(dead_code)]
 pub const OUTPUT_FORMAT: (&str, char) = ("output-format", 'o');
+#[allow(dead_code)]
 pub const INPUT_PARAMETERS: (&str, char) = ("input-parameters", 'i');
 pub const PAYLOAD: (&str, char) = ("payload", 'P');
 pub const PRINT_JSON: (&str, char) = ("print-json", 'p');
@@ -84,11 +86,17 @@ that equally works for any JSON- and YAML- data."#;
 #[command(version)]
 pub struct CfnGuard {
     #[command(subcommand)]
-    pub command: Commands,
+    pub(crate) command: Commands,
+}
+
+impl CfnGuard {
+    pub fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> crate::rules::Result<i32> {
+        self.command.execute(writer, reader)
+    }
 }
 
 #[derive(Debug, Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     Validate(Validate),
     Test(Test),
     ParseTree(ParseTree),

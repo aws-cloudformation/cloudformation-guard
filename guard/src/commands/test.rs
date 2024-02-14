@@ -54,7 +54,7 @@ const VERBOSE_HELP: &str = "Verbose logging";
     .conflicts_with(RULES_AND_TEST_FILE))
 ]
 #[clap(arg_required_else_help = true)]
-pub struct Test {
+pub(crate) struct Test {
     #[arg(short, long, help=RULES_HELP)]
     pub(crate) rules: Option<String>,
     #[arg(short, long, help=TEST_DATA_HELP)]

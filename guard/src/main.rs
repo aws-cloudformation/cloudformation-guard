@@ -3,7 +3,7 @@ mod commands;
 mod rules;
 mod utils;
 
-use crate::commands::{CfnGuard, Commands, Executable};
+use crate::commands::{CfnGuard, Commands};
 use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
@@ -25,17 +25,10 @@ fn main() -> Result<(), Error> {
         },
         _ => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
     };
+
     let mut reader = Reader::new(ReadBuffer::Stdin(std::io::stdin()));
 
-    let exit_code = match args.command {
-        Commands::Validate(cmd) => cmd.execute(&mut writer, &mut reader),
-        Commands::Test(cmd) => cmd.execute(&mut writer, &mut reader),
-        Commands::ParseTree(cmd) => cmd.execute(&mut writer, &mut reader),
-        Commands::Rulegen(cmd) => cmd.execute(&mut writer, &mut reader),
-        Commands::Completions(cmd) => cmd.execute(),
-    };
-
-    match exit_code {
+    match args.execute(&mut writer, &mut reader) {
         Ok(code) => exit(code),
         Err(e) => {
             writer
