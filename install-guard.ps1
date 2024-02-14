@@ -108,7 +108,7 @@ function print_success {
   Write-Host "*                 Installation Successful!                   *" -BackgroundColor Green -ForegroundColor White;
   Write-Host "**************************************************************" -BackgroundColor Green -ForegroundColor White;
   Write-Host ""
-  Write-Host "IMPORTANT: Remember to SET PATH include $env:USERPROFILE\.guard\bin"
+  Write-Host "IMPORTANT: Remember to SET PATH to include $env:USERPROFILE\.guard\bin"
   Write-Host ""
   Write-Host ""
 }
