@@ -14,7 +14,7 @@ const RULES_HELP: &str = "Provide a rules file";
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
 #[clap(arg_required_else_help = true)]
-pub struct ParseTree {
+pub(crate) struct ParseTree {
     #[arg(short, long, help = RULES_HELP)]
     pub(crate) rules: Option<String>,
     #[arg(short, long, help = OUTPUT_HELP)]

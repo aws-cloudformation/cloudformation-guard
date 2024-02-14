@@ -20,7 +20,7 @@ const OUTPUT_HELP: &str = "Write to output file";
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(arg_required_else_help = true)]
 #[clap(about=ABOUT)]
-pub struct Rulegen {
+pub(crate) struct Rulegen {
     #[arg(short, long, help=OUTPUT_HELP)]
     pub(crate) output: Option<String>,
     #[arg(short, long, help=TEMPLATE_HELP)]
