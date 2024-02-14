@@ -20,9 +20,9 @@ use crate::commands::reporters::validate::{cfn, generic_summary};
 use crate::commands::tracker::StatusContext;
 use crate::commands::{
     Executable, ALPHABETICAL, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE,
-    FAILURE_STATUS_CODE, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
-    REQUIRED_FLAGS, RULES, RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED,
-    SUCCESS_STATUS_CODE, TYPE, VERBOSE,
+    FAILURE_STATUS_CODE, INPUT_PARAMETERS, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS,
+    RULES, RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE,
+    VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -150,7 +150,6 @@ pub(crate) struct Validate {
     #[arg(name=TYPE.0, short, long, help=TEMPLATE_TYPE_HELP, value_parser=TEMPLATE_TYPE)]
     pub(crate) template_type: Option<String>,
     #[arg(
-        name=OUTPUT_FORMAT.0,
         short,
         long,
         help=OUTPUT_FORMAT_HELP,
@@ -158,15 +157,15 @@ pub(crate) struct Validate {
         default_value_t=OutputFormatType::SingleLineSummary
     )]
     pub(crate) output_format: OutputFormatType,
-    #[arg(name=SHOW_SUMMARY.0, short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
     pub(crate) show_summary: Vec<ShowSummaryType>,
-    #[arg(name=ALPHABETICAL.0, short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    #[arg(name="alphabetical", short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
-    #[arg(name=LAST_MODIFIED.0, short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    #[arg(name="last-modified", short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
     pub(crate) last_modified: bool,
     #[arg(short, long, help=VERBOSE_HELP)]
     pub(crate) verbose: bool,
-    #[arg(name=PRINT_JSON.0, short=PRINT_JSON.1, long, help=PRINT_JSON_HELP)]
+    #[arg(name="print-json", short=PRINT_JSON.1, long, help=PRINT_JSON_HELP)]
     pub(crate) print_json: bool,
     #[arg(short=PAYLOAD.1, long, help=PAYLOAD_HELP)]
     pub(crate) payload: bool,

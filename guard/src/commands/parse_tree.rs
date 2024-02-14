@@ -19,9 +19,9 @@ pub(crate) struct ParseTree {
     pub(crate) rules: Option<String>,
     #[arg(short, long, help = OUTPUT_HELP)]
     pub(crate) output: Option<String>,
-    #[arg(name=PRINT_JSON.0, short=PRINT_JSON.1, long=PRINT_JSON.0, help=PRINT_JSON_HELP)]
+    #[arg(short=PRINT_JSON.1, long=PRINT_JSON.0, help=PRINT_JSON_HELP)]
     pub(crate) print_json: bool,
-    #[arg(name=PRINT_YAML.0, short=PRINT_YAML.1, long=PRINT_YAML.0, help=PRINT_YAML_HELP)]
+    #[arg(short=PRINT_YAML.1, long=PRINT_YAML.0, help=PRINT_YAML_HELP)]
     pub(crate) print_yaml: bool,
 }
 

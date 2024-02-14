@@ -4,7 +4,7 @@ use crate::commands::reporters::test::structured::{
 };
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
-    Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
+    Executable, RULES, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -22,8 +22,8 @@ use crate::commands::files::{
 };
 use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_HELP};
 use crate::commands::{
-    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, OUTPUT_FORMAT,
-    RULES_AND_TEST_FILE, RULES_FILE, TEST_DATA,
+    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
+    RULES_FILE, TEST_DATA,
 };
 use crate::rules::errors::Error;
 use crate::rules::Result;
@@ -55,20 +55,20 @@ const VERBOSE_HELP: &str = "Verbose logging";
 ]
 #[clap(arg_required_else_help = true)]
 pub(crate) struct Test {
-    #[arg(short, long, help=RULES_HELP)]
+    #[arg(name=RULES.0, short, long, help=RULES_HELP)]
     pub(crate) rules: Option<String>,
-    #[arg(short, long, help=TEST_DATA_HELP)]
+    #[arg(name=TEST_DATA.0, short, long, help=TEST_DATA_HELP)]
     pub(crate) test_data: Option<String>,
     #[arg(name=DIRECTORY.0, short, long=DIRECTORY.0, help=DIRECTORY_HELP)]
     pub(crate) directory: Option<String>,
-    #[arg(short, long, help = ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    #[arg(name="alphabetical", short, long, help = ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
-    #[arg(name=LAST_MODIFIED.0, short=LAST_MODIFIED.1, long=LAST_MODIFIED.0, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    #[arg(name="last-modified", short=LAST_MODIFIED.1, long=LAST_MODIFIED.0, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
     pub(crate) last_modified: bool,
     #[arg(short, long, help=VERBOSE_HELP)]
     pub(crate) verbose: bool,
     #[arg(
-        name=OUTPUT_FORMAT.0,
+        name="output-format",
         short,
         long,
         help=OUTPUT_FORMAT_HELP,
