@@ -8,8 +8,6 @@ use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::Args;
 use itertools::Itertools;
-use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -19,7 +17,7 @@ const ABOUT: &str = "Autogenerate rules from an existing JSON- or YAML- formatte
 const TEMPLATE_HELP: &str = "Provide path to a CloudFormation template file in JSON or YAML";
 const OUTPUT_HELP: &str = "Write to output file";
 
-#[derive(Debug, Clone, Eq, PartialEq, Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(arg_required_else_help = true)]
 #[clap(about=ABOUT)]
 pub struct Rulegen {

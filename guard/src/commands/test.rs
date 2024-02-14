@@ -41,7 +41,7 @@ const ALPHABETICAL_HELP: &str = "Sort alphabetically inside a directory";
 const LAST_MODIFIED_HELP: &str = "Sort by last modified times within a directory";
 const VERBOSE_HELP: &str = "Verbose logging";
 
-#[derive(Debug, Clone, Eq, PartialEq, Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
 #[clap(
     group=clap::ArgGroup::new(RULES_AND_TEST_FILE)

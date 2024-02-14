@@ -136,7 +136,7 @@ pub(crate) trait Reporter: Debug {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(group=clap::ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))]
 #[clap(about=ABOUT)]
 #[clap(arg_required_else_help = true)]

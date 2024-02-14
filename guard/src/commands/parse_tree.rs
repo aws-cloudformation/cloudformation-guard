@@ -3,7 +3,6 @@ use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::Args;
-use serde::{Deserialize, Serialize};
 use std::fs::File;
 
 const ABOUT: &str = "Prints out the parse tree for the rules defined in the file.";
@@ -12,7 +11,7 @@ const PRINT_JSON_HELP: &str = "Print output in JSON format. Use -p as the short 
 const PRINT_YAML_HELP: &str = "Print output in YAML format";
 const RULES_HELP: &str = "Provide a rules file";
 
-#[derive(Debug, Clone, Eq, PartialEq, Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
 #[clap(arg_required_else_help = true)]
 pub struct ParseTree {
