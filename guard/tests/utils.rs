@@ -1,7 +1,6 @@
 // Copyright Amazon Web Services, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use pretty_assertions::assert_eq;
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{BufReader, Read};
