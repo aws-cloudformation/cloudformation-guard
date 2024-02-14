@@ -61,20 +61,13 @@ pub(crate) struct Test {
     pub(crate) test_data: Option<String>,
     #[arg(name=DIRECTORY.0, short, long=DIRECTORY.0, help=DIRECTORY_HELP)]
     pub(crate) directory: Option<String>,
-    #[arg(name="alphabetical", short, long, help = ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    #[arg(short, long, help = ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
     #[arg(name="last-modified", short=LAST_MODIFIED.1, long=LAST_MODIFIED.0, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
     pub(crate) last_modified: bool,
     #[arg(short, long, help=VERBOSE_HELP)]
     pub(crate) verbose: bool,
-    #[arg(
-        name="output-format",
-        short,
-        long,
-        help=OUTPUT_FORMAT_HELP,
-        value_enum,
-        default_value_t=OutputFormatType::SingleLineSummary
-    )]
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
     pub(crate) output_format: OutputFormatType,
 }
 

@@ -145,21 +145,15 @@ pub(crate) struct Validate {
     pub(crate) rules: Vec<String>,
     #[arg(short, long, help=DATA_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
     pub(crate) data: Vec<String>,
-    #[arg(name=INPUT_PARAMETERS.0, short, long, help=INPUT_PARAMETERS_HELP, num_args=0..)]
+    #[arg(short, long, help=INPUT_PARAMETERS_HELP, num_args=0..)]
     pub(crate) input_params: Vec<String>,
     #[arg(name=TYPE.0, short, long, help=TEMPLATE_TYPE_HELP, value_parser=TEMPLATE_TYPE)]
     pub(crate) template_type: Option<String>,
-    #[arg(
-        short,
-        long,
-        help=OUTPUT_FORMAT_HELP,
-        value_enum,
-        default_value_t=OutputFormatType::SingleLineSummary
-    )]
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
     pub(crate) output_format: OutputFormatType,
     #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
     pub(crate) show_summary: Vec<ShowSummaryType>,
-    #[arg(name="alphabetical", short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
     #[arg(name="last-modified", short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
     pub(crate) last_modified: bool,
