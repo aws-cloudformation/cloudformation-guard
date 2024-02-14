@@ -10,14 +10,14 @@ mod test_command_tests {
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, OUTPUT_FORMAT, RULES_AND_TEST_FILE, RULES_FILE,
-        TEST, TEST_DATA, VERBOSE,
+        TEST_DATA, VERBOSE,
     };
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
 
-    use crate::utils::{sanitize_junit_writer, CommandTestRunner, StatusCode};
+    use crate::utils::{sanitize_junit_writer, Command, CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
@@ -87,7 +87,7 @@ mod test_command_tests {
 
     impl<'args> CommandTestRunner for TestCommandTestRunner<'args> {
         fn build_args(&self) -> Vec<String> {
-            let mut args = vec![String::from(TEST)];
+            let mut args = vec![Command::Test.to_string()];
 
             if self.test_data.is_some() {
                 args.push(format!("-{}", TEST_DATA.1));

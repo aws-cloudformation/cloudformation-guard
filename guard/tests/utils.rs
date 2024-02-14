@@ -7,17 +7,41 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
-use cfn_guard::utils;
+use cfn_guard::commands::{CfnGuard, Commands, Executable};
 use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::WriteBuffer::Vec as WBVec;
 use cfn_guard::utils::writer::Writer;
+use clap::Parser;
 use fancy_regex::Regex;
 
 #[non_exhaustive]
 pub struct StatusCode;
 
 const GUARD_TEST_APP_NAME: &str = "cfn-guard-test";
+
+#[allow(dead_code)]
+pub enum Command {
+    ParseTree,
+    Validate,
+    Test,
+    Rulegen,
+}
+
+impl std::fmt::Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Command::ParseTree => "parse-tree",
+                Command::Validate => "validate",
+                Command::Test => "test",
+                Command::Rulegen => "rulegen",
+            }
+        )
+    }
+}
 
 #[allow(dead_code)]
 impl StatusCode {
@@ -127,8 +151,6 @@ pub trait CommandTestRunner {
     fn build_args(&self) -> Vec<String>;
 
     fn run(&self, writer: &mut Writer, reader: &mut Reader) -> i32 {
-        let mut app = clap::Command::new(GUARD_TEST_APP_NAME);
-
         let args = self.build_args();
 
         let command_options =
@@ -138,41 +160,25 @@ pub trait CommandTestRunner {
                     res
                 });
 
-        let commands = utils::get_guard_commands();
+        let cfn_guard = CfnGuard::parse_from(command_options);
 
-        let mappings = commands.iter().map(|s| (s.name(), s)).fold(
-            HashMap::with_capacity(commands.len()),
-            |mut map, entry| {
-                map.insert(entry.0, entry.1.as_ref());
-                map
-            },
-        );
+        let exit_code = match cfn_guard.command {
+            Commands::Validate(cmd) => cmd.execute(writer, reader),
+            Commands::Test(cmd) => cmd.execute(writer, reader),
+            Commands::ParseTree(cmd) => cmd.execute(writer, reader),
+            Commands::Rulegen(cmd) => cmd.execute(writer, reader),
+            _ => unreachable!(),
+        };
 
-        for each in &commands {
-            app = app.subcommand(each.command());
-        }
+        match exit_code {
+            Err(e) => {
+                writer
+                    .write_err(format!("Error occurred {e}"))
+                    .expect("failed to write to stderr");
 
-        let app = app.get_matches_from(command_options);
-
-        match app.subcommand() {
-            Some((name, value)) => {
-                if let Some(command) = mappings.get(name) {
-                    match (*command).execute(value, writer, reader) {
-                        Err(e) => {
-                            writer
-                                .write_err(format!("Error occurred {e}"))
-                                .expect("failed to write to stderr");
-
-                            StatusCode::INTERNAL_FAILURE
-                        }
-                        Ok(code) => code,
-                    }
-                } else {
-                    StatusCode::PREPROCESSOR_ERROR
-                }
+                StatusCode::INTERNAL_FAILURE
             }
-
-            None => StatusCode::PREPROCESSOR_ERROR,
+            Ok(code) => code,
         }
     }
 }
