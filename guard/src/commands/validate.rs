@@ -20,9 +20,8 @@ use crate::commands::reporters::validate::{cfn, generic_summary};
 use crate::commands::tracker::StatusContext;
 use crate::commands::{
     Executable, ALPHABETICAL, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE,
-    FAILURE_STATUS_CODE, INPUT_PARAMETERS, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS,
-    RULES, RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE,
-    VERBOSE,
+    FAILURE_STATUS_CODE, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
