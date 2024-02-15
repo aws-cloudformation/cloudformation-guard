@@ -2,6 +2,7 @@ function main {
   # Check for deps and if the user is in an admin shell
   check_requirements
 
+  # Log to the user what version and archType we're trying to install
   $archType = Get-ArchType
   $majorVersion, $version = Get-Versions
   Write-Host "Installing cfn-guard version $version for $archType architecture"
@@ -34,8 +35,10 @@ function main {
       err "cfn-guard was not installed properly"
   }
 
-  # Print a success message to the user
-  print_success
+  # Add guard to PATH automatically
+  update_path $binDir
+
+  Write-Host "Done."
 }
 
 function Get-ArchType {
@@ -81,9 +84,13 @@ function check_cmd_present {
 
 function download_file_to_path {
     param($url, $outputFile)
-    Write-Host "Downloading $url to $outputFile"
-    $webClient = New-Object System.Net.WebClient
-    $webClient.DownloadFile($url, $outputFile)
+    try {
+      Write-Host "Downloading $url to $outputFile"
+      $webClient = New-Object System.Net.WebClient
+      $webClient.DownloadFile($url, $outputFile)
+    } catch {
+      err "Failed to download cfn-guard release. Please try again."
+    }
 }
 
 function check_admin {
@@ -103,14 +110,23 @@ function check_requirements {
     check_cmd_present "tar"
 }
 
-function print_success {
-  Write-Host "**************************************************************" -BackgroundColor Green -ForegroundColor White;
-  Write-Host "*                 Installation Successful!                   *" -BackgroundColor Green -ForegroundColor White;
-  Write-Host "**************************************************************" -BackgroundColor Green -ForegroundColor White;
-  Write-Host ""
-  Write-Host "IMPORTANT: Remember to SET PATH to include $env:USERPROFILE\.guard\bin"
-  Write-Host ""
-  Write-Host ""
+function update_path {
+  param($binDir)
+
+  $existingPathValue = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+  $guardPathValue = "$binDir\cfn-guard"
+
+  if ($existingPathValue -contains $guardPathValue) {
+    Write-Host "PATH includes cfn-guard already. Skipping."
+  } else {
+    try {
+      $updatedPathValue = "$existingPathValue;"
+      [System.Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+      Write-Host "Added cfn-guard to PATH."
+    } catch {
+      err "Could not automatically add cfn-guard to PATH. Please manually add  to PATH manually."
+    }
+  }
 }
 
 main
