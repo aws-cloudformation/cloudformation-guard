@@ -191,6 +191,8 @@ You would not need to modify `$PATH` this way.
 $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
 
+Remember to add `~/.guard/bin/` to your `$PATH`.
+
 ##### Windows
 
 1. Open PowerShell as Administrator
@@ -199,7 +201,11 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-clo
 $GuardWindowsInstallScript = Invoke-WebRequest https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.ps1; Invoke-Expression $($GuardWindowsInstallScript.Content)
 ```
 
-Remember to add `~/.guard/bin/` to your `$PATH`.
+If you get an error regarding authorization to execute the script run the follow before retrying step 2:
+
+```shell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
 
 #### Installation of Rust and Cargo
 
