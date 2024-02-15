@@ -65,6 +65,20 @@ jobs:
           cd cloudformation-guard
           sh install-guard.sh
 
+  installScriptWindows:
+    runs-on: windows-latest
+    name: Testing Windows Install Script (install-guard.ps1)
+    steps:
+      - uses: actions/checkout@v3
+        name: Checkout cfn-guard
+        with:
+          path: cloudformation-guard
+      - name: Test install script on windows-latest
+        run: |
+          set -e
+          cd cloudformation-guard
+          ./install-guard.ps1
+
   linting:
     name: Linting check (clippy)
     runs-on: ubuntu-latest
