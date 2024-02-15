@@ -44,7 +44,7 @@ function main {
 function Get-ArchType {
     $archtype = (Get-WmiObject -Class Win32_Processor).Architecture
     switch ($archtype) {
-        5 { "aarch64" }
+        12 { "aarch64" }
         9 { "x86_64" }
         0 { "i686" }
         default { err "Unsupported architecture type $archtype" }
