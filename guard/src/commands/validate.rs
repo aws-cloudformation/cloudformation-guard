@@ -139,7 +139,7 @@ pub(crate) trait Reporter: Debug {
 #[clap(group=clap::ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))]
 #[clap(about=ABOUT)]
 #[clap(arg_required_else_help = true)]
-pub(crate) struct Validate {
+pub struct Validate {
     #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
     pub(crate) rules: Vec<String>,
     #[arg(short, long, help=DATA_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
