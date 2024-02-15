@@ -79,7 +79,7 @@ where
     }
 }
 
-pub(crate) fn alpabetical(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
+pub(crate) fn alphabetical(first: &walkdir::DirEntry, second: &walkdir::DirEntry) -> Ordering {
     first.file_name().cmp(second.file_name())
 }
 

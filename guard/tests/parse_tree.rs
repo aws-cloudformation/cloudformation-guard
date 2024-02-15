@@ -4,13 +4,13 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod parse_tree_tests {
-    use cfn_guard::commands::{PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+    use cfn_guard::commands::{PRINT_JSON, PRINT_YAML, RULES};
     use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use pretty_assertions::assert_eq;
 
-    use crate::utils::{get_full_path_for_resource_file, CommandTestRunner, StatusCode};
+    use crate::utils::{get_full_path_for_resource_file, Command, CommandTestRunner, StatusCode};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
     #[allow(dead_code)]
@@ -49,7 +49,7 @@ mod parse_tree_tests {
     impl<'args> CommandTestRunner for ParseTreeTestRunner<'args> {
         fn build_args(&self) -> Vec<String> {
             let mut args = vec![
-                String::from(PARSE_TREE),
+                Command::ParseTree.to_string(),
                 format!("-{}", RULES.1),
                 get_path_for_resource_file(self.rules),
             ];

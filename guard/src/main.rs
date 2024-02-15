@@ -1,87 +1,41 @@
-use std::collections::HashMap;
 use std::fs::File;
-mod command;
 mod commands;
 mod rules;
 mod utils;
 
-use crate::commands::{OUTPUT, PARSE_TREE, RULEGEN};
+use crate::commands::{CfnGuard, Commands};
 use crate::utils::reader::{ReadBuffer, Reader};
 use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
-use commands::{APP_NAME, APP_VERSION};
+use clap::Parser;
 use rules::errors::Error;
 use std::process::exit;
 
 fn main() -> Result<(), Error> {
-    let mut app = clap::Command::new(APP_NAME)
-        .version(APP_VERSION)
-        .about(
-            r#"
-  Guard is a general-purpose tool that provides a simple declarative syntax to define
-  policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
-  Rules are composed of clauses expressed using Conjunctive Normal Form
-  (fancy way of saying it is a logical AND of OR clauses). Guard has deep
-  integration with CloudFormation templates for evaluation but is a general tool
-  that equally works for any JSON- and YAML- data."#,
-        )
-        .arg_required_else_help(true);
+    let args = CfnGuard::parse();
 
-    let mut commands = utils::get_guard_commands();
-    commands.push(Box::<commands::completions::Completions>::default());
-
-    let mappings = commands.iter().map(|s| (s.name(), s)).fold(
-        HashMap::with_capacity(commands.len()),
-        |mut map, entry| {
-            map.insert(entry.0, entry.1.as_ref());
-            map
+    let mut writer = match &args.command {
+        Commands::ParseTree(cmd) => match &cmd.output {
+            Some(path) => Writer::new(WBFile(File::create(path)?), Stderr(std::io::stderr())),
+            None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
         },
-    );
+        Commands::Rulegen(cmd) => match &cmd.output {
+            Some(path) => Writer::new(WBFile(File::create(path)?), Stderr(std::io::stderr())),
+            None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
+        },
+        _ => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
+    };
 
-    for each in &commands {
-        app = app.subcommand(each.command());
-    }
+    let mut reader = Reader::new(ReadBuffer::Stdin(std::io::stdin()));
 
-    let help = app.render_usage();
-    let app = app.get_matches();
+    match args.execute(&mut writer, &mut reader) {
+        Ok(code) => exit(code),
+        Err(e) => {
+            writer
+                .write_err(format!("Error occurred {e}"))
+                .expect("failed to write to stderr");
 
-    match app.subcommand() {
-        Some((name, value)) => {
-            if let Some(command) = mappings.get(name) {
-                let mut output_writer: Writer = if [PARSE_TREE, RULEGEN].contains(&command.name()) {
-                    let writer: Writer = match value.get_one::<String>(OUTPUT.0) {
-                        Some(file) => {
-                            Writer::new(WBFile(File::create(file)?), Stderr(std::io::stderr()))
-                        }
-                        None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
-                    };
-                    writer
-                } else {
-                    Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr()))
-                };
-
-                match (*command).execute(
-                    value,
-                    &mut output_writer,
-                    &mut Reader::new(ReadBuffer::Stdin(std::io::stdin())),
-                ) {
-                    Err(e) => {
-                        output_writer
-                            .write_err(format!("Error occurred {e}"))
-                            .expect("failed to write to stderr");
-
-                        exit(-1);
-                    }
-                    Ok(code) => exit(code),
-                }
-            } else {
-                println!("{}", help);
-            }
-        }
-        None => {
-            println!("{}", help);
+            exit(-1)
         }
     }
-
-    Ok(())
 }

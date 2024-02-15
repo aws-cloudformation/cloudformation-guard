@@ -7,23 +7,21 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
 
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
+use clap::{Args, ValueEnum};
 use colored::*;
 use enumflags2::BitFlags;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::command::Command;
-use crate::commands::files::{alpabetical, iterate_over, last_modified, walk_dir};
+use crate::commands::files::{alphabetical, iterate_over, last_modified, walk_dir};
 use crate::commands::reporters::validate::structured::StructuredEvaluator;
 use crate::commands::reporters::validate::summary_table::{self, SummaryType};
 use crate::commands::reporters::validate::tf::TfAware;
 use crate::commands::reporters::validate::{cfn, generic_summary};
 use crate::commands::tracker::StatusContext;
 use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE, FAILURE_STATUS_CODE,
-    INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VALIDATE,
-    VERBOSE,
+    Executable, ALPHABETICAL, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE,
+    FAILURE_STATUS_CODE, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VERBOSE,
 };
 use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
@@ -58,12 +56,36 @@ impl From<&str> for Type {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Copy, Eq, Clone, Debug, PartialEq)]
+#[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
 pub enum OutputFormatType {
+    #[default]
     SingleLineSummary,
     JSON,
     YAML,
     Junit,
+}
+
+#[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
+pub enum ShowSummaryType {
+    All,
+    Pass,
+    #[default]
+    Fail,
+    Skip,
+    None,
+}
+
+impl From<&str> for ShowSummaryType {
+    fn from(value: &str) -> Self {
+        match value {
+            "all" => ShowSummaryType::All,
+            "fail" => ShowSummaryType::Fail,
+            "pass" => ShowSummaryType::Pass,
+            "none" => ShowSummaryType::None,
+            "skip" => ShowSummaryType::Skip,
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl OutputFormatType {
@@ -113,190 +135,82 @@ pub(crate) trait Reporter: Debug {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Validate {}
-
-#[derive(Deserialize, Debug)]
-pub(crate) struct Payload {
-    #[serde(rename = "rules")]
-    list_of_rules: Vec<String>,
-    #[serde(rename = "data")]
-    list_of_data: Vec<String>,
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
+#[clap(group=clap::ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))]
+#[clap(about=ABOUT)]
+#[clap(arg_required_else_help = true)]
+pub struct Validate {
+    #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    pub(crate) rules: Vec<String>,
+    #[arg(short, long, help=DATA_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    pub(crate) data: Vec<String>,
+    #[arg(short, long, help=INPUT_PARAMETERS_HELP, num_args=0..)]
+    pub(crate) input_params: Vec<String>,
+    #[arg(name=TYPE.0, short, long, help=TEMPLATE_TYPE_HELP, value_parser=TEMPLATE_TYPE)]
+    pub(crate) template_type: Option<String>,
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    pub(crate) output_format: OutputFormatType,
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
+    pub(crate) show_summary: Vec<ShowSummaryType>,
+    #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    pub(crate) alphabetical: bool,
+    #[arg(name="last-modified", short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    pub(crate) last_modified: bool,
+    #[arg(short, long, help=VERBOSE_HELP)]
+    pub(crate) verbose: bool,
+    #[arg(name="print-json", short=PRINT_JSON.1, long, help=PRINT_JSON_HELP)]
+    pub(crate) print_json: bool,
+    #[arg(short=PAYLOAD.1, long, help=PAYLOAD_HELP)]
+    pub(crate) payload: bool,
+    #[arg(short=STRUCTURED.1, long, help=STRUCTURED_HELP, conflicts_with_all=vec![PRINT_JSON.0, VERBOSE.0])]
+    pub(crate) structured: bool,
 }
 
-#[allow(clippy::new_without_default)]
-impl Validate {
-    pub fn new() -> Self {
-        Validate {}
-    }
-}
+impl Executable for Validate {
+    fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        let summary_type = self
+            .show_summary
+            .iter()
+            .fold(BitFlags::empty(), |mut st, elem| {
+                match elem {
+                    ShowSummaryType::Pass => st.insert(SummaryType::PASS),
+                    ShowSummaryType::Fail => st.insert(SummaryType::FAIL),
+                    ShowSummaryType::Skip => st.insert(SummaryType::SKIP),
+                    ShowSummaryType::None => return BitFlags::empty(),
+                    ShowSummaryType::All => {
+                        st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
+                    }
+                };
+                st
+            });
 
-pub const OUTPUT_FORMAT_VALUE_TYPE: [&str; 4] = ["json", "yaml", "single-line-summary", "junit"];
-const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
-const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
-
-impl Command for Validate {
-    fn name(&self) -> &'static str {
-        VALIDATE
-    }
-
-    fn command(&self) -> clap::Command {
-        clap::Command::new(VALIDATE)
-            .about(r#"Evaluates rules against the data files to determine success or failure.
-You can point rules flag to a rules directory and point data flag to a data directory.
-When pointed to a directory it will read all rules in the directory file and evaluate
-them against the data files found in the directory. The command can also point to a
-single file and it would work as well.
-Note - When pointing the command to a directory, the directory may not contain a mix of
-rules and data files. The directory being pointed to must contain only data files,
-or rules files.
-"#)
-            .arg(Arg::new(RULES.0)
-                .long(RULES.0)
-                .short(RULES.1)
-                .num_args(0..)
-                .action(ArgAction::Append)
-                .value_hint(ValueHint::AnyPath)
-                .num_args(0..)
-                .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
-                          \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-                .conflicts_with("payload"))
-            .arg(Arg::new(DATA.0)
-                .long(DATA.0)
-                .short(DATA.1)
-                .num_args(0..)
-                .action(ArgAction::Append)
-                .value_hint(ValueHint::FilePath)
-                .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
-                          \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .conflicts_with("payload"))
-            .arg(Arg::new(INPUT_PARAMETERS.0)
-                .long(INPUT_PARAMETERS.0)
-                .short(INPUT_PARAMETERS.1)
-                .num_args(0..)
-                .value_hint(ValueHint::AnyPath)
-                .action(ArgAction::Append)
-                .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
-                           All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
-                           expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
-                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template"))
-            .arg(Arg::new(TYPE.0)
-                .long(TYPE.0)
-                .short(TYPE.1)
-                .required(false)
-                .value_parser(TEMPLATE_TYPE)
-                .value_hint(ValueHint::Other)
-                .help("Specify the type of data file used for improved messaging - ex: CFNTemplate"))
-            .arg(Arg::new(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1)
-                .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
-                .default_value("single-line-summary")
-                .action(ArgAction::Set)
-                .value_hint(ValueHint::Other)
-                .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::new(SHOW_SUMMARY.0)
-                .long(SHOW_SUMMARY.0)
-                .short(SHOW_SUMMARY.1)
-                .use_value_delimiter(true)
-                .action(ArgAction::Append)
-                .value_parser(SHOW_SUMMARY_VALUE_TYPE)
-                .default_value("fail")
-                .value_hint(ValueHint::Other)
-                .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::new(ALPHABETICAL.0)
-                .long(ALPHABETICAL.0)
-                .short(ALPHABETICAL.1)
-                .action(ArgAction::SetTrue)
-                .help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::new(LAST_MODIFIED.0)
-                .long(LAST_MODIFIED.0)
-                .short(LAST_MODIFIED.1)
-                .action(ArgAction::SetTrue)
-                .conflicts_with(ALPHABETICAL.0)
-                .help("Validate files in a directory ordered by last modified times"))
-            .arg(Arg::new(VERBOSE.0)
-                .long(VERBOSE.0)
-                .short(VERBOSE.1)
-                .action(ArgAction::SetTrue)
-                .help("Verbose logging"))
-            .arg(Arg::new(PRINT_JSON.0)
-                .long(PRINT_JSON.0)
-                .short(PRINT_JSON.1)
-                .action(ArgAction::SetTrue)
-                .help("Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated"))
-            .arg(Arg::new(PAYLOAD.0)
-                .long(PAYLOAD.0)
-                .short(PAYLOAD.1)
-                .action(ArgAction::SetTrue)
-                .required(false)
-                .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
-                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
-            .arg(Arg::new(STRUCTURED.0)
-                .long(STRUCTURED.0)
-                .short(STRUCTURED.1)
-                .help("Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary")
-                .conflicts_with_all(vec![PRINT_JSON.0, VERBOSE.0])
-                .action(ArgAction::SetTrue))
-            .group(ArgGroup::new(REQUIRED_FLAGS)
-                .args([RULES.0, PAYLOAD.0])
-                .required(true))
-            .arg_required_else_help(true)
-    }
-
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let cmp = if app.get_flag(LAST_MODIFIED.0) {
+        let cmp = if self.last_modified {
             last_modified
         } else {
-            alpabetical
+            alphabetical
         };
 
-        let summary_type: BitFlags<SummaryType> =
-            app.get_many::<String>(SHOW_SUMMARY.0)
-                .map_or(SummaryType::FAIL.into(), |v| {
-                    v.fold(BitFlags::empty(), |mut st, elem| {
-                        match elem.as_str() {
-                            "pass" => st.insert(SummaryType::PASS),
-                            "fail" => st.insert(SummaryType::FAIL),
-                            "skip" => st.insert(SummaryType::SKIP),
-                            "none" => return BitFlags::empty(),
-                            "all" => {
-                                st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
-                            }
-                            _ => unreachable!(),
-                        };
-                        st
-                    })
-                });
-
-        let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
-            Some(o) => OutputFormatType::from(o.as_str()),
-            None => OutputFormatType::SingleLineSummary,
-        };
-
-        let structured = app.get_flag(STRUCTURED.0);
-        if structured && !summary_type.is_empty() {
+        if self.structured && !summary_type.is_empty() {
             return Err(Error::IllegalArguments(String::from(
                 "Cannot provide a summary-type other than `none` when the `structured` flag is present",
             )));
-        } else if structured && output_type == OutputFormatType::SingleLineSummary {
+        } else if self.structured && self.output_format == OutputFormatType::SingleLineSummary {
             return Err(Error::IllegalArguments(String::from(
                 "single-line-summary is not able to be used when the `structured` flag is present",
             )));
         }
 
-        if matches!(output_type, OutputFormatType::Junit) && !structured {
+        if matches!(self.output_format, OutputFormatType::Junit) && !self.structured {
             return Err(Error::IllegalArguments(String::from(
                 "the structured flag must be set when output is set to junit",
             )));
         }
 
-        let data_files = match app.get_many::<String>(DATA.0) {
-            Some(list_of_file_or_dir) => {
+        let data_files = match self.data.is_empty() {
+            false => {
                 let mut streams = Vec::new();
 
-                for file_or_dir in list_of_file_or_dir {
+                for file_or_dir in &self.data {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
                     for file in walk_dir(base, cmp) {
@@ -323,8 +237,8 @@ or rules files.
                 }
                 streams
             }
-            None => {
-                if app.contains_id(RULES.0) {
+            true => {
+                if !self.rules.is_empty() {
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
 
@@ -337,10 +251,11 @@ or rules files.
             }
         };
 
-        let extra_data = match app.get_many::<String>(INPUT_PARAMETERS.0) {
-            Some(list_of_file_or_dir) => {
+        let extra_data = match self.input_params.is_empty() {
+            false => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
-                for file_or_dir in list_of_file_or_dir {
+
+                for file_or_dir in &self.input_params {
                     validate_path(file_or_dir)?;
                     let base = PathBuf::from_str(file_or_dir)?;
 
@@ -368,26 +283,29 @@ or rules files.
                 }
                 primary_path_value
             }
-            None => None,
+            true => None,
         };
-
-        let verbose = app.get_flag(VERBOSE.0);
-
-        let data_type = match app.get_one::<String>(TYPE.0) {
-            Some(t) => Type::from(t.as_str()),
-            None => Type::Generic,
-        };
-
-        let print_json = app.get_flag(PRINT_JSON.0);
 
         let mut exit_code = SUCCESS_STATUS_CODE;
 
-        if app.contains_id(RULES.0) {
-            let list_of_file_or_dir = app.get_many::<String>(RULES.0).unwrap();
+        let data_type = self
+            .template_type
+            .as_ref()
+            .map_or(Type::Generic, |t| Type::from(t.as_str()));
+
+        let cmp = if self.last_modified {
+            last_modified
+        } else {
+            alphabetical
+        };
+
+        if !self.rules.is_empty() {
             let mut rules = Vec::new();
-            for file_or_dir in list_of_file_or_dir {
+
+            for file_or_dir in &self.rules {
                 validate_path(file_or_dir)?;
                 let base = PathBuf::from_str(file_or_dir)?;
+
                 if base.is_file() {
                     rules.push(base.clone())
                 } else {
@@ -407,14 +325,14 @@ or rules files.
                 }
             }
 
-            exit_code = match structured {
+            exit_code = match self.structured {
                 true => {
                     let rule_info = get_rule_info(&rules, writer)?;
                     let mut evaluator = StructuredEvaluator {
                         rule_info: &rule_info,
                         input_params: extra_data,
                         data: data_files,
-                        output: output_type,
+                        output: self.output_format,
                         writer,
                         exit_code,
                     };
@@ -435,12 +353,12 @@ or rules files.
                             Ok(rule) => {
                                 let status = evaluate_rule(
                                     data_type,
-                                    output_type,
+                                    self.output_format,
                                     &extra_data,
                                     &data_files,
                                     rule,
-                                    verbose,
-                                    print_json,
+                                    self.verbose,
+                                    self.print_json,
                                     summary_type,
                                     writer,
                                 )?;
@@ -454,7 +372,7 @@ or rules files.
                     exit_code
                 }
             };
-        } else if app.contains_id(PAYLOAD.0) {
+        } else if self.payload {
             let mut context = String::new();
             reader.read_to_string(&mut context)?;
             let payload = deserialize_payload(&context)?;
@@ -482,13 +400,13 @@ or rules files.
                 })
                 .collect::<Vec<_>>();
 
-            exit_code = match structured {
+            exit_code = match self.structured {
                 true => {
                     let mut evaluator = StructuredEvaluator {
                         rule_info: &rule_info,
                         input_params: extra_data,
                         data: data_collection,
-                        output: output_type,
+                        output: self.output_format,
                         writer,
                         exit_code,
                     };
@@ -498,12 +416,12 @@ or rules files.
                     for rule in rule_info {
                         let status = evaluate_rule(
                             data_type,
-                            output_type,
+                            self.output_format,
                             &None,
                             &data_collection,
                             rule,
-                            verbose,
-                            print_json,
+                            self.verbose,
+                            self.print_json,
                             summary_type,
                             writer,
                         )?;
@@ -522,6 +440,50 @@ or rules files.
         Ok(exit_code)
     }
 }
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct Payload {
+    #[serde(rename = "rules")]
+    list_of_rules: Vec<String>,
+    #[serde(rename = "data")]
+    list_of_data: Vec<String>,
+}
+
+const ABOUT: &str = r#"Evaluates rules against the data files to determine success or failure.
+You can point rules flag to a rules directory and point data flag to a data directory.
+When pointed to a directory it will read all rules in the directory file and evaluate
+them against the data files found in the directory. The command can also point to a
+single file and it would work as well.
+Note - When pointing the command to a directory, the directory may not contain a mix of
+rules and data files. The directory being pointed to must contain only data files,
+or rules files.
+"#;
+
+// const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
+const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
+const RULES_HELP: &str = "Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
+                          \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset";
+const DATA_HELP: &str = "Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
+                          \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template";
+const INPUT_PARAMETERS_HELP: &str = "Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                           All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
+                           expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
+                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template";
+const TEMPLATE_TYPE_HELP: &str =
+    "Specify the type of data file used for improved messaging - ex: CFNTemplate";
+pub(crate) const OUTPUT_FORMAT_HELP: &str =
+    "Specify the format in which the output should be displayed";
+const SHOW_SUMMARY_HELP: &str = "Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)";
+const ALPHABETICAL_HELP: &str = "Validate files in a directory ordered alphabetically";
+const LAST_MODIFIED_HELP: &str = "Validate files in a directory ordered by last modified times";
+const VERBOSE_HELP: &str = "Verbose logging";
+const PRINT_JSON_HELP: &str = "Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated";
+const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
+                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
+const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_rule(

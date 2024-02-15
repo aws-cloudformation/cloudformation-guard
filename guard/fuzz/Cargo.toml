@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+clap = { version = "4.1.4", features = ["derive"] }
 
 [dependencies.cfn-guard]
 path = ".."

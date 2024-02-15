@@ -1,65 +1,33 @@
-use crate::command::Command;
-use crate::commands::{OUTPUT, PARSE_TREE, PRINT_JSON, PRINT_YAML, RULES};
+use crate::commands::{Executable, PRINT_JSON, PRINT_YAML, SUCCESS_STATUS_CODE};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
-use clap::{Arg, ArgAction, ArgMatches, ValueHint};
+use clap::Args;
 use std::fs::File;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct ParseTree {}
+const ABOUT: &str = "Prints out the parse tree for the rules defined in the file.";
+const OUTPUT_HELP: &str = "Write to output file";
+const PRINT_JSON_HELP: &str = "Print output in JSON format. Use -p as the short flag";
+const PRINT_YAML_HELP: &str = "Print output in YAML format";
+const RULES_HELP: &str = "Provide a rules file";
 
-#[allow(clippy::new_without_default)]
-impl ParseTree {
-    pub fn new() -> Self {
-        ParseTree {}
-    }
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
+#[clap(about=ABOUT)]
+#[clap(arg_required_else_help = true)]
+pub struct ParseTree {
+    #[arg(short, long, help = RULES_HELP)]
+    pub(crate) rules: Option<String>,
+    #[arg(short, long, help = OUTPUT_HELP)]
+    pub(crate) output: Option<String>,
+    #[arg(short=PRINT_JSON.1, long=PRINT_JSON.0, help=PRINT_JSON_HELP)]
+    pub(crate) print_json: bool,
+    #[arg(short=PRINT_YAML.1, long=PRINT_YAML.0, help=PRINT_YAML_HELP)]
+    pub(crate) print_yaml: bool,
 }
 
-impl Command for ParseTree {
-    fn name(&self) -> &'static str {
-        PARSE_TREE
-    }
-
-    fn command(&self) -> clap::Command {
-        clap::Command::new(PARSE_TREE)
-            .about("Prints out the parse tree for the rules defined in the file.")
-            .arg(
-                Arg::new(RULES.0)
-                    .long(RULES.0)
-                    .short(RULES.1)
-                    .help("Provide a rules file")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(
-                Arg::new(OUTPUT.0)
-                    .long(OUTPUT.0)
-                    .short(OUTPUT.1)
-                    .help("Write to output file")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(
-                Arg::new(PRINT_JSON.0)
-                    .long(PRINT_JSON.0)
-                    .short(PRINT_JSON.1)
-                    .action(ArgAction::SetTrue)
-                    .help("Print output in JSON format. Use -p as the short flag"),
-            )
-            .arg(
-                Arg::new(PRINT_YAML.0)
-                    .long(PRINT_YAML.0)
-                    .short(PRINT_YAML.1)
-                    .action(ArgAction::SetTrue)
-                    .required(false)
-                    .help("Print output in YAML format"),
-            )
-            .arg_required_else_help(true)
-    }
-
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
-        let mut file: Box<dyn std::io::Read> = match app.get_one::<String>(RULES.0) {
+impl Executable for ParseTree {
+    fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        let mut file: Box<dyn std::io::Read> = match &self.rules {
             Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
             None => Box::new(reader),
         };
@@ -70,11 +38,11 @@ impl Command for ParseTree {
 
         let rules = crate::rules::parser::rules_file(span)?;
 
-        match app.get_flag(PRINT_JSON.0) {
+        match self.print_json {
             true => serde_json::to_writer_pretty(writer, &rules)?,
             false => serde_yaml::to_writer(writer, &rules)?,
         }
 
-        Ok(0_i32)
+        Ok(SUCCESS_STATUS_CODE)
     }
 }

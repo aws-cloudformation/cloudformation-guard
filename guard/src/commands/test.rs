@@ -3,8 +3,10 @@ use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
 use crate::commands::reporters::JunitReport;
-use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, ValueHint};
+use crate::commands::{
+    Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
+};
+use clap::Args;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -15,22 +17,60 @@ use walkdir::DirEntry;
 
 use validate::validate_path;
 
-use crate::command::Command;
 use crate::commands::files::{
-    alpabetical, get_files_with_filter, last_modified, read_file_content, regular_ordering,
+    alphabetical, get_files_with_filter, last_modified, read_file_content, regular_ordering,
 };
-use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_VALUE_TYPE};
+use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_HELP};
 use crate::commands::{
-    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, OUTPUT_FORMAT,
-    RULES_AND_TEST_FILE, RULES_FILE, TEST, TEST_DATA, VERBOSE,
+    validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
+    RULES_FILE, TEST_DATA,
 };
 use crate::rules::errors::Error;
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Test {}
+const ABOUT: &str = r#"Built in unit testing capability to validate a Guard rules file against
+unit tests specified in YAML format to determine each individual rule's success
+or failure testing.
+"#;
+const RULES_HELP: &str = "Provide a rules file";
+const TEST_DATA_HELP: &str = "Provide a file or dir for data files in JSON or YAML";
+const DIRECTORY_HELP: &str = "Provide the root directory for rules";
+const ALPHABETICAL_HELP: &str = "Sort alphabetically inside a directory";
+const LAST_MODIFIED_HELP: &str = "Sort by last modified times within a directory";
+const VERBOSE_HELP: &str = "Verbose logging";
+
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
+#[clap(about=ABOUT)]
+#[clap(
+    group=clap::ArgGroup::new(RULES_AND_TEST_FILE)
+    .requires_all([RULES_FILE.0, TEST_DATA.0])
+    .conflicts_with(DIRECTORY_ONLY))
+]
+#[clap(
+    group=clap::ArgGroup::new(DIRECTORY_ONLY).args([DIRECTORY.0])
+    .requires_all([DIRECTORY.0])
+    .conflicts_with(RULES_AND_TEST_FILE))
+]
+#[clap(arg_required_else_help = true)]
+pub struct Test {
+    #[arg(name="rules-file", short, long, help=RULES_HELP)]
+    pub(crate) rules: Option<String>,
+    #[arg(name="test-data", short, long, help=TEST_DATA_HELP)]
+    pub(crate) test_data: Option<String>,
+    #[arg(name=DIRECTORY.0, short, long=DIRECTORY.0, help=DIRECTORY_HELP)]
+    pub(crate) directory: Option<String>,
+    #[arg(short, long, help = ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    pub(crate) alphabetical: bool,
+    #[arg(name="last-modified", short=LAST_MODIFIED.1, long=LAST_MODIFIED.0, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    pub(crate) last_modified: bool,
+    #[arg(short, long, help=VERBOSE_HELP)]
+    pub(crate) verbose: bool,
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    pub(crate) output_format: OutputFormatType,
+}
+
 #[derive(Debug)]
 pub(crate) struct GuardFile {
     prefix: String,
@@ -46,127 +86,37 @@ impl GuardFile {
             .collect::<Vec<PathBuf>>()
     }
 }
-#[allow(clippy::new_without_default)]
-impl Test {
-    pub fn new() -> Self {
-        Test {}
-    }
-}
 
-impl Command for Test {
-    fn name(&self) -> &'static str {
-        TEST
-    }
-
-    fn command(&self) -> clap::Command {
-        clap::Command::new(TEST)
-            .about(
-                r#"Built in unit testing capability to validate a Guard rules file against
-unit tests specified in YAML format to determine each individual rule's success
-or failure testing.
-"#,
-            )
-            .arg(
-                Arg::new(RULES_FILE.0)
-                    .long(RULES_FILE.0)
-                    .short(RULES_FILE.1)
-                    .action(ArgAction::Set)
-                    .help("Provide a rules file"),
-            )
-            .arg(
-                Arg::new(TEST_DATA.0)
-                    .long(TEST_DATA.0)
-                    .short(TEST_DATA.1)
-                    .action(ArgAction::Set)
-                    .help("Provide a file or dir for data files in JSON or YAML"),
-            )
-            .arg(
-                Arg::new(DIRECTORY.0)
-                    .long(DIRECTORY.0)
-                    .short(DIRECTORY.1)
-                    .action(ArgAction::Set)
-                    .help("Provide the root directory for rules"),
-            )
-            .group(
-                ArgGroup::new(RULES_AND_TEST_FILE)
-                    .requires_all([RULES_FILE.0, TEST_DATA.0])
-                    .conflicts_with(DIRECTORY_ONLY),
-            )
-            .group(
-                ArgGroup::new(DIRECTORY_ONLY)
-                    .args(["dir"])
-                    .requires_all([DIRECTORY.0])
-                    .conflicts_with(RULES_AND_TEST_FILE),
-            )
-            .arg(
-                Arg::new(ALPHABETICAL.0)
-                    .long(ALPHABETICAL.0)
-                    .short(ALPHABETICAL.1)
-                    .action(ArgAction::SetTrue)
-                    .help("Sort alphabetically inside a directory"),
-            )
-            .arg(
-                Arg::new(LAST_MODIFIED.0)
-                    .long(LAST_MODIFIED.0)
-                    .short(LAST_MODIFIED.1)
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with(ALPHABETICAL.0)
-                    .help("Sort by last modified times within a directory"),
-            )
-            .arg(
-                Arg::new(VERBOSE.0)
-                    .long(VERBOSE.0)
-                    .short(VERBOSE.1)
-                    .action(ArgAction::SetTrue)
-                    .help("Verbose logging"),
-            )
-            .arg(
-                Arg::new(OUTPUT_FORMAT.0)
-                    .long(OUTPUT_FORMAT.0)
-                    .short(OUTPUT_FORMAT.1)
-                    .value_parser(OUTPUT_FORMAT_VALUE_TYPE)
-                    .default_value("single-line-summary")
-                    .action(ArgAction::Set)
-                    .value_hint(ValueHint::Other)
-                    .help("Specify the format in which the output should be displayed"),
-            )
-            .arg_required_else_help(true)
-    }
-
-    fn execute(&self, app: &ArgMatches, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
+impl Executable for Test {
+    fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let mut exit_code = SUCCESS_STATUS_CODE;
-        let cmp = if app.get_flag(ALPHABETICAL.0) {
-            alpabetical
-        } else if app.get_flag(LAST_MODIFIED.0) {
+        let cmp = if self.alphabetical {
+            alphabetical
+        } else if self.last_modified {
             last_modified
         } else {
             regular_ordering
         };
 
-        let output_type = match app.get_one::<String>(OUTPUT_FORMAT.0) {
-            Some(o) => OutputFormatType::from(o.as_str()),
-            None => OutputFormatType::SingleLineSummary,
-        };
-
-        let verbose = app.get_flag(VERBOSE.0);
-
-        if output_type.is_structured() && verbose {
+        if self.output_format.is_structured() && self.verbose {
             return Err(Error::IllegalArguments(String::from("Cannot provide an output_type of JSON, YAML, or JUnit while the verbose flag is set")));
         }
 
-        if app.contains_id(DIRECTORY_ONLY) {
-            let dir = app.get_one::<String>(DIRECTORY.0).unwrap();
+        if let Some(dir) = &self.directory {
             validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let ordered_directory = OrderedTestDirectory::from(walk);
 
-            match output_type {
+            match self.output_format {
                 OutputFormatType::SingleLineSummary => {
-                    handle_plaintext_directory(ordered_directory, writer, verbose)
+                    handle_plaintext_directory(ordered_directory, writer, self.verbose)
                 }
                 OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Junit => {
-                    let test_exit_code =
-                        handle_structured_directory_report(ordered_directory, writer, output_type)?;
+                    let test_exit_code = handle_structured_directory_report(
+                        ordered_directory,
+                        writer,
+                        self.output_format,
+                    )?;
                     exit_code = if exit_code == SUCCESS_STATUS_CODE {
                         test_exit_code
                     } else {
@@ -177,8 +127,8 @@ or failure testing.
                 }
             }
         } else {
-            let file = app.get_one::<String>(RULES_FILE.0).unwrap();
-            let data = app.get_one::<String>(TEST_DATA.0).unwrap();
+            let file = self.rules.as_ref().unwrap();
+            let data = self.test_data.as_ref().unwrap();
 
             validate_path(file)?;
             validate_path(data)?;
@@ -207,13 +157,13 @@ or failure testing.
                 )));
             }
 
-            match output_type {
+            match self.output_format {
                 OutputFormatType::SingleLineSummary => handle_plaintext_single_file(
                     rule_file,
                     path.as_path(),
                     writer,
                     &data_test_files,
-                    verbose,
+                    self.verbose,
                 ),
 
                 OutputFormatType::YAML | OutputFormatType::JSON | OutputFormatType::Junit => {
@@ -222,7 +172,7 @@ or failure testing.
                         path.as_path(),
                         writer,
                         &data_test_files,
-                        output_type,
+                        self.output_format,
                     )
                 }
             }
