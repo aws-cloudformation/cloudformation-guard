@@ -1,4 +1,4 @@
-name: Rust
+name: Release
 on:
   release:
     types: [published]
@@ -9,7 +9,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -63,6 +63,31 @@ jobs:
             cp ./target/aarch64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-aarch64-${{ matrix.os }}/
             cp README.md ./cfn-guard-v3-aarch64-${{ matrix.os }}/
             tar czvf ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-aarch64-${{ matrix.os }}
+          windows: |
+            rustup target add x86_64-pc-windows-msvc
+            cargo build --release --target x86_64-pc-windows-msvc
+            mkdir cfn-guard-v3-x86_64-${{ matrix.os }}
+            cp ./target/x86_64-pc-windows-msvc/release/cfn-guard.exe ./cfn-guard-v3-x86_64-${{ matrix.os }}/
+            cp README.md ./cfn-guard-v3-x86_64-${{ matrix.os }}/
+            tar czvf ./cfn-guard-v3-x86_64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-x86_64-${{ matrix.os }}
+            mkdir cfn-guard-v3-${{ matrix.os }}
+            cp ./target/x86_64-pc-windows-msvc/release/cfn-guard.exe ./cfn-guard-v3-${{ matrix.os }}/
+            cp README.md ./cfn-guard-v3-${{ matrix.os }}/
+            tar czvf ./cfn-guard-v3-${{ matrix.os }}.tar.gz ./cfn-guard-v3-${{ matrix.os }}
+
+            rustup target add i686-pc-windows-msvc
+            cargo build --release --target i686-pc-windows-msvc
+            mkdir cfn-guard-v3-i686-${{ matrix.os }}
+            cp ./target/i686-pc-windows-msvc/release/cfn-guard.exe ./cfn-guard-v3-i686-${{ matrix.os }}/
+            cp README.md ./cfn-guard-v3-i686-${{ matrix.os }}/
+            tar czvf ./cfn-guard-v3-i686-${{ matrix.os }}.tar.gz ./cfn-guard-v3-i686-${{ matrix.os }}
+
+            rustup target add aarch64-pc-windows-msvc
+            cargo build --release --target aarch64-pc-windows-msvc
+            mkdir cfn-guard-v3-aarch64-${{ matrix.os }}
+            cp ./target/i686-pc-windows-msvc/release/cfn-guard.exe ./cfn-guard-v3-aarch64-${{ matrix.os }}/
+            cp README.md ./cfn-guard-v3-aarch64-${{ matrix.os }}/
+            tar czvf ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-aarch64-${{ matrix.os }}
       - name: Upload x86 Release Asset
         id: upload-x86_64-release-asset
         uses: actions/upload-release-asset@v1
@@ -82,6 +107,17 @@ jobs:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz
           asset_name: cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz
+          asset_content_type: application/octet-stream
+      - name: Upload i686 Release Asset
+        id: upload-i686-release-asset
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./cfn-guard-v3-i686-${{ matrix.os }}.tar.gz
+          asset_name: cfn-guard-v3-i686-${{ matrix.os }}.tar.gz
           asset_content_type: application/octet-stream
       - name: Upload Release Asset (Legacy)
         id: upload-release-asset

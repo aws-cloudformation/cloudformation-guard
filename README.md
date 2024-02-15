@@ -16,8 +16,8 @@ Guard can be used for the following domains:
 
 > **NOTE**: If you are using Guard 1.0 rules, we highly recommend adopting the latest version of Guard to simplify your current policy-as-code experience. Guard 2.0 and higher versions are backward incompatible with your Guard 1.0 rules and can result in breaking changes. The Guard 2.0 release was a complete re-write of the earlier 1.0 version to make the tool general-purpose.
 >
-> To migrate from Guard 1.0 rules to use the updated grammar, follow the steps given below. 
-> 1. Pull the release artifacts for the latest `2.x.x` release from the corresponding release page listed [here](https://github.com/aws-cloudformation/cloudformation-guard/releases). 
+> To migrate from Guard 1.0 rules to use the updated grammar, follow the steps given below.
+> 1. Pull the release artifacts for the latest `2.x.x` release from the corresponding release page listed [here](https://github.com/aws-cloudformation/cloudformation-guard/releases).
 > 2. Use `migrate` command to transition your existing 1.0 rules to use the updated grammar
 > 3. Read about all new Guard features from the latest release, and modify your rules for enhanced experience
 
@@ -193,6 +193,20 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-clo
 
 Remember to add `~/.guard/bin/` to your `$PATH`.
 
+##### Windows
+
+1. Open PowerShell as Administrator
+2. Cut-n-paste the command below
+```shell
+$GuardWindowsInstallScript = Invoke-WebRequest https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.ps1; Invoke-Expression $($GuardWindowsInstallScript.Content)
+```
+
+If you get an error regarding authorization to execute the script run the follow before retrying step 2:
+
+```shell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
 #### Installation of Rust and Cargo
 
 ##### Ubuntu/MacOS: Install Rust and Cargo
@@ -245,7 +259,7 @@ Commands:
   test         Built in unit testing capability to validate a Guard rules file against
                unit tests specified in YAML format to determine each individual rule's success
                or failure testing.
-                   
+
   validate     Evaluates rules against the data files to determine success or failure.
                You can point rules flag to a rules directory and point data flag to a data directory.
                When pointed to a directory it will read all rules in the directory file and evaluate
@@ -254,7 +268,7 @@ Commands:
                Note - When pointing the command to a directory, the directory may not contain a mix of
                rules and data files. The directory being pointed to must contain only data files,
                or rules files.
-                   
+
   rulegen      Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
   completions  Generate auto-completions for all the sub-commands in shell.
   help         Print this message or the help of the given subcommand(s)
@@ -516,7 +530,7 @@ As a starting point for writing Guard rules for yourself or your organisation we
 
 ## <a name="functions"></a> Built-in functions & stateful rules
 
-Guard 3.0 introduces support for functions, allowing for stateful rules that can run on a value that's evaluated based 
+Guard 3.0 introduces support for functions, allowing for stateful rules that can run on a value that's evaluated based
 on some properties extracted out of a data template.
 
 ### Sample template
@@ -559,7 +573,7 @@ to the industry best practices around usages across AWS resources, we have recen
 [AWS Guard Rules Registry](https://github.com/aws-cloudformation/aws-guard-rules-registry).
 
 
-## <a name="docker"></a> Use Guard as a Docker Image  
+## <a name="docker"></a> Use Guard as a Docker Image
 
 Guard is also published as an ECR image in [ECR public gallery](https://gallery.ecr.aws/aws-cloudformation/cloudformation-guard) and can be used as an image in a docker container.
 
