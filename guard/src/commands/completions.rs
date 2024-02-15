@@ -20,6 +20,8 @@ impl From<String> for Shell {
 }
 
 #[derive(Debug, Args)]
+#[clap(arg_required_else_help = true)]
+#[clap(about = "Generate auto-completions for all the sub-commands in shell.")]
 pub struct Completions {
     #[arg(short, long, value_enum)]
     shell: Shell,
