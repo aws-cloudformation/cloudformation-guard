@@ -1,5 +1,4 @@
 {
-  // Rust extensions for easier dev in vscode
   "recommendations": [
     "rust-lang.rust-analyzer",
     "serayuzgur.crates"
