@@ -1594,7 +1594,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     //
-    // Evaluate the SOME clause again, it must pass with ths value as well
+    // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);

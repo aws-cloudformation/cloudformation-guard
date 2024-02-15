@@ -2728,7 +2728,7 @@ fn test_rule_block() {
     let examples = [r#"rule example_rule when stage == 'prod' {
     let ec2_instance_types := [/^t*/, /^m*/]   # scoped variable assignments
 
-    # clause can referene another rule for composition
+    # clause can reference another rule for composition
     dependent_rule                            # named rule reference
 
     # IN (disjunction, one of them)

@@ -1109,7 +1109,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
         recorder: None,
     };
     //
-    // Evaluate the SOME clause again, it must pass with ths value as well
+    // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
