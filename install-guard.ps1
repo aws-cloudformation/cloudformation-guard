@@ -129,6 +129,4 @@ function update_path {
   }
 }
 
-
-
 main
