@@ -75,7 +75,6 @@ jobs:
           path: cloudformation-guard
       - name: Test install script on windows-latest
         run: |
-          set -e
           cd cloudformation-guard
           ./install-guard.ps1
 
