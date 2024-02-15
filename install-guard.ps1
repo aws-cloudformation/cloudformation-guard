@@ -113,20 +113,22 @@ function check_requirements {
 function update_path {
   param($binDir)
 
-  $existingPathValue = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+  $existingPathValue = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
   $guardPathValue = "$binDir\cfn-guard"
 
-  if ($existingPathValue -contains $guardPathValue) {
-    Write-Host "PATH includes cfn-guard already. Skipping."
+  if ($existingPathValue -like "*$guardPathValue*") {
+      Write-Host "PATH already includes cfn-guard. Skipping."
   } else {
-    try {
-      $updatedPathValue = "$existingPathValue;"
-      [System.Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
-      Write-Host "Added cfn-guard to PATH."
-    } catch {
-      err "Could not automatically add cfn-guard to PATH. Please manually add  to PATH manually."
-    }
+      try {
+          $updatedPathValue = "$existingPathValue;$guardPathValue"
+          [System.Environment]::SetEnvironmentVariable("PATH", $updatedPathValue, "Machine")
+          Write-Host "Added cfn-guard to PATH."
+      } catch {
+          err "Could not automatically add cfn-guard to PATH. Please add it manually: $guardPathValue"
+      }
   }
 }
+
+
 
 main
