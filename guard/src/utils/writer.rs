@@ -8,8 +8,28 @@ pub struct Writer {
     err: WriteBuffer,
 }
 
+impl Default for Writer {
+    fn default() -> Self {
+        Self {
+            buffer: WriteBuffer::Stdout(std::io::stdout()),
+            err: WriteBuffer::Stderr(std::io::stderr()),
+        }
+    }
+}
+
 impl Writer {
-    pub fn new(buffer: WriteBuffer, err: WriteBuffer) -> Self {
+    pub fn new(buffer: WriteBuffer) -> Self {
+        if let WriteBuffer::Stderr(_) = buffer {
+            panic!("unable to use stderr as regular buffer");
+        }
+
+        Self {
+            buffer,
+            err: WriteBuffer::Stderr(std::io::stderr()),
+        }
+    }
+
+    pub fn new_with_err(buffer: WriteBuffer, err: WriteBuffer) -> Self {
         if let WriteBuffer::Stderr(_) = buffer {
             panic!("unable to use stderr as regular buffer");
         }

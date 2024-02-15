@@ -5,6 +5,14 @@ pub struct Reader {
     inner: ReadBuffer,
 }
 
+impl Default for Reader {
+    fn default() -> Self {
+        Self {
+            inner: ReadBuffer::Stdin(std::io::stdin()),
+        }
+    }
+}
+
 impl Read for Reader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match &mut self.inner {
