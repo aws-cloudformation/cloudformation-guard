@@ -2,7 +2,6 @@
 **/*.rs.bk
 *.iml
 .project
-.vscode
 cloudformation-guard.tar.gz
 .DS_Store
 *#
