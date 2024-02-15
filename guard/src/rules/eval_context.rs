@@ -1069,7 +1069,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         match self.parameterized_rules.get(rule_name) {
             Some(r) => Ok(*r),
             _ => Err(Error::MissingValue(format!(
-                "Parameterized Rule with name {} was not found, candiate {:?}",
+                "Parameterized Rule with name {} was not found, candidate {:?}",
                 rule_name,
                 self.parameterized_rules.keys()
             ))),
@@ -2208,7 +2208,7 @@ fn report_all_failed_clauses_for_rules<'value>(
     clauses
 }
 
-pub(crate) fn simplifed_json_from_root<'value>(
+pub(crate) fn simplified_json_from_root<'value>(
     root: &EventRecord<'value>,
 ) -> Result<FileReport<'value>> {
     Ok(match &root.container {

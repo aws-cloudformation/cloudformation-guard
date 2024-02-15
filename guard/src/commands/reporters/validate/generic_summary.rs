@@ -10,7 +10,7 @@ use crate::rules::{EvaluationType, Status};
 
 use super::common::*;
 use super::summary_table::SummaryType;
-use crate::rules::eval_context::{simplifed_json_from_root, EventRecord};
+use crate::rules::eval_context::{simplified_json_from_root, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 
@@ -125,7 +125,7 @@ impl Reporter for GenericSummary {
         _data: &Traversal<'value>,
         output_type: OutputFormatType,
     ) -> crate::rules::Result<()> {
-        let failure_repord = simplifed_json_from_root(root_record)?;
+        let failure_repord = simplified_json_from_root(root_record)?;
 
         match output_type {
             OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &failure_repord)?,

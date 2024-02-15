@@ -26,7 +26,7 @@ rule dynamo_db_sse_on when %ddb !empty
                            assert_all_resources_have_non_empty_tags
 {
     #
-    # Enusre ALL DynamoDB Tables have encryption at rest turned on
+    # Ensure ALL DynamoDB Tables have encryption at rest turned on
     #
     %ddb.Properties.SSESpecification.SSEEnabled == true    
 }
@@ -56,7 +56,7 @@ rule dynamo_db_sse_on_for_prod_only when dynamo_db_sse_on
      
     #
     # From the set of DynamoDB Tables that had SSE on (dependent rule dynamo_db_sse_on), 
-    # check the ones that are targetted for PRODuction based on 
+    # check the ones that are targeted for PRODuction based on 
     # Key containing /PROD/ and Value starting with /^App/
     #
     let only_prod_ddb = %ddb[

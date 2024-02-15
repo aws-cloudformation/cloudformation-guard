@@ -18,7 +18,7 @@ or
 
 The block form iterates over all `AWS::ApiGateway::RestApi` resources found in the input. The first form short circuits and returns immediately after the first resource failure.
 
-> **Workaround**: use the block form to traverse all values to show all resource failures and not just the first one that failed. We are tracking to resolve this issue. 2. Need `when` guards with filter expressions- When a query uses filters like `Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]`, if there are no `ApiGatway` resources, then Guard will fail the clause today when performing the check
+> **Workaround**: use the block form to traverse all values to show all resource failures and not just the first one that failed. We are tracking to resolve this issue. 2. Need `when` guards with filter expressions- When a query uses filters like `Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]`, if there are no `ApiGateway` resources, then Guard will fail the clause today when performing the check
 
 ```
 %api_gws.Properties.EndpointConfiguration.Types[*] == "PRIVATE"

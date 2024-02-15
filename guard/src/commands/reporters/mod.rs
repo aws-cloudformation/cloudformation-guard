@@ -17,7 +17,7 @@ use crate::{
     rules::{
         self,
         eval::eval_rules_file,
-        eval_context::{root_scope, simplifed_json_from_root, Messages},
+        eval_context::{root_scope, simplified_json_from_root, Messages},
         exprs::RulesFile,
         Status,
     },
@@ -114,7 +114,7 @@ fn get_test_case<'rule>(
     let root_record = root_scope.reset_recorder().extract();
     let time = now.elapsed().as_millis();
 
-    let tc = match simplifed_json_from_root(&root_record) {
+    let tc = match simplified_json_from_root(&root_record) {
         Ok(report) => match status {
             Status::FAIL => {
                 let status = report.not_compliant.iter().fold(

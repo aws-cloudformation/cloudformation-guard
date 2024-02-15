@@ -202,7 +202,7 @@ mod test_command_tests {
     }
 
     #[test]
-    fn test_parse_error_when_file_dne() {
+    fn test_parse_error_when_file_done() {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
