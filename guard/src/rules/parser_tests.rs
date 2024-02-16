@@ -2728,7 +2728,7 @@ fn test_rule_block() {
     let examples = [r#"rule example_rule when stage == 'prod' {
     let ec2_instance_types := [/^t*/, /^m*/]   # scoped variable assignments
 
-    # clause can referene another rule for composition
+    # clause can reference another rule for composition
     dependent_rule                            # named rule reference
 
     # IN (disjunction, one of them)
@@ -2742,7 +2742,7 @@ fn test_rule_block() {
         let volumes := block_device_mappings      # var local, snake case allowed.
           %volumes.*.Ebs EXISTS
           %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
-          %volumes.*.Ebs.encrypted == true               # Ebs volume must be encryped
+          %volumes.*.Ebs.encrypted == true               # Ebs volume must be encrypted
           %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
     } or
     AWS::EC2::Instance {                   # OR a regular volume (disjunction)
@@ -2880,7 +2880,7 @@ fn test_rule_block() {
                                 }],
                                 // %volumes.*.Ebs EXISTS
                                 // %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
-                                // %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
+                                // %volumes.*.Ebs.encrypted == true               # Ebs volume must be encrypted
                                 // %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
                                 conjunctions: Conjunctions::from([
                                     Disjunctions::from([GuardClause::Clause(GuardAccessClause {
@@ -3989,8 +3989,8 @@ fn test_block_in_block_properties() -> Result<(), Error> {
         GuardClause::BlockClause(block) => match &block.block.conjunctions[0][0] {
             GuardClause::BlockClause(blk) => {
                 assert!(blk.block.assignments.is_empty());
-                let conjuntions = &blk.block.conjunctions;
-                assert_eq!(conjuntions.len(), 2);
+                let conjunctions = &blk.block.conjunctions;
+                assert_eq!(conjunctions.len(), 2);
             }
             _ => unreachable!(),
         },
@@ -4416,7 +4416,7 @@ fn parameterized_rule_single_param_function_with_multiple_arguments() -> Result<
 }
 
 #[test]
-fn paramterized_clause_errors() -> Result<(), Error> {
+fn parameterized_clause_errors() -> Result<(), Error> {
     let just_name_rule_clause = "not named_rule";
     let result = ParameterizedNamedRuleClause::try_from(just_name_rule_clause);
     assert!(result.is_err());

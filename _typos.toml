@@ -1,0 +1,10 @@
+[default.extend-words]
+# Don't correct "archtype" to "archetype"
+archtype = "archtype"
+# Don't flag ure in `FAIL`ure as a misspelling
+ure = "ure"
+# Don't flag dne as a misspelling
+dne = "dne"
+[default.extend-identifiers]
+# Ignore ID in evaluate_tests.rs
+fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"

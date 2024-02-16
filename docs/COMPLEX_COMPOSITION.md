@@ -98,7 +98,7 @@ rule check_parameter_validity when check_resource_type_and_parameter {
     }
 }
 
-rule check_ip_procotol_and_port_range_validity when check_parameter_validity {
+rule check_ip_protocol_and_port_range_validity when check_parameter_validity {
     let ports = InputParameters.TcpBlockedPorts[*]
 
     # 
@@ -126,7 +126,7 @@ rule check_ip_procotol_and_port_range_validity when check_parameter_validity {
 }
 ```
 
-`check_parameter_validity` is conditionally dependent on `check_resource_type_and_parameter` and `check_ip_procotol_and_port_range_validity` is conditionally dependent on `check_parameter_validity`. Below is a CMDB configuration item which conforms to the above rules:
+`check_parameter_validity` is conditionally dependent on `check_resource_type_and_parameter` and `check_ip_protocol_and_port_range_validity` is conditionally dependent on `check_parameter_validity`. Below is a CMDB configuration item which conforms to the above rules:
 
 ```yaml
 ---
@@ -263,7 +263,7 @@ cfn-guard validate --data /path/to/dataDirectory --rules /path/to/ruleDirectory
 
 Where `/path/to/dataDirectory` has one or more data files and `/path/to/ruleDirectory` has one or more rules files.
 
-Consider you are writing rules to check if various resources defined in multiple CloudFormation templates have appropriate property assignments which guarantees encryption at rest. For ease of searchability and maintainability you can decide to have rules for checking encryption at rest in each resource in separate files, e.g. `s3_bucket_encryption.guard`, `ec2_volume_encryption.guard`, `rds_dbinstance_encrytion.guard` and so on all inside one directory, `~/GuardRules/encryption_at_rest`. You have all your CloudFormation templates that you need to validate under `~/CloudFormation/templates`. The command will be as follows:
+Consider you are writing rules to check if various resources defined in multiple CloudFormation templates have appropriate property assignments which guarantees encryption at rest. For ease of searchability and maintainability you can decide to have rules for checking encryption at rest in each resource in separate files, e.g. `s3_bucket_encryption.guard`, `ec2_volume_encryption.guard`, `rds_dbinstance_encryption.guard` and so on all inside one directory, `~/GuardRules/encryption_at_rest`. You have all your CloudFormation templates that you need to validate under `~/CloudFormation/templates`. The command will be as follows:
 
 ```bash
 cfn-guard validate --data ~/CloudFormation/templates --rules ~/GuardRules/encryption_at_rest

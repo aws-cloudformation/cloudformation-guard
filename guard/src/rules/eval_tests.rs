@@ -1107,7 +1107,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
         recorder: None,
     };
     //
-    // Evaluate the SOME clause again, it must pass with ths value as well
+    // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = eval_guard_clause(&clause, &mut eval)?;
     assert_eq!(status, Status::PASS);
@@ -1342,7 +1342,7 @@ fn query_cross_joins() -> Result<()> {
         Resources:
           s3_bucket:
             Type: AWS::S3::Bucket
-          s3_bucket_polocy:
+          s3_bucket_policy:
             Type: AWS::S3::BucketPolicy
             Properties:
               Bucket:
@@ -1605,7 +1605,7 @@ fn test_field_type_array_or_single() -> Result<()> {
 
 #[test]
 fn test_for_in_and_not_in() -> Result<()> {
-    let statments = r#"
+    let statements = r#"
     {
       "mainSteps": [
           {
@@ -1617,7 +1617,7 @@ fn test_for_in_and_not_in() -> Result<()> {
         ]
     }"#;
 
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statements)?)?;
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,

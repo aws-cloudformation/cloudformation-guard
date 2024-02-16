@@ -5,7 +5,7 @@ use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFil
 use crate::commands::{ERROR_STATUS_CODE, FAILURE_STATUS_CODE};
 use crate::rules;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, FileReport};
+use crate::rules::eval_context::{root_scope, simplified_json_from_root, FileReport};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status;
@@ -110,7 +110,7 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
                 }
 
                 let root_record = root_scope.reset_recorder().extract();
-                let report = simplifed_json_from_root(&root_record)?;
+                let report = simplified_json_from_root(&root_record)?;
                 file_report.combine(report);
             }
 

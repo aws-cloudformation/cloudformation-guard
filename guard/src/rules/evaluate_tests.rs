@@ -1594,7 +1594,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     "###;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     //
-    // Evaluate the SOME clause again, it must pass with ths value as well
+    // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
@@ -1995,7 +1995,7 @@ fn test_field_type_array_or_single() -> Result<()> {
 
 #[test]
 fn test_for_not_in() -> Result<()> {
-    let statments = r#"
+    let statements = r#"
     {
       "mainSteps": [
           {
@@ -2010,7 +2010,7 @@ fn test_for_not_in() -> Result<()> {
     let clause = GuardClause::try_from(
         r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statements)?)?;
     let dummy = DummyEval {};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);

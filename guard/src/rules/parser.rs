@@ -440,7 +440,7 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///        let volumes := block_device_mappings      # var local, snake case allowed.
 ///        when %volumes.*.Ebs != null {                  # Ebs is setup
 ///          %volumes.*.device_name == /^\/dev\/ebs-/  # must have ebs in the name
-///          %volumes.*.Ebs.encryped == true               # Ebs volume must be encryped
+///          %volumes.*.Ebs.encrypted == true               # Ebs volume must be encrypted
 ///          %volumes.*.Ebs.delete_on_termination == true  # Ebs volume must have delete protection
 ///        }
 ///    } or

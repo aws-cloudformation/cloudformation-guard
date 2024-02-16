@@ -45,7 +45,7 @@ pub enum Error {
     Errors(#[from] Errors),
     #[error("{0}")]
     IllegalArguments(String),
-    #[error("Error occured while attempting to write junit report")]
+    #[error("Error occurred while attempting to write junit report")]
     XMLError(#[from] quick_xml::Error),
     #[error("{0}")]
     InternalError(InternalError),

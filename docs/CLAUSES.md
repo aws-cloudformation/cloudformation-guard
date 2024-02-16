@@ -42,7 +42,7 @@ Properties.BucketName != /(?i)encrypted/
 
 ```
 # ReadCapacityUnits must be less than or equal to 5000
-Properties.ProvisionedThroughtput.ReadCapacityUnits <= 5000
+Properties.ProvisionedThroughput.ReadCapacityUnits <= 5000
 ```
 
 ## Operators

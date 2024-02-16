@@ -40,7 +40,7 @@
       ecsTask:
         Type: 'AWS::ECS::TaskDefinition'
         Metadata:
-          SharedExectionRole: allowed
+          SharedExecutionRole: allowed
         Properties:
           TaskRoleArn: 'aws:arn'
           ExecutionRoleArn: 'aws:arn2'
@@ -56,7 +56,7 @@
       ecsTask:
         Type: 'AWS::ECS::TaskDefinition'
         Metadata:
-          SharedExectionRole: allowed
+          SharedExecutionRole: allowed
         Properties:
           TaskRoleArn: 
             'Fn::GetAtt': [iam, Arn]
@@ -73,7 +73,7 @@
       ecsTask:
         Type: 'AWS::ECS::TaskDefinition'
         Metadata:
-          SharedExectionRole: allowed
+          SharedExecutionRole: allowed
         Properties:
           TaskRoleArn: 
             'Fn::GetAtt': [iamRole, Arn]

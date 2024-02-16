@@ -1,7 +1,7 @@
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::{
-    simplifed_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
+    simplified_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
     InComparison, RuleReport, UnaryComparison,
 };
 use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
@@ -52,7 +52,7 @@ impl<'reporter> Reporter for TfAware<'reporter> {
     ) -> crate::rules::Result<()> {
         let root = data.root().unwrap();
         if data.at("/resource_changes", root).is_ok() {
-            let failure_report = simplifed_json_from_root(root_record)?;
+            let failure_report = simplified_json_from_root(root_record)?;
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,

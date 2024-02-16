@@ -292,7 +292,7 @@ The following rules show different ways we can use the count function.
 
 - One queries a struct, and counts the number of properties.
 - The second queries a list object, and counts the elements in the list
-- The third queries for all resources that are s3 buckets and have a PublicAcessBlockConfiguration property
+- The third queries for all resources that are s3 buckets and have a PublicAccessBlockConfiguration property
 
 #### Example
 
