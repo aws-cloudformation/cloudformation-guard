@@ -139,34 +139,103 @@ pub(crate) trait Reporter: Debug {
 #[clap(group=clap::ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))]
 #[clap(about=ABOUT)]
 #[clap(arg_required_else_help = true)]
+/// .
+/// The Validate command evaluates rules against data files to determine success or failure
 pub struct Validate {
     #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
+    /// conflicts with payload
     pub(crate) rules: Vec<String>,
     #[arg(short, long, help=DATA_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    /// a list of paths that point to data files, or a directory containing data files  for the rules to be evaluated against. Only JSON, or YAML files will be used
+    /// conflicts with payload
     pub(crate) data: Vec<String>,
     #[arg(short, long, help=INPUT_PARAMETERS_HELP, num_args=0..)]
+    /// a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
     pub(crate) input_params: Vec<String>,
     #[arg(name=TYPE.0, short, long, help=TEMPLATE_TYPE_HELP, value_parser=TEMPLATE_TYPE)]
+    #[deprecated(since = "3.0.0", note = "this field does not get evaluated")]
     pub(crate) template_type: Option<String>,
     #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    /// Specify the format in which the output should be displayed
+    /// default is single-line-summary
+    /// if junit is used, `structured` attributed must be set to true
     pub(crate) output_format: OutputFormatType,
     #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
+    /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
+    /// default is failed
+    /// must be set to none if used together with the structured flag
     pub(crate) show_summary: Vec<ShowSummaryType>,
     #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    /// Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
     pub(crate) alphabetical: bool,
     #[arg(name="last-modified", short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    /// Validate files in a directory ordered by last modified times, conflicts with `alphabetical` field
     pub(crate) last_modified: bool,
     #[arg(short, long, help=VERBOSE_HELP)]
+    /// Output verbose logging, conflicts with `structured` field
+    /// default is false
     pub(crate) verbose: bool,
     #[arg(name="print-json", short=PRINT_JSON.1, long, help=PRINT_JSON_HELP)]
+    /// Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
+    /// conflicts with the `structured` attribute
+    /// default is false
     pub(crate) print_json: bool,
     #[arg(short=PAYLOAD.1, long, help=PAYLOAD_HELP)]
+    /// Tells the command that rules, and data will be passed via a reader, as a json payload.
+    /// Conflicts with both rules, and data
+    /// default is false
     pub(crate) payload: bool,
     #[arg(short=STRUCTURED.1, long, help=STRUCTURED_HELP, conflicts_with_all=vec![PRINT_JSON.0, VERBOSE.0])]
+    /// Prints the output which must be specified to JSON/YAML/JUnit in a structured format
+    /// Conflicts with the following attributes `verbose`, `print-json`, `output-format` when set
+    /// to "single-line-summary", show-summary when set to anything other than "none"
+    /// default is false
     pub(crate) structured: bool,
 }
 
+impl Validate {
+    fn validate(&self, summary_type: &BitFlags<SummaryType, u8>) -> crate::rules::Result<()> {
+        if self.structured && !summary_type.is_empty() {
+            return Err(Error::IllegalArguments(String::from(
+                "Cannot provide a summary-type other than `none` when the `structured` flag is present",
+            )));
+        } else if self.structured
+            && matches!(self.output_format, OutputFormatType::SingleLineSummary)
+        {
+            return Err(Error::IllegalArguments(String::from(
+                "single-line-summary is not able to be used when the `structured` flag is present",
+            )));
+        }
+
+        if matches!(self.output_format, OutputFormatType::Junit) && !self.structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to junit",
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn get_comparator(&self) -> fn(&walkdir::DirEntry, &walkdir::DirEntry) -> cmp::Ordering {
+        match self.last_modified {
+            true => last_modified,
+            false => alphabetical,
+        }
+    }
+}
+
 impl Executable for Validate {
+    /// .
+    /// evaluates the given rules, against the given data files.
+    ///
+    /// This function will return an error if
+    /// - conflicting attributes have been set
+    /// - any of the specified paths do not exist
+    /// - parse errors occur in the rule file
+    /// - illegal json or yaml syntax present in any of the data/input parameter files
+    /// - both rules is empty, and payload is false
+    #[allow(deprecated)]
     fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let summary_type = self
             .show_summary
@@ -184,27 +253,9 @@ impl Executable for Validate {
                 st
             });
 
-        let cmp = if self.last_modified {
-            last_modified
-        } else {
-            alphabetical
-        };
+        self.validate(&summary_type)?;
 
-        if self.structured && !summary_type.is_empty() {
-            return Err(Error::IllegalArguments(String::from(
-                "Cannot provide a summary-type other than `none` when the `structured` flag is present",
-            )));
-        } else if self.structured && self.output_format == OutputFormatType::SingleLineSummary {
-            return Err(Error::IllegalArguments(String::from(
-                "single-line-summary is not able to be used when the `structured` flag is present",
-            )));
-        }
-
-        if matches!(self.output_format, OutputFormatType::Junit) && !self.structured {
-            return Err(Error::IllegalArguments(String::from(
-                "the structured flag must be set when output is set to junit",
-            )));
-        }
+        let cmp = self.get_comparator();
 
         let data_files = match self.data.is_empty() {
             false => {
@@ -647,6 +698,7 @@ fn evaluate_against_data_input<'r>(
     }
     Ok(overall)
 }
+
 fn build_data_file(content: String, name: String) -> Result<DataFile> {
     if content.trim().is_empty() {
         return Err(Error::ParseError(format!(
