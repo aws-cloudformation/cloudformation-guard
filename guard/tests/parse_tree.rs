@@ -5,7 +5,6 @@ pub(crate) mod utils;
 #[cfg(test)]
 mod parse_tree_tests {
     use cfn_guard::commands::{PRINT_JSON, PRINT_YAML, RULES};
-    use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use pretty_assertions::assert_eq;
@@ -72,8 +71,8 @@ mod parse_tree_tests {
 
     #[test]
     fn test_json_output() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .print_json()
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
@@ -111,8 +110,8 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
@@ -131,8 +130,8 @@ mod parse_tree_tests {
         #[case] rules_arg: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
@@ -169,8 +168,8 @@ mod parse_tree_tests {
         #[case] expected_writer_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);

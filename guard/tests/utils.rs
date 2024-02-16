@@ -73,7 +73,7 @@ pub fn sanitize_junit_writer(writer: Writer) -> Writer {
     let rgx = Regex::new(r#"time="\d+""#).unwrap();
     let res = rgx.replace_all(&buf, r#"time="0""#);
 
-    Writer::new(WBVec(res.as_bytes().to_vec()), WBVec(vec![]))
+    Writer::new(WBVec(res.as_bytes().to_vec()))
 }
 
 pub fn get_full_path_for_resource_file(path: &str) -> String {

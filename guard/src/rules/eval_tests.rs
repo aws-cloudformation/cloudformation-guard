@@ -3,11 +3,9 @@ use grep_searcher::SearcherBuilder;
 use indoc::formatdoc;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::collections::HashMap;
-use std::io::{stderr, stdout};
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
 use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
-use crate::utils::writer::WriteBuffer::{Stderr, Stdout};
 
 use super::*;
 
@@ -3892,7 +3890,7 @@ fn parameterized_evaluations() -> Result<()> {
     let mut eval = root_scope(&rules_files, Rc::new(template));
     let status = eval_rules_file(&rules_files, &mut eval, None)?;
     let top = eval.reset_recorder().extract();
-    let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+    let mut writer = Writer::default();
     crate::commands::validate::print_verbose_tree(&top, &mut writer);
     assert_eq!(status, Status::FAIL);
 

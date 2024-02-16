@@ -5,7 +5,6 @@ mod utils;
 
 use crate::commands::{CfnGuard, Commands};
 use crate::utils::reader::{ReadBuffer, Reader};
-use crate::utils::writer::WriteBuffer::Stderr;
 use crate::utils::writer::{WriteBuffer::File as WBFile, WriteBuffer::Stdout, Writer};
 use clap::Parser;
 use rules::errors::Error;
@@ -16,14 +15,14 @@ fn main() -> Result<(), Error> {
 
     let mut writer = match &args.command {
         Commands::ParseTree(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?), Stderr(std::io::stderr())),
-            None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
+            Some(path) => Writer::new(WBFile(File::create(path)?)),
+            None => Writer::new(Stdout(std::io::stdout())),
         },
         Commands::Rulegen(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?), Stderr(std::io::stderr())),
-            None => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
+            Some(path) => Writer::new(WBFile(File::create(path)?)),
+            None => Writer::new(Stdout(std::io::stdout())),
         },
-        _ => Writer::new(Stdout(std::io::stdout()), Stderr(std::io::stderr())),
+        _ => Writer::new(Stdout(std::io::stdout())),
     };
 
     let mut reader = Reader::new(ReadBuffer::Stdin(std::io::stdin()));
