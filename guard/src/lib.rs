@@ -77,6 +77,8 @@ impl ParseTreeBuilder {
 }
 
 #[derive(Debug)]
+/// .
+/// A builder to help construct the `Validate` command for
 pub struct ValidateBuilder {
     rules: Vec<String>,
     data: Vec<String>,
@@ -93,7 +95,6 @@ pub struct ValidateBuilder {
 }
 
 impl Default for ValidateBuilder {
-    // TODO: is there a cleaner way to do this?
     fn default() -> Self {
         Self {
             rules: Default::default(),
@@ -113,6 +114,13 @@ impl Default for ValidateBuilder {
 }
 
 impl CommandBuilder<Validate> for ValidateBuilder {
+    /// .
+    /// attempts to construct a `Validate` command
+    ///
+    /// This function will return an error if
+    /// - conflicting attributes have been set
+    /// - both rules is empty, and payload is false
+    #[allow(deprecated)]
     fn try_build(self) -> crate::rules::Result<Validate> {
         if self.structured {
             if self.output_format == OutputFormatType::SingleLineSummary {
@@ -122,7 +130,7 @@ impl CommandBuilder<Validate> for ValidateBuilder {
             }
 
             if self.print_json {
-                return Err(Error::IllegalArguments( String::from("unable to construct validate command when both structured and print_json are set to true")));
+                return Err(Error::IllegalArguments(String::from("unable to construct validate command when both structured and print_json are set to true")));
             }
 
             if self.verbose {
@@ -195,66 +203,91 @@ impl CommandBuilder<Validate> for ValidateBuilder {
 }
 
 impl ValidateBuilder {
+    /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
+    /// conflicts with payload
     pub fn rules(mut self, rules: Vec<String>) -> Self {
         self.rules = rules;
 
         self
     }
 
+    /// a list of paths that point to data files, or a directory containing data files  for the rules to be evaluated against. Only JSON, or YAML files will be used
+    /// conflicts with payload
     pub fn data(mut self, data: Vec<String>) -> Self {
         self.data = data;
 
         self
     }
 
+    /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
+    /// default is failed
+    /// must be set to none if used together with the structured flag
     pub fn show_summary(mut self, args: Vec<ShowSummaryType>) -> Self {
         self.show_summary = args;
 
         self
     }
 
+    /// a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
     pub fn input_params(mut self, input_params: Vec<String>) -> Self {
         self.input_params = input_params;
 
         self
     }
 
+    /// Specify the format in which the output should be displayed
+    /// default is single-line-summary
+    /// if junit is used, `structured` attributed must be set to true
     pub fn output_format(mut self, output: OutputFormatType) -> Self {
         self.output_format = output;
 
         self
     }
 
+    /// Tells the command that rules, and data will be passed via a reader, as a json payload.
+    /// Conflicts with both rules, and data
+    /// default is false
     pub fn payload(mut self, arg: bool) -> Self {
         self.payload = arg;
 
         self
     }
 
+    /// Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
     pub fn alphabetical(mut self, arg: bool) -> Self {
         self.alphabetical = arg;
 
         self
     }
 
+    /// Validate files in a directory ordered by last modified times, conflicts with `alphabetical` field
     pub fn last_modified(mut self, arg: bool) -> Self {
         self.last_modified = arg;
 
         self
     }
 
+    /// Output verbose logging, conflicts with `structured` field
+    /// default is false
     pub fn verbose(mut self, arg: bool) -> Self {
         self.verbose = arg;
 
         self
     }
 
+    /// Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
+    /// conflicts with the `structured` attribute
+    /// default is false
     pub fn print_json(mut self, arg: bool) -> Self {
         self.print_json = arg;
 
         self
     }
 
+    /// Prints the output which must be specified to JSON/YAML/JUnit in a structured format
+    /// Conflicts with the following attributes `verbose`, `print-json`, `output-format` when set
+    /// to "single-line-summary", show-summary when set to anything other than "none"
+    /// default is false
     pub fn structured(mut self, arg: bool) -> Self {
         self.structured = arg;
 
