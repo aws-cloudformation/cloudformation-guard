@@ -12,7 +12,6 @@ mod test_command_tests {
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, OUTPUT_FORMAT, RULES_AND_TEST_FILE, RULES_FILE,
         TEST_DATA, VERBOSE,
     };
-    use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
@@ -134,8 +133,8 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     fn test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_logging_enabled_tests.{}",
@@ -159,8 +158,8 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     fn test_data_file(#[case] file_type: &str) -> Result<(), Error> {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.{}",
@@ -182,8 +181,8 @@ mod test_command_tests {
 
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
@@ -202,7 +201,7 @@ mod test_command_tests {
     }
 
     #[test]
-    fn test_parse_error_when_file_done() {
+    fn test_parse_error_when_file_dne() {
         let mut reader = Reader::new(Stdin(std::io::stdin()));
         let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
@@ -221,8 +220,8 @@ mod test_command_tests {
 
     #[test]
     fn test_data_file_verbose() -> Result<(), Error> {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
@@ -244,8 +243,8 @@ mod test_command_tests {
 
     #[test]
     fn test_with_rules_dir_verbose() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .directory_only()
@@ -264,8 +263,8 @@ mod test_command_tests {
     #[case("yaml")]
     #[case("junit")]
     fn test_structured_single_report(#[case] output: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
@@ -295,8 +294,8 @@ mod test_command_tests {
     #[case("yaml")]
     #[case("junit")]
     fn test_structured_directory_report(#[case] output: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
@@ -320,8 +319,8 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     fn test_structured_report_with_illegal_args(#[case] output: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
@@ -333,8 +332,8 @@ mod test_command_tests {
 
     #[test]
     fn test_with_function_expr() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/functions/data/template.yaml",
@@ -350,8 +349,8 @@ mod test_command_tests {
 
     #[test]
     fn test_with_failure() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/data-dir/failing_test.yaml",

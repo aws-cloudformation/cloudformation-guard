@@ -6,9 +6,7 @@ pub(crate) mod utils;
 mod rulegen_tests {
     use crate::assert_output_from_file_eq;
     use cfn_guard::commands::{OUTPUT, TEMPLATE};
-    use cfn_guard::utils::reader::ReadBuffer::Stdin;
     use cfn_guard::utils::reader::Reader;
-    use cfn_guard::utils::writer::WriteBuffer::Stderr;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use pretty_assertions::assert_eq;
 
@@ -67,8 +65,8 @@ mod rulegen_tests {
         #[case] expected_output_file_path: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), Stderr(std::io::stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = RulegenTestRunner::default()
             .template(template_arg)
             .run(&mut writer, &mut reader);

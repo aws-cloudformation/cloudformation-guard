@@ -5,16 +5,15 @@ pub(crate) mod utils;
 mod validate_tests {
     use indoc::indoc;
     use pretty_assertions::assert_eq;
-    use std::io::{stderr, stdout, Cursor};
+    use std::io::Cursor;
 
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
         RULES, SHOW_SUMMARY, STRUCTURED, VERBOSE,
     };
-    use cfn_guard::utils::reader::ReadBuffer::{Cursor as ReadCursor, Stdin};
+    use cfn_guard::utils::reader::ReadBuffer::Cursor as ReadCursor;
     use cfn_guard::utils::reader::Reader;
-    use cfn_guard::utils::writer::WriteBuffer::Stderr;
-    use cfn_guard::utils::writer::{WriteBuffer::Stdout, WriteBuffer::Vec as WBVec, Writer};
+    use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{
         get_full_path_for_resource_file, sanitize_junit_writer, Command, CommandTestRunner,
@@ -208,8 +207,8 @@ mod validate_tests {
         #[case] rules_arg: Vec<&str>,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -227,7 +226,7 @@ mod validate_tests {
     fn test_graceful_handling_when_yaml_file_has_non_string_type_key(#[case] input: &str) {
         let bytes = input.as_bytes();
         let mut reader = Reader::new(ReadCursor(Cursor::new(bytes.to_vec())));
-        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+        let mut writer = Writer::default();
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["s3_bucket_server_side_encryption_enabled_2.guard"])
@@ -238,8 +237,8 @@ mod validate_tests {
 
     #[test]
     fn test_single_data_file_single_rules_file_compliant() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .data(vec![
                 "data-dir/s3-public-read-prohibited-template-compliant.yaml",
@@ -291,8 +290,8 @@ mod validate_tests {
         #[case] expected_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]));
+        let mut reader = Reader::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -329,8 +328,8 @@ mod validate_tests {
         #[case] expected_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -354,8 +353,8 @@ mod validate_tests {
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -394,8 +393,8 @@ mod validate_tests {
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -406,8 +405,8 @@ mod validate_tests {
 
     #[test]
     fn test_updated_summary_output() {
-        let mut writer = Writer::new(WBVec(vec![]), Stderr(stderr()));
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
+        let mut writer = Writer::new(WBVec(vec![]));
+        let mut reader = Reader::default();
         let status_code = ValidateTestRunner::default()
             .data(vec!["data-dir"])
             .rules(vec!["rules-dir"])
@@ -463,8 +462,8 @@ mod validate_tests {
         #[case] input_params_arg: Vec<&str>,
         #[case] expected_status_code: i32,
     ) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(Stdout(stdout()), Stderr(stderr()));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -479,7 +478,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         );
-        let mut writer = Writer::new(Stdout(stdout()), WBVec(vec![]));
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .run(&mut writer, &mut reader);
@@ -492,7 +491,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -510,7 +509,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -528,7 +527,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -546,7 +545,7 @@ mod validate_tests {
     fn test_with_payload_flag() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .payload()
             .run(&mut writer, &mut reader);
@@ -558,7 +557,7 @@ mod validate_tests {
     fn test_with_payload_failing_type_block() {
         let payload = r#"{"data": [ "{}" ], "rules" : [ "d1z::Y\n\t\tm<0m<03333333" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
             .payload()
             .run(&mut writer, &mut reader);
@@ -570,7 +569,7 @@ mod validate_tests {
     fn test_with_payload_flag_fail() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"SomeRandomString\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]));
         let status_code = ValidateTestRunner::default()
             .payload()
             .run(&mut writer, &mut reader);
@@ -602,8 +601,8 @@ mod validate_tests {
     #[case("json")]
     #[case("junit")]
     fn test_structured_output(#[case] output: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
@@ -633,7 +632,7 @@ mod validate_tests {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),
         ))));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
             .payload()
@@ -667,8 +666,8 @@ mod validate_tests {
     #[case("single-line-summary", "skip")]
     #[case("single-line-summary", "pass")]
     fn test_structured_output_with_show_summary(#[case] output: &str, #[case] show_summary: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
@@ -685,8 +684,8 @@ mod validate_tests {
 
     #[test]
     fn test_junit_without_structured_flag() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
@@ -711,8 +710,8 @@ mod validate_tests {
     #[case("converters.guard")]
     #[case("complex_rules.guard")]
     fn test_validate_with_fn_expr_success(#[case] rule: &str) {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
 
         let status_code = ValidateTestRunner::default()
             .rules(vec![&format!("/functions/rules/{rule}")])
@@ -726,8 +725,8 @@ mod validate_tests {
 
     #[test]
     fn test_validate_with_failing_count_and_compare_output() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/count_with_message.guard"])
@@ -744,8 +743,8 @@ mod validate_tests {
 
     #[test]
     fn test_validate_with_failing_complex_rule() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/failing_complex_rule.guard"])
@@ -761,8 +760,8 @@ mod validate_tests {
 
     #[test]
     fn test_validate_with_failing_join_and_compare_output() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/join_with_message.guard"])
