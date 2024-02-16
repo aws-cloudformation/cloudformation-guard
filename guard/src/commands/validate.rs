@@ -195,7 +195,10 @@ pub struct Validate {
 }
 
 impl Validate {
-    fn validate(&self, summary_type: &BitFlags<SummaryType, u8>) -> crate::rules::Result<()> {
+    fn validate_construct(
+        &self,
+        summary_type: &BitFlags<SummaryType, u8>,
+    ) -> crate::rules::Result<()> {
         if self.structured && !summary_type.is_empty() {
             return Err(Error::IllegalArguments(String::from(
                 "Cannot provide a summary-type other than `none` when the `structured` flag is present",
@@ -253,7 +256,7 @@ impl Executable for Validate {
                 st
             });
 
-        self.validate(&summary_type)?;
+        self.validate_construct(&summary_type)?;
 
         let cmp = self.get_comparator();
 
