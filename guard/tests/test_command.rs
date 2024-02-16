@@ -202,8 +202,8 @@ mod test_command_tests {
 
     #[test]
     fn test_parse_error_when_file_dne() {
-        let mut reader = Reader::new(Stdin(std::io::stdin()));
-        let mut writer = Writer::new(WBVec(vec![]), WBVec(vec![]));
+        let mut reader = Reader::default();
+        let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]));
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))

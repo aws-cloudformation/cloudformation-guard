@@ -3,7 +3,7 @@ rule SOME_RULE when %template !empty {
     let props = %template.Properties
     let stuff = %props.stuff
     let other = %stuff.other
-    let collection = %other.done.*
+    let collection = %other.dne.*
     let res = count(%collection)
     %res == 3
 }
