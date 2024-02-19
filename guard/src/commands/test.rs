@@ -59,7 +59,7 @@ const VERBOSE_HELP: &str = "Verbose logging";
 /// pre-defined expected outcomes
 pub struct Test {
     // the path to a rules file that a data file will have access to
-    // deafult None
+    // default None
     // conflicts with directory attribute
     #[arg(name="rules-file", short, long, help=RULES_HELP)]
     pub(crate) rules: Option<String>,
@@ -91,7 +91,7 @@ pub struct Test {
     pub(crate) verbose: bool,
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
-    /// if junit, json or yaml are chosen, will conflcit with verbose logging if set to true
+    /// if junit, json or yaml are chosen, will conflict with verbose logging if set to true
     #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
     pub(crate) output_format: OutputFormatType,
 }

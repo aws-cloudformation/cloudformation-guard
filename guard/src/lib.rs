@@ -400,7 +400,7 @@ impl TestBuilder {
 
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
-    /// will conflict with verbose if set to something other thatn single-line-summary and verbose
+    /// will conflict with verbose if set to something other than single-line-summary and verbose
     /// is set to true
     pub fn output_format(mut self, output: OutputFormatType) -> Self {
         self.output_format = output;
