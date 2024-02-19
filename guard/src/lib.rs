@@ -307,6 +307,12 @@ pub struct TestBuilder {
 }
 
 impl CommandBuilder<Test> for TestBuilder {
+    /// .
+    /// attempts to construct a `Test` command
+    ///
+    /// This function will return an error if
+    /// - conflicting attributes have been set
+    /// - rules, test-data, and directory is set to None
     fn try_build(self) -> crate::rules::Result<Test> {
         if self.last_modified && self.alphabetical {
             return Err(Error::IllegalArguments(String::from("unable to construct a test command: cannot have both last modified, and alphabetical arguments set to true")));
@@ -343,42 +349,59 @@ impl CommandBuilder<Test> for TestBuilder {
 }
 
 impl TestBuilder {
+    // the path to the rule file
+    // conflicts with directory
     pub fn rules(mut self, rules: Option<String>) -> Self {
         self.rules = rules;
 
         self
     }
 
+    // the path to the test-data file
+    // conflicts with directory
     pub fn test_data(mut self, test_data: Option<String>) -> Self {
         self.test_data = test_data;
 
         self
     }
 
+    // A path to a directory containing rule file(s), and a subdirectory called tests containing
+    // data input file(s)
+    // conflicts with rules, and test_data
     pub fn directory(mut self, directory: Option<String>) -> Self {
         self.directory = directory;
 
         self
     }
 
+    /// Test files in a directory ordered alphabetically, conflicts with `last_modified` field
+    /// default is false
     pub fn alphabetical(mut self, arg: bool) -> Self {
         self.alphabetical = arg;
 
         self
     }
 
+    /// Test files in a directory ordered by last modified times, conflicts with `alphabetical` field
+    /// default is false
     pub fn last_modified(mut self, arg: bool) -> Self {
         self.last_modified = arg;
 
         self
     }
 
+    /// Output verbose logging, conflicts with output_format if not single-line-summary
+    /// default is false
     pub fn verbose(mut self, arg: bool) -> Self {
         self.verbose = arg;
 
         self
     }
 
+    /// Specify the format in which the output should be displayed
+    /// default is single-line-summary
+    /// will conflict with verbose if set to something other thatn single-line-summary and verbose
+    /// is set to true
     pub fn output_format(mut self, output: OutputFormatType) -> Self {
         self.output_format = output;
 
