@@ -21,6 +21,8 @@ pub trait CommandBuilder<T: Executable> {
 }
 
 #[derive(Default, Debug)]
+/// .
+/// A builder to help construct the `ParseTree` command
 pub struct ParseTreeBuilder {
     rules: Option<String>,
     output: Option<String>,
@@ -29,11 +31,9 @@ pub struct ParseTreeBuilder {
 }
 
 impl CommandBuilder<ParseTree> for ParseTreeBuilder {
+    /// .
+    /// builds a parse tree command
     fn try_build(self) -> crate::rules::Result<ParseTree> {
-        if self.print_json && self.print_yaml {
-            return Err(Error::IllegalArguments(String::from("cannot construct a ParseTree command when both print_json and print_yaml are set to true")));
-        }
-
         let ParseTreeBuilder {
             rules,
             output,
@@ -51,24 +51,28 @@ impl CommandBuilder<ParseTree> for ParseTreeBuilder {
 }
 
 impl ParseTreeBuilder {
+    /// path to the rules file to be evaluated
     pub fn rules(mut self, rules: Option<String>) -> Self {
         self.rules = rules;
 
         self
     }
 
+    // path to the output file where the parse tree will be printed to
     pub fn output(mut self, output: Option<String>) -> Self {
         self.output = output;
 
         self
     }
 
+    /// print parse tree in JSON format
     pub fn print_json(mut self, arg: bool) -> Self {
         self.print_json = arg;
 
         self
     }
 
+    /// print parse tree in YAML format
     pub fn print_yaml(mut self, arg: bool) -> Self {
         self.print_yaml = arg;
 
@@ -78,7 +82,7 @@ impl ParseTreeBuilder {
 
 #[derive(Debug)]
 /// .
-/// A builder to help construct the `Validate` command for
+/// A builder to help construct the `Validate` command
 pub struct ValidateBuilder {
     rules: Vec<String>,
     data: Vec<String>,
@@ -296,6 +300,8 @@ impl ValidateBuilder {
 }
 
 #[derive(Default, Debug)]
+/// .
+/// A builder to help construct the `Test` command
 pub struct TestBuilder {
     rules: Option<String>,
     test_data: Option<String>,
