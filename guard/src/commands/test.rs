@@ -58,30 +58,30 @@ const VERBOSE_HELP: &str = "Verbose logging";
 /// The test command evaluates rules against data files to determine success or failure based on
 /// pre-defined expected outcomes
 pub struct Test {
-    // the path to a rules file that a data file will have access to
-    // default None
-    // conflicts with directory attribute
+    /// the path to a rules file that a data file will have access to
+    /// default None
+    /// conflicts with directory attribute
     #[arg(name="rules-file", short, long, help=RULES_HELP)]
     pub(crate) rules: Option<String>,
-    // the path to the test-data file
-    // default None
-    // conflicts with directory attribute
+    /// the path to the test-data file
+    /// default None
+    /// conflicts with directory attribute
     #[arg(name="test-data", short, long, help=TEST_DATA_HELP)]
     pub(crate) test_data: Option<String>,
-    // the path to the directory that includes rule files, and a subdirectory labeled tests that
-    // includes test-data files
-    // default None
-    // conflicts with rules, and test_data attributes
+    /// the path to the directory that includes rule files, and a subdirectory labeled tests that
+    /// includes test-data files
+    /// default None
+    /// conflicts with rules, and test_data attributes
     #[arg(name=DIRECTORY.0, short, long=DIRECTORY.0, help=DIRECTORY_HELP)]
     pub(crate) directory: Option<String>,
-    // Sort alphabetically inside a directory
-    // default false
-    // conflicts with last_modified attribute
+    /// Sort alphabetically inside a directory
+    /// default false
+    /// conflicts with last_modified attribute
     #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     pub(crate) alphabetical: bool,
-    // Sort by last modified times within a directory
-    // default false
-    // conflicts with last_modified attribute
+    /// Sort by last modified times within a directory
+    /// default false
+    /// conflicts with last_modified attribute
     #[arg(name="last-modified", short=LAST_MODIFIED.1, long=LAST_MODIFIED.0, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
     pub(crate) last_modified: bool,
     /// Output verbose logging, conflicts with output_format when not using single-line-summary

@@ -58,7 +58,7 @@ impl ParseTreeBuilder {
         self
     }
 
-    // path to the output file where the parse tree will be printed to
+    /// path to the output file where the parse tree will be printed to
     pub fn output(mut self, output: Option<String>) -> Self {
         self.output = output;
 
