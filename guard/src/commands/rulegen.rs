@@ -20,14 +20,27 @@ const OUTPUT_HELP: &str = "Write to output file";
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(arg_required_else_help = true)]
 #[clap(about=ABOUT)]
+/// .
+/// The Rulegen command auto generates rules from an existing CloudFormation template
+/// Please note this currently only works on CloudFormation templates
 pub struct Rulegen {
+    /// the path to the file which the generated rules will be outputted to
+    /// default None
+    /// if set to None rules will be outputted to the stdout
     #[arg(short, long, help=OUTPUT_HELP)]
     pub(crate) output: Option<String>,
+    /// the path to the CloudFormation template
     #[arg(short, long, help=TEMPLATE_HELP)]
     pub(crate) template: String,
 }
 
 impl Executable for Rulegen {
+    /// .
+    /// autogenerate rules from an existing CloudFormation template
+    ///
+    /// This function will return an error if
+    /// - any of the specified paths do not exist
+    /// - illegal json or yaml syntax present in any of the data/input parameter files
     fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let template_contents = fs::read_to_string(&self.template)?;
 
