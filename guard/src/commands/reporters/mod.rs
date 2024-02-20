@@ -85,11 +85,11 @@ impl<'report> JunitReport<'report> {
     }
 }
 
-pub struct JunitReporter<'reporter> {
-    pub(crate) rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
-    pub(crate) data: Vec<DataFile>,
-    pub writer: &'reporter mut crate::utils::writer::Writer,
-    pub exit_code: i32,
+struct JunitReporter<'reporter> {
+    rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
+    data: Vec<DataFile>,
+    writer: &'reporter mut crate::utils::writer::Writer,
+    exit_code: i32,
 }
 
 impl<'reporter> JunitReporter<'reporter> {

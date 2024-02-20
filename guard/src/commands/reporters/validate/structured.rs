@@ -12,7 +12,7 @@ use crate::rules::Status;
 use crate::utils::writer::Writer;
 use colored::Colorize;
 
-pub trait StructuredReporter {
+pub(crate) trait StructuredReporter {
     fn report(&mut self) -> rules::Result<i32>;
 }
 
