@@ -85,12 +85,12 @@ impl<'eval> StructuredEvaluator<'eval> {
     }
 }
 
-pub struct CommonStructuredReporter<'reporter> {
-    pub(crate) rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
-    pub(crate) data: Vec<DataFile>,
-    pub writer: &'reporter mut crate::utils::writer::Writer,
-    pub exit_code: i32,
-    pub output: OutputFormatType,
+struct CommonStructuredReporter<'reporter> {
+    rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
+    data: Vec<DataFile>,
+    writer: &'reporter mut crate::utils::writer::Writer,
+    exit_code: i32,
+    output: OutputFormatType,
 }
 
 impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
