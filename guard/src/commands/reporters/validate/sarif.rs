@@ -205,10 +205,9 @@ impl SarifReportBuilder {
             if report.status == Status::FAIL {
                 if !sarif_unique_artifacts.contains(report.name) && !report.name.is_empty() {
                     sarif_unique_artifacts.insert(report.name.to_string());
+                    let uri = self.sanitize_path(report.name);
                     self.runs[0].artifacts.push(SarifArtifact {
-                        location: SarifArtifactLocation {
-                            uri: report.name.to_string(),
-                        },
+                        location: SarifArtifactLocation { uri },
                     });
                 }
                 report.not_compliant.iter().for_each(|failure| {
