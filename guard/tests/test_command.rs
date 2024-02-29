@@ -16,9 +16,7 @@ mod test_command_tests {
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
 
-    use crate::utils::{
-        sanitize_junit_writer, sanitize_sarif_writer, Command, CommandTestRunner, StatusCode,
-    };
+    use crate::utils::{sanitize_junit_writer, Command, CommandTestRunner, StatusCode};
 
     #[derive(Default)]
     struct TestCommandTestRunner<'args> {
@@ -305,8 +303,6 @@ mod test_command_tests {
 
         let writer = if output == "junit" {
             sanitize_junit_writer(writer)
-        } else if output == "sarif" {
-            sanitize_sarif_writer(writer)
         } else {
             writer
         };
