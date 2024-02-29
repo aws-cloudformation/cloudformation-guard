@@ -202,7 +202,7 @@ Options:
   -v, --verbose                  Verbose logging
   -h, --help                     Print help
   -o, --output-format <output-format>
-          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit, sarif]
+          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit]
 ```
 
 For example, given a rules file (rules.guard) as:
