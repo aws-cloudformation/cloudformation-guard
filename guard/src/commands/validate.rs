@@ -63,6 +63,7 @@ pub enum OutputFormatType {
     JSON,
     YAML,
     Junit,
+    SARIF,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]

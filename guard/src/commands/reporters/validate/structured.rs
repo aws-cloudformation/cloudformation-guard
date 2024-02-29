@@ -12,6 +12,8 @@ use crate::rules::Status;
 use crate::utils::writer::Writer;
 use colored::Colorize;
 
+use super::sarif::SarifReportBuilder;
+
 pub(crate) trait StructuredReporter {
     fn report(&mut self) -> rules::Result<i32>;
 }
@@ -70,14 +72,15 @@ impl<'eval> StructuredEvaluator<'eval> {
                 writer: self.writer,
                 exit_code: self.exit_code,
             }) as Box<dyn StructuredReporter>,
-            OutputFormatType::JSON | OutputFormatType::YAML => Box::new(CommonStructuredReporter {
-                rules,
-                data: merged_data,
-                writer: self.writer,
-                exit_code: self.exit_code,
-                output: self.output,
-            })
-                as Box<dyn StructuredReporter>,
+            OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::SARIF => {
+                Box::new(CommonStructuredReporter {
+                    rules,
+                    data: merged_data,
+                    writer: self.writer,
+                    exit_code: self.exit_code,
+                    output: self.output,
+                }) as Box<dyn StructuredReporter>
+            }
             OutputFormatType::SingleLineSummary => unreachable!(),
         };
 
@@ -120,6 +123,9 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
         match self.output {
             OutputFormatType::YAML => serde_yaml::to_writer(&mut self.writer, &records)?,
             OutputFormatType::JSON => serde_json::to_writer_pretty(&mut self.writer, &records)?,
+            OutputFormatType::SARIF => SarifReportBuilder::new()
+                .results(&records)
+                .serialize(&mut self.writer),
             _ => unreachable!(),
         };
 

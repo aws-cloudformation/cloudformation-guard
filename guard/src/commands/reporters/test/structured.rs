@@ -154,6 +154,7 @@ impl TestCase {
                 status: TestCaseStatus::Fail(FailingTestCase {
                     name: None,
                     messages: vec![Messages {
+                        location: None,
                         custom_message: None,
                         error_message: Some(format!(
                             "Expected = {}, Evaluated = [{}]",

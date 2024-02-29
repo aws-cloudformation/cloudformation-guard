@@ -113,6 +113,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                     }
                 }
                 OutputFormatType::Junit => unreachable!(),
+                OutputFormatType::SARIF => unreachable!(),
             };
 
             Ok(())

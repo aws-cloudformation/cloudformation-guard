@@ -49,6 +49,7 @@ impl Reporter for CfnReporter {
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
                     as Box<dyn GenericReporter>,
                 OutputFormatType::Junit => unreachable!(),
+                OutputFormatType::SARIF => unreachable!(),
             };
         let failed = if !failed_rules.is_empty() {
             let mut by_resource_name = HashMap::new();
@@ -151,6 +152,7 @@ impl Reporter for CfnReporter {
                 OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
                     as Box<dyn GenericReporter>,
                 OutputFormatType::Junit => unreachable!(),
+                OutputFormatType::SARIF => unreachable!(),
             };
         super::common::report_from_events(
             _root_record,
