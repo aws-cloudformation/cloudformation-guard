@@ -72,10 +72,6 @@
       checks:
       - Clause:
           Unary:
-            context: ' %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  '
-            messages:
-              custom_message: "\n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  "
-              error_message: Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:
                 value:
@@ -93,6 +89,10 @@
                 comparison:
                 - Exists
                 - false
+            context: ' %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  '
+            messages:
+              custom_message: "\n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  "
+              error_message: Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
   - Rule:
       name: S3_BUCKET_PUBLIC_READ_PROHIBITED
       metadata: {}
@@ -102,10 +102,6 @@
       checks:
       - Clause:
           Unary:
-            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  '
-            messages:
-              custom_message: ''
-              error_message: Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
             check:
               UnResolved:
                 value:
@@ -123,6 +119,10 @@
                 comparison:
                 - Exists
                 - false
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  '
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
       - Clause:
           Binary:
             context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true'
