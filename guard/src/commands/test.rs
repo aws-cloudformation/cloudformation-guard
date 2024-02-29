@@ -133,6 +133,10 @@ impl Executable for Test {
 
         if self.output_format.is_structured() && self.verbose {
             return Err(Error::IllegalArguments(String::from("Cannot provide an output_type of JSON, YAML, or JUnit while the verbose flag is set")));
+        } else if matches!(self.output_format, OutputFormatType::SARIF) {
+            return Err(Error::IllegalArguments(String::from(
+                "Cannot provide an output_type of SARIF, SARIF reporter is unsupported.",
+            )));
         }
 
         if let Some(dir) = &self.directory {

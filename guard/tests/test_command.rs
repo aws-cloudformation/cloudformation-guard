@@ -264,7 +264,6 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     #[case("junit")]
-    #[case("sarif")]
     fn test_structured_single_report(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![]));
@@ -296,7 +295,6 @@ mod test_command_tests {
     #[case("json")]
     #[case("yaml")]
     #[case("junit")]
-    #[case("sarif")]
     fn test_structured_directory_report(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![]));

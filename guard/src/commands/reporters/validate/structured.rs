@@ -123,7 +123,7 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
         match self.output {
             OutputFormatType::YAML => serde_yaml::to_writer(&mut self.writer, &records)?,
             OutputFormatType::JSON => serde_json::to_writer_pretty(&mut self.writer, &records)?,
-            OutputFormatType::SARIF => SarifReportBuilder::new()
+            OutputFormatType::SARIF => SarifReportBuilder::default()
                 .results(&records)
                 .serialize(&mut self.writer),
             _ => unreachable!(),

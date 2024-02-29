@@ -89,31 +89,6 @@ type ExtractedStatements<'value, 'loc> = (
     HashMap<&'value str, &'value FunctionExpr<'loc>>,
 );
 
-fn extract_location(value: &Option<Rc<PathAwareValue>>) -> Option<Location> {
-    let location = match value {
-        Some(inner_value) => {
-            let unwrapped_value = inner_value.as_ref();
-            match unwrapped_value {
-                PathAwareValue::Null(path) => path.1,
-                PathAwareValue::String((path, _))
-                | PathAwareValue::Regex((path, _))
-                | PathAwareValue::Bool((path, _))
-                | PathAwareValue::Int((path, _))
-                | PathAwareValue::Float((path, _))
-                | PathAwareValue::Char((path, _))
-                | PathAwareValue::List((path, _))
-                | PathAwareValue::Map((path, _))
-                | PathAwareValue::RangeInt((path, _))
-                | PathAwareValue::RangeFloat((path, _))
-                | PathAwareValue::RangeChar((path, _)) => path.1,
-            }
-        }
-        None => Location { line: 0, col: 0 },
-    };
-
-    Some(location)
-}
-
 fn extract_variables<'value, 'loc: 'value>(
     expressions: &'value Vec<LetExpr<'loc>>,
 ) -> ExtractedStatements<'value, 'loc> {
@@ -2080,7 +2055,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: Some(custom_message),
                                 error_message: Some(message),
-                                location: extract_location(&from.unresolved_traversed_to()),
+                                location: Some(
+                                    from.unresolved_traversed_to()
+                                        .map_or(Location::default(), |val| val.self_path().1),
+                                ),
                             },
                             context: current.context.clone(),
                             check,
@@ -2119,9 +2097,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                     messages: Messages {
                                         custom_message: Some(custom_message),
                                         error_message: Some(message),
-                                        location: extract_location(&Some(
-                                            to_unres.traversed_to.to_owned(),
-                                        )),
+                                        location: Some(to_unres.traversed_to.self_path().1),
                                     },
                                     check: BinaryCheck::UnResolved(ValueUnResolved {
                                         comparison: (*cmp, *not),
@@ -2160,9 +2136,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 }),
                                                 context: current.context.to_string(),
                                                 messages: Messages {
-                                                    location: extract_location(&Some(
-                                                        to_res.clone(),
-                                                    )),
+                                                    location: Some(to_res.clone().self_path().1),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
                                                 },
@@ -2183,9 +2157,9 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 messages: Messages {
                                                     custom_message: Some(custom_message),
                                                     error_message: Some(message),
-                                                    location: extract_location(&Some(
-                                                        to_unres.traversed_to.to_owned(),
-                                                    )),
+                                                    location: Some(
+                                                        to_unres.traversed_to.self_path().1,
+                                                    ),
                                                 },
                                                 check: BinaryCheck::UnResolved(ValueUnResolved {
                                                     comparison: (*cmp, *not),
@@ -2219,13 +2193,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: custom_message.clone(),
                                 error_message: Some(error_message),
-                                location: match from.resolved() {
-                                    Some(val) => extract_location(&Some(val)),
-                                    None => match from.unresolved_traversed_to() {
-                                        Some(val) => extract_location(&Some(val)),
-                                        None => None,
-                                    },
-                                },
+                                location: Some(from.resolved().unwrap().self_path().1),
                             },
                             check: BinaryCheck::InResolved(InComparison {
                                 from: match from.resolved() {
