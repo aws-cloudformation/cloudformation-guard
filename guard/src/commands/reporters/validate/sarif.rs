@@ -178,7 +178,7 @@ fn extract_rule_id(rule_name: &str) -> String {
 
     let uppercase_first_part_of_rule_file_name = first_part_of_rule_file_name
         .first()
-        .map_or_else(|| String::new(), |&s| s.to_uppercase());
+        .map_or_else(|| String::from(""), |&s| s.to_uppercase());
 
     uppercase_first_part_of_rule_file_name.to_string()
 }
