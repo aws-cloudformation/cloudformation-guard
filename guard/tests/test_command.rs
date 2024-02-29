@@ -362,4 +362,21 @@ mod test_command_tests {
 
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
+
+    #[test]
+    fn test_sarif_output_with_expected_failures() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![]));
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/failing_test.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format("sarif")
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
 }

@@ -133,7 +133,7 @@ impl Executable for Test {
 
         if self.output_format.is_structured() && self.verbose {
             return Err(Error::IllegalArguments(String::from("Cannot provide an output_type of JSON, YAML, or JUnit while the verbose flag is set")));
-        } else if matches!(self.output_format, OutputFormatType::SARIF) {
+        } else if matches!(self.output_format, OutputFormatType::Sarif) {
             return Err(Error::IllegalArguments(String::from(
                 "Cannot provide an output_type of SARIF, SARIF reporter is unsupported.",
             )));
@@ -162,7 +162,7 @@ impl Executable for Test {
 
                     Ok(exit_code)
                 }
-                OutputFormatType::SARIF => unreachable!(),
+                OutputFormatType::Sarif => unreachable!(),
             }
         } else {
             let file = self.rules.as_ref().unwrap();
@@ -203,7 +203,7 @@ impl Executable for Test {
                     &data_test_files,
                     self.verbose,
                 ),
-                OutputFormatType::SARIF => unreachable!(),
+                OutputFormatType::Sarif => unreachable!(),
                 OutputFormatType::YAML | OutputFormatType::JSON | OutputFormatType::Junit => {
                     handle_structured_single_report(
                         rule_file,
@@ -374,7 +374,7 @@ pub(crate) fn handle_structured_single_report(
         OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &result)?,
         OutputFormatType::Junit => JunitReport::from(&vec![result]).serialize(writer)?,
         OutputFormatType::SingleLineSummary => unreachable!(),
-        OutputFormatType::SARIF => unreachable!(),
+        OutputFormatType::Sarif => unreachable!(),
     }
 
     Ok(exit_code)
@@ -449,7 +449,7 @@ fn handle_structured_directory_report(
         OutputFormatType::JSON => serde_json::to_writer_pretty(writer, &test_results)?,
         OutputFormatType::Junit => JunitReport::from(&test_results).serialize(writer)?,
         // NOTE: safe since output type is checked prior to calling this function
-        OutputFormatType::SARIF => unreachable!(),
+        OutputFormatType::Sarif => unreachable!(),
         OutputFormatType::SingleLineSummary => unreachable!(),
     }
 

@@ -20,7 +20,6 @@ mod validate_tests {
         CommandTestRunner, StatusCode,
     };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
-
     #[derive(Default)]
     struct ValidateTestRunner<'args> {
         data: Vec<&'args str>,
@@ -689,18 +688,19 @@ mod validate_tests {
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
-    #[test]
-    fn test_junit_without_structured_flag() {
+    #[rstest::rstest]
+    #[case("junit")]
+    #[case("sarif")]
+    fn test_junit_without_structured_flag(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::default();
-
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
             .data(vec![
                 "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
             ])
             .show_summary(vec!["none"])
-            .output_format(Option::from("junit"))
+            .output_format(Option::from(output))
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
