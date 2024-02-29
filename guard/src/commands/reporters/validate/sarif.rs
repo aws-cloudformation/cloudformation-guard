@@ -176,17 +176,11 @@ fn handle_messages(messages: &Messages) -> String {
 fn extract_rule_id(rule_name: &str) -> String {
     let first_part_of_rule_file_name: Vec<&str> = rule_name.split('.').collect();
 
-    let uppercase_first_part_of_rule_file_name = {
-        let maybe_first_part = first_part_of_rule_file_name
-            .first()
-            .map(|&s| s.to_uppercase());
-        match maybe_first_part {
-            Some(uppercased_part) => uppercased_part,
-            None => String::new(),
-        }
-    };
+    let uppercase_first_part_of_rule_file_name = first_part_of_rule_file_name
+        .first()
+        .map_or_else(|| String::new(), |&s| s.to_uppercase());
 
-    uppercase_first_part_of_rule_file_name
+    uppercase_first_part_of_rule_file_name.to_string()
 }
 
 fn sanitize_path(path: &str) -> String {
