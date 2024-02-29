@@ -191,8 +191,8 @@ impl SarifReportBuilder {
                     uri: self.sanitize_path(path_string),
                 },
                 region: SarifRegion {
-                    start_line: if start_line == 0 { 1 } else { start_line },
-                    start_column: if start_column == 0 { 1 } else { start_column },
+                    start_line: start_line.max(1),
+                    start_column: start_column.max(1),
                 },
             },
         }]
