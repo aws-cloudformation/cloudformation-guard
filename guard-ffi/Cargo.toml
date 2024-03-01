@@ -1,6 +1,6 @@
 [package]
 name = "cfn-guard-ffi"
-version = "3.0.3"
+version = "3.1.0-beta"
 edition = "2018"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>", "Tyler Southwick"]
 description = "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies."
@@ -14,5 +14,5 @@ keywords = ["policy-as-code", "guard", "cfn-guard", "security", "compliance"]
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
-cfn-guard = { version = "3.0.3", path = "../guard" }
+cfn-guard = { version = "3.1.0-beta", path = "../guard" }
 ffi-support = "0.4.4"
