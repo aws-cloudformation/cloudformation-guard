@@ -185,7 +185,6 @@ struct SarifRule {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct SarifReport {
     #[serde(rename = "$schema")]
     schema: String,
@@ -230,22 +229,13 @@ fn handle_messages(messages: &Messages) -> String {
 fn extract_rule_id(rule_name: &str) -> String {
     let first_part_of_rule_file_name: Vec<&str> = rule_name.split('.').collect();
 
-    let uppercase_first_part_of_rule_file_name = first_part_of_rule_file_name
+    first_part_of_rule_file_name
         .first()
-        .map_or(String::default(), |&s| s.to_uppercase());
-
-    uppercase_first_part_of_rule_file_name.to_string()
+        .map_or(String::default(), |&s| s.to_uppercase())
 }
 
 fn sanitize_path(path: &str) -> String {
-    if path.starts_with('/') {
-        match path.strip_prefix('/') {
-            Some(stripped) => stripped.to_string(),
-            None => path.to_string(),
-        }
-    } else {
-        path.to_string()
-    }
+    path.strip_prefix('/').unwrap_or(path).to_string()
 }
 
 fn generate_sarif_locations(

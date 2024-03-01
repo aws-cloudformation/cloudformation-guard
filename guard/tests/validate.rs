@@ -691,7 +691,7 @@ mod validate_tests {
     #[rstest::rstest]
     #[case("junit")]
     #[case("sarif")]
-    fn test_outputs_without_structured_flag(#[case] output: &str) {
+    fn test_structured_outputs_fail_without_structured_flag(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::default();
         let status_code = ValidateTestRunner::default()
