@@ -16,11 +16,10 @@ mod validate_tests {
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
 
     use crate::utils::{
-        get_full_path_for_resource_file, sanitize_junit_writer, Command, CommandTestRunner,
-        StatusCode,
+        get_full_path_for_resource_file, sanitize_junit_writer, sanitize_sarif_writer, Command,
+        CommandTestRunner, StatusCode,
     };
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq, utils};
-
     #[derive(Default)]
     struct ValidateTestRunner<'args> {
         data: Vec<&'args str>,
@@ -600,6 +599,7 @@ mod validate_tests {
     #[case("yaml")]
     #[case("json")]
     #[case("junit")]
+    #[case("sarif")]
     fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![]));
@@ -616,6 +616,8 @@ mod validate_tests {
 
         let writer = if output == "junit" {
             sanitize_junit_writer(writer)
+        } else if output == "sarif" {
+            sanitize_sarif_writer(writer)
         } else {
             writer
         };
@@ -661,6 +663,10 @@ mod validate_tests {
     #[case("junit", "pass")]
     #[case("junit", "fail")]
     #[case("junit", "skip")]
+    #[case("sarif", "all")]
+    #[case("sarif", "pass")]
+    #[case("sarif", "fail")]
+    #[case("sarif", "skip")]
     #[case("single-line-summary", "none")]
     #[case("single-line-summary", "all")]
     #[case("single-line-summary", "skip")]
@@ -682,18 +688,19 @@ mod validate_tests {
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
-    #[test]
-    fn test_junit_without_structured_flag() {
+    #[rstest::rstest]
+    #[case("junit")]
+    #[case("sarif")]
+    fn test_structured_outputs_fail_without_structured_flag(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::default();
-
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
             .data(vec![
                 "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
             ])
             .show_summary(vec!["none"])
-            .output_format(Option::from("junit"))
+            .output_format(Option::from(output))
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);

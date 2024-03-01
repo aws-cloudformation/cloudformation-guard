@@ -10,6 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
+use crate::rules::path_value::Location;
 use crate::rules::path_value::{MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
@@ -24,7 +25,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
-
+use std::vec::Vec;
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: Rc<PathAwareValue>,
     resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
@@ -1435,6 +1436,8 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'l
 pub(crate) struct Messages {
     pub(crate) custom_message: Option<String>,
     pub(crate) error_message: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) location: Option<Location>,
 }
 
 pub(crate) type Metadata = HashMap<String, String>;
@@ -1502,9 +1505,9 @@ impl ValueComparisons for UnaryCheck {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct UnaryReport {
+    pub(crate) check: UnaryCheck,
     pub(crate) context: String,
     pub(crate) messages: Messages,
-    pub(crate) check: UnaryCheck,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1803,6 +1806,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                     messages: Messages {
                         custom_message: message.clone(),
                         error_message: None,
+                        location: None,
                     },
                     ..Default::default()
                 }));
@@ -1820,6 +1824,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 "query for block clause did not retrieve any value",
                             )),
                             custom_message: None,
+                            location: None,
                         },
                         unresolved: None,
                     }));
@@ -1874,6 +1879,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: Some(custom_message),
                                 error_message: Some(error_message),
+                                location: None,
                             },
                         },
                     )))
@@ -1893,6 +1899,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: Some(message.to_string()),
                                 error_message: Some(error_message),
+                                location: None,
                             },
                             context: current.context.clone(),
                             check: UnaryCheck::UnResolvedContext(missing.rule.to_string()),
@@ -1918,6 +1925,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                         messages: Messages {
                             custom_message: Some(message.to_string()),
                             error_message: Some(error_message),
+                            location: None,
                         },
                         unresolved: Some(ur.clone()),
                     }));
@@ -2047,6 +2055,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: Some(custom_message),
                                 error_message: Some(message),
+                                location: Some(
+                                    from.unresolved_traversed_to()
+                                        .map_or(Location::default(), |val| val.self_path().1),
+                                ),
                             },
                             context: current.context.clone(),
                             check,
@@ -2085,6 +2097,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                     messages: Messages {
                                         custom_message: Some(custom_message),
                                         error_message: Some(message),
+                                        location: Some(to_unres.traversed_to.self_path().1),
                                     },
                                     check: BinaryCheck::UnResolved(ValueUnResolved {
                                         comparison: (*cmp, *not),
@@ -2123,6 +2136,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 }),
                                                 context: current.context.to_string(),
                                                 messages: Messages {
+                                                    location: Some(to_res.clone().self_path().1),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
                                                 },
@@ -2143,6 +2157,9 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 messages: Messages {
                                                     custom_message: Some(custom_message),
                                                     error_message: Some(message),
+                                                    location: Some(
+                                                        to_unres.traversed_to.self_path().1,
+                                                    ),
                                                 },
                                                 check: BinaryCheck::UnResolved(ValueUnResolved {
                                                     comparison: (*cmp, *not),
@@ -2176,6 +2193,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                             messages: Messages {
                                 custom_message: custom_message.clone(),
                                 error_message: Some(error_message),
+                                location: Some(from.resolved().unwrap().self_path().1),
                             },
                             check: BinaryCheck::InResolved(InComparison {
                                 from: match from.resolved() {

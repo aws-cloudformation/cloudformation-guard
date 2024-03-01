@@ -76,6 +76,16 @@ pub fn sanitize_junit_writer(writer: Writer) -> Writer {
     Writer::new(WBVec(res.as_bytes().to_vec()))
 }
 
+#[allow(dead_code)]
+pub fn sanitize_sarif_writer(writer: Writer) -> Writer {
+    let buf = writer.stripped().unwrap();
+
+    let rgx = Regex::new(r#"("uri": ".*")"#).unwrap();
+    let res = rgx.replace_all(&buf, r#""uri": "some/path""#);
+
+    Writer::new(WBVec(res.as_bytes().to_vec()))
+}
+
 pub fn get_full_path_for_resource_file(path: &str) -> String {
     let path = if cfg!(windows) {
         path.replace('/', r#"\"#)

@@ -154,9 +154,13 @@ impl CommandBuilder<Validate> for ValidateBuilder {
                     "Cannot provide a summary-type other than `none` when the `structured` flag is present",
                 )));
             }
-        } else if matches!(self.output_format, OutputFormatType::Junit) {
-            return Err(Error::IllegalArguments(String::from(
-                "the structured flag must be set when output is set to junit",
+        } else if matches!(
+            self.output_format,
+            OutputFormatType::Junit | OutputFormatType::Sarif
+        ) {
+            return Err(Error::IllegalArguments(format!(
+                "the structured flag must be set when output is set to {:?}",
+                self.output_format
             )));
         }
 
@@ -496,15 +500,22 @@ mod cfn_guard_lib_tests {
             .try_build();
         assert!(cmd.is_err());
 
-        // fails cause junit, but not structured
-        let cmd = ValidateBuilder::default()
-            .data(vec![String::from("resources/validate/data-dir")])
-            .rules(vec![String::from("resources/validate/rules-dir")])
-            .output_format(crate::commands::validate::OutputFormatType::Junit)
-            .show_summary(vec![ShowSummaryType::None])
-            .try_build();
+        // fails cause junit or sarif, but not structured
+        vec![
+            crate::commands::validate::OutputFormatType::Junit,
+            crate::commands::validate::OutputFormatType::Sarif,
+        ]
+        .into_iter()
+        .for_each(|output_format| {
+            let cmd = ValidateBuilder::default()
+                .data(vec![String::from("resources/validate/data-dir")])
+                .rules(vec![String::from("resources/validate/rules-dir")])
+                .output_format(output_format)
+                .show_summary(vec![ShowSummaryType::None])
+                .try_build();
 
-        assert!(cmd.is_err());
+            assert!(cmd.is_err());
+        });
 
         // fails cause no payload, or rules
         let cmd = ValidateBuilder::default()

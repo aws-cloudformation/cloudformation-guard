@@ -63,6 +63,7 @@ pub enum OutputFormatType {
     JSON,
     YAML,
     Junit,
+    Sarif,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
@@ -100,6 +101,7 @@ impl From<&str> for OutputFormatType {
             "single-line-summary" => OutputFormatType::SingleLineSummary,
             "json" => OutputFormatType::JSON,
             "junit" => OutputFormatType::Junit,
+            "sarif" => OutputFormatType::Sarif,
             _ => OutputFormatType::YAML,
         }
     }
@@ -214,6 +216,12 @@ impl Validate {
         if matches!(self.output_format, OutputFormatType::Junit) && !self.structured {
             return Err(Error::IllegalArguments(String::from(
                 "the structured flag must be set when output is set to junit",
+            )));
+        }
+
+        if matches!(self.output_format, OutputFormatType::Sarif) && !self.structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to sarif",
             )));
         }
 

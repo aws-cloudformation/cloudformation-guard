@@ -96,7 +96,7 @@ Options:
   -t, --type <type>
           Specify the type of data file used for improved messaging - ex: CFNTemplate [possible values: CFNTemplate]
   -o, --output-format <output-format>
-          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit]
+          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit, sarif]
   -S, --show-summary <show-summary>
           Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip) [default: fail] [possible values: none, all, pass, fail, skip]
   -s, --show-clause-failures
