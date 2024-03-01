@@ -6,8 +6,8 @@
       "tool": {
         "driver": {
           "name": "cfn-guard",
-          "semanticVersion": "3.0.3",
-          "fullName": "cfn-guard 3.0.3",
+          "semanticVersion": "3.1.0-beta",
+          "fullName": "cfn-guard 3.1.0-beta",
           "organization": "Amazon Web Services",
           "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
           "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
