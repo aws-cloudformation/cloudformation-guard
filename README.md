@@ -42,6 +42,7 @@ Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl
 * [Built-in functions & stateful rules](#functions)
 * [AWS Rule Registry](#registry)
 * [Use Guard as a Docker Image](#docker)
+* [Use Guard as a CI tool](#ci)
 * [License](#license)
 
 ## FAQs
@@ -596,6 +597,22 @@ docker run \
   ./cfn-guard validate -d /container/guard-files/template.yml -r /container/guard-files/rule.guard
 ```
 We should see the evaluation result emitted out on the console.
+
+## <a name="ci"></a> Use Guard as a CI tool
+
+Guard is great for CI checks with the Junit output format, making the process of validating or testing your templates seamless and simple. Check out the examples below.
+
+### GitHub Actions
+
+![GitHub Actions](images/github.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/junit-test-and-validate.yml)
+
+### CircleCI
+
+![CircleCI](images/circleci.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.circleci/config.yml)
 
 ### Tagging convention
 
