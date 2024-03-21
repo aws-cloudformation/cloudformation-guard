@@ -1936,16 +1936,6 @@ impl<'a> TryFrom<&'a str> for GuardClause<'a> {
     }
 }
 
-pub(crate) struct ConjunctionsWrapper<'a>(pub(crate) Conjunctions<GuardClause<'a>>);
-impl<'a> TryFrom<&'a str> for ConjunctionsWrapper<'a> {
-    type Error = Error;
-
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        let span = from_str2(value);
-        Ok(ConjunctionsWrapper(clauses(span)?.1))
-    }
-}
-
 impl<'a> TryFrom<&'a str> for TypeBlock<'a> {
     type Error = Error;
 
