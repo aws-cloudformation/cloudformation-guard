@@ -1345,6 +1345,7 @@ fn single_clauses(input: Span) -> IResult<Span, Conjunctions<WhenGuardClause>> {
     )
 }
 
+#[allow(dead_code)] // TODO: investigate why this is unused
 fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
     cnf_clauses(
         input,
