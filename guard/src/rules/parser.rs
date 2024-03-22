@@ -6,7 +6,7 @@ use indexmap::map::IndexMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{alpha1, newline, space1};
+use nom::character::complete::{alpha1, space1};
 use nom::character::complete::{anychar, digit1, one_of};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{all_consuming, cut, peek};
@@ -1187,6 +1187,17 @@ fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
 //
 //      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
 //
+//
+//
+
+// fn testingstuff(input: Span) -> IResult<Span, Span> {
+//     tag("\r\n")(input)?
+// }
+
+fn newline(input: Span) -> IResult<Span, Span> {
+    alt((tag("\n"), tag("\r\n")))(input)
+}
+
 fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
     let location = FileLocation {
         file_name: input.extra,
