@@ -604,11 +604,21 @@ Guard is great for CI checks with the Junit output format, making the process of
 
 ### GitHub Actions
 
+#### Junit
+
 ![GitHub Actions](images/github.png)
 
-[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/junit-test-and-validate.yml)
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/workflows/junit-test-and-validate.yml)
+
+#### SARIF
+
+![GitHub Actions](images/sarif-gh.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/workflows/sarif-validate.yml)
 
 ### CircleCI
+
+#### Junit
 
 ![CircleCI](images/circleci.png)
 
