@@ -9,10 +9,12 @@ pub(crate) enum Event<'input> {
     StreamEnd,
     DocumentStart,
     DocumentEnd,
+    #[allow(dead_code)]
     Alias(Anchor),
     Scalar(Scalar<'input>),
     SequenceStart(SequenceStart),
     SequenceEnd,
+    #[allow(dead_code)]
     MappingStart(MappingStart),
     MappingEnd,
 }
