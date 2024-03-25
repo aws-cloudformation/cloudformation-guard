@@ -1,0 +1,25 @@
+# NOTE: You must enable code scanning and analysis on your repository
+name: "cfn-guard SARIF analysis"
+
+on:
+  push:
+  schedule:
+    - cron: '45 15 * * 4'
+
+jobs:
+  sarif:
+    runs-on: ubuntu-latest
+    container:
+      image: public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cfn-guard
+        # Replace these paths with your own
+        run: /usr/src/cloudformation-guard/cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format sarif --show-summary none --structured > results.sarif || true
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
