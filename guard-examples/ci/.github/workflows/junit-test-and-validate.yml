@@ -6,32 +6,17 @@ jobs:
   build:
     name: Run cfn-guard validate & test with Junit output
     runs-on: ubuntu-latest
-    # Note: GitHub workflows require additional permissions to use the install script.
-    # This example downloads the binary directly and adds it to the PATH so you can
-    # easily copy over and replace the tests and validations with your own existing
-    # commands.
+    container:
+      image: public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      - name: Create cfn-guard v3 directory
-        run: mkdir -p ~/.guard/3
-      - name: Create cfn-guard bin directory
-        run: mkdir -p ~/.guard/bin
-      - name: Download cfn-guard
-        # At the time of creating this example, only 3.1.0-beta supports junit output.
-        run: curl -L -o /tmp/guard.tar.gz https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.1.0-beta/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz
-      - name: Extract cfn-guard
-        run: tar -C ~/.guard/3 -xzf /tmp/guard.tar.gz
-      - name: Link cfn-guard
-        run: ln -sf ~/.guard/3/cfn-guard-v3-x86_64-ubuntu-latest/cfn-guard ~/.guard/bin && ls -l ~/.guard/bin
-      - name: Add ~/.guard/bin/ to PATH
-        run: echo "$HOME/.guard/bin/" >> $GITHUB_PATH
       - name: Run cfn-guard validate with Junit output
         # Replace these paths with your own
-        run: cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format junit --show-summary none --structured > validate-junit.xml || true
+        run: /usr/src/cloudformation-guard/cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format junit --show-summary none --structured > validate-junit.xml || true
       - name: Run cfn-guard test with Junit output
         # Replace these paths with your own
-        run: cfn-guard test -r ./path/to/test/directory_or_file/ -t ./path/to/test/directory_or_file/ --output-format junit > test-junit.xml || true
+        run: /usr/src/cloudformation-guard/cfn-guard test -r ./path/to/test/directory_or_file/ -t ./path/to/data/directory_or_file/ --output-format junit > test-junit.xml || true
       - name: Publish Validate Report
         uses: mikepenz/action-junit-report@v4
         if: success() || failure()
