@@ -2,48 +2,16 @@ version: 2.1
 executors:
   default:
     docker:
-      - image: alpine:latest
+      - image: public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
 commands:
-  # At the time of creating this example, only 3.1.0-beta supports junit output.
-  # This example downloads the binary directly and adds it to the PATH so you can
-  # easily copy over and replace the tests and validations with your own existing
-  # commands.
-  install_guard:
-    description: "Install cfn-guard"
-    steps:
-      - run:
-          name: Install curl
-          command: apk add curl
-      - run:
-          name: Create cfn-guard v3 directory
-          command: mkdir -p ~/.guard/3
-      - run:
-          name: Create cfn-guard bin directory
-          command: mkdir -p ~/.guard/bin
-      - run:
-          name: Download cfn-guard
-          command: curl -L -o /tmp/guard.tar.gz https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.1.0-beta/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz
-      - run:
-          name: Extract cfn-guard
-          command: tar -C ~/.guard/3 -xzf /tmp/guard.tar.gz
-      - run:
-          name: Link cfn-guard
-          command: ln -sf ~/.guard/3/cfn-guard-v3-x86_64-ubuntu-latest/cfn-guard ~/.guard/bin && ls -l ~/.guard/bin
-      - run:
-          name: Add ~/.guard/bin/ to PATH
-          command: |
-            echo 'export PATH=$HOME/.guard/bin/:$PATH' >> $BASH_ENV
-            source "$BASH_ENV"
-            cfn-guard --help
   validate:
     description: "Run cfn-guard validate"
     steps:
       - run:
           # Replace these paths with your own
           command: |
-            source "$BASH_ENV"
             mkdir -p ~/test-results/validate/
-            if ! cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format junit --show-summary none --structured > ~/test-results/validate/validate.xml; then
+            if ! /usr/src/cloudformation-guard/cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format junit --show-summary none --structured > ~/test-results/validate/validate.xml; then
               exit 1
             fi
           when: always
@@ -55,9 +23,8 @@ commands:
       - run:
           # Replace these paths with your own
           command: |
-            source "$BASH_ENV"
             mkdir -p ~/test-results/test/
-            if ! cfn-guard test -r ./path/to/test/directory_or_file/ -t ./path/to/data/directory_or_file/ --output-format junit > ~/test-results/test/test.xml; then
+            if ! /usr/src/cloudformation-guard/cfn-guard test -r ./path/to/test/directory_or_file/ -t ./path/to/data/directory_or_file/ --output-format junit > ~/test-results/test/test.xml; then
               exit 1
             fi
           when: always
@@ -68,7 +35,6 @@ jobs:
     executor: default
     steps:
       - checkout
-      - install_guard
       - validate
       - test
 workflows:
