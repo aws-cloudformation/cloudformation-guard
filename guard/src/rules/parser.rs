@@ -1190,10 +1190,6 @@ fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
 //
 //
 
-// fn testingstuff(input: Span) -> IResult<Span, Span> {
-//     tag("\r\n")(input)?
-// }
-
 fn newline(input: Span) -> IResult<Span, Span> {
     alt((tag("\n"), tag("\r\n")))(input)
 }
