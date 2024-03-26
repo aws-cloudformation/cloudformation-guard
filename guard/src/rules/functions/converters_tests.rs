@@ -126,7 +126,7 @@ fn test_parse_float() -> crate::rules::Result<()> {
         Type: AWS::EC2::SecurityGroup
         Properties:
           SecurityGroupIngress:
-            String: "2234"
+            String: "2.0"
             Int: 1
             Float: 1.0
             BadValue: "123 not a real number"
