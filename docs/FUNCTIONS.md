@@ -1,6 +1,6 @@
 # Guard built-in functions and stateful rules
 
-As of version 3.0.0 guard now supplies some builtin functions, allowing for stateful rules. 
+As of version 3.0.0 guard now supplies some builtin functions, allowing for stateful rules.
 
 Built-in functions are supported only through assignment to a variable at the moment.
 
@@ -43,6 +43,14 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      SecurityGroupIngress:
+        String: "true"
+        Char: "1"
+        Int: 1
+        Float: 1.5
 ```
 
 ## String Manipulation
@@ -91,7 +99,7 @@ rule TEST_JSON_PARSE when %template !empty {
             Effect == "Deny"
             Resource == "arn:aws:s3:::s3-test-123/*"
     }
-    
+
 }
 ```
 
@@ -101,9 +109,11 @@ The `regex_replace` function adds support for replacing one regular expression w
 
 #### Argument(s)
 
-1. `base_string`:  A query, each string that is resolved from this query will be operated on. Example, `%s3_resource.Properties.BucketName`
+1. `base_string`: A query, each string that is resolved from this query will be operated on. Example, `%s3_resource.Properties.BucketName`
 2. `regex_to_extract`: A regular expression that we are looking for to extract from the `base_string`
-  - Note: if this string does not resolve to a valid regular expression an error will occur
+
+- Note: if this string does not resolve to a valid regular expression an error will occur
+
 3. `regex_replacement` A regular expression that will replace the part we extracted, also supports capture groups
 
 #### Return value
@@ -162,13 +172,13 @@ rule TEST_COLLECTION when %template !empty {
 }
 ```
 
-### to_lower 
+### to_lower
 
 This function can be used to change the casing of the all characters in the string passed to all lowercase.
 
 #### Argument(s)
 
-1. `base_string`: A query that resolves to string(s) 
+1. `base_string`: A query that resolves to string(s)
 
 #### Return value
 
@@ -217,14 +227,14 @@ The `substring` function allows to extract a part of string(s) resolved from a q
 #### Argument(s)
 
 1. `base_string`: A query that resolves to string(s)
-2. `start_index`:  A query that resolves to an int or a literal int, this is the starting index for the substring (inclusive)
+2. `start_index`: A query that resolves to an int or a literal int, this is the starting index for the substring (inclusive)
 3. `end_index`: A query that resolves to an int or a literal int, this is the ending index for the substring (exclusive)
 
 #### Return value
 
 A result of substrings for each `base_string` passed as input
 
- - Note: Any string that would result in an index out of bounds from the 2nd or 3rd argument is skipped
+- Note: Any string that would result in an index out of bounds from the 2nd or 3rd argument is skipped
 
 #### Example
 
@@ -267,14 +277,14 @@ rule SOME_RULE when %template !empty {
 
     let res = url_decode(%encoded)
     %res == "This string will be URL encoded"
-    << 
-        Violation: The result of URL decoding does not 
+    <<
+        Violation: The result of URL decoding does not
         match with the expected outcome
     >>
 }
 ```
 
-## Collection functions
+## Collection Functions
 
 ### count
 
@@ -315,5 +325,114 @@ rule SOME_RULE when %template !empty {
     %res3 >= 2
     << Violation: At least 2 buckets should have PublicAccessBlockConfiguration set  >>
 
+}
+```
+
+## Converter Functions
+
+It's important to note that if the the argument passed to any of the converter functions is a list, any element in the list that is of a type not supported for the conversion function, is skipped and left out of the final result.
+
+This means the resulting list would contain N - M elements where N is the number of items in the original list, and M are the number of elements whose type were not supported for this conversion
+
+### parse_float
+
+This function converts strings, ints, and chars to floating numbers
+
+NOTE: Strings that cannot be represented as a number will cause this function to error
+
+#### Argument(s)
+
+1. `args`: A query that resolves to either a literal or variable
+
+#### Example
+
+```
+let security_group = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule check when %security_group !EMPTY {
+    let converted = parse_float(%security_group.Properties.Int)
+    1.0 == %converted
+}
+```
+
+### parse_int
+
+This function converts strings, floats, and chars to integers
+
+NOTE: floating point numbers are truncated to their integer representation, chars/strings that cannot be represented as an int will cause this function to error
+
+#### Argument(s)
+
+1. `args`: A query that resolves to either a literal or variable
+
+#### Example
+
+```
+let security_group = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule check when %security_group !EMPTY {
+    let converted = parse_int(%security_group.Properties.Float)
+    1 == %converted
+}
+```
+
+### parse_boolean
+
+This function converts strings to their boolean equivalent
+
+NOTE: this function is not case sensitive meaning `tRuE`, `true`, `TRUE`, `True`, etc will all be successfully converted
+
+#### Argument(s)
+
+1. `args`: A query that resolves to either a literal or variable
+
+#### Example
+
+```
+let security_group = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule check when %security_group !EMPTY {
+    let converted = parse_boolean(%security_group.Properties.String)
+    %converted == true
+}
+```
+
+### parse_string
+
+This function converts floats, booleans, chars, and ints to their String equivalents
+
+#### Argument(s)
+
+1. `args`: A query that resolves to either a literal or variable
+
+#### Example
+
+```
+let security_group = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule check when %security_group !EMPTY {
+    let converted = parse_string(%security_group.Properties.Float)
+    %converted == "1.5"
+}
+```
+
+### parse_char
+
+This function converts strings, and ints to their char equivalents
+
+NOTE: this function will cause an error if the int is not 0 <= n <= 9, it will also error out if a string has a length > 1
+
+#### Argument(s)
+
+1. `args`: A query that resolves to either a literal or variable
+
+#### Example
+
+```
+let security_group = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
+
+rule check when %security_group !EMPTY {
+    let converted = parse_char(%security_group.Properties.Char)
+    %converted == '1'
 }
 ```
