@@ -1,11 +1,17 @@
 Transform: AWS::Serverless-2016-10-31
 
+Parameters:
+  FunctionName:
+    Type: String
+    Description: The name of the function
+
 Resources:
   CloudFormationGuardLambda:
     Type: AWS::Serverless::Function
     Properties:
       Runtime: provided.al2
       Handler: guard.handler
+      FunctionName: !Ref FunctionName
       # We need to point to the parent directory, so we can use ../guard/*
       CodeUri: ..
       Environment:
