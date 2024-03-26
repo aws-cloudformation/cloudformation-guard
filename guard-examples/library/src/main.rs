@@ -12,13 +12,10 @@ use cfn_guard::{
     },
     CommandBuilder, ValidateBuilder,
 };
-use serde_derive::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Payload {
-    #[serde(rename = "data")]
     pub data: String,
-    #[serde(rename = "rules")]
     pub rules: Vec<String>,
 }
 

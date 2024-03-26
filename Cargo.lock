@@ -683,9 +683,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cfn-guard",
- "serde",
- "serde_derive",
- "serde_json",
 ]
 
 [[package]]
