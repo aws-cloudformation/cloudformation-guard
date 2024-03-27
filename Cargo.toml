@@ -3,5 +3,6 @@
 members = [
     "guard",
     "guard-lambda",
-    "guard-ffi"
+    "guard-ffi",
+    "guard-examples/library"
 ]
