@@ -24,13 +24,8 @@ fn main() -> anyhow::Result<()> {
     let mut reader = Reader::new(ReadBuffer::Cursor(Cursor::new(Vec::from(
         payload.as_bytes(),
     ))));
-    let mut writer = match Writer::new_with_err(WriteBuffer::Vec(vec![]), WriteBuffer::Vec(vec![]))
-    {
-        Ok(writer) => writer,
-        Err(err) => {
-            panic!("Error: {}", err);
-        }
-    };
+    let mut writer = Writer::new_with_err(WriteBuffer::Vec(vec![]), WriteBuffer::Vec(vec![]))
+        .expect("Failed to create writer");
 
     let cmd = ValidateBuilder::default()
         .payload(true)

@@ -72,12 +72,7 @@ mod parse_tree_tests {
     #[test]
     fn test_json_output() {
         let mut reader = Reader::default();
-        let mut writer = match Writer::new(WBVec(vec![])) {
-            Ok(writer) => writer,
-            Err(err) => {
-                panic!("Error: {}", err);
-            }
-        };
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer");
         let status_code = ParseTreeTestRunner::default()
             .print_json()
             .rules("validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard")
@@ -116,12 +111,7 @@ mod parse_tree_tests {
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::default();
-        let mut writer = match Writer::new(WBVec(vec![])) {
-            Ok(writer) => writer,
-            Err(err) => {
-                panic!("Error: {}", err);
-            }
-        };
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer");
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
@@ -141,12 +131,8 @@ mod parse_tree_tests {
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::default();
-        let mut writer = match Writer::new_with_err(WBVec(vec![]), WBVec(vec![])) {
-            Ok(writer) => writer,
-            Err(err) => {
-                panic!("Error: {}", err);
-            }
-        };
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer");
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
@@ -184,12 +170,7 @@ mod parse_tree_tests {
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::default();
-        let mut writer = match Writer::new(WBVec(vec![])) {
-            Ok(writer) => writer,
-            Err(err) => {
-                panic!("Error: {}", err);
-            }
-        };
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer");
         let status_code = ParseTreeTestRunner::default()
             .rules(rules_arg)
             .run(&mut writer, &mut reader);
