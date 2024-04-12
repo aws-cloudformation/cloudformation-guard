@@ -73,7 +73,7 @@ pub fn sanitize_junit_writer(writer: Writer) -> Writer {
     let rgx = Regex::new(r#"time="\d+""#).unwrap();
     let res = rgx.replace_all(&buf, r#"time="0""#);
 
-    let writer = Writer::new(WBVec(res.as_bytes().to_vec())).expect("Failed to create writer");
+    let writer = Writer::new(WBVec(res.as_bytes().to_vec())).expect("Failed to create writer.");
 
     writer
 }
@@ -85,7 +85,7 @@ pub fn sanitize_sarif_writer(writer: Writer) -> Writer {
     let rgx = Regex::new(r#"("uri": ".*")"#).unwrap();
     let res = rgx.replace_all(&buf, r#""uri": "some/path""#);
 
-    let writer = Writer::new(WBVec(res.as_bytes().to_vec())).expect("Failed to create writer");
+    let writer = Writer::new(WBVec(res.as_bytes().to_vec())).expect("Failed to create writer.");
 
     writer
 }

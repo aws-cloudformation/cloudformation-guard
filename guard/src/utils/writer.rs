@@ -22,7 +22,7 @@ impl Writer {
     pub fn new(buffer: WriteBuffer) -> crate::rules::Result<Self> {
         if buffer.is_err() {
             return Err(Error::InternalError(IncompatibleWriteError(
-                "Unable to use stderr as a regular buffer".to_string(),
+                "Unable to use stderr as a regular buffer.".to_string(),
             )));
         }
 
@@ -35,7 +35,7 @@ impl Writer {
     pub fn new_with_err(buffer: WriteBuffer, err: WriteBuffer) -> crate::rules::Result<Self> {
         if buffer.is_err() {
             return Err(Error::InternalError(IncompatibleWriteError(
-                "Unable to use stderr as a regular buffer".to_string(),
+                "Unable to use stderr as a regular buffer.".to_string(),
             )));
         }
 
@@ -98,10 +98,10 @@ impl Writer {
                 }
             }
             WriteBuffer::Stdout(..) => Err(Error::InternalError(IncompatibleWriteError(
-                "Unable to strip ANSI escapes from stdout buffer".to_string(),
+                "Unable to strip ANSI escapes from stdout buffer.".to_string(),
             ))),
             WriteBuffer::Stderr(..) => Err(Error::InternalError(IncompatibleWriteError(
-                "Unable to strip ANSI escapes from stderr buffer".to_string(),
+                "Unable to strip ANSI escapes from stderr buffer.".to_string(),
             ))),
         }
     }
