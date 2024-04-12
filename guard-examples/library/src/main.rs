@@ -25,7 +25,9 @@ fn main() -> anyhow::Result<()> {
         payload.as_bytes(),
     ))));
     let mut writer = Writer::new_with_err(WriteBuffer::Vec(vec![]), WriteBuffer::Vec(vec![]))
-        .expect("Failed to create writer.");
+        .unwrap_or_else(|err| {
+            panic!("Error: {}", err);
+        });
 
     let cmd = ValidateBuilder::default()
         .payload(true)
