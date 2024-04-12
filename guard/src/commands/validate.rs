@@ -163,7 +163,7 @@ pub struct Validate {
     /// default is single-line-summary
     /// if junit is used, `structured` attributed must be set to true
     pub(crate) output_format: OutputFormatType,
-    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail])]
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail], value_delimiter=',')]
     /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
     /// default is failed
     /// must be set to none if used together with the structured flag

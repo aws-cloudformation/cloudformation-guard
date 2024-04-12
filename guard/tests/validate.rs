@@ -782,4 +782,27 @@ mod validate_tests {
             writer
         );
     }
+
+    #[rstest::rstest]
+    #[case("single-line-summary", vec!["pass", "fail"])]
+    #[case("single-line-summary", vec!["skip", "fail"])]
+    #[case("single-line-summary", vec!["skip", "pass"])]
+    fn test_validate_with_show_summary_combinations(
+        #[case] output: &str,
+        #[case] show_summary: Vec<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/rules-dir"])
+            .data(vec![
+                "/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(show_summary)
+            .output_format(Option::from(output))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
 }
