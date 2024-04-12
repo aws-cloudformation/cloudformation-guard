@@ -5,6 +5,9 @@ archtype = "archtype"
 ure = "ure"
 # Don't flag dne as a misspelling
 dne = "dne"
+# Don't flag kms as mispelling
+kms = "kms"
 [default.extend-identifiers]
 # Ignore ID in evaluate_tests.rs
 fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"
+
