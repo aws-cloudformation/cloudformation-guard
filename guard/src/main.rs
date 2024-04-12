@@ -15,14 +15,39 @@ fn main() -> Result<(), Error> {
 
     let mut writer = match &args.command {
         Commands::ParseTree(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?)),
-            None => Writer::new(Stdout(std::io::stdout())),
+            Some(path) => match Writer::new(WBFile(File::create(path)?)) {
+                Ok(writer) => writer,
+                Err(err) => {
+                    panic!("Error: {}", err);
+                }
+            },
+            None => match Writer::new(Stdout(std::io::stdout())) {
+                Ok(writer) => writer,
+                Err(err) => {
+                    panic!("Error: {}", err);
+                }
+            },
         },
         Commands::Rulegen(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?)),
-            None => Writer::new(Stdout(std::io::stdout())),
+            Some(path) => match Writer::new(WBFile(File::create(path)?)) {
+                Ok(writer) => writer,
+                Err(err) => {
+                    panic!("Error: {}", err);
+                }
+            },
+            None => match Writer::new(Stdout(std::io::stdout())) {
+                Ok(writer) => writer,
+                Err(err) => {
+                    panic!("Error: {}", err);
+                }
+            },
         },
-        _ => Writer::new(Stdout(std::io::stdout())),
+        _ => match Writer::new(Stdout(std::io::stdout())) {
+            Ok(writer) => writer,
+            Err(err) => {
+                panic!("Error: {}", err);
+            }
+        },
     };
 
     let mut reader = Reader::new(ReadBuffer::Stdin(std::io::stdin()));

@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::fmt::{Debug, Formatter};
+use std::str::Utf8Error;
 use thiserror::Error;
 
 use crate::rules::parser::{ParserError, Span};
@@ -57,6 +58,10 @@ pub enum InternalError {
     InvalidKeyType(String),
     #[error("internal error {0}")]
     UnresolvedKeyForReporter(String),
+    #[error("{0}")]
+    FromUtf8Error(#[from] Utf8Error),
+    #[error("{0}")]
+    IncompatibleWriteError(String),
 }
 
 #[derive(Debug, Error)]

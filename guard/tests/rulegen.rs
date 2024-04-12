@@ -66,7 +66,12 @@ mod rulegen_tests {
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = match Writer::new(WBVec(vec![])) {
+            Ok(writer) => writer,
+            Err(err) => {
+                panic!("Error: {}", err);
+            }
+        };
         let status_code = RulegenTestRunner::default()
             .template(template_arg)
             .run(&mut writer, &mut reader);
