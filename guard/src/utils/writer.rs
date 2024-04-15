@@ -23,7 +23,7 @@ impl Default for Writer {
 impl Writer {
     pub fn new(buffer: WriteBuffer) -> crate::rules::Result<Self> {
         if buffer.is_err() {
-            return Err(Error::InternalError(IncompatibleWriterError(
+            return Err(Error::from(IncompatibleWriterError(
                 "Unable to use stderr as a regular buffer.".to_string(),
             )));
         }
@@ -36,7 +36,7 @@ impl Writer {
 
     pub fn new_with_err(buffer: WriteBuffer, err: WriteBuffer) -> crate::rules::Result<Self> {
         if buffer.is_err() {
-            return Err(Error::InternalError(IncompatibleWriterError(
+            return Err(Error::from(IncompatibleWriterError(
                 "Unable to use stderr as a regular buffer.".to_string(),
             )));
         }
@@ -51,19 +51,19 @@ impl Writer {
     pub fn err_to_stripped(self) -> crate::rules::Result<String> {
         match self.err {
             WriteBuffer::Vec(vec) => String::from_utf8(strip_ansi_escapes::strip(vec)?)
-                .map_err(|e| Error::InternalError(FromUtf8Error(e.utf8_error()))),
+                .map_err(|e| Error::from(FromUtf8Error(e))),
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
                 file.read_to_string(&mut data)
                     .expect("Unable to read from file");
 
                 String::from_utf8(strip_ansi_escapes::strip(data)?)
-                    .map_err(|e| Error::InternalError(FromUtf8Error(e.utf8_error())))
+                    .map_err(|e| Error::from(FromUtf8Error(e)))
             }
-            WriteBuffer::Stdout(..) => Err(Error::InternalError(UnsupportedOperationError(
+            WriteBuffer::Stdout(..) => Err(Error::from(UnsupportedOperationError(
                 "Unable to call err_to_stripped() on a stdout buffer.".to_string(),
             ))),
-            WriteBuffer::Stderr(..) => Err(Error::InternalError(UnsupportedOperationError(
+            WriteBuffer::Stderr(..) => Err(Error::from(UnsupportedOperationError(
                 "Unable to call err_to_stripped() on a stderr buffer.".to_string(),
             ))),
         }
@@ -78,8 +78,7 @@ impl Writer {
             WriteBuffer::Vec(vec) => {
                 let stripped = strip_ansi_escapes::strip(vec)?;
 
-                String::from_utf8(stripped)
-                    .map_err(|e| Error::InternalError(FromUtf8Error(e.utf8_error())))
+                String::from_utf8(stripped).map_err(|e| Error::from(FromUtf8Error(e)))
             }
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
@@ -88,13 +87,12 @@ impl Writer {
 
                 let stripped = strip_ansi_escapes::strip(data.into_bytes())?;
 
-                String::from_utf8(stripped)
-                    .map_err(|e| Error::InternalError(FromUtf8Error(e.utf8_error())))
+                String::from_utf8(stripped).map_err(|e| Error::from(FromUtf8Error(e)))
             }
-            WriteBuffer::Stdout(..) => Err(Error::InternalError(UnsupportedBufferError(
+            WriteBuffer::Stdout(..) => Err(Error::from(UnsupportedBufferError(
                 "Unable to strip ANSI escapes from stdout buffer.".to_string(),
             ))),
-            WriteBuffer::Stderr(..) => Err(Error::InternalError(UnsupportedBufferError(
+            WriteBuffer::Stderr(..) => Err(Error::from(UnsupportedBufferError(
                 "Unable to strip ANSI escapes from stderr buffer.".to_string(),
             ))),
         }
@@ -125,14 +123,15 @@ impl WriteBuffer {
     }
     fn into_string(self) -> crate::rules::Result<String> {
         match self {
-            WriteBuffer::Stdout(..) => Err(Error::InternalError(UnsupportedOperationError(
+            WriteBuffer::Stdout(..) => Err(Error::from(UnsupportedOperationError(
                 "Unable to call into_string() on a stdout buffer.".to_string(),
             ))),
-            WriteBuffer::Stderr(..) => Err(Error::InternalError(UnsupportedOperationError(
+            WriteBuffer::Stderr(..) => Err(Error::from(UnsupportedOperationError(
                 "Unable to call into_string() on a stderr buffer.".to_string(),
             ))),
-            WriteBuffer::Vec(vec) => String::from_utf8(vec)
-                .map_err(|e| Error::InternalError(FromUtf8Error(e.utf8_error()))),
+            WriteBuffer::Vec(vec) => {
+                String::from_utf8(vec).map_err(|e| Error::from(FromUtf8Error(e)))
+            }
             WriteBuffer::File(mut file) => {
                 let mut data = String::new();
                 file.read_to_string(&mut data)
