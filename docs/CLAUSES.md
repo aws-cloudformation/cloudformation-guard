@@ -124,7 +124,7 @@ Resources.S3Bucket.Properties.ObjectLockEnabled is_bool
 
 ```
 # Checks if Port is defined as an int
-Resources.ELBListener.Properties.Port is_bool
+Resources.ELBListener.Properties.Port is_int
 ```
 
 `is_float` - Checks if each occurrence of the query is of `float` type.
@@ -148,7 +148,7 @@ Resources.S3Bucket.Properties.Tags is_list
 Resources.S3Bucket.Properties.BucketEncryption is_struct
 ```
 
-`is_null` - Checks if each occurrence of the query is of `float` type.
+`is_null` - Checks if each occurrence of the query is of `null` type.
 
 ```
 # Checks if Resources.S3Bucket.Properties is null
