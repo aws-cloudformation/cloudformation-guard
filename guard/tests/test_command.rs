@@ -134,7 +134,7 @@ mod test_command_tests {
     #[case("yaml")]
     fn test_data_file_with_shorthand_reference(#[case] file_type: &str) -> Result<(), Error> {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_logging_enabled_tests.{}",
@@ -159,7 +159,7 @@ mod test_command_tests {
     #[case("yaml")]
     fn test_data_file(#[case] file_type: &str) -> Result<(), Error> {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(&format!(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.{}",
@@ -182,7 +182,7 @@ mod test_command_tests {
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("resources/test-command/rule-dir/invalid_rule.guard"))
@@ -203,7 +203,8 @@ mod test_command_tests {
     #[test]
     fn test_parse_error_when_file_dne() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Some("resources/test-command/data-dir/test.yaml"))
             .rules(Some("/resources/test-command/data-dir/invalid_rule.guard"))
@@ -221,7 +222,7 @@ mod test_command_tests {
     #[test]
     fn test_data_file_verbose() -> Result<(), Error> {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Some(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
@@ -244,7 +245,7 @@ mod test_command_tests {
     #[test]
     fn test_with_rules_dir_verbose() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .directory_only()
@@ -264,7 +265,7 @@ mod test_command_tests {
     #[case("junit")]
     fn test_structured_single_report(#[case] output: &str) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
@@ -295,7 +296,7 @@ mod test_command_tests {
     #[case("junit")]
     fn test_structured_directory_report(#[case] output: &str) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
@@ -320,7 +321,7 @@ mod test_command_tests {
     #[case("yaml")]
     fn test_structured_report_with_illegal_args(#[case] output: &str) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .directory(Option::from("resources/test-command/dir"))
             .output_format(output)
@@ -333,7 +334,7 @@ mod test_command_tests {
     #[test]
     fn test_with_function_expr() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/functions/data/template.yaml",
@@ -350,7 +351,7 @@ mod test_command_tests {
     #[test]
     fn test_with_failure() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/data-dir/failing_test.yaml",
@@ -366,7 +367,7 @@ mod test_command_tests {
     #[test]
     fn test_sarif_output_with_expected_failures() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
             .test_data(Option::from(
                 "resources/test-command/data-dir/failing_test.yaml",

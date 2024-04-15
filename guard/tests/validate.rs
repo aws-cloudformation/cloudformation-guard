@@ -237,7 +237,7 @@ mod validate_tests {
     #[test]
     fn test_single_data_file_single_rules_file_compliant() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .data(vec![
                 "data-dir/s3-public-read-prohibited-template-compliant.yaml",
@@ -289,7 +289,7 @@ mod validate_tests {
         #[case] expected_output: &str,
         #[case] expected_status_code: i32,
     ) {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let mut reader = Reader::default();
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
@@ -328,7 +328,7 @@ mod validate_tests {
         #[case] expected_status_code: i32,
     ) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .data(data_arg)
             .rules(rules_arg)
@@ -404,7 +404,7 @@ mod validate_tests {
 
     #[test]
     fn test_updated_summary_output() {
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let mut reader = Reader::default();
         let status_code = ValidateTestRunner::default()
             .data(vec!["data-dir"])
@@ -490,7 +490,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-server-side-encryption-template-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -508,7 +508,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -526,7 +526,7 @@ mod validate_tests {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
@@ -568,7 +568,7 @@ mod validate_tests {
     fn test_with_payload_flag_fail() {
         let payload = r#"{"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"SomeRandomString\"" ]}"#;
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .payload()
             .run(&mut writer, &mut reader);
@@ -602,7 +602,7 @@ mod validate_tests {
     #[case("sarif")]
     fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/rules-dir"])
@@ -634,7 +634,7 @@ mod validate_tests {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),
         ))));
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
             .payload()
@@ -733,7 +733,7 @@ mod validate_tests {
     #[test]
     fn test_validate_with_failing_count_and_compare_output() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/count_with_message.guard"])
@@ -751,7 +751,7 @@ mod validate_tests {
     #[test]
     fn test_validate_with_failing_complex_rule() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/failing_complex_rule.guard"])
@@ -768,7 +768,7 @@ mod validate_tests {
     #[test]
     fn test_validate_with_failing_join_and_compare_output() {
         let mut reader = Reader::default();
-        let mut writer = Writer::new(WBVec(vec![]));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
             .rules(vec!["/functions/rules/join_with_message.guard"])

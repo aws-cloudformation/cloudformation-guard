@@ -15,14 +15,18 @@ fn main() -> Result<(), Error> {
 
     let mut writer = match &args.command {
         Commands::ParseTree(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?)),
-            None => Writer::new(Stdout(std::io::stdout())),
+            Some(path) => {
+                Writer::new(WBFile(File::create(path)?)).expect("Failed to create writer.")
+            }
+            None => Writer::new(Stdout(std::io::stdout())).expect("Failed to create writer."),
         },
         Commands::Rulegen(cmd) => match &cmd.output {
-            Some(path) => Writer::new(WBFile(File::create(path)?)),
-            None => Writer::new(Stdout(std::io::stdout())),
+            Some(path) => {
+                Writer::new(WBFile(File::create(path)?)).expect("Failed to create writer.")
+            }
+            None => Writer::new(Stdout(std::io::stdout())).expect("Failed to create writer."),
         },
-        _ => Writer::new(Stdout(std::io::stdout())),
+        _ => Writer::new(Stdout(std::io::stdout())).expect("Failed to create writer."),
     };
 
     let mut reader = Reader::new(ReadBuffer::Stdin(std::io::stdin()));

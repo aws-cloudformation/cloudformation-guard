@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::fmt::{Debug, Formatter};
+use std::string::FromUtf8Error;
 use thiserror::Error;
 
 use crate::rules::parser::{ParserError, Span};
@@ -48,7 +49,7 @@ pub enum Error {
     #[error("Error occurred while attempting to write junit report")]
     XMLError(#[from] quick_xml::Error),
     #[error("{0}")]
-    InternalError(InternalError),
+    InternalError(#[from] InternalError),
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +58,14 @@ pub enum InternalError {
     InvalidKeyType(String),
     #[error("internal error {0}")]
     UnresolvedKeyForReporter(String),
+    #[error("{0}")]
+    FromUtf8Error(#[from] FromUtf8Error),
+    #[error("{0}")]
+    IncompatibleWriterError(String),
+    #[error("{0}")]
+    UnsupportedBufferError(String),
+    #[error("{0}")]
+    UnsupportedOperationError(String),
 }
 
 #[derive(Debug, Error)]
