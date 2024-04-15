@@ -61,7 +61,11 @@ pub enum InternalError {
     #[error("{0}")]
     FromUtf8Error(#[from] Utf8Error),
     #[error("{0}")]
-    IncompatibleWriteError(String),
+    IncompatibleWriterError(String),
+    #[error("{0}")]
+    UnsupportedBufferError(String),
+    #[error("{0}")]
+    UnsupportedOperationError(String),
 }
 
 #[derive(Debug, Error)]
