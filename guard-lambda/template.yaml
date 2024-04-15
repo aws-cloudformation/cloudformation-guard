@@ -4,7 +4,7 @@ Resources:
   CloudFormationGuardLambda:
     Type: AWS::Serverless::Function
     Properties:
-      Runtime: provided.al2
+      Runtime: provided.al2023
       Handler: guard.handler
       # We need to point to the parent directory, so we can use ../guard/*
       CodeUri: ..
