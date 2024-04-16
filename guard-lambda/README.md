@@ -54,7 +54,7 @@ The Lambda version of the tool is a lightweight wrapper around the core [cfn-gua
     --function-name $LAMBDA_FUNCTION_NAME \
     --handler guard.handler \
     --zip-file fileb://./lambda.zip \
-    --runtime provided \
+    --runtime provided.al2023 \
     --role "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}" \
     --environment Variables={RUST_BACKTRACE=1} \
     --tracing-config Mode=Active \
