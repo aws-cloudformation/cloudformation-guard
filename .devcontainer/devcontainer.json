@@ -1,8 +1,7 @@
 {
 	"name": "cfn-guard",
 	"build": {
-		"context": "..",
-		"dockerfile": "../DevContainer.Dockerfile"
+		"dockerfile": "./Dockerfile"
 	},
 	"runArgs": ["--name=cfn-guard"],
 	"features": {
