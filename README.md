@@ -634,7 +634,7 @@ Guard is great for CI checks with the Junit output format, making the process of
 
 ### Setup
 
-1. Follow the prerequesite instructions [here](https://code.visualstudio.com/learn/develop-cloud/containers).
+1. Follow the prerequisite instructions [here](https://code.visualstudio.com/learn/develop-cloud/containers).
 1. In VSCode following the install, open the command palette.
 1. Search "Dev Containers: Build Container"
 1. Once done, open the project inside the container.
