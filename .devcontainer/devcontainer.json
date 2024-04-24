@@ -5,6 +5,6 @@
 	},
 	"runArgs": ["--name", "cfn-guard"],
 	"features": {
-      "ghcr.io/devcontainers/features/rust:1": {}
-  }
+		"ghcr.io/devcontainers/features/rust:1": {}
+	}
 }
