@@ -3,8 +3,8 @@
 	"build": {
 		"dockerfile": "./Dockerfile"
 	},
-	"runArgs": ["--name=cfn-guard"],
+	"runArgs": ["--name", "cfn-guard"],
 	"features": {
-		"ghcr.io/devcontainers/features/rust:1": {}
-	}
+      "ghcr.io/devcontainers/features/rust:1": {}
+  }
 }

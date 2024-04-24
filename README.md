@@ -633,6 +633,7 @@ Guard is great for CI checks with the Junit output format, making the process of
 ## <a name="devcontainer"></a> Contribute using the DevContainer in VSCode
 
 ### Setup
+**NOTE**: The devcontainer supports zsh and bash with theming and aliases. You can choose which shell you like in the terminal options in your VSCode session.
 
 1. Follow the prerequisite instructions [here](https://code.visualstudio.com/learn/develop-cloud/containers).
 1. In VSCode following the install, open the command palette.
