@@ -1,4 +1,4 @@
-name: Deploy tagged version to ECR Public Gallery
+name: Docker build to check toolchain
 
 on:
   push:
