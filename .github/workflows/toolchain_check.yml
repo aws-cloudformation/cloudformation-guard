@@ -1,0 +1,17 @@
+name: Deploy tagged version to ECR Public Gallery
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Check toolchain in docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Build in docker
+        run: |
+          docker build .
