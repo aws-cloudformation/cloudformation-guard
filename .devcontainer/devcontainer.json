@@ -1,0 +1,10 @@
+{
+	"name": "cfn-guard",
+	"build": {
+		"dockerfile": "./Dockerfile"
+	},
+	"runArgs": ["--name", "cfn-guard"],
+	"features": {
+		"ghcr.io/devcontainers/features/rust:1": {}
+	}
+}

@@ -43,6 +43,7 @@ Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl
 * [AWS Rule Registry](#registry)
 * [Use Guard as a Docker Image](#docker)
 * [Use Guard as a CI tool](#ci)
+* [Contribute using the DevContainer in VSCode](#devcontainer)
 * [License](#license)
 
 ## FAQs
@@ -598,6 +599,11 @@ docker run \
 ```
 We should see the evaluation result emitted out on the console.
 
+### Tagging convention
+
+* We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
+* We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
+
 ## <a name="ci"></a> Use Guard as a CI tool
 
 Guard is great for CI checks with the Junit output format, making the process of validating or testing your templates seamless and simple. Check out the examples below.
@@ -624,10 +630,25 @@ Guard is great for CI checks with the Junit output format, making the process of
 
 [Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.circleci/config.yml)
 
-### Tagging convention
+## <a name="devcontainer"></a> Contribute using the DevContainer in VSCode
 
-* We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
-* We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
+### Setup
+**NOTE**: The devcontainer supports zsh and bash with theming and aliases. You can choose which shell you like in the terminal options in your VSCode session.
+
+1. Follow the prerequisite instructions [here](https://code.visualstudio.com/learn/develop-cloud/containers).
+1. In VSCode following the install, open the command palette.
+1. Search "Dev Containers: Build Container"
+1. Once done, open the project inside the container.
+
+### Aliases
+
+* `gval`: `cargo run --bin cfn-guard validate`
+* `gtest`: `cargo run --bin cfn-guard test`
+* `gparse`: `cargo run --bin cfn-guard parse-tree`
+* `cb`: `cargo build`
+* `ct`: `cargo nextest run`
+* `cn`: `cargo +nightly`
+
 
 ## License
 
