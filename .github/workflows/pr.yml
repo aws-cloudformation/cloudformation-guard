@@ -83,10 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
           components: clippy
       - uses: actions-rs/clippy-check@v1
         with:
@@ -111,9 +109,11 @@ jobs:
     name: Run Fuzz Checks
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
+          matcher: false
+          rustflags: ""
       - uses: actions-rs/cargo@v1
         name: Install cargo-fuzz
         with:
