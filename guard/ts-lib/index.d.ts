@@ -55,5 +55,5 @@ interface ValidateParams {
     rulesPath: string;
     dataPath: string;
 }
-export declare const validate: ({ rulesPath, dataPath, }: ValidateParams) => Promise<SarifReport>;
+export declare const validate: ({ rulesPath, dataPath }: ValidateParams) => Promise<SarifReport>;
 export {};

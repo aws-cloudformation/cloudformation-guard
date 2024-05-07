@@ -1,9 +1,8 @@
 import { OutputFormatType, ShowSummaryType, ValidateBuilder } from "./guard";
-const path = require('node:path');
-import * as fs from 'fs';
+import * as path from "node:path";
+import * as fs from "fs";
 
-const DATA_FILE_SUPPORTED_EXTENSIONS =
-    [".yaml", ".yml", ".json", ".jsn", ".template"];
+const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
 const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
 
 interface TraversalResult {
@@ -11,8 +10,8 @@ interface TraversalResult {
   fileContents: string[];
 }
 
-interface formatOutputParams {
-  inputString: string;
+interface FormatOutputParams {
+  result: SarifReport;
   rulesNames: string[];
   dataNames: string[];
 }
@@ -82,11 +81,11 @@ export interface SarifShortDescription {
   text: string;
 }
 
-const formatOutput = ({ inputString, rulesNames, dataNames }: formatOutputParams): SarifReport => {
+const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): SarifReport => {
   const dataPattern = /DATA_STDIN\[(\d+)\]/g;
   const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
 
-  const output = inputString.replace(dataPattern, (match: string, index: string) => {
+  const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match: string, index: string) => {
     const fileIndex = parseInt(index, 10) - 1;
     const fileName = dataNames[fileIndex];
     return fileName ? fileName.replace(/^\//, '') : match;
@@ -98,74 +97,57 @@ const formatOutput = ({ inputString, rulesNames, dataNames }: formatOutputParams
       return fileNameWithoutExtension.toUpperCase();
     }
     return match;
-  });
+  }));
 
-  return JSON.parse(JSON.parse(output));
-};
+  return JSON.parse(output);
+}
 
-async function readFilesRecursively(parentDir: string): Promise<TraversalResult> {
-  const fileNames: string[] = [];
-  const fileContents: string[] = [];
+  async function readFiles(dirPath: string, supportedExtensions: string[]): Promise<TraversalResult> {
+    const fileNames: string[] = [];
+    const fileContents: string[] = [];
 
-  async function traverseDirectory(currentDir: string): Promise<void> {
-    try {
-      const files = await fs.promises.readdir(currentDir, { withFileTypes: true });
-      const readPromises = files.map(async (file) => {
-        const filePath = path.join(currentDir, file.name);
-        if (file.isDirectory()) {
-          await traverseDirectory(filePath);
-        } else {
-          if ([...DATA_FILE_SUPPORTED_EXTENSIONS, ...RULE_FILE_SUPPORTED_EXTENSIONS].includes(path.extname(filePath))) {
-            const content = await fs.promises.readFile(filePath, 'utf8');
-            fileNames.push(filePath);
-            fileContents.push(content);
-          }
-        }
-      });
-      await Promise.all(readPromises);
-    } catch (err) {
-      console.error('Error reading files:', err);
-    }
+    const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const readPromises = files.map(async (file) => {
+      const filePath = path.join(dirPath, file.name);
+      if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
+        const content = await fs.promises.readFile(filePath, "utf8");
+        fileNames.push(filePath);
+        fileContents.push(content);
+      }
+    });
+    await Promise.all(readPromises);
+
+    return {
+      fileContents,
+      fileNames,
+    };
   }
 
-  await traverseDirectory(parentDir);
-  return {
-    fileContents,
-    fileNames
-  };
-}
+  interface ValidateParams {
+    rulesPath: string;
+    dataPath: string;
+  }
 
-interface ValidateParams {
-  rulesPath: string;
-  dataPath: string;
-}
-
-export const validate = async({
-  rulesPath,
-  dataPath,
-}: ValidateParams): Promise<SarifReport> => {
-  const rulesResult = await readFilesRecursively(rulesPath)
-  const dataResult = await readFilesRecursively(dataPath)
+export const validate = async ({ rulesPath, dataPath }: ValidateParams): Promise<SarifReport> => {
+  const rulesResult = await readFiles(rulesPath, RULE_FILE_SUPPORTED_EXTENSIONS);
+  const dataResult = await readFiles(dataPath, DATA_FILE_SUPPORTED_EXTENSIONS);
 
   const payload = {
     rules: rulesResult.fileContents,
-    data: dataResult.fileContents
-  }
+    data: dataResult.fileContents,
+  };
 
   const validateBuilder = new ValidateBuilder();
-
   const result: SarifReport = validateBuilder
     .payload(true)
     .structured(true)
     .showSummary([ShowSummaryType.None])
     .outputFormat(OutputFormatType.Sarif)
-    .tryBuildAndExecute(JSON.stringify(payload))
+    .tryBuildAndExecute(JSON.stringify(payload));
 
-  const formattedOutput: SarifReport = formatOutput({
-    inputString: JSON.stringify(result),
+  return formatOutput({
+    result,
     rulesNames: rulesResult.fileNames,
-    dataNames: dataResult.fileNames
-  })
-
-  return formattedOutput
+    dataNames: dataResult.fileNames,
+  });
 }

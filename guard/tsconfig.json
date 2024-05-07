@@ -9,6 +9,7 @@
     "types": ["node", "jest"],
   },
   "exclude": [
-    "**/*.spec.ts"
+    "**/*.spec.ts",
+    "**/utils.ts"
   ]
 }

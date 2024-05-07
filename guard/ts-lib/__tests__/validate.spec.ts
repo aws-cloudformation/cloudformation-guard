@@ -1,5 +1,5 @@
 import { validate } from '../index.js'
-import { sanitizeSarifOutput } from '../utils.js';
+import { sanitizeSarifOutput } from '../utils';
 const path = require('path')
 
 describe('validate', () => {

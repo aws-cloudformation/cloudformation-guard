@@ -2,14 +2,14 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validate = void 0;
 const guard_1 = require("./guard");
-const path = require('node:path');
+const path = require("node:path");
 const fs = require("fs");
 const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
 const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
-const formatOutput = ({ inputString, rulesNames, dataNames }) => {
+const formatOutput = ({ result, rulesNames, dataNames }) => {
     const dataPattern = /DATA_STDIN\[(\d+)\]/g;
     const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
-    const output = inputString.replace(dataPattern, (match, index) => {
+    const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
         const fileIndex = parseInt(index, 10) - 1;
         const fileName = dataNames[fileIndex];
         return fileName ? fileName.replace(/^\//, '') : match;
@@ -21,46 +21,33 @@ const formatOutput = ({ inputString, rulesNames, dataNames }) => {
             return fileNameWithoutExtension.toUpperCase();
         }
         return match;
-    });
-    return JSON.parse(JSON.parse(output));
+    }));
+    return JSON.parse(output);
 };
-async function readFilesRecursively(parentDir) {
+async function readFiles(dirPath, supportedExtensions) {
     const fileNames = [];
     const fileContents = [];
-    async function traverseDirectory(currentDir) {
-        try {
-            const files = await fs.promises.readdir(currentDir, { withFileTypes: true });
-            const readPromises = files.map(async (file) => {
-                const filePath = path.join(currentDir, file.name);
-                if (file.isDirectory()) {
-                    await traverseDirectory(filePath);
-                }
-                else {
-                    if ([...DATA_FILE_SUPPORTED_EXTENSIONS, ...RULE_FILE_SUPPORTED_EXTENSIONS].includes(path.extname(filePath))) {
-                        const content = await fs.promises.readFile(filePath, 'utf8');
-                        fileNames.push(filePath);
-                        fileContents.push(content);
-                    }
-                }
-            });
-            await Promise.all(readPromises);
+    const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const readPromises = files.map(async (file) => {
+        const filePath = path.join(dirPath, file.name);
+        if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
+            const content = await fs.promises.readFile(filePath, "utf8");
+            fileNames.push(filePath);
+            fileContents.push(content);
         }
-        catch (err) {
-            console.error('Error reading files:', err);
-        }
-    }
-    await traverseDirectory(parentDir);
+    });
+    await Promise.all(readPromises);
     return {
         fileContents,
-        fileNames
+        fileNames,
     };
 }
-const validate = async ({ rulesPath, dataPath, }) => {
-    const rulesResult = await readFilesRecursively(rulesPath);
-    const dataResult = await readFilesRecursively(dataPath);
+const validate = async ({ rulesPath, dataPath }) => {
+    const rulesResult = await readFiles(rulesPath, RULE_FILE_SUPPORTED_EXTENSIONS);
+    const dataResult = await readFiles(dataPath, DATA_FILE_SUPPORTED_EXTENSIONS);
     const payload = {
         rules: rulesResult.fileContents,
-        data: dataResult.fileContents
+        data: dataResult.fileContents,
     };
     const validateBuilder = new guard_1.ValidateBuilder();
     const result = validateBuilder
@@ -69,11 +56,10 @@ const validate = async ({ rulesPath, dataPath, }) => {
         .showSummary([guard_1.ShowSummaryType.None])
         .outputFormat(guard_1.OutputFormatType.Sarif)
         .tryBuildAndExecute(JSON.stringify(payload));
-    const formattedOutput = formatOutput({
-        inputString: JSON.stringify(result),
+    return formatOutput({
+        result,
         rulesNames: rulesResult.fileNames,
-        dataNames: dataResult.fileNames
+        dataNames: dataResult.fileNames,
     });
-    return formattedOutput;
 };
 exports.validate = validate;

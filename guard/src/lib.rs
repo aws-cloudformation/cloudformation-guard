@@ -336,7 +336,9 @@ impl ValidateBuilder {
         cmd.execute(&mut writer, &mut reader)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        Ok(JsValue::from(writer.into_string().unwrap_or("")))
+        Ok(JsValue::from(
+            writer.into_string().unwrap_or("".to_string()),
+        ))
     }
 }
 /// .
