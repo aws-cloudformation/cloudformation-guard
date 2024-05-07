@@ -14,7 +14,7 @@ jobs:
         working-directory: ./guard
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4.0.2
         with:
           node-version: '16'
       - run: npm config set registry "https://registry.npmjs.com/" && npm login
