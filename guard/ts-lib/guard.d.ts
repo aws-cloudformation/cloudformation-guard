@@ -2,21 +2,21 @@
 /* eslint-disable */
 /**
 */
-export enum ShowSummaryType {
-  All = 0,
-  Pass = 1,
-  Fail = 2,
-  Skip = 3,
-  None = 4,
-}
-/**
-*/
 export enum OutputFormatType {
   SingleLineSummary = 0,
   JSON = 1,
   YAML = 2,
   Junit = 3,
   Sarif = 4,
+}
+/**
+*/
+export enum ShowSummaryType {
+  All = 0,
+  Pass = 1,
+  Fail = 2,
+  Skip = 3,
+  None = 4,
 }
 /**
 * .

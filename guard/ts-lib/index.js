@@ -2,7 +2,6 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validate = void 0;
 const guard_1 = require("./guard");
-const validateBuilder = new guard_1.ValidateBuilder();
 const path = require('node:path');
 const fs = require("fs");
 const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
@@ -75,7 +74,6 @@ const validate = async ({ rulesPath, dataPath, }) => {
         rulesNames: rulesResult.fileNames,
         dataNames: dataResult.fileNames
     });
-    debugger;
     return formattedOutput;
 };
 exports.validate = validate;

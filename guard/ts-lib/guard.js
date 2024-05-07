@@ -158,10 +158,10 @@ function handleError(f, args) {
 }
 /**
 */
-module.exports.ShowSummaryType = Object.freeze({ All:0,"0":"All",Pass:1,"1":"Pass",Fail:2,"2":"Fail",Skip:3,"3":"Skip",None:4,"4":"None", });
+module.exports.OutputFormatType = Object.freeze({ SingleLineSummary:0,"0":"SingleLineSummary",JSON:1,"1":"JSON",YAML:2,"2":"YAML",Junit:3,"3":"Junit",Sarif:4,"4":"Sarif", });
 /**
 */
-module.exports.OutputFormatType = Object.freeze({ SingleLineSummary:0,"0":"SingleLineSummary",JSON:1,"1":"JSON",YAML:2,"2":"YAML",Junit:3,"3":"Junit",Sarif:4,"4":"Sarif", });
+module.exports.ShowSummaryType = Object.freeze({ All:0,"0":"All",Pass:1,"1":"Pass",Fail:2,"2":"Fail",Skip:3,"3":"Skip",None:4,"4":"None", });
 
 const ValidateBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
