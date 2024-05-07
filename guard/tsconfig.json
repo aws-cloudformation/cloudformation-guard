@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext", "dom"],
+    "module": "commonjs",
+    "declaration": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+  },
+  "exclude": [
+    "**/*.spec.ts"
+  ]
+}

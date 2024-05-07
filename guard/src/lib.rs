@@ -8,6 +8,8 @@ pub mod commands;
 mod rules;
 pub mod utils;
 
+use std::io::Cursor;
+
 pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
 use crate::commands::parse_tree::ParseTree;
 use crate::commands::rulegen::Rulegen;
@@ -15,6 +17,9 @@ use crate::commands::test::Test;
 use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
+use crate::utils::reader::{ReadBuffer, Reader};
+use crate::utils::writer::WriteBuffer::Vec as WBVec;
+use wasm_bindgen::prelude::*;
 
 pub trait CommandBuilder<T: Executable> {
     fn try_build(self) -> crate::rules::Result<T>;
@@ -81,6 +86,7 @@ impl ParseTreeBuilder {
 }
 
 #[derive(Debug)]
+#[wasm_bindgen]
 /// .
 /// A builder to help construct the `Validate` command
 pub struct ValidateBuilder {
@@ -210,6 +216,7 @@ impl CommandBuilder<Validate> for ValidateBuilder {
     }
 }
 
+#[wasm_bindgen]
 impl ValidateBuilder {
     /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
     /// conflicts with payload
@@ -301,9 +308,33 @@ impl ValidateBuilder {
 
         self
     }
-}
 
-#[derive(Default, Debug)]
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ValidateBuilder {
+        ValidateBuilder {
+            ..Default::default()
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn try_build_js(self, payload: &str) -> Result<JsValue, JsValue> {
+        let mut reader = Reader::new(ReadBuffer::Cursor(Cursor::new(Vec::from(
+            payload.as_bytes(),
+        ))));
+
+        let mut writer = utils::writer::Writer::new(WBVec(vec![]))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let cmd = self
+            .try_build()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        cmd.execute(&mut writer, &mut reader)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        Ok(JsValue::from(writer.into_string().expect("Should work")))
+    }
+}
 /// .
 /// A builder to help construct the `Test` command
 pub struct TestBuilder {
