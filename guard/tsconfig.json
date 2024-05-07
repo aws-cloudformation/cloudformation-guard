@@ -6,6 +6,7 @@
     "declaration": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
+    "types": ["node", "jest"],
   },
   "exclude": [
     "**/*.spec.ts"

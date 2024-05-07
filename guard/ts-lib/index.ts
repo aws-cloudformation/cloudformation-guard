@@ -1,14 +1,10 @@
 import { OutputFormatType, ShowSummaryType, ValidateBuilder } from "./guard";
-const validateBuilder = new ValidateBuilder();
 const path = require('node:path');
 import * as fs from 'fs';
-
 
 const DATA_FILE_SUPPORTED_EXTENSIONS =
     [".yaml", ".yml", ".json", ".jsn", ".template"];
 const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
-
-
 
 interface TraversalResult {
   fileNames: string[];
@@ -107,8 +103,6 @@ const formatOutput = ({ inputString, rulesNames, dataNames }: formatOutputParams
   return JSON.parse(JSON.parse(output));
 };
 
-
-
 async function readFilesRecursively(parentDir: string): Promise<TraversalResult> {
   const fileNames: string[] = [];
   const fileContents: string[] = [];
@@ -146,7 +140,6 @@ interface ValidateParams {
   dataPath: string;
 }
 
-
 export const validate = async({
   rulesPath,
   dataPath,
@@ -173,6 +166,6 @@ export const validate = async({
     rulesNames: rulesResult.fileNames,
     dataNames: dataResult.fileNames
   })
-  debugger
+
   return formattedOutput
 }
