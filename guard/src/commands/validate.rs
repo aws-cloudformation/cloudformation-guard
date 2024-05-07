@@ -34,11 +34,6 @@ use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use wasm_bindgen::prelude::*;
 
-#[derive(Debug)]
-pub struct DirEntry {
-    pub path: PathBuf,
-}
-
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
     pub(crate) content: String,
