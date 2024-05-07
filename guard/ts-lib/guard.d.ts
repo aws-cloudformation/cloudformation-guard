@@ -45,7 +45,7 @@ export class ValidateBuilder {
 * @param {any[]} args
 * @returns {ValidateBuilder}
 */
-  show_summary(args: any[]): ValidateBuilder;
+  showSummary(args: any[]): ValidateBuilder;
 /**
 * a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
 * @param {(string)[]} input_params
@@ -59,7 +59,7 @@ export class ValidateBuilder {
 * @param {OutputFormatType} output
 * @returns {ValidateBuilder}
 */
-  output_format(output: OutputFormatType): ValidateBuilder;
+  outputFormat(output: OutputFormatType): ValidateBuilder;
 /**
 * Tells the command that rules, and data will be passed via a reader, as a json payload.
 * Conflicts with both rules, and data
@@ -111,5 +111,5 @@ export class ValidateBuilder {
 * @param {string} payload
 * @returns {any}
 */
-  try_build_js(payload: string): any;
+  tryBuildAndExecute(payload: string): any;
 }

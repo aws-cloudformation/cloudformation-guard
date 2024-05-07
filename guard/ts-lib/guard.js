@@ -224,11 +224,11 @@ class ValidateBuilder {
     * @param {any[]} args
     * @returns {ValidateBuilder}
     */
-    show_summary(args) {
+    showSummary(args) {
         const ptr = this.__destroy_into_raw();
         const ptr0 = passArrayJsValueToWasm0(args, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.validatebuilder_show_summary(ptr, ptr0, len0);
+        const ret = wasm.validatebuilder_showSummary(ptr, ptr0, len0);
         return ValidateBuilder.__wrap(ret);
     }
     /**
@@ -250,9 +250,9 @@ class ValidateBuilder {
     * @param {OutputFormatType} output
     * @returns {ValidateBuilder}
     */
-    output_format(output) {
+    outputFormat(output) {
         const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_output_format(ptr, output);
+        const ret = wasm.validatebuilder_outputFormat(ptr, output);
         return ValidateBuilder.__wrap(ret);
     }
     /**
@@ -334,13 +334,13 @@ class ValidateBuilder {
     * @param {string} payload
     * @returns {any}
     */
-    try_build_js(payload) {
+    tryBuildAndExecute(payload) {
         try {
             const ptr = this.__destroy_into_raw();
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
-            wasm.validatebuilder_try_build_js(retptr, ptr, ptr0, len0);
+            wasm.validatebuilder_tryBuildAndExecute(retptr, ptr, ptr0, len0);
             var r0 = getInt32Memory0()[retptr / 4 + 0];
             var r1 = getInt32Memory0()[retptr / 4 + 1];
             var r2 = getInt32Memory0()[retptr / 4 + 2];

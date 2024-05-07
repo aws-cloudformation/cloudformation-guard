@@ -636,12 +636,6 @@ extern "C" {
     fn path_resolve(path: &str) -> Result<String>;
 }
 
-#[wasm_bindgen(module = "console")]
-extern "C" {
-    #[wasm_bindgen(js_name = log, catch)]
-    fn console_log(msg: &str) -> Result<String>;
-}
-
 pub fn resolve_path(file_or_dir: &str) -> Result<PathBuf> {
     #[cfg(target_arch = "wasm32")]
     {

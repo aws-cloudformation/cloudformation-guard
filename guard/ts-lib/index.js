@@ -66,9 +66,9 @@ const validate = async ({ rulesPath, dataPath, }) => {
     const result = validateBuilder
         .payload(true)
         .structured(true)
-        .show_summary([guard_1.ShowSummaryType.None])
-        .output_format(guard_1.OutputFormatType.Sarif)
-        .try_build_js(JSON.stringify(payload));
+        .showSummary([guard_1.ShowSummaryType.None])
+        .outputFormat(guard_1.OutputFormatType.Sarif)
+        .tryBuildAndExecute(JSON.stringify(payload));
     const formattedOutput = formatOutput({
         inputString: JSON.stringify(result),
         rulesNames: rulesResult.fileNames,

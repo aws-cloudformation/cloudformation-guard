@@ -237,6 +237,7 @@ impl ValidateBuilder {
     /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
     /// default is failed
     /// must be set to none if used together with the structured flag
+    #[wasm_bindgen(js_name = showSummary)]
     pub fn show_summary(mut self, args: Vec<ShowSummaryType>) -> Self {
         self.show_summary = args;
 
@@ -253,6 +254,7 @@ impl ValidateBuilder {
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
     /// if junit is used, `structured` attributed must be set to true
+    #[wasm_bindgen(js_name = outputFormat)]
     pub fn output_format(mut self, output: OutputFormatType) -> Self {
         self.output_format = output;
 
@@ -309,6 +311,7 @@ impl ValidateBuilder {
         self
     }
 
+    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(constructor)]
     pub fn new() -> ValidateBuilder {
         ValidateBuilder {
@@ -316,8 +319,9 @@ impl ValidateBuilder {
         }
     }
 
-    #[wasm_bindgen]
-    pub fn try_build_js(self, payload: &str) -> Result<JsValue, JsValue> {
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen(js_name = tryBuildAndExecute)]
+    pub fn try_build_js_and_execute(self, payload: &str) -> Result<JsValue, JsValue> {
         let mut reader = Reader::new(ReadBuffer::Cursor(Cursor::new(Vec::from(
             payload.as_bytes(),
         ))));

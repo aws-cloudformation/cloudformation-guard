@@ -157,9 +157,9 @@ export const validate = async({
   const result: SarifReport = validateBuilder
     .payload(true)
     .structured(true)
-    .show_summary([ShowSummaryType.None])
-    .output_format(OutputFormatType.Sarif)
-    .try_build_js(JSON.stringify(payload))
+    .showSummary([ShowSummaryType.None])
+    .outputFormat(OutputFormatType.Sarif)
+    .tryBuildAndExecute(JSON.stringify(payload))
 
   const formattedOutput: SarifReport = formatOutput({
     inputString: JSON.stringify(result),
