@@ -2,10 +2,10 @@ name: Typescript Library CI
 on:
   push:
     paths:
-    - './guard/ts-lib/**'
+    - 'guard/ts-lib/**'
   pull_request:
     paths:
-    - './guard/ts-lib/**'
+    - 'guard/ts-lib/**'
 jobs:
   run-unit-tests:
     runs-on: ubuntu-latest
