@@ -18,7 +18,7 @@
   "scripts": {
     "build:wasm-pack": "wasm-pack build --target nodejs --out-name guard --out-dir ./ts-lib",
     "build:typescript": "tsc -b",
-    "build": "npm run build:wasm-pack && npm run build:typescript && rm ./ts-lib/.gitignore && rm ./ts-lib/README.md",
+    "build": "npm run build:wasm-pack && npm run build:typescript && rm ./ts-lib/.gitignore",
     "package": "npm pack",
     "test": "jest",
     "test:update": "jest --u"

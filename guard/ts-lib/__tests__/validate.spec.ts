@@ -2,8 +2,6 @@ import { validate } from '../index.js'
 import { sanitizeSarifOutput } from '../utils.js';
 const path = require('path')
 
-
-
 describe('validate', () => {
   it('should match the snapshot', async () => {
     const result = await validate({
