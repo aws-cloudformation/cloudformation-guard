@@ -662,10 +662,12 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            let reverse_diff = if lhs.len() > rhs.len() {
-                                                reverse_diff(qin.diff, &qin.lhs)
-                                            } else {
+                                            let reverse_diff = if rhs.len() > lhs.len()
+                                                && matches!(self.0, crate::rules::CmpOperator::Eq)
+                                            {
                                                 reverse_diff(qin.diff, &qin.rhs)
+                                            } else {
+                                                reverse_diff(qin.diff, &qin.lhs)
                                             };
 
                                             if reverse_diff.is_empty() {
