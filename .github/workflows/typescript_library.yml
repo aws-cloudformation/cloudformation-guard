@@ -17,6 +17,6 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: '16'
-      - run: npm config set registry "https://registry.npmjs.com/"
+      - run: npm config set registry "https://registry.npmjs.com/" && npm login
       - run: npm install
       - run: npm test
