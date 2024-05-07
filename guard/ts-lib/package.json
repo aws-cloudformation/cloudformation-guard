@@ -22,18 +22,17 @@
   "files": [
     "guard_bg.wasm",
     "guard.js",
-    "guard.d.ts"
+    "guard.d.ts",
+    "index.d.ts",
+    "index.js"
   ],
-  "main": "guard.js",
-  "types": "guard.d.ts",
+  "main": "index.js",
+  "types": "index.d.ts",
   "keywords": [
     "policy-as-code",
     "guard",
     "cfn-guard",
     "security",
     "compliance"
-  ],
-  "dependencies": {
-    "lodash": "^4.17.21"
-  }
+  ]
 }
