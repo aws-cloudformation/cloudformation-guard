@@ -634,6 +634,17 @@ impl Comparator for crate::rules::CmpOperator {
     }
 }
 
+fn reverse_diff(
+    diff: Vec<Rc<PathAwareValue>>,
+    other: &[Rc<PathAwareValue>],
+) -> Vec<Rc<PathAwareValue>> {
+    other
+        .iter()
+        .filter(|e| !diff.contains(e))
+        .map(Rc::clone)
+        .collect()
+}
+
 impl Comparator for (crate::rules::CmpOperator, bool) {
     fn compare<'value>(
         &self,
@@ -651,13 +662,14 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            let mut reverse_diff =
-                                                Vec::with_capacity(qin.lhs.len());
-                                            for each in &qin.lhs {
-                                                if !qin.diff.contains(each) {
-                                                    reverse_diff.push(Rc::clone(each))
-                                                }
-                                            }
+                                            let reverse_diff = if rhs.len() >= lhs.len()
+                                                && matches!(self.0, crate::rules::CmpOperator::Eq)
+                                            {
+                                                reverse_diff(qin.diff, &qin.rhs)
+                                            } else {
+                                                reverse_diff(qin.diff, &qin.lhs)
+                                            };
+
                                             if reverse_diff.is_empty() {
                                                 ValueEvalResult::ComparisonResult(
                                                     ComparisonResult::Success(Compare::QueryIn(

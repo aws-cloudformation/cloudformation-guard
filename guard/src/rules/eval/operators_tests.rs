@@ -52,6 +52,11 @@ Resources:
     Properties:
       ge: [10, 20, 30]
       le: 10
+  OutboundRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      FromPort: 46
+      ToPort: 56
 "###;
 
 // const RULES_EQ: &str = r###"
@@ -1086,6 +1091,42 @@ fn test_operator_eq_vs_in_from_queries() -> crate::rules::Result<()> {
         r,
         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(_))
     )));
+
+    Ok(())
+}
+
+#[test]
+fn test_operator_not_eq() -> crate::rules::Result<()> {
+    let to_port = AccessQuery::try_from(
+        r#"Resources[ Type == "AWS::EC2::SecurityGroupEgress" ].Properties.ToPort"#,
+    )?;
+
+    let from_port = AccessQuery::try_from(
+        r#"Resources[ Type == "AWS::EC2::SecurityGroupEgress" ].Properties.FromPort"#,
+    )?;
+
+    let value = PathAwareValue::try_from(crate::rules::values::read_from(RESOURCES)?)?;
+    let mut evaluator = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+
+    let resolved_to = evaluator.query(&to_port.query)?;
+    assert_eq!(resolved_to.len(), 1);
+
+    let resolved_from = evaluator.query(&from_port.query)?;
+    assert_eq!(resolved_from.len(), 1);
+
+    let result = match (CmpOperator::Eq, true).compare(&resolved_to, &resolved_from)? {
+        EvalResult::Result(v) => v,
+        _ => unreachable!(),
+    };
+
+    assert_eq!(result.len(), 1);
+    assert!(matches!(
+        result[0],
+        ValueEvalResult::ComparisonResult(ComparisonResult::Success(_))
+    ));
 
     Ok(())
 }
