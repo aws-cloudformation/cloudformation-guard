@@ -1,45 +1,45 @@
-export interface SarifReport {
+export type SarifReport = {
     $schema: string;
     runs: SarifRun[];
     version: string;
-}
-export interface SarifRun {
+};
+export type SarifRun = {
     artifacts: SarifArtifact[];
     results: SarifResult[];
     tool: SarifTool;
-}
-export interface SarifArtifact {
+};
+export type SarifArtifact = {
     location: SarifLocation;
-}
-export interface SarifLocation {
+};
+export type SarifLocation = {
     uri: string;
-}
-export interface SarifResult {
+};
+export type SarifResult = {
     level: string;
     locations: SarifPhysicalLocation[];
     message: SarifMessage;
     ruleId: string;
-}
-export interface SarifPhysicalLocation {
+};
+export type SarifPhysicalLocation = {
     physicalLocation: {
         artifactLocation: SarifArtifactLocation;
         region: SarifRegion;
     };
-}
-export interface SarifArtifactLocation {
+};
+export type SarifArtifactLocation = {
     uri: string;
-}
-export interface SarifRegion {
+};
+export type SarifRegion = {
     startColumn: number;
     startLine: number;
-}
-export interface SarifMessage {
+};
+export type SarifMessage = {
     text: string;
-}
-export interface SarifTool {
+};
+export type SarifTool = {
     driver: SarifDriver;
-}
-export interface SarifDriver {
+};
+export type SarifDriver = {
     downloadUri: string;
     fullName: string;
     informationUri: string;
@@ -47,13 +47,13 @@ export interface SarifDriver {
     organization: string;
     semanticVersion: string;
     shortDescription: SarifShortDescription;
-}
-export interface SarifShortDescription {
+};
+export type SarifShortDescription = {
     text: string;
-}
-interface ValidateParams {
-    rulesPath: string;
+};
+type ValidateParams = {
     dataPath: string;
-}
+    rulesPath: string;
+};
 export declare const validate: ({ rulesPath, dataPath }: ValidateParams) => Promise<SarifReport>;
 export {};

@@ -1,6 +1,7 @@
 import { SarifReport, SarifArtifact, SarifResult, SarifLocation, SarifDriver } from './index';
 import { orderBy } from 'lodash';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function sanitizeProperty<T extends Record<string, any>>(obj: T, key: keyof T, newValue: string): T {
   if (typeof obj !== 'object' || obj === null) {
     return obj;
@@ -11,8 +12,10 @@ function sanitizeProperty<T extends Record<string, any>>(obj: T, key: keyof T, n
       const value = obj[prop];
 
       if (prop === key && typeof value === 'string') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (obj as any)[prop] = newValue;
       } else if (typeof value === 'object' && value !== null) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (obj as any)[prop] = sanitizeProperty(value, key, newValue);
       }
     }

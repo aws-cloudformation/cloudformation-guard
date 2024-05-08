@@ -4,8 +4,8 @@ exports.validate = void 0;
 const guard_1 = require("./guard");
 const path = require("node:path");
 const fs = require("fs");
-const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
-const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
+const DATA_FILE_SUPPORTED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsn', '.template'];
+const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
 const formatOutput = ({ result, rulesNames, dataNames }) => {
     const dataPattern = /DATA_STDIN\[(\d+)\]/g;
     const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
@@ -31,7 +31,7 @@ async function readFiles(dirPath, supportedExtensions) {
     const readPromises = files.map(async (file) => {
         const filePath = path.join(dirPath, file.name);
         if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
-            const content = await fs.promises.readFile(filePath, "utf8");
+            const content = await fs.promises.readFile(filePath, 'utf8');
             fileNames.push(filePath);
             fileContents.push(content);
         }
