@@ -11,3 +11,5 @@ cmake-build-debug
 *gcno
 *gcda
 **/._*
+node_modules
+*.tgz

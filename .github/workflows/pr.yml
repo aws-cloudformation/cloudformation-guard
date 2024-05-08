@@ -3,8 +3,12 @@ name: Pull Request
 on:
   push:
     branches: [main, development]
+    paths-ignore:
+      - 'guard/**/*.{js,json,ts,d.ts}'
   pull_request:
     branches: [main, development]
+    paths-ignore:
+      - 'guard/**/*.{js,json,ts,d.ts}'
 
 env:
   CARGO_TERM_COLOR: always

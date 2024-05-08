@@ -4,7 +4,8 @@ on:
   push:
     tags:
       - "*"
-
+    paths-ignore:
+      - 'guard/**/*.{js,json,ts,d.ts}'
 jobs:
   build:
     name: Build Image for Latest Release

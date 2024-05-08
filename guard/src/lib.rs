@@ -15,6 +15,7 @@ use crate::commands::test::Test;
 use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
+use wasm_bindgen::prelude::*;
 
 pub trait CommandBuilder<T: Executable> {
     fn try_build(self) -> crate::rules::Result<T>;
@@ -81,6 +82,7 @@ impl ParseTreeBuilder {
 }
 
 #[derive(Debug)]
+#[wasm_bindgen]
 /// .
 /// A builder to help construct the `Validate` command
 pub struct ValidateBuilder {
@@ -210,6 +212,7 @@ impl CommandBuilder<Validate> for ValidateBuilder {
     }
 }
 
+#[wasm_bindgen]
 impl ValidateBuilder {
     /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
     /// conflicts with payload
@@ -230,6 +233,7 @@ impl ValidateBuilder {
     /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
     /// default is failed
     /// must be set to none if used together with the structured flag
+    #[wasm_bindgen(js_name = showSummary)]
     pub fn show_summary(mut self, args: Vec<ShowSummaryType>) -> Self {
         self.show_summary = args;
 
@@ -246,6 +250,7 @@ impl ValidateBuilder {
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
     /// if junit is used, `structured` attributed must be set to true
+    #[wasm_bindgen(js_name = outputFormat)]
     pub fn output_format(mut self, output: OutputFormatType) -> Self {
         self.output_format = output;
 
@@ -301,11 +306,40 @@ impl ValidateBuilder {
 
         self
     }
-}
 
-#[derive(Default, Debug)]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ValidateBuilder {
+        ValidateBuilder {
+            ..Default::default()
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen(js_name = tryBuildAndExecute)]
+    pub fn try_build_js_and_execute(self, payload: &str) -> Result<JsValue, JsValue> {
+        let mut reader = Reader::new(ReadBuffer::Cursor(Cursor::new(Vec::from(
+            payload.as_bytes(),
+        ))));
+
+        let mut writer = utils::writer::Writer::new(WBVec(vec![]))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let cmd = self
+            .try_build()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        cmd.execute(&mut writer, &mut reader)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        Ok(JsValue::from(
+            writer.into_string().unwrap_or("".to_string()),
+        ))
+    }
+}
 /// .
 /// A builder to help construct the `Test` command
+#[derive(Default, Debug)]
 pub struct TestBuilder {
     rules: Option<String>,
     test_data: Option<String>,

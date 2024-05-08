@@ -3,7 +3,8 @@ name: Deploy to ECR Public Gallery
 on:
   push:
     branches: [main]
-
+    paths-ignore:
+      - 'guard/**/*.{js,json,ts,d.ts}'
 jobs:
   build:
     if: github.repository == 'aws-cloudformation/cloudformation-guard'

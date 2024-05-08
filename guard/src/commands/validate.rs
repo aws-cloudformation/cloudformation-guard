@@ -32,6 +32,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
+use wasm_bindgen::prelude::*;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
@@ -55,6 +56,7 @@ impl From<&str> for Type {
     }
 }
 
+#[wasm_bindgen]
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
 pub enum OutputFormatType {
@@ -66,6 +68,7 @@ pub enum OutputFormatType {
     Sarif,
 }
 
+#[wasm_bindgen]
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
 pub enum ShowSummaryType {
     All,
@@ -274,7 +277,7 @@ impl Executable for Validate {
 
                 for file_or_dir in &self.data {
                     validate_path(file_or_dir)?;
-                    let base = PathBuf::from_str(file_or_dir)?;
+                    let base = resolve_path(file_or_dir)?;
                     for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
@@ -284,14 +287,12 @@ impl Executable for Validate {
                                 .canonicalize()?
                                 .to_str()
                                 .map_or("".to_string(), String::from);
-
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
                                 let mut content = String::new();
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
                                 let data_file = build_data_file(content, name)?;
-
                                 streams.push(data_file);
                             }
                         }
@@ -319,7 +320,7 @@ impl Executable for Validate {
 
                 for file_or_dir in &self.input_params {
                     validate_path(file_or_dir)?;
-                    let base = PathBuf::from_str(file_or_dir)?;
+                    let base = resolve_path(file_or_dir)?;
 
                     for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
@@ -366,7 +367,7 @@ impl Executable for Validate {
 
             for file_or_dir in &self.rules {
                 validate_path(file_or_dir)?;
-                let base = PathBuf::from_str(file_or_dir)?;
+                let base = resolve_path(file_or_dir)?;
 
                 if base.is_file() {
                     rules.push(base.clone())
@@ -595,9 +596,55 @@ fn evaluate_rule(
 }
 
 pub(crate) fn validate_path(base: &str) -> Result<()> {
-    match Path::new(base).exists() {
-        true => Ok(()),
-        false => Err(Error::FileNotFoundError(base.to_string())),
+    #[cfg(target_arch = "wasm32")]
+    {
+        path_exists(base).map_err(Error::from).and_then(|exists| {
+            if exists {
+                Ok(())
+            } else {
+                Err(Error::FileNotFoundError(base.to_string()))
+            }
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if Path::new(base).exists() {
+            Ok(())
+        } else {
+            Err(Error::FileNotFoundError(base.to_string()))
+        }
+    }
+}
+
+#[wasm_bindgen]
+extern "C" {
+    type Buffer;
+}
+
+#[wasm_bindgen(module = "fs")]
+extern "C" {
+    #[wasm_bindgen(js_name = existsSync, catch)]
+    fn path_exists(path: &str) -> Result<bool>;
+    #[wasm_bindgen(js_name = readDirSync, catch)]
+    fn read_dir(path: &str) -> Result<String>;
+}
+
+#[wasm_bindgen(module = "path")]
+extern "C" {
+    #[wasm_bindgen(js_name = resolve, catch)]
+    fn path_resolve(path: &str) -> Result<String>;
+}
+
+pub fn resolve_path(file_or_dir: &str) -> Result<PathBuf> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok(PathBuf::from_str(&path_resolve(file_or_dir)?)?)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(PathBuf::from_str(file_or_dir)?)
     }
 }
 

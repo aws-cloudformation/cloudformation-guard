@@ -1,0 +1,39 @@
+{
+  "name": "cfn-guard",
+  "collaborators": [
+    "Diwakar Chakravarthy",
+    "John Tompkins",
+    "Omkar Hegde",
+    "Priya Padmanaban",
+    "Bryan Ayala",
+    "Kexiang Wang",
+    "Akshay Rane",
+    "Tyler Southwick",
+    "Josh Fried",
+    "Dan Vassallo",
+    "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"
+  ],
+  "description": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+  "version": "3.1.1",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aws-cloudformation/cloudformation-guard"
+  },
+  "files": [
+    "guard_bg.wasm",
+    "guard.js",
+    "guard.d.ts",
+    "index.d.ts",
+    "index.js"
+  ],
+  "main": "index.js",
+  "types": "index.d.ts",
+  "keywords": [
+    "policy-as-code",
+    "guard",
+    "cfn-guard",
+    "security",
+    "compliance"
+  ]
+}
