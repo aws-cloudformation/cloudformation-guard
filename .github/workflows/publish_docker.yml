@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'guard/**/*.{js,json,ts,d.ts}'
+      - 'guard/ts-lib/**'
 jobs:
   build:
     if: github.repository == 'aws-cloudformation/cloudformation-guard'

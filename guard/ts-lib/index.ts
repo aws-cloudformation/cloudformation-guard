@@ -1,73 +1,73 @@
-import { OutputFormatType, ShowSummaryType, ValidateBuilder } from "./guard";
-import * as path from "node:path";
-import * as fs from "fs";
+import { OutputFormatType, ShowSummaryType, ValidateBuilder } from './guard';
+import * as path from 'node:path';
+import * as fs from 'fs';
 
-const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
-const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
+const DATA_FILE_SUPPORTED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsn', '.template'];
+const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
 
-interface TraversalResult {
-  fileNames: string[];
+type TraversalResult = {
   fileContents: string[];
+  fileNames: string[];
 }
 
-interface FormatOutputParams {
+type FormatOutputParams = {
+  dataNames: string[];
   result: SarifReport;
   rulesNames: string[];
-  dataNames: string[];
 }
 
-export interface SarifReport {
+export type SarifReport = {
   $schema: string;
   runs: SarifRun[];
   version: string;
 }
 
-export interface SarifRun {
+export type SarifRun = {
   artifacts: SarifArtifact[];
   results: SarifResult[];
   tool: SarifTool;
 }
 
-export interface SarifArtifact {
+export type SarifArtifact = {
   location: SarifLocation;
 }
 
-export interface SarifLocation {
+export type SarifLocation = {
   uri: string;
 }
 
-export interface SarifResult {
+export type SarifResult = {
   level: string;
   locations: SarifPhysicalLocation[];
   message: SarifMessage;
   ruleId: string;
 }
 
-export interface SarifPhysicalLocation {
+export type SarifPhysicalLocation = {
   physicalLocation: {
     artifactLocation: SarifArtifactLocation;
     region: SarifRegion;
   };
 }
 
-export interface SarifArtifactLocation {
+export type SarifArtifactLocation = {
   uri: string;
 }
 
-export interface SarifRegion {
+export type SarifRegion = {
   startColumn: number;
   startLine: number;
 }
 
-export interface SarifMessage {
+export type SarifMessage = {
   text: string;
 }
 
-export interface SarifTool {
+export type SarifTool = {
   driver: SarifDriver;
 }
 
-export interface SarifDriver {
+export type SarifDriver = {
   downloadUri: string;
   fullName: string;
   informationUri: string;
@@ -77,7 +77,7 @@ export interface SarifDriver {
   shortDescription: SarifShortDescription;
 }
 
-export interface SarifShortDescription {
+export type SarifShortDescription = {
   text: string;
 }
 
@@ -110,7 +110,7 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
     const readPromises = files.map(async (file) => {
       const filePath = path.join(dirPath, file.name);
       if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
-        const content = await fs.promises.readFile(filePath, "utf8");
+        const content = await fs.promises.readFile(filePath, 'utf8');
         fileNames.push(filePath);
         fileContents.push(content);
       }
@@ -123,9 +123,9 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
     };
   }
 
-  interface ValidateParams {
-    rulesPath: string;
+  type ValidateParams = {
     dataPath: string;
+    rulesPath: string;
   }
 
 export const validate = async ({ rulesPath, dataPath }: ValidateParams): Promise<SarifReport> => {

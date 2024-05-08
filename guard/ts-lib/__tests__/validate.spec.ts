@@ -1,6 +1,6 @@
 import { validate } from '../index.js'
 import { sanitizeSarifOutput } from '../utils';
-const path = require('path')
+import * as path from 'path';
 
 describe('validate', () => {
   it('should match the snapshot', async () => {
