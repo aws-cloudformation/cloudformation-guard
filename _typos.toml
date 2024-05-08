@@ -10,4 +10,5 @@ kms = "kms"
 [default.extend-identifiers]
 # Ignore ID in evaluate_tests.rs
 fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"
-
+[files]
+extend-exclude = ["guard/ts-lib"]

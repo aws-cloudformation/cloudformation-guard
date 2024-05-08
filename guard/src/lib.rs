@@ -8,8 +8,6 @@ pub mod commands;
 mod rules;
 pub mod utils;
 
-use std::io::Cursor;
-
 pub use crate::commands::helper::{validate_and_return_json as run_checks, ValidateInput};
 use crate::commands::parse_tree::ParseTree;
 use crate::commands::rulegen::Rulegen;
@@ -17,8 +15,6 @@ use crate::commands::test::Test;
 use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
-use crate::utils::reader::{ReadBuffer, Reader};
-use crate::utils::writer::WriteBuffer::Vec as WBVec;
 use wasm_bindgen::prelude::*;
 
 pub trait CommandBuilder<T: Executable> {
@@ -343,6 +339,7 @@ impl ValidateBuilder {
 }
 /// .
 /// A builder to help construct the `Test` command
+#[derive(Default, Debug)]
 pub struct TestBuilder {
     rules: Option<String>,
     test_data: Option<String>,
