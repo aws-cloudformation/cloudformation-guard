@@ -4,11 +4,11 @@ on:
   push:
     branches: [main, development]
     paths-ignore:
-      - 'guard/**/*.{js,json,ts,d.ts}'
+      - 'guard/ts-lib/**'
   pull_request:
     branches: [main, development]
     paths-ignore:
-      - 'guard/**/*.{js,json,ts,d.ts}'
+      - 'guard/ts-lib/**'
 
 env:
   CARGO_TERM_COLOR: always

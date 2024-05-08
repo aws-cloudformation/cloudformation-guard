@@ -5,7 +5,7 @@ on:
     tags:
       - "*"
     paths-ignore:
-      - 'guard/**/*.{js,json,ts,d.ts}'
+      - 'guard/ts-lib/**'
 jobs:
   build:
     name: Build Image for Latest Release
