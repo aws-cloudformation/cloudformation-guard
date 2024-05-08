@@ -8,7 +8,7 @@ module.exports = {
     "<rootDir>/lib/",
   ],
   transform: {
-    "^.+\\.tsx?$": [
+    "^.+\\.ts?$": [
       "ts-jest",
       {
         diagnostics: false,
