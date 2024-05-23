@@ -13,6 +13,8 @@ ignorePatterns:
   - '**/dist/.*'
   - '**/coverage/.*'
   - '*.json'
+  - '__tests__/'
+  - 'jestSetup.ts'
 
 parser: '@typescript-eslint/parser'
 
@@ -20,8 +22,7 @@ parserOptions:
   ecmaVersion: 2023
   sourceType: module
   project:
-    - './.github/linters/tsconfig.json'
-    - './tsconfig.json'
+    - 'tsconfig.json'
 
 plugins:
   - jest
@@ -44,7 +45,10 @@ rules:
     'no-console': 'off',
     'no-unused-vars': 'off',
     'prettier/prettier': 'error',
+    'no-shadow': 'off',
+    '@typescript-eslint/no-shadow': 'error',
     'semi': 'off',
+    'filenames/match-regex': 'off',
     '@typescript-eslint/array-type': 'error',
     '@typescript-eslint/await-thenable': 'error',
     '@typescript-eslint/ban-ts-comment': 'error',

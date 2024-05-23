@@ -19,7 +19,7 @@ enum ValidationSummaryStrings {
  */
 export const handleWriteActionSummary = async ({
   results
-}: HandleWriteActionSummaryParams) => {
+}: HandleWriteActionSummaryParams): Promise<void> => {
   await core.summary
     .addHeading(ValidationSummaryStrings.Heading)
     .addTable([

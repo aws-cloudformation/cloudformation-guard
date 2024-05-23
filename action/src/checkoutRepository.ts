@@ -7,9 +7,9 @@ enum CheckoutRepositoryStrings {
 
 /**
  * Checkout the appropriate ref for the users changes.
- * @returns {void}
+ * @returns {Promise<void>}
  */
-export const checkoutRepository = async () => {
+export const checkoutRepository = async (): Promise<void> => {
   const ref = context.payload.ref
   const repository = context.payload.repository?.full_name
   try {

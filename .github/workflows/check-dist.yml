@@ -1,28 +1,30 @@
-# In TypeScript actions, `dist/` is a special directory. When you reference
-# an action with the `uses:` property, `dist/index.js` is the code that will be
-# run. For this project, the `dist/index.js` file is transpiled from other
-# source files. This workflow ensures the `dist/` directory contains the
+# In TypeScript actions, `action/dist/` is a special directory. When you reference
+# an action with the `uses:` property, `action/dist/index.js` is the code that will be
+# run. For this project, the `action/dist/index.js` file is transpiled from other
+# source files. This workflow ensures the `action/dist/` directory contains the
 # expected transpiled code.
 #
 # If this workflow is run from a feature branch, it will act as an additional CI
-# check and fail if the checked-in `dist/` directory does not match what is
+# check and fail if the checked-in `action/dist/` directory does not match what is
 # expected from the build.
-name: Check Transpiled JavaScript
+name: Check Transpiled JavaScript For Action
 
 on:
   pull_request:
     branches:
       - main
+      - action-develop
   push:
     branches:
       - main
+      - action-develop
 
 permissions:
   contents: read
 
 jobs:
   check-dist:
-    name: Check dist/
+    name: Check action/dist/
     runs-on: ubuntu-latest
 
     steps:
@@ -41,27 +43,32 @@ jobs:
         id: install
         run: npm ci
 
-      - name: Build dist/ Directory
+      - name: Build action/dist/ Directory
         id: build
         run: npm run bundle
 
-      # This will fail the workflow if the `dist/` directory is different than
+      # This will fail the workflow if the `action/dist/` directory is different than
       # expected.
       - name: Compare Directories
         id: diff
         run: |
-          if [ "$(git diff --ignore-space-at-eol --text dist/ | wc -l)" -gt "0" ]; then
+          if [ ! -d action/dist/ ]; then
+            echo "Expected action/dist/ directory does not exist.  See status below:"
+            ls -la ./
+            exit 1
+          fi
+          if [ "$(git diff --ignore-space-at-eol --text action/dist/ | wc -l)" -gt "0" ]; then
             echo "Detected uncommitted changes after build. See status below:"
-            git diff --ignore-space-at-eol --text dist/
+            git diff --ignore-space-at-eol --text action/dist/
             exit 1
           fi
 
-      # If `dist/` was different than expected, upload the expected version as a
+      # If `action/dist/` was different than expected, upload the expected version as a
       # workflow artifact.
       - if: ${{ failure() && steps.diff.outcome == 'failure' }}
         name: Upload Artifact
         id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: action-dist
+          path: action/dist/

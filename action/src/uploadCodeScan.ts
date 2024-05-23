@@ -3,6 +3,7 @@ import zlib from 'zlib'
 import { context, getOctokit } from '@actions/github'
 import getConfig from './getConfig'
 import { SarifReport } from 'cfn-guard'
+import { Readable } from 'stream'
 
 enum Endpoints {
   CodeScan = 'POST /repos/{owner}/{repo}/code-scanning/sarifs'
@@ -46,7 +47,7 @@ export const compressAndEncode = async (input: string): Promise<string> => {
  * @returns {Promise<string>} - The base64-encoded string.
  */
 const blobToBase64 = async (blob: Buffer): Promise<string> => {
-  const reader = new (require('stream').Readable)()
+  const reader = new Readable()
   reader._read = () => {} // _read is required but you can noop it
   reader.push(blob)
   reader.push(null)
@@ -72,7 +73,9 @@ export type UploadCodeScanParams = {
  * @param {UploadCodeScanParams} params - The parameters for the code scan upload.
  * @returns {Promise<void>} - Resolves when the code scan has been uploaded successfully.
  */
-export const uploadCodeScan = async ({ result }: UploadCodeScanParams) => {
+export const uploadCodeScan = async ({
+  result
+}: UploadCodeScanParams): Promise<void> => {
   const { token } = getConfig()
   const ref = context.payload.ref
   const octokit = getOctokit(token)

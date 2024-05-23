@@ -17,7 +17,7 @@ inputs:
     default: '.'
   token:
     description: 'GitHub token for API calls.'
-    required: true
+    required: false
   checkout:
     description: 'Checkout the repository if not using a composite action where cfn-guard follows actions/checkout.'
     required: false

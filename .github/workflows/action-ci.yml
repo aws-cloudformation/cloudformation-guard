@@ -1,0 +1,25 @@
+name: Github Action CI
+on:
+  push:
+    paths:
+      - 'action/**'
+      - 'action.yml'
+  pull_request:
+    paths:
+      - 'action/**'
+      - 'action.yml'
+jobs:
+  run-unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./action
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v4.0.2
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run package

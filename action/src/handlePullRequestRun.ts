@@ -34,7 +34,7 @@ type HandleCreateReviewParams = {
 export const handleCreateReview = async ({
   tmpComments,
   filesWithViolationsInPr
-}: HandleCreateReviewParams) => {
+}: HandleCreateReviewParams): Promise<void> => {
   const { token } = getConfig()
   const { pull_request } = context.payload
   if (!pull_request) return

@@ -26,10 +26,10 @@ export async function run(): Promise<void> {
   try {
     const result = await handleValidate()
     const {
-      runs: [run]
+      runs: [sarifRun]
     } = result
 
-    if (run.results.length) {
+    if (sarifRun.results.length) {
       core.setFailed(RunStrings.ValidationFailed)
 
       if (analyze) {
@@ -38,8 +38,8 @@ export async function run(): Promise<void> {
         await handleWriteActionSummary({
           results:
             eventName === 'pull_request'
-              ? await handlePullRequestRun({ run })
-              : await handlePushRun({ run })
+              ? await handlePullRequestRun({ run: sarifRun })
+              : await handlePushRun({ run: sarifRun })
         })
       }
     }
