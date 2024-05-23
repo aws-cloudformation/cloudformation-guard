@@ -1,0 +1,16 @@
+name: CFN Guard Validate
+
+on: [pull_request, push]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    name: Guard Validate
+    steps:
+      - name: CFN Guard Validate
+        uses: dannyvassallo/cloudformation-guard@action-v0.0.033
+        with:
+          rules: './guard/resources/validate/rules-dir/'
+          data: './guard/resources/validate/data-dir/'
+          token: ${{ secrets.GITHUB_TOKEN }}
