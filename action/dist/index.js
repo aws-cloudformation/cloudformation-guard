@@ -30920,8 +30920,8 @@ function wrappy (fn, cb) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutRepository = void 0;
-const exec_1 = __nccwpck_require__(1514);
 const github_1 = __nccwpck_require__(5438);
+const exec_1 = __nccwpck_require__(1514);
 var CheckoutRepositoryStrings;
 (function (CheckoutRepositoryStrings) {
     CheckoutRepositoryStrings["Error"] = "Error checking out repository";
@@ -30930,7 +30930,7 @@ var CheckoutRepositoryStrings;
  * Checkout the appropriate ref for the users changes.
  * @returns {Promise<void>}
  */
-const checkoutRepository = async () => {
+async function checkoutRepository() {
     const ref = github_1.context.payload.ref;
     const repository = github_1.context.payload.repository?.full_name;
     try {
@@ -30949,9 +30949,9 @@ const checkoutRepository = async () => {
     catch (error) {
         throw new Error(`${CheckoutRepositoryStrings.Error}: ${error}`);
     }
-};
+}
 exports.checkoutRepository = checkoutRepository;
-exports["default"] = exports.checkoutRepository;
+exports["default"] = checkoutRepository;
 
 
 /***/ }),
@@ -30991,16 +30991,18 @@ const core = __importStar(__nccwpck_require__(2186));
  * Returns the config values in JSON format
  * @returns {Config}
  */
-const getConfig = () => ({
-    rulesPath: core.getInput('rules'),
-    dataPath: core.getInput('data'),
-    token: core.getInput('token'),
-    checkout: core.getBooleanInput('checkout'),
-    analyze: core.getBooleanInput('analyze'),
-    createReview: core.getBooleanInput('create-review')
-});
+function getConfig() {
+    return {
+        analyze: core.getBooleanInput('analyze'),
+        checkout: core.getBooleanInput('checkout'),
+        createReview: core.getBooleanInput('create-review'),
+        dataPath: core.getInput('data'),
+        rulesPath: core.getInput('rules'),
+        token: core.getInput('token')
+    };
+}
 exports.getConfig = getConfig;
-exports["default"] = exports.getConfig;
+exports["default"] = getConfig;
 
 
 /***/ }),
@@ -31031,7 +31033,7 @@ var HandlePullRequestRunStrings;
  * @param {string[]} params.filesWithViolationsInPr - The list of files with violations in the pull request.
  * @returns {Promise<void>}
  */
-const handleCreateReview = async ({ tmpComments, filesWithViolationsInPr }) => {
+async function handleCreateReview({ tmpComments, filesWithViolationsInPr }) {
     const { token } = (0, getConfig_1.default)();
     const { pull_request } = github_1.context.payload;
     if (!pull_request)
@@ -31040,12 +31042,12 @@ const handleCreateReview = async ({ tmpComments, filesWithViolationsInPr }) => {
     const comments = tmpComments.filter(comment => filesWithViolationsInPr.includes(comment.path));
     await octokit.rest.pulls.createReview({
         ...github_1.context.repo,
-        pull_number: pull_request.number,
         comments,
+        commit_id: github_1.context.payload.head_commit,
         event: 'COMMENT',
-        commit_id: github_1.context.payload.head_commit
+        pull_number: pull_request.number
     });
-};
+}
 exports.handleCreateReview = handleCreateReview;
 /**
  * Handles formatting the reported execution of a pull request run for the CFN Guard action.
@@ -31054,7 +31056,7 @@ exports.handleCreateReview = handleCreateReview;
  * @returns {Promise<string[][]>} - An array of arrays, where each inner array represents a violation with the following format: [file path, violation message, rule ID].
  * @throws {Error} - Throws an error if the pull request context cannot be found.
  */
-const handlePullRequestRun = async ({ run }) => {
+async function handlePullRequestRun({ run }) {
     const { token, createReview } = (0, getConfig_1.default)();
     const octokit = (0, github_1.getOctokit)(token);
     const { pull_request } = github_1.context.payload;
@@ -31063,8 +31065,8 @@ const handlePullRequestRun = async ({ run }) => {
     }
     const listFiles = await octokit.rest.pulls.listFiles({
         ...github_1.context.repo,
-        pull_number: pull_request.number,
-        per_page: 3000
+        per_page: 3000,
+        pull_number: pull_request.number
     });
     const filesChanged = listFiles.data.map(({ filename }) => filename);
     const tmpComments = run.results.map(result => ({
@@ -31076,9 +31078,9 @@ const handlePullRequestRun = async ({ run }) => {
     const filesWithViolationsInPr = filesChanged.filter(value => filesWithViolations.includes(value));
     filesWithViolationsInPr.length &&
         createReview &&
-        (await (0, exports.handleCreateReview)({
-            tmpComments,
-            filesWithViolationsInPr
+        (await handleCreateReview({
+            filesWithViolationsInPr,
+            tmpComments
         }));
     return run.results
         .map(({ locations: [location], ruleId, message: { text } }) => filesWithViolationsInPr.includes(location.physicalLocation.artifactLocation.uri)
@@ -31089,7 +31091,7 @@ const handlePullRequestRun = async ({ run }) => {
         ]
         : [])
         .filter(result => result.some(Boolean));
-};
+}
 exports.handlePullRequestRun = handlePullRequestRun;
 
 
@@ -31108,11 +31110,13 @@ exports.handlePushRun = void 0;
  * @param {SarifRun} params.run - The SARIF run object containing the validation results.
  * @returns {Promise<string[][]>} - An array of arrays, where each inner array represents a violation with the following format: [file path, violation message, rule ID].
  */
-const handlePushRun = async ({ run }) => run.results.map(({ locations: [location], ruleId, message: { text } }) => [
-    `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
-    text,
-    ruleId
-]);
+async function handlePushRun({ run }) {
+    return run.results.map(({ locations: [location], ruleId, message: { text } }) => [
+        `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+        text,
+        ruleId
+    ]);
+}
 exports.handlePushRun = handlePushRun;
 
 
@@ -31151,22 +31155,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleValidate = void 0;
-const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 const core = __importStar(__nccwpck_require__(2186));
 const cfn_guard_1 = __nccwpck_require__(7848);
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Handles the validation of the CloudFormation templates using CFN Guard.
  * @returns {Promise<SarifReport>} - The SARIF report containing the validation results.
  */
-const handleValidate = async () => {
+async function handleValidate() {
     const { rulesPath, dataPath } = (0, getConfig_1.default)();
     const result = await (0, cfn_guard_1.validate)({
-        rulesPath,
-        dataPath
+        dataPath,
+        rulesPath
     });
     core.setOutput('result', JSON.stringify(result, null, 2));
     return result;
-};
+}
 exports.handleValidate = handleValidate;
 
 
@@ -31216,7 +31220,7 @@ var ValidationSummaryStrings;
  * @param {string[][]} params.results - A 2D array of strings representing the validation results. Each inner array contains the file path, violation message, and rule ID.
  * @returns {Promise<void>} - Resolves when the action summary has been written.
  */
-const handleWriteActionSummary = async ({ results }) => {
+async function handleWriteActionSummary({ results }) {
     await core.summary
         .addHeading(ValidationSummaryStrings.Heading)
         .addTable([
@@ -31228,7 +31232,7 @@ const handleWriteActionSummary = async ({ results }) => {
         ...results
     ])
         .write();
-};
+}
 exports.handleWriteActionSummary = handleWriteActionSummary;
 
 
@@ -31268,14 +31272,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = exports.RunStrings = void 0;
 const core = __importStar(__nccwpck_require__(2186));
-const github_1 = __nccwpck_require__(5438);
 const checkoutRepository_1 = __nccwpck_require__(9274);
-const uploadCodeScan_1 = __nccwpck_require__(1806);
-const handleValidate_1 = __nccwpck_require__(5426);
+const github_1 = __nccwpck_require__(5438);
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 const handlePullRequestRun_1 = __nccwpck_require__(4879);
 const handlePushRun_1 = __nccwpck_require__(5802);
+const handleValidate_1 = __nccwpck_require__(5426);
 const handleWriteActionSummary_1 = __nccwpck_require__(5546);
-const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+const uploadCodeScan_1 = __nccwpck_require__(1806);
 var RunStrings;
 (function (RunStrings) {
     RunStrings["ValidationFailed"] = "Validation failure. cfn-guard found violations.";
@@ -31329,11 +31333,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uploadCodeScan = exports.compressAndEncode = void 0;
-const buffer_1 = __nccwpck_require__(4300);
-const zlib_1 = __importDefault(__nccwpck_require__(9796));
 const github_1 = __nccwpck_require__(5438);
-const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+const buffer_1 = __nccwpck_require__(4300);
 const stream_1 = __nccwpck_require__(2781);
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+const zlib_1 = __importDefault(__nccwpck_require__(9796));
 var Endpoints;
 (function (Endpoints) {
     Endpoints["CodeScan"] = "POST /repos/{owner}/{repo}/code-scanning/sarifs";
@@ -31343,7 +31347,7 @@ var Endpoints;
  * @param {string} input - The input string to be compressed and encoded.
  * @returns {Promise<string>} - The compressed and base64-encoded string.
  */
-const compressAndEncode = async (input) => {
+async function compressAndEncode(input) {
     const byteArray = buffer_1.Buffer.from(input, 'utf8');
     const gzip = zlib_1.default.createGzip();
     const compressedData = await new Promise((resolve, reject) => {
@@ -31362,14 +31366,14 @@ const compressAndEncode = async (input) => {
     });
     const base64 = await blobToBase64(compressedData);
     return base64;
-};
+}
 exports.compressAndEncode = compressAndEncode;
 /**
  * Converts a Buffer to a base64-encoded string.
  * @param {Buffer} blob - The Buffer to be converted to base64.
  * @returns {Promise<string>} - The base64-encoded string.
  */
-const blobToBase64 = async (blob) => {
+async function blobToBase64(blob) {
     const reader = new stream_1.Readable();
     reader._read = () => { }; // _read is required but you can noop it
     reader.push(blob);
@@ -31383,13 +31387,13 @@ const blobToBase64 = async (blob) => {
             reject(error);
         });
     });
-};
+}
 /**
  * Uploads the SARIF report to the GitHub Code Scanning API.
  * @param {UploadCodeScanParams} params - The parameters for the code scan upload.
  * @returns {Promise<void>} - Resolves when the code scan has been uploaded successfully.
  */
-const uploadCodeScan = async ({ result }) => {
+async function uploadCodeScan({ result }) {
     const { token } = (0, getConfig_1.default)();
     const ref = github_1.context.payload.ref;
     const octokit = (0, github_1.getOctokit)(token);
@@ -31397,14 +31401,14 @@ const uploadCodeScan = async ({ result }) => {
     const params = {
         ...github_1.context.repo,
         commit_sha: github_1.context.payload.head_commit.id,
+        headers,
         ref,
-        // SARIF reports must be gzipped and base64 encoded for the code scanning API
         // https://docs.github.com/en/rest/code-scanning/code-scanning?apiVersion=2022-11-28#upload-an-analysis-as-sarif-data
-        sarif: await (0, exports.compressAndEncode)(JSON.stringify(result)),
-        headers
+        // SARIF reports must be gzipped and base64 encoded for the code scanning API
+        sarif: await compressAndEncode(JSON.stringify(result))
     };
     await octokit.request(Endpoints.CodeScan, params);
-};
+}
 exports.uploadCodeScan = uploadCodeScan;
 
 

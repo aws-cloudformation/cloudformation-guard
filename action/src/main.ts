@@ -1,12 +1,12 @@
 import * as core from '@actions/core';
-import { context } from '@actions/github';
 import { checkoutRepository } from './checkoutRepository';
-import { uploadCodeScan } from './uploadCodeScan';
-import { handleValidate } from './handleValidate';
+import { context } from '@actions/github';
+import getConfig from './getConfig';
 import { handlePullRequestRun } from './handlePullRequestRun';
 import { handlePushRun } from './handlePushRun';
+import { handleValidate } from './handleValidate';
 import { handleWriteActionSummary } from './handleWriteActionSummary';
-import getConfig from './getConfig';
+import { uploadCodeScan } from './uploadCodeScan';
 
 export enum RunStrings {
   ValidationFailed = 'Validation failure. cfn-guard found violations.',

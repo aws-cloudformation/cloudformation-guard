@@ -1,5 +1,5 @@
-import { SarifRun } from 'cfn-guard';
 import { context, getOctokit } from '@actions/github';
+import { SarifRun } from 'cfn-guard';
 import getConfig from './getConfig';
 
 enum HandlePullRequestRunStrings {
@@ -31,10 +31,10 @@ type HandleCreateReviewParams = {
  * @param {string[]} params.filesWithViolationsInPr - The list of files with violations in the pull request.
  * @returns {Promise<void>}
  */
-export const handleCreateReview = async ({
+export async function handleCreateReview({
   tmpComments,
   filesWithViolationsInPr
-}: HandleCreateReviewParams): Promise<void> => {
+}: HandleCreateReviewParams): Promise<void> {
   const { token } = getConfig();
   const { pull_request } = context.payload;
   if (!pull_request) return;
@@ -46,12 +46,12 @@ export const handleCreateReview = async ({
 
   await octokit.rest.pulls.createReview({
     ...context.repo,
-    pull_number: pull_request.number,
     comments,
+    commit_id: context.payload.head_commit,
     event: 'COMMENT',
-    commit_id: context.payload.head_commit
+    pull_number: pull_request.number
   });
-};
+}
 
 /**
  * Handles formatting the reported execution of a pull request run for the CFN Guard action.
@@ -60,9 +60,9 @@ export const handleCreateReview = async ({
  * @returns {Promise<string[][]>} - An array of arrays, where each inner array represents a violation with the following format: [file path, violation message, rule ID].
  * @throws {Error} - Throws an error if the pull request context cannot be found.
  */
-export const handlePullRequestRun = async ({
+export async function handlePullRequestRun({
   run
-}: HandlePullRequestRunParams): Promise<string[][]> => {
+}: HandlePullRequestRunParams): Promise<string[][]> {
   const { token, createReview } = getConfig();
   const octokit = getOctokit(token);
   const { pull_request } = context.payload;
@@ -73,8 +73,8 @@ export const handlePullRequestRun = async ({
 
   const listFiles = await octokit.rest.pulls.listFiles({
     ...context.repo,
-    pull_number: pull_request.number,
-    per_page: 3000
+    per_page: 3000,
+    pull_number: pull_request.number
   });
 
   const filesChanged = listFiles.data.map(({ filename }) => filename);
@@ -94,8 +94,8 @@ export const handlePullRequestRun = async ({
   filesWithViolationsInPr.length &&
     createReview &&
     (await handleCreateReview({
-      tmpComments,
-      filesWithViolationsInPr
+      filesWithViolationsInPr,
+      tmpComments
     }));
 
   return run.results
@@ -111,4 +111,4 @@ export const handlePullRequestRun = async ({
         : []
     )
     .filter(result => result.some(Boolean));
-};
+}

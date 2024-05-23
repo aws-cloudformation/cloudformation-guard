@@ -1,5 +1,5 @@
-import { exec } from '@actions/exec';
 import { context } from '@actions/github';
+import { exec } from '@actions/exec';
 
 enum CheckoutRepositoryStrings {
   Error = 'Error checking out repository'
@@ -9,7 +9,7 @@ enum CheckoutRepositoryStrings {
  * Checkout the appropriate ref for the users changes.
  * @returns {Promise<void>}
  */
-export const checkoutRepository = async (): Promise<void> => {
+export async function checkoutRepository(): Promise<void> {
   const ref = context.payload.ref;
   const repository = context.payload.repository?.full_name;
   try {
@@ -26,6 +26,6 @@ export const checkoutRepository = async (): Promise<void> => {
   } catch (error) {
     throw new Error(`${CheckoutRepositoryStrings.Error}: ${error}`);
   }
-};
+}
 
 export default checkoutRepository;

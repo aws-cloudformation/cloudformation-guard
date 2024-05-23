@@ -13,13 +13,15 @@ export type Config = {
  * Returns the config values in JSON format
  * @returns {Config}
  */
-export const getConfig = (): Config => ({
-  rulesPath: core.getInput('rules'),
-  dataPath: core.getInput('data'),
-  token: core.getInput('token'),
-  checkout: core.getBooleanInput('checkout'),
-  analyze: core.getBooleanInput('analyze'),
-  createReview: core.getBooleanInput('create-review')
-});
+export function getConfig(): Config {
+  return {
+    analyze: core.getBooleanInput('analyze'),
+    checkout: core.getBooleanInput('checkout'),
+    createReview: core.getBooleanInput('create-review'),
+    dataPath: core.getInput('data'),
+    rulesPath: core.getInput('rules'),
+    token: core.getInput('token')
+  };
+}
 
 export default getConfig;

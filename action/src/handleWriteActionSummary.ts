@@ -17,9 +17,9 @@ enum ValidationSummaryStrings {
  * @param {string[][]} params.results - A 2D array of strings representing the validation results. Each inner array contains the file path, violation message, and rule ID.
  * @returns {Promise<void>} - Resolves when the action summary has been written.
  */
-export const handleWriteActionSummary = async ({
+export async function handleWriteActionSummary({
   results
-}: HandleWriteActionSummaryParams): Promise<void> => {
+}: HandleWriteActionSummaryParams): Promise<void> {
   await core.summary
     .addHeading(ValidationSummaryStrings.Heading)
     .addTable([
@@ -31,4 +31,4 @@ export const handleWriteActionSummary = async ({
       ...results
     ])
     .write();
-};
+}

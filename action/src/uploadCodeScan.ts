@@ -1,9 +1,9 @@
-import { Buffer } from 'buffer';
-import zlib from 'zlib';
 import { context, getOctokit } from '@actions/github';
-import getConfig from './getConfig';
-import { SarifReport } from 'cfn-guard';
+import { Buffer } from 'buffer';
 import { Readable } from 'stream';
+import { SarifReport } from 'cfn-guard';
+import getConfig from './getConfig';
+import zlib from 'zlib';
 
 enum Endpoints {
   CodeScan = 'POST /repos/{owner}/{repo}/code-scanning/sarifs'
@@ -14,7 +14,7 @@ enum Endpoints {
  * @param {string} input - The input string to be compressed and encoded.
  * @returns {Promise<string>} - The compressed and base64-encoded string.
  */
-export const compressAndEncode = async (input: string): Promise<string> => {
+export async function compressAndEncode(input: string): Promise<string> {
   const byteArray = Buffer.from(input, 'utf8');
   const gzip = zlib.createGzip();
 
@@ -39,14 +39,14 @@ export const compressAndEncode = async (input: string): Promise<string> => {
 
   const base64 = await blobToBase64(compressedData);
   return base64;
-};
+}
 
 /**
  * Converts a Buffer to a base64-encoded string.
  * @param {Buffer} blob - The Buffer to be converted to base64.
  * @returns {Promise<string>} - The base64-encoded string.
  */
-const blobToBase64 = async (blob: Buffer): Promise<string> => {
+async function blobToBase64(blob: Buffer): Promise<string> {
   const reader = new Readable();
   reader._read = () => {}; // _read is required but you can noop it
   reader.push(blob);
@@ -62,7 +62,7 @@ const blobToBase64 = async (blob: Buffer): Promise<string> => {
       reject(error);
     });
   });
-};
+}
 
 export type UploadCodeScanParams = {
   result: SarifReport;
@@ -73,9 +73,9 @@ export type UploadCodeScanParams = {
  * @param {UploadCodeScanParams} params - The parameters for the code scan upload.
  * @returns {Promise<void>} - Resolves when the code scan has been uploaded successfully.
  */
-export const uploadCodeScan = async ({
+export async function uploadCodeScan({
   result
-}: UploadCodeScanParams): Promise<void> => {
+}: UploadCodeScanParams): Promise<void> {
   const { token } = getConfig();
   const ref = context.payload.ref;
   const octokit = getOctokit(token);
@@ -84,12 +84,12 @@ export const uploadCodeScan = async ({
   const params = {
     ...context.repo,
     commit_sha: context.payload.head_commit.id,
+    headers,
     ref,
-    // SARIF reports must be gzipped and base64 encoded for the code scanning API
     // https://docs.github.com/en/rest/code-scanning/code-scanning?apiVersion=2022-11-28#upload-an-analysis-as-sarif-data
-    sarif: await compressAndEncode(JSON.stringify(result)),
-    headers
+    // SARIF reports must be gzipped and base64 encoded for the code scanning API
+    sarif: await compressAndEncode(JSON.stringify(result))
   };
 
   await octokit.request(Endpoints.CodeScan, params);
-};
+}
