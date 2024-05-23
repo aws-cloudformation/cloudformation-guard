@@ -97,5 +97,10 @@ rules:
           'allowSeparatedGroups': false
         }
       ],
-      'sort-keys': ['error', 'asc', {'caseSensitive': true, 'natural': false, 'minKeys': 2}]
+    'sort-keys':
+      [
+        'error',
+        'asc',
+        { 'caseSensitive': true, 'natural': false, 'minKeys': 2 }
+      ]
   }
