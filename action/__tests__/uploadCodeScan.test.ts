@@ -18,22 +18,21 @@ describe('compressAndEncode', () => {
     const input = 'test input'
     const expectedBase64 = 'dGVzdCBpbnB1dA=='
 
-    jest.spyOn(zlib, 'createGzip').mockImplementation(() => ({
-      // @ts-ignore whatever for now
-      on: jest.fn((event, callback) => {
+    const mockGzip = {
+      on: jest.fn((event, callback: (arg?: Buffer) => void) => {
         if (event === 'data') {
-          // @ts-ignore whatever for now
-          callback(Buffer.from('test input'))
+          callback(Buffer.from(input))
         } else if (event === 'end') {
-          // @ts-ignore whatever for now
           callback()
         }
       }),
-      // @ts-ignore whatever for now
       write: jest.fn(),
-      // @ts-ignore whatever for now
       end: jest.fn()
-    }))
+    }
+
+    jest
+      .spyOn(zlib, 'createGzip')
+      .mockReturnValue(mockGzip as unknown as zlib.Gzip)
 
     const result = await uploadCodeScan.compressAndEncode(input)
     expect(result).toBe(expectedBase64)
@@ -50,7 +49,7 @@ describe('uploadCodeScan', () => {
       .spyOn(getConfig, 'getConfig')
       .mockReturnValue(mockConfig as getConfig.Config)
     jest.spyOn(github, 'getOctokit').mockReturnValue({
-      // @ts-ignore whatever
+      // @ts-ignore Just need to stop the spec to listen for a call and not execute.
       request: jest.fn().mockResolvedValue({})
     })
     jest

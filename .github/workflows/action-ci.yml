@@ -21,6 +21,7 @@ jobs:
           node-version: '20'
       - run: npm install
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run test
       - run: npm run package
       # This will fail the workflow if the `dist/` directory is different than

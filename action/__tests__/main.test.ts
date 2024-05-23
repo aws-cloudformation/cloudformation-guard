@@ -1,16 +1,7 @@
 import * as mocks from './__mocks/mockSarif'
 import * as core from '@actions/core'
 import { run } from '../src/main'
-import {
-  describe,
-  expect,
-  it,
-  jest,
-  beforeEach,
-  afterEach,
-  beforeAll,
-  afterAll
-} from '@jest/globals'
+import { describe, expect, it, jest, afterEach } from '@jest/globals'
 import { checkoutRepository } from '../src/checkoutRepository'
 import getConfig from '../src/getConfig'
 import * as handleValidate from '../src/handleValidate'
@@ -28,10 +19,9 @@ jest.mock('../src/checkoutRepository', () => ({
 jest.mock('../src/handlePushRun', () => ({
   __esModule: true,
   handlePushRun: jest.fn().mockReturnValue([
-      ['file1.ts', 'Violation message 1', 'rule-id-1'],
-      ['file2.ts', 'Violation message 2', 'rule-id-2']
-    ]
-  ),
+    ['file1.ts', 'Violation message 1', 'rule-id-1'],
+    ['file2.ts', 'Violation message 2', 'rule-id-2']
+  ]),
   default: jest.fn()
 }))
 jest.mock('../src/handleValidate', () => {
@@ -49,17 +39,20 @@ jest.mock('../src/uploadCodeScan', () => ({
   default: jest.fn()
 }))
 jest.mock('../src/handlePullRequestRun', () => {
-  // @ts-ignore
   const { handlePullRequestRun: handlePullRequestRunActual } =
-    jest.requireActual('../src/handlePullRequestRun')
+    jest.requireActual<typeof handlePullRequestRun>(
+      '../src/handlePullRequestRun'
+    )
   const handleCreateReviewSpy = jest.fn()
   return {
     __esModule: true,
-    handlePullRequestRun: jest.fn((...args) => {
-      handlePullRequestRunActual(...args)
+    handlePullRequestRun: jest.fn(args => {
+      handlePullRequestRunActual(
+        args as handlePullRequestRun.HandlePullRequestRunParams
+      )
       const config = jest.mocked(getConfig)()
       if (config.createReview) {
-        handleCreateReviewSpy(...args)
+        handleCreateReviewSpy(args)
       }
       return [
         ['file1.ts', 'Violation message 1', 'rule-id-1'],
@@ -78,26 +71,7 @@ jest.mock('../src/getConfig', () => {
 })
 
 describe('main', () => {
-  let originalContext: Context
-
-  beforeAll(() => {
-    // @ts-ignore
-    originalContext = { ...github.context }
-  })
-
-  afterAll(() => {
-    // @ts-ignore
-    github.context = originalContext
-  })
-
-  beforeEach(() => {
-    // @ts-ignore
-    github.context = { ...originalContext }
-  })
-
   afterEach(() => {
-    // @ts-ignore
-    github.context = { ...originalContext }
     jest.clearAllMocks()
   })
 
