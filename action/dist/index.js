@@ -30913,6 +30913,39 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 1453:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.blobToBase64 = void 0;
+const stream_1 = __nccwpck_require__(2781);
+/**
+ * Converts a Buffer to a base64-encoded string.
+ * @param {Buffer} blob - The Buffer to be converted to base64.
+ * @returns {Promise<string>} - The base64-encoded string.
+ */
+async function blobToBase64(blob) {
+    const reader = new stream_1.Readable();
+    reader._read = () => { }; // _read is required but you can noop it
+    reader.push(blob);
+    reader.push(null);
+    return new Promise((resolve, reject) => {
+        reader.on('data', (chunk) => {
+            const base64 = chunk.toString('base64');
+            resolve(base64);
+        });
+        reader.on('error', (error) => {
+            reject(error);
+        });
+    });
+}
+exports.blobToBase64 = blobToBase64;
+
+
+/***/ }),
+
 /***/ 9274:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -30952,6 +30985,48 @@ async function checkoutRepository() {
 }
 exports.checkoutRepository = checkoutRepository;
 exports["default"] = checkoutRepository;
+
+
+/***/ }),
+
+/***/ 8492:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.compressAndEncode = void 0;
+const blobToBase64_1 = __nccwpck_require__(1453);
+const zlib_1 = __importDefault(__nccwpck_require__(9796));
+/**
+ * Compresses and encodes the input string using gzip and base64.
+ * @param {string} input - The input string to be compressed and encoded.
+ * @returns {Promise<string>} - The compressed and base64-encoded string.
+ */
+async function compressAndEncode(input) {
+    const byteArray = Buffer.from(input, 'utf8');
+    const gzip = zlib_1.default.createGzip();
+    const compressedData = await new Promise((resolve, reject) => {
+        const chunks = [];
+        gzip.on('data', (chunk) => {
+            chunks.push(chunk);
+        });
+        gzip.on('end', () => {
+            resolve(Buffer.concat(chunks));
+        });
+        gzip.on('error', (error) => {
+            reject(error);
+        });
+        gzip.write(byteArray);
+        gzip.end();
+    });
+    const base64 = await (0, blobToBase64_1.blobToBase64)(compressedData);
+    return base64;
+}
+exports.compressAndEncode = compressAndEncode;
 
 
 /***/ }),
@@ -31332,62 +31407,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.uploadCodeScan = exports.compressAndEncode = void 0;
+exports.uploadCodeScan = void 0;
 const github_1 = __nccwpck_require__(5438);
-const buffer_1 = __nccwpck_require__(4300);
-const stream_1 = __nccwpck_require__(2781);
+const compressAndEncode_1 = __nccwpck_require__(8492);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
-const zlib_1 = __importDefault(__nccwpck_require__(9796));
 var Endpoints;
 (function (Endpoints) {
     Endpoints["CodeScan"] = "POST /repos/{owner}/{repo}/code-scanning/sarifs";
 })(Endpoints || (Endpoints = {}));
-/**
- * Compresses and encodes the input string using gzip and base64.
- * @param {string} input - The input string to be compressed and encoded.
- * @returns {Promise<string>} - The compressed and base64-encoded string.
- */
-async function compressAndEncode(input) {
-    const byteArray = buffer_1.Buffer.from(input, 'utf8');
-    const gzip = zlib_1.default.createGzip();
-    const compressedData = await new Promise((resolve, reject) => {
-        const chunks = [];
-        gzip.on('data', (chunk) => {
-            chunks.push(chunk);
-        });
-        gzip.on('end', () => {
-            resolve(buffer_1.Buffer.concat(chunks));
-        });
-        gzip.on('error', (error) => {
-            reject(error);
-        });
-        gzip.write(byteArray);
-        gzip.end();
-    });
-    const base64 = await blobToBase64(compressedData);
-    return base64;
-}
-exports.compressAndEncode = compressAndEncode;
-/**
- * Converts a Buffer to a base64-encoded string.
- * @param {Buffer} blob - The Buffer to be converted to base64.
- * @returns {Promise<string>} - The base64-encoded string.
- */
-async function blobToBase64(blob) {
-    const reader = new stream_1.Readable();
-    reader._read = () => { }; // _read is required but you can noop it
-    reader.push(blob);
-    reader.push(null);
-    return new Promise((resolve, reject) => {
-        reader.on('data', (chunk) => {
-            const base64 = chunk.toString('base64');
-            resolve(base64);
-        });
-        reader.on('error', (error) => {
-            reject(error);
-        });
-    });
-}
 /**
  * Uploads the SARIF report to the GitHub Code Scanning API.
  * @param {UploadCodeScanParams} params - The parameters for the code scan upload.
@@ -31398,14 +31425,16 @@ async function uploadCodeScan({ result }) {
     const ref = github_1.context.payload.ref;
     const octokit = (0, github_1.getOctokit)(token);
     const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
+    const stringifiedResult = JSON.stringify(result);
+    // https://docs.github.com/en/rest/code-scanning/code-scanning?apiVersion=2022-11-28#upload-an-analysis-as-sarif-data
+    // SARIF reports must be gzipped and base64 encoded for the code scanning API
+    const sarif = await (0, compressAndEncode_1.compressAndEncode)(stringifiedResult);
     const params = {
         ...github_1.context.repo,
         commit_sha: github_1.context.payload.head_commit.id,
         headers,
         ref,
-        // https://docs.github.com/en/rest/code-scanning/code-scanning?apiVersion=2022-11-28#upload-an-analysis-as-sarif-data
-        // SARIF reports must be gzipped and base64 encoded for the code scanning API
-        sarif: await compressAndEncode(JSON.stringify(result))
+        sarif
     };
     await octokit.request(Endpoints.CodeScan, params);
 }

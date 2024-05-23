@@ -1,43 +1,13 @@
-import { Buffer } from 'buffer';
-import * as zlib from 'zlib';
 import * as github from '@actions/github';
 import * as getConfig from '../src/getConfig';
-import { SarifReport } from 'cfn-guard';
 import * as uploadCodeScan from '../src/uploadCodeScan';
-import { jest, describe, it, expect } from '@jest/globals';
-import { context } from '@actions/github';
+import { jest, describe, it, expect, beforeAll } from '@jest/globals';
 import { sarifResultFixture } from './__fixtures__/sarifFixtures';
+import * as compressAndEncode from '../src/compressAndEncode';
 
 jest.mock('@actions/github');
 jest.mock('../src/getConfig');
 jest.mock('@actions/core');
-jest.mock('zlib');
-
-describe('compressAndEncode', () => {
-  it('should compress and encode the input string', async () => {
-    const input = 'test input';
-    const expectedBase64 = 'dGVzdCBpbnB1dA==';
-
-    const mockGzip = {
-      on: jest.fn((event, callback: (arg?: Buffer) => void) => {
-        if (event === 'data') {
-          callback(Buffer.from(input));
-        } else if (event === 'end') {
-          callback();
-        }
-      }),
-      write: jest.fn(),
-      end: jest.fn()
-    };
-
-    jest
-      .spyOn(zlib, 'createGzip')
-      .mockReturnValue(mockGzip as unknown as zlib.Gzip);
-
-    const result = await uploadCodeScan.compressAndEncode(input);
-    expect(result).toBe(expectedBase64);
-  });
-});
 
 describe('uploadCodeScan', () => {
   it('should upload the SARIF report to the GitHub Code Scanning API', async () => {
@@ -53,14 +23,14 @@ describe('uploadCodeScan', () => {
       request: jest.fn().mockResolvedValue({})
     });
     jest
-      .spyOn(uploadCodeScan, 'compressAndEncode')
+      .spyOn(compressAndEncode, 'compressAndEncode')
       .mockResolvedValue('compressed-and-encoded-sarif');
 
     await uploadCodeScan.uploadCodeScan({ result: sarifResultFixture });
 
     expect(getConfig.default).toHaveBeenCalled();
     expect(github.getOctokit).toHaveBeenCalledWith('test-token');
-    expect(uploadCodeScan.compressAndEncode).toHaveBeenCalledWith(
+    expect(compressAndEncode.compressAndEncode).toHaveBeenCalledWith(
       JSON.stringify(sarifResultFixture)
     );
     expect(github.getOctokit('test-token').request).toHaveBeenCalledWith(
