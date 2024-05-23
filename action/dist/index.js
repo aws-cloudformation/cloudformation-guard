@@ -2578,7 +2578,7 @@ class HttpClient {
         if (this._keepAlive && useProxy) {
             agent = this._proxyAgent;
         }
-        if (this._keepAlive && !useProxy) {
+        if (!useProxy) {
             agent = this._agent;
         }
         // if agent is already assigned use that agent.
@@ -2610,15 +2610,11 @@ class HttpClient {
             agent = tunnelAgent(agentOptions);
             this._proxyAgent = agent;
         }
-        // if reusing agent across request and tunneling agent isn't assigned create a new agent
-        if (this._keepAlive && !agent) {
+        // if tunneling agent isn't assigned create a new agent
+        if (!agent) {
             const options = { keepAlive: this._keepAlive, maxSockets };
             agent = usingSsl ? new https.Agent(options) : new http.Agent(options);
             this._agent = agent;
-        }
-        // if not using private agent and tunnel agent isn't setup then use global agent
-        if (!agent) {
-            agent = usingSsl ? https.globalAgent : http.globalAgent;
         }
         if (usingSsl && this._ignoreSslError) {
             // we don't want to set NODE_TLS_REJECT_UNAUTHORIZED=0 since that will affect request for entire process
@@ -30932,7 +30928,7 @@ var CheckoutRepositoryStrings;
 })(CheckoutRepositoryStrings || (CheckoutRepositoryStrings = {}));
 /**
  * Checkout the appropriate ref for the users changes.
- * @returns {void}
+ * @returns {Promise<void>}
  */
 const checkoutRepository = async () => {
     const ref = github_1.context.payload.ref;
@@ -31294,8 +31290,8 @@ async function run() {
     checkout && (await (0, checkoutRepository_1.checkoutRepository)());
     try {
         const result = await (0, handleValidate_1.handleValidate)();
-        const { runs: [run] } = result;
-        if (run.results.length) {
+        const { runs: [sarifRun] } = result;
+        if (sarifRun.results.length) {
             core.setFailed(RunStrings.ValidationFailed);
             if (analyze) {
                 await (0, uploadCodeScan_1.uploadCodeScan)({ result });
@@ -31303,8 +31299,8 @@ async function run() {
             else {
                 await (0, handleWriteActionSummary_1.handleWriteActionSummary)({
                     results: eventName === 'pull_request'
-                        ? await (0, handlePullRequestRun_1.handlePullRequestRun)({ run })
-                        : await (0, handlePushRun_1.handlePushRun)({ run })
+                        ? await (0, handlePullRequestRun_1.handlePullRequestRun)({ run: sarifRun })
+                        : await (0, handlePushRun_1.handlePushRun)({ run: sarifRun })
                 });
             }
         }
@@ -31332,6 +31328,7 @@ const buffer_1 = __nccwpck_require__(4300);
 const zlib_1 = __importDefault(__nccwpck_require__(9796));
 const github_1 = __nccwpck_require__(5438);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+const stream_1 = __nccwpck_require__(2781);
 var Endpoints;
 (function (Endpoints) {
     Endpoints["CodeScan"] = "POST /repos/{owner}/{repo}/code-scanning/sarifs";
@@ -31368,7 +31365,7 @@ exports.compressAndEncode = compressAndEncode;
  * @returns {Promise<string>} - The base64-encoded string.
  */
 const blobToBase64 = async (blob) => {
-    const reader = new ((__nccwpck_require__(2781).Readable))();
+    const reader = new stream_1.Readable();
     reader._read = () => { }; // _read is required but you can noop it
     reader.push(blob);
     reader.push(null);
