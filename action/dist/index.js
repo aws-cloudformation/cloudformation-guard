@@ -31266,7 +31266,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.run = void 0;
+exports.run = exports.RunStrings = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const github_1 = __nccwpck_require__(5438);
 const checkoutRepository_1 = __nccwpck_require__(9274);
@@ -31278,9 +31278,9 @@ const handleWriteActionSummary_1 = __nccwpck_require__(5546);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 var RunStrings;
 (function (RunStrings) {
-    RunStrings["ValidationFailed"] = "Validation failure. CFN Guard found violations.";
+    RunStrings["ValidationFailed"] = "Validation failure. cfn-guard found violations.";
     RunStrings["Error"] = "Action failed with error";
-})(RunStrings || (RunStrings = {}));
+})(RunStrings || (exports.RunStrings = RunStrings = {}));
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
