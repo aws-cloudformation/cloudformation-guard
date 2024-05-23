@@ -90,7 +90,8 @@ export const handlePullRequestRun = async ({
   const filesWithViolationsInPr = filesChanged.filter(value =>
     filesWithViolations.includes(value)
   )
-  createReview &&
+  filesWithViolationsInPr &&
+    createReview &&
     (await handleCreateReview({
       tmpComments,
       filesWithViolationsInPr
