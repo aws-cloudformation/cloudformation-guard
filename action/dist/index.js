@@ -31074,7 +31074,8 @@ const handlePullRequestRun = async ({ run }) => {
     }));
     const filesWithViolations = tmpComments.map(({ path }) => path);
     const filesWithViolationsInPr = filesChanged.filter(value => filesWithViolations.includes(value));
-    createReview &&
+    filesWithViolationsInPr.length &&
+        createReview &&
         (await (0, exports.handleCreateReview)({
             tmpComments,
             filesWithViolationsInPr
@@ -31292,16 +31293,20 @@ async function run() {
         const result = await (0, handleValidate_1.handleValidate)();
         const { runs: [sarifRun] } = result;
         if (sarifRun.results.length) {
-            core.setFailed(RunStrings.ValidationFailed);
             if (analyze) {
+                core.setFailed(RunStrings.ValidationFailed);
                 await (0, uploadCodeScan_1.uploadCodeScan)({ result });
             }
             else {
-                await (0, handleWriteActionSummary_1.handleWriteActionSummary)({
-                    results: eventName === 'pull_request'
-                        ? await (0, handlePullRequestRun_1.handlePullRequestRun)({ run: sarifRun })
-                        : await (0, handlePushRun_1.handlePushRun)({ run: sarifRun })
-                });
+                const results = eventName === 'pull_request'
+                    ? await (0, handlePullRequestRun_1.handlePullRequestRun)({ run: sarifRun })
+                    : await (0, handlePushRun_1.handlePushRun)({ run: sarifRun });
+                if (results.length) {
+                    core.setFailed(RunStrings.ValidationFailed);
+                    await (0, handleWriteActionSummary_1.handleWriteActionSummary)({
+                        results
+                    });
+                }
             }
         }
     }
