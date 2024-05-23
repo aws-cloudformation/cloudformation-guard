@@ -30,17 +30,20 @@ export async function run(): Promise<void> {
     } = result
 
     if (sarifRun.results.length) {
-      core.setFailed(RunStrings.ValidationFailed)
-
       if (analyze) {
+        core.setFailed(RunStrings.ValidationFailed)
         await uploadCodeScan({ result })
       } else {
-        await handleWriteActionSummary({
-          results:
-            eventName === 'pull_request'
-              ? await handlePullRequestRun({ run: sarifRun })
-              : await handlePushRun({ run: sarifRun })
-        })
+        const results =
+          eventName === 'pull_request'
+            ? await handlePullRequestRun({ run: sarifRun })
+            : await handlePushRun({ run: sarifRun })
+        if (results.length) {
+          core.setFailed(RunStrings.ValidationFailed)
+          await handleWriteActionSummary({
+            results
+          })
+        }
       }
     }
   } catch (error) {

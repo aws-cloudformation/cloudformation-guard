@@ -27,7 +27,11 @@ jest.mock('../src/checkoutRepository', () => ({
 }))
 jest.mock('../src/handlePushRun', () => ({
   __esModule: true,
-  handlePushRun: jest.fn(),
+  handlePushRun: jest.fn().mockReturnValue([
+      ['file1.ts', 'Violation message 1', 'rule-id-1'],
+      ['file2.ts', 'Violation message 2', 'rule-id-2']
+    ]
+  ),
   default: jest.fn()
 }))
 jest.mock('../src/handleValidate', () => {
@@ -57,6 +61,10 @@ jest.mock('../src/handlePullRequestRun', () => {
       if (config.createReview) {
         handleCreateReviewSpy(...args)
       }
+      return [
+        ['file1.ts', 'Violation message 1', 'rule-id-1'],
+        ['file2.ts', 'Violation message 2', 'rule-id-2']
+      ]
     }),
     handleCreateReview: handleCreateReviewSpy,
     default: jest.fn()
