@@ -30,7 +30,7 @@
     "format:write": "npx prettier --write .",
     "format:check": "npx prettier --check .",
     "lint": "npx eslint . -c .eslintrc.yml",
-    "lint:fix": "npx eslint . -c .eslintrc.yml --fix",
+    "lint:fix": "npm run lint -- --fix && npm run format:write",
     "package": "npx ncc build src/index.ts -o dist --source-map --license licenses.txt",
     "package:watch": "npm run package -- --watch",
     "test": "npx jest",

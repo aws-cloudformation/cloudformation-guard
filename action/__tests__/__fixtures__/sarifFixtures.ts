@@ -1,6 +1,6 @@
-import { SarifReport, SarifRun } from 'cfn-guard'
+import { SarifReport, SarifRun } from 'cfn-guard';
 
-export const mockSarifRun: SarifRun = {
+export const sarifRunFixture: SarifRun = {
   tool: {
     driver: {
       name: 'cfn-guard',
@@ -64,10 +64,10 @@ export const mockSarifRun: SarifRun = {
       ruleId: 'rule2'
     }
   ]
-}
+};
 
-export const mockSarifResult: SarifReport = {
+export const sarifResultFixture: SarifReport = {
   $schema: 'x',
   version: '2.1.0',
-  runs: [mockSarifRun]
-}
+  runs: [sarifRunFixture]
+};

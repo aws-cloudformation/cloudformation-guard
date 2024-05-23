@@ -1,8 +1,8 @@
-import * as core from '@actions/core'
+import * as core from '@actions/core';
 
 type HandleWriteActionSummaryParams = {
-  results: string[][]
-}
+  results: string[][];
+};
 
 enum ValidationSummaryStrings {
   File = 'File',
@@ -30,5 +30,5 @@ export const handleWriteActionSummary = async ({
       ],
       ...results
     ])
-    .write()
-}
+    .write();
+};

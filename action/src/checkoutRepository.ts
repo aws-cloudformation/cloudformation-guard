@@ -1,5 +1,5 @@
-import { exec } from '@actions/exec'
-import { context } from '@actions/github'
+import { exec } from '@actions/exec';
+import { context } from '@actions/github';
 
 enum CheckoutRepositoryStrings {
   Error = 'Error checking out repository'
@@ -10,22 +10,22 @@ enum CheckoutRepositoryStrings {
  * @returns {Promise<void>}
  */
 export const checkoutRepository = async (): Promise<void> => {
-  const ref = context.payload.ref
-  const repository = context.payload.repository?.full_name
+  const ref = context.payload.ref;
+  const repository = context.payload.repository?.full_name;
   try {
-    await exec('git init')
-    await exec(`git remote add origin https://github.com/${repository}.git`)
+    await exec('git init');
+    await exec(`git remote add origin https://github.com/${repository}.git`);
     if (context.eventName === 'pull_request') {
-      const prRef = `refs/pull/${context.payload.pull_request?.number}/merge`
-      await exec(`git fetch origin ${prRef}`)
-      await exec(`git checkout -qf FETCH_HEAD`)
+      const prRef = `refs/pull/${context.payload.pull_request?.number}/merge`;
+      await exec(`git fetch origin ${prRef}`);
+      await exec(`git checkout -qf FETCH_HEAD`);
     } else {
-      await exec(`git fetch origin ${ref}`)
-      await exec(`git checkout FETCH_HEAD`)
+      await exec(`git fetch origin ${ref}`);
+      await exec(`git checkout FETCH_HEAD`);
     }
   } catch (error) {
-    throw new Error(`${CheckoutRepositoryStrings.Error}: ${error}`)
+    throw new Error(`${CheckoutRepositoryStrings.Error}: ${error}`);
   }
-}
+};
 
-export default checkoutRepository
+export default checkoutRepository;

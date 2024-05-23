@@ -1,8 +1,8 @@
-import { SarifRun } from 'cfn-guard'
+import { SarifRun } from 'cfn-guard';
 
 type HandlePushRunParams = {
-  run: SarifRun
-}
+  run: SarifRun;
+};
 
 /**
  * Handles the execution of a push run for the CFN Guard action.
@@ -17,4 +17,4 @@ export const handlePushRun = async ({
     `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
     text,
     ruleId
-  ])
+  ]);

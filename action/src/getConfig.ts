@@ -1,13 +1,13 @@
-import * as core from '@actions/core'
+import * as core from '@actions/core';
 
 export type Config = {
-  rulesPath: string
-  dataPath: string
-  token: string
-  analyze: boolean
-  checkout: boolean
-  createReview: boolean
-}
+  rulesPath: string;
+  dataPath: string;
+  token: string;
+  analyze: boolean;
+  checkout: boolean;
+  createReview: boolean;
+};
 
 /**
  * Returns the config values in JSON format
@@ -20,6 +20,6 @@ export const getConfig = (): Config => ({
   checkout: core.getBooleanInput('checkout'),
   analyze: core.getBooleanInput('analyze'),
   createReview: core.getBooleanInput('create-review')
-})
+});
 
-export default getConfig
+export default getConfig;

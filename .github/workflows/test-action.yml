@@ -1,4 +1,4 @@
-name: CFN Guard Validate
+name: cfn-guard Validate
 
 on: [pull_request]
 
@@ -6,9 +6,9 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     permissions: write-all
-    name: Guard Validate
+    name: cfn-guard validate
     steps:
-      - name: CFN Guard Validate
+      - name: cfn-guard Validate
         uses: dannyvassallo/cloudformation-guard@action-v0.0.034
         with:
           rules: './guard/resources/validate/rules-dir/'

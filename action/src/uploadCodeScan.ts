@@ -1,9 +1,9 @@
-import { Buffer } from 'buffer'
-import zlib from 'zlib'
-import { context, getOctokit } from '@actions/github'
-import getConfig from './getConfig'
-import { SarifReport } from 'cfn-guard'
-import { Readable } from 'stream'
+import { Buffer } from 'buffer';
+import zlib from 'zlib';
+import { context, getOctokit } from '@actions/github';
+import getConfig from './getConfig';
+import { SarifReport } from 'cfn-guard';
+import { Readable } from 'stream';
 
 enum Endpoints {
   CodeScan = 'POST /repos/{owner}/{repo}/code-scanning/sarifs'
@@ -15,31 +15,31 @@ enum Endpoints {
  * @returns {Promise<string>} - The compressed and base64-encoded string.
  */
 export const compressAndEncode = async (input: string): Promise<string> => {
-  const byteArray = Buffer.from(input, 'utf8')
-  const gzip = zlib.createGzip()
+  const byteArray = Buffer.from(input, 'utf8');
+  const gzip = zlib.createGzip();
 
   const compressedData = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = []
+    const chunks: Buffer[] = [];
 
     gzip.on('data', (chunk: Buffer) => {
-      chunks.push(chunk)
-    })
+      chunks.push(chunk);
+    });
 
     gzip.on('end', () => {
-      resolve(Buffer.concat(chunks))
-    })
+      resolve(Buffer.concat(chunks));
+    });
 
     gzip.on('error', (error: Error) => {
-      reject(error)
-    })
+      reject(error);
+    });
 
-    gzip.write(byteArray)
-    gzip.end()
-  })
+    gzip.write(byteArray);
+    gzip.end();
+  });
 
-  const base64 = await blobToBase64(compressedData)
-  return base64
-}
+  const base64 = await blobToBase64(compressedData);
+  return base64;
+};
 
 /**
  * Converts a Buffer to a base64-encoded string.
@@ -47,26 +47,26 @@ export const compressAndEncode = async (input: string): Promise<string> => {
  * @returns {Promise<string>} - The base64-encoded string.
  */
 const blobToBase64 = async (blob: Buffer): Promise<string> => {
-  const reader = new Readable()
-  reader._read = () => {} // _read is required but you can noop it
-  reader.push(blob)
-  reader.push(null)
+  const reader = new Readable();
+  reader._read = () => {}; // _read is required but you can noop it
+  reader.push(blob);
+  reader.push(null);
 
   return new Promise<string>((resolve, reject) => {
     reader.on('data', (chunk: Buffer) => {
-      const base64 = chunk.toString('base64')
-      resolve(base64)
-    })
+      const base64 = chunk.toString('base64');
+      resolve(base64);
+    });
 
     reader.on('error', (error: Error) => {
-      reject(error)
-    })
-  })
-}
+      reject(error);
+    });
+  });
+};
 
 export type UploadCodeScanParams = {
-  result: SarifReport
-}
+  result: SarifReport;
+};
 
 /**
  * Uploads the SARIF report to the GitHub Code Scanning API.
@@ -76,10 +76,10 @@ export type UploadCodeScanParams = {
 export const uploadCodeScan = async ({
   result
 }: UploadCodeScanParams): Promise<void> => {
-  const { token } = getConfig()
-  const ref = context.payload.ref
-  const octokit = getOctokit(token)
-  const headers = { 'X-GitHub-Api-Version': '2022-11-28' }
+  const { token } = getConfig();
+  const ref = context.payload.ref;
+  const octokit = getOctokit(token);
+  const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
 
   const params = {
     ...context.repo,
@@ -89,7 +89,7 @@ export const uploadCodeScan = async ({
     // https://docs.github.com/en/rest/code-scanning/code-scanning?apiVersion=2022-11-28#upload-an-analysis-as-sarif-data
     sarif: await compressAndEncode(JSON.stringify(result)),
     headers
-  }
+  };
 
-  await octokit.request(Endpoints.CodeScan, params)
-}
+  await octokit.request(Endpoints.CodeScan, params);
+};

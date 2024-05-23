@@ -1,6 +1,6 @@
-import { context } from '@actions/github'
+import { context } from '@actions/github';
 
-context.eventName = 'pull_request'
+context.eventName = 'pull_request';
 context.payload = {
   ref: 'refs/heads/main',
   pull_request: {
@@ -16,20 +16,20 @@ context.payload = {
       login: 'owner'
     }
   }
-}
+};
 
 jest.mock('@actions/exec', () => {
-  const originalModule = jest.requireActual('@actions/exec')
+  const originalModule = jest.requireActual('@actions/exec');
 
   return {
     __esModule: true,
     ...originalModule,
     exec: jest.fn()
-  }
-})
+  };
+});
 
 jest.mock('@actions/github', () => {
-  const originalModule = jest.requireActual('@actions/github')
+  const originalModule = jest.requireActual('@actions/github');
 
   return {
     __esModule: true,
@@ -60,11 +60,11 @@ jest.mock('@actions/github', () => {
         }
       }
     })
-  }
-})
+  };
+});
 
 jest.mock('@actions/core', () => {
-  const originalModule = jest.requireActual('@actions/core')
+  const originalModule = jest.requireActual('@actions/core');
 
   return {
     __esModule: true,
@@ -72,28 +72,28 @@ jest.mock('@actions/core', () => {
     getInput: jest.fn().mockImplementation(name => {
       switch (name) {
         case 'rules':
-          return 'test-rules-path'
+          return 'test-rules-path';
         case 'data':
-          return 'test-data-path'
+          return 'test-data-path';
         case 'token':
-          return 'test-token'
+          return 'test-token';
         default:
-          return ''
+          return '';
       }
     }),
     getBooleanInput: jest.fn().mockImplementation(name => {
       switch (name) {
         case 'checkout':
-          return true
+          return true;
         case 'analyze':
-          return true
+          return true;
         case 'create-review':
-          return true
+          return true;
         default:
-          return false
+          return false;
       }
     }),
     setOutput: jest.fn(),
     setFailed: jest.fn()
-  }
-})
+  };
+});

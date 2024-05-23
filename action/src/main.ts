@@ -1,15 +1,15 @@
-import * as core from '@actions/core'
-import { context } from '@actions/github'
-import { checkoutRepository } from './checkoutRepository'
-import { uploadCodeScan } from './uploadCodeScan'
-import { handleValidate } from './handleValidate'
-import { handlePullRequestRun } from './handlePullRequestRun'
-import { handlePushRun } from './handlePushRun'
-import { handleWriteActionSummary } from './handleWriteActionSummary'
-import getConfig from './getConfig'
+import * as core from '@actions/core';
+import { context } from '@actions/github';
+import { checkoutRepository } from './checkoutRepository';
+import { uploadCodeScan } from './uploadCodeScan';
+import { handleValidate } from './handleValidate';
+import { handlePullRequestRun } from './handlePullRequestRun';
+import { handlePushRun } from './handlePushRun';
+import { handleWriteActionSummary } from './handleWriteActionSummary';
+import getConfig from './getConfig';
 
-enum RunStrings {
-  ValidationFailed = 'Validation failure. CFN Guard found violations.',
+export enum RunStrings {
+  ValidationFailed = 'Validation failure. cfn-guard found violations.',
   Error = 'Action failed with error'
 }
 
@@ -18,35 +18,35 @@ enum RunStrings {
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 export async function run(): Promise<void> {
-  const { analyze, checkout } = getConfig()
-  const { eventName } = context
+  const { analyze, checkout } = getConfig();
+  const { eventName } = context;
 
-  checkout && (await checkoutRepository())
+  checkout && (await checkoutRepository());
 
   try {
-    const result = await handleValidate()
+    const result = await handleValidate();
     const {
       runs: [sarifRun]
-    } = result
+    } = result;
 
     if (sarifRun.results.length) {
       if (analyze) {
-        core.setFailed(RunStrings.ValidationFailed)
-        await uploadCodeScan({ result })
+        core.setFailed(RunStrings.ValidationFailed);
+        await uploadCodeScan({ result });
       } else {
         const results =
           eventName === 'pull_request'
             ? await handlePullRequestRun({ run: sarifRun })
-            : await handlePushRun({ run: sarifRun })
+            : await handlePushRun({ run: sarifRun });
         if (results.length) {
-          core.setFailed(RunStrings.ValidationFailed)
+          core.setFailed(RunStrings.ValidationFailed);
           await handleWriteActionSummary({
             results
-          })
+          });
         }
       }
     }
   } catch (error) {
-    core.setFailed(`${RunStrings.Error}: ${error}`)
+    core.setFailed(`${RunStrings.Error}: ${error}`);
   }
 }
