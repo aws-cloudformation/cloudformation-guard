@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { ErrorStrings, GithubEventNames } from './stringEnums';
 import { checkoutRepository } from './checkoutRepository';
 import { context } from '@actions/github';
 import getConfig from './getConfig';
@@ -7,11 +8,6 @@ import { handlePushRun } from './handlePushRun';
 import { handleValidate } from './handleValidate';
 import { handleWriteActionSummary } from './handleWriteActionSummary';
 import { uploadCodeScan } from './uploadCodeScan';
-
-export enum RunStrings {
-  ValidationFailed = 'Validation failure. cfn-guard found violations.',
-  Error = 'Action failed with error'
-}
 
 /**
  * The main function for the action.
@@ -31,15 +27,15 @@ export async function run(): Promise<void> {
 
     if (sarifRun.results.length) {
       if (analyze) {
-        core.setFailed(RunStrings.ValidationFailed);
+        core.setFailed(ErrorStrings.VALIDATION_FAILURE);
         await uploadCodeScan({ result });
       } else {
         const results =
-          eventName === 'pull_request'
+          eventName === GithubEventNames.PULL_REQUEST
             ? await handlePullRequestRun({ run: sarifRun })
             : await handlePushRun({ run: sarifRun });
         if (results.length) {
-          core.setFailed(RunStrings.ValidationFailed);
+          core.setFailed(ErrorStrings.VALIDATION_FAILURE);
           await handleWriteActionSummary({
             results
           });
@@ -47,6 +43,12 @@ export async function run(): Promise<void> {
       }
     }
   } catch (error) {
-    core.setFailed(`${RunStrings.Error}: ${error}`);
+    if (error instanceof Error) {
+      core.setFailed(`${ErrorStrings.ACTION_FAILURE}: ${error}`);
+    } else {
+      core.setFailed(
+        `${ErrorStrings.ACTION_FAILURE}: ${JSON.stringify(error)}`
+      );
+    }
   }
 }

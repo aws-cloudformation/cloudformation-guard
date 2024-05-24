@@ -1,15 +1,9 @@
 import * as core from '@actions/core';
+import { SummaryStrings } from './stringEnums';
 
 type HandleWriteActionSummaryParams = {
   results: string[][];
 };
-
-enum ValidationSummaryStrings {
-  File = 'File',
-  Reason = 'Reason',
-  Rule = 'Rule',
-  Heading = 'Validation Failures'
-}
 
 /**
  * Writes a summary of the validation results to the GitHub Actions summary.
@@ -21,12 +15,12 @@ export async function handleWriteActionSummary({
   results
 }: HandleWriteActionSummaryParams): Promise<void> {
   await core.summary
-    .addHeading(ValidationSummaryStrings.Heading)
+    .addHeading(SummaryStrings.HEADING)
     .addTable([
       [
-        { data: ValidationSummaryStrings.File, header: true },
-        { data: ValidationSummaryStrings.Reason, header: true },
-        { data: ValidationSummaryStrings.Rule, header: true }
+        { data: SummaryStrings.FILE, header: true },
+        { data: SummaryStrings.REASON, header: true },
+        { data: SummaryStrings.RULE, header: true }
       ],
       ...results
     ])

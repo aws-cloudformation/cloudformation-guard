@@ -2,6 +2,7 @@ import * as exec from '@actions/exec';
 import { context } from '@actions/github';
 import { checkoutRepository } from '../src/checkoutRepository';
 import { describe, expect, jest, it, afterEach } from '@jest/globals';
+import { GithubEventNames } from '../src/stringEnums';
 
 describe('checkoutRepository', () => {
   it('should checkout the pull request ref', async () => {
@@ -18,7 +19,7 @@ describe('checkoutRepository', () => {
   });
 
   it('should checkout the branch ref', async () => {
-    context.eventName = 'push';
+    context.eventName = GithubEventNames.PUSH;
 
     await checkoutRepository();
 

@@ -1,10 +1,7 @@
 import { context, getOctokit } from '@actions/github';
+import { ErrorStrings } from './stringEnums';
 import { SarifRun } from 'cfn-guard';
 import getConfig from './getConfig';
-
-enum HandlePullRequestRunStrings {
-  Error = 'Tried to handle pull request result but could not find PR context.'
-}
 
 export type HandlePullRequestRunParams = {
   run: SarifRun;
@@ -63,17 +60,18 @@ export async function handleCreateReview({
 export async function handlePullRequestRun({
   run
 }: HandlePullRequestRunParams): Promise<string[][]> {
+  const MAX_PER_PAGE = 3000;
   const { token, createReview } = getConfig();
   const octokit = getOctokit(token);
   const { pull_request } = context.payload;
 
   if (!pull_request) {
-    throw new Error(HandlePullRequestRunStrings.Error);
+    throw new Error(ErrorStrings.PULL_REQUEST_ERROR);
   }
 
   const listFiles = await octokit.rest.pulls.listFiles({
     ...context.repo,
-    per_page: 3000,
+    per_page: MAX_PER_PAGE,
     pull_number: pull_request.number
   });
 

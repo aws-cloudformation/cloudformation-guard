@@ -2,9 +2,6 @@ import { context, getOctokit } from '@actions/github';
 import { SarifReport } from 'cfn-guard';
 import { compressAndEncode } from './compressAndEncode';
 import getConfig from './getConfig';
-enum Endpoints {
-  CodeScan = 'POST /repos/{owner}/{repo}/code-scanning/sarifs'
-}
 
 export type UploadCodeScanParams = {
   result: SarifReport;
@@ -18,8 +15,14 @@ export type UploadCodeScanParams = {
 export async function uploadCodeScan({
   result
 }: UploadCodeScanParams): Promise<void> {
+  const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
   const { token } = getConfig();
-  const ref = context.payload.ref;
+  const {
+    payload: {
+      ref,
+      head_commit: { id }
+    }
+  } = context;
   const octokit = getOctokit(token);
   const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
   const stringifiedResult = JSON.stringify(result);
@@ -28,11 +31,11 @@ export async function uploadCodeScan({
   const sarif = await compressAndEncode(stringifiedResult);
   const params = {
     ...context.repo,
-    commit_sha: context.payload.head_commit.id,
+    commit_sha: id,
     headers,
     ref,
     sarif
   };
 
-  await octokit.request(Endpoints.CodeScan, params);
+  await octokit.request(ENDPOINT, params);
 }

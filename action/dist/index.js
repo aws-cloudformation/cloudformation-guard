@@ -30953,12 +30953,9 @@ exports.blobToBase64 = blobToBase64;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutRepository = void 0;
+const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
 const exec_1 = __nccwpck_require__(1514);
-var CheckoutRepositoryStrings;
-(function (CheckoutRepositoryStrings) {
-    CheckoutRepositoryStrings["Error"] = "Error checking out repository";
-})(CheckoutRepositoryStrings || (CheckoutRepositoryStrings = {}));
 /**
  * Checkout the appropriate ref for the users changes.
  * @returns {Promise<void>}
@@ -30969,7 +30966,7 @@ async function checkoutRepository() {
     try {
         await (0, exec_1.exec)('git init');
         await (0, exec_1.exec)(`git remote add origin https://github.com/${repository}.git`);
-        if (github_1.context.eventName === 'pull_request') {
+        if (github_1.context.eventName === stringEnums_1.GithubEventNames.PULL_REQUEST) {
             const prRef = `refs/pull/${github_1.context.payload.pull_request?.number}/merge`;
             await (0, exec_1.exec)(`git fetch origin ${prRef}`);
             await (0, exec_1.exec)(`git checkout -qf FETCH_HEAD`);
@@ -30980,7 +30977,7 @@ async function checkoutRepository() {
         }
     }
     catch (error) {
-        throw new Error(`${CheckoutRepositoryStrings.Error}: ${error}`);
+        throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
     }
 }
 exports.checkoutRepository = checkoutRepository;
@@ -31093,11 +31090,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handlePullRequestRun = exports.handleCreateReview = void 0;
 const github_1 = __nccwpck_require__(5438);
+const stringEnums_1 = __nccwpck_require__(4916);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
-var HandlePullRequestRunStrings;
-(function (HandlePullRequestRunStrings) {
-    HandlePullRequestRunStrings["Error"] = "Tried to handle pull request result but could not find PR context.";
-})(HandlePullRequestRunStrings || (HandlePullRequestRunStrings = {}));
 /**
  * Handle the creation of a review on a pull request.
  *
@@ -31132,15 +31126,16 @@ exports.handleCreateReview = handleCreateReview;
  * @throws {Error} - Throws an error if the pull request context cannot be found.
  */
 async function handlePullRequestRun({ run }) {
+    const MAX_PER_PAGE = 3000;
     const { token, createReview } = (0, getConfig_1.default)();
     const octokit = (0, github_1.getOctokit)(token);
     const { pull_request } = github_1.context.payload;
     if (!pull_request) {
-        throw new Error(HandlePullRequestRunStrings.Error);
+        throw new Error(stringEnums_1.ErrorStrings.PULL_REQUEST_ERROR);
     }
     const listFiles = await octokit.rest.pulls.listFiles({
         ...github_1.context.repo,
-        per_page: 3000,
+        per_page: MAX_PER_PAGE,
         pull_number: pull_request.number
     });
     const filesChanged = listFiles.data.map(({ filename }) => filename);
@@ -31282,13 +31277,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleWriteActionSummary = void 0;
 const core = __importStar(__nccwpck_require__(2186));
-var ValidationSummaryStrings;
-(function (ValidationSummaryStrings) {
-    ValidationSummaryStrings["File"] = "File";
-    ValidationSummaryStrings["Reason"] = "Reason";
-    ValidationSummaryStrings["Rule"] = "Rule";
-    ValidationSummaryStrings["Heading"] = "Validation Failures";
-})(ValidationSummaryStrings || (ValidationSummaryStrings = {}));
+const stringEnums_1 = __nccwpck_require__(4916);
 /**
  * Writes a summary of the validation results to the GitHub Actions summary.
  * @param {HandleWriteActionSummaryParams} params - The parameters for writing the action summary.
@@ -31297,12 +31286,12 @@ var ValidationSummaryStrings;
  */
 async function handleWriteActionSummary({ results }) {
     await core.summary
-        .addHeading(ValidationSummaryStrings.Heading)
+        .addHeading(stringEnums_1.SummaryStrings.HEADING)
         .addTable([
         [
-            { data: ValidationSummaryStrings.File, header: true },
-            { data: ValidationSummaryStrings.Reason, header: true },
-            { data: ValidationSummaryStrings.Rule, header: true }
+            { data: stringEnums_1.SummaryStrings.FILE, header: true },
+            { data: stringEnums_1.SummaryStrings.REASON, header: true },
+            { data: stringEnums_1.SummaryStrings.RULE, header: true }
         ],
         ...results
     ])
@@ -31345,8 +31334,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.run = exports.RunStrings = void 0;
+exports.run = void 0;
 const core = __importStar(__nccwpck_require__(2186));
+const stringEnums_1 = __nccwpck_require__(4916);
 const checkoutRepository_1 = __nccwpck_require__(9274);
 const github_1 = __nccwpck_require__(5438);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
@@ -31355,11 +31345,6 @@ const handlePushRun_1 = __nccwpck_require__(5802);
 const handleValidate_1 = __nccwpck_require__(5426);
 const handleWriteActionSummary_1 = __nccwpck_require__(5546);
 const uploadCodeScan_1 = __nccwpck_require__(1806);
-var RunStrings;
-(function (RunStrings) {
-    RunStrings["ValidationFailed"] = "Validation failure. cfn-guard found violations.";
-    RunStrings["Error"] = "Action failed with error";
-})(RunStrings || (exports.RunStrings = RunStrings = {}));
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
@@ -31373,15 +31358,15 @@ async function run() {
         const { runs: [sarifRun] } = result;
         if (sarifRun.results.length) {
             if (analyze) {
-                core.setFailed(RunStrings.ValidationFailed);
+                core.setFailed(stringEnums_1.ErrorStrings.VALIDATION_FAILURE);
                 await (0, uploadCodeScan_1.uploadCodeScan)({ result });
             }
             else {
-                const results = eventName === 'pull_request'
+                const results = eventName === stringEnums_1.GithubEventNames.PULL_REQUEST
                     ? await (0, handlePullRequestRun_1.handlePullRequestRun)({ run: sarifRun })
                     : await (0, handlePushRun_1.handlePushRun)({ run: sarifRun });
                 if (results.length) {
-                    core.setFailed(RunStrings.ValidationFailed);
+                    core.setFailed(stringEnums_1.ErrorStrings.VALIDATION_FAILURE);
                     await (0, handleWriteActionSummary_1.handleWriteActionSummary)({
                         results
                     });
@@ -31390,10 +31375,45 @@ async function run() {
         }
     }
     catch (error) {
-        core.setFailed(`${RunStrings.Error}: ${error}`);
+        if (error instanceof Error) {
+            core.setFailed(`${stringEnums_1.ErrorStrings.ACTION_FAILURE}: ${error}`);
+        }
+        else {
+            core.setFailed(`${stringEnums_1.ErrorStrings.ACTION_FAILURE}: ${JSON.stringify(error)}`);
+        }
     }
 }
 exports.run = run;
+
+
+/***/ }),
+
+/***/ 4916:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SummaryStrings = exports.ErrorStrings = exports.GithubEventNames = void 0;
+var GithubEventNames;
+(function (GithubEventNames) {
+    GithubEventNames["PULL_REQUEST"] = "pull_request";
+    GithubEventNames["PUSH"] = "push";
+})(GithubEventNames || (exports.GithubEventNames = GithubEventNames = {}));
+var ErrorStrings;
+(function (ErrorStrings) {
+    ErrorStrings["ACTION_FAILURE"] = "Action failed with error";
+    ErrorStrings["CHECKOUT_REPOSITORY_ERROR"] = "Error checking out repository";
+    ErrorStrings["PULL_REQUEST_ERROR"] = "Tried to handle pull request result but could not find PR context.";
+    ErrorStrings["VALIDATION_FAILURE"] = "Validation failure. cfn-guard found violations.";
+})(ErrorStrings || (exports.ErrorStrings = ErrorStrings = {}));
+var SummaryStrings;
+(function (SummaryStrings) {
+    SummaryStrings["FILE"] = "File";
+    SummaryStrings["HEADING"] = "Validation Failures";
+    SummaryStrings["REASON"] = "Reason";
+    SummaryStrings["RULE"] = "Rule";
+})(SummaryStrings || (exports.SummaryStrings = SummaryStrings = {}));
 
 
 /***/ }),
@@ -31411,18 +31431,15 @@ exports.uploadCodeScan = void 0;
 const github_1 = __nccwpck_require__(5438);
 const compressAndEncode_1 = __nccwpck_require__(8492);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
-var Endpoints;
-(function (Endpoints) {
-    Endpoints["CodeScan"] = "POST /repos/{owner}/{repo}/code-scanning/sarifs";
-})(Endpoints || (Endpoints = {}));
 /**
  * Uploads the SARIF report to the GitHub Code Scanning API.
  * @param {UploadCodeScanParams} params - The parameters for the code scan upload.
  * @returns {Promise<void>} - Resolves when the code scan has been uploaded successfully.
  */
 async function uploadCodeScan({ result }) {
+    const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
     const { token } = (0, getConfig_1.default)();
-    const ref = github_1.context.payload.ref;
+    const { payload: { ref, head_commit: { id } } } = github_1.context;
     const octokit = (0, github_1.getOctokit)(token);
     const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
     const stringifiedResult = JSON.stringify(result);
@@ -31431,12 +31448,12 @@ async function uploadCodeScan({ result }) {
     const sarif = await (0, compressAndEncode_1.compressAndEncode)(stringifiedResult);
     const params = {
         ...github_1.context.repo,
-        commit_sha: github_1.context.payload.head_commit.id,
+        commit_sha: id,
         headers,
         ref,
         sarif
     };
-    await octokit.request(Endpoints.CodeScan, params);
+    await octokit.request(ENDPOINT, params);
 }
 exports.uploadCodeScan = uploadCodeScan;
 

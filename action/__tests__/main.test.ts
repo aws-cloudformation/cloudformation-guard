@@ -1,6 +1,6 @@
 import * as mocks from './__fixtures__/sarifFixtures';
 import * as core from '@actions/core';
-import { RunStrings, run } from '../src/main';
+import { run } from '../src/main';
 import { describe, expect, it, jest, afterEach } from '@jest/globals';
 import { checkoutRepository } from '../src/checkoutRepository';
 import getConfig from '../src/getConfig';
@@ -9,7 +9,7 @@ import * as uploadCodeScan from '../src/uploadCodeScan';
 import * as handlePullRequestRun from '../src/handlePullRequestRun';
 import * as handlePushRun from '../src/handlePushRun';
 import * as github from '@actions/github';
-import { Context } from '@actions/github/lib/context';
+import { GithubEventNames, ErrorStrings } from '../src/stringEnums';
 
 jest.mock('../src/checkoutRepository', () => ({
   __esModule: true,
@@ -88,7 +88,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe('main', () => {
   });
 
   it('checks out, handles a push with a proper config', async () => {
-    github.context.eventName = 'push';
+    github.context.eventName = GithubEventNames.PUSH;
     (getConfig as jest.Mock).mockReturnValue({
       analyze: false,
       checkout: true,
@@ -152,7 +152,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).toHaveBeenCalled();
@@ -174,7 +174,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).toHaveBeenCalled();
@@ -195,7 +195,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -216,7 +216,7 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(RunStrings.ValidationFailed);
+    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();

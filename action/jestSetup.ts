@@ -1,4 +1,5 @@
 import { context } from '@actions/github';
+import { jest } from '@jest/globals';
 
 context.eventName = 'pull_request';
 context.payload = {
@@ -19,7 +20,7 @@ context.payload = {
 };
 
 jest.mock('@actions/exec', () => {
-  const originalModule = jest.requireActual('@actions/exec');
+  const originalModule = jest.requireActual('@actions/exec') as Object;
 
   return {
     __esModule: true,
@@ -29,7 +30,7 @@ jest.mock('@actions/exec', () => {
 });
 
 jest.mock('@actions/github', () => {
-  const originalModule = jest.requireActual('@actions/github');
+  const originalModule = jest.requireActual('@actions/github') as Object;
 
   return {
     __esModule: true,
@@ -55,7 +56,7 @@ jest.mock('@actions/github', () => {
               { filename: 'file2.yaml' },
               { filename: 'file3.yaml' }
             ]
-          }),
+          } as never),
           createReview: jest.fn()
         }
       }
@@ -64,7 +65,7 @@ jest.mock('@actions/github', () => {
 });
 
 jest.mock('@actions/core', () => {
-  const originalModule = jest.requireActual('@actions/core');
+  const originalModule = jest.requireActual('@actions/core') as Object;
 
   return {
     __esModule: true,
