@@ -1,89 +1,241 @@
-/**
- * Unit tests for the action's main functionality, src/main.ts
- *
- * These should be run as if the action was called from a workflow.
- * Specifically, the inputs listed in `action.yml` should be set as environment
- * variables following the pattern `INPUT_<INPUT_NAME>`.
- */
+import * as mocks from './__fixtures__/sarifFixtures';
+import * as core from '@actions/core';
+import { run } from '../src/main';
+import { describe, expect, it, jest, afterEach } from '@jest/globals';
+import { checkoutRepository } from '../src/checkoutRepository';
+import getConfig from '../src/getConfig';
+import * as handleValidate from '../src/handleValidate';
+import * as uploadCodeScan from '../src/uploadCodeScan';
+import * as handlePullRequestRun from '../src/handlePullRequestRun';
+import * as handlePushRun from '../src/handlePushRun';
+import * as github from '@actions/github';
+import { GithubEventNames, ErrorStrings } from '../src/stringEnums';
 
-import * as core from '@actions/core'
-import * as main from '../src/main'
-
-// Mock the action's main function
-const runMock = jest.spyOn(main, 'run')
-
-// Other utilities
-const timeRegex = /^\d{2}:\d{2}:\d{2}/
-
-// Mock the GitHub Actions core library
-let debugMock: jest.SpiedFunction<typeof core.debug>
-let errorMock: jest.SpiedFunction<typeof core.error>
-let getInputMock: jest.SpiedFunction<typeof core.getInput>
-let setFailedMock: jest.SpiedFunction<typeof core.setFailed>
-let setOutputMock: jest.SpiedFunction<typeof core.setOutput>
-
-describe('action', () => {
-  beforeEach(() => {
-    jest.clearAllMocks()
-
-    debugMock = jest.spyOn(core, 'debug').mockImplementation()
-    errorMock = jest.spyOn(core, 'error').mockImplementation()
-    getInputMock = jest.spyOn(core, 'getInput').mockImplementation()
-    setFailedMock = jest.spyOn(core, 'setFailed').mockImplementation()
-    setOutputMock = jest.spyOn(core, 'setOutput').mockImplementation()
-  })
-
-  it('sets the time output', async () => {
-    // Set the action's inputs as return values from core.getInput()
-    getInputMock.mockImplementation(name => {
-      switch (name) {
-        case 'milliseconds':
-          return '500'
-        default:
-          return ''
+jest.mock('../src/checkoutRepository', () => ({
+  __esModule: true,
+  checkoutRepository: jest.fn(),
+  default: jest.fn()
+}));
+jest.mock('../src/handlePushRun', () => ({
+  __esModule: true,
+  handlePushRun: jest.fn().mockReturnValue([
+    ['file1.ts', 'Violation message 1', 'rule-id-1'],
+    ['file2.ts', 'Violation message 2', 'rule-id-2']
+  ]),
+  default: jest.fn()
+}));
+jest.mock('../src/handleValidate', () => {
+  const mockResult = (
+    jest.requireActual('./__fixtures__/sarifFixtures') as typeof mocks
+  ).sarifResultFixture;
+  return {
+    __esModule: true,
+    handleValidate: jest.fn().mockReturnValue(mockResult),
+    default: jest.fn()
+  };
+});
+jest.mock('../src/uploadCodeScan', () => ({
+  __esModule: true,
+  uploadCodeScan: jest.fn(),
+  default: jest.fn()
+}));
+jest.mock('../src/handlePullRequestRun', () => {
+  const { handlePullRequestRun: handlePullRequestRunActual } =
+    jest.requireActual<typeof handlePullRequestRun>(
+      '../src/handlePullRequestRun'
+    );
+  const handleCreateReviewSpy = jest.fn();
+  return {
+    __esModule: true,
+    handlePullRequestRun: jest.fn(args => {
+      handlePullRequestRunActual(
+        args as handlePullRequestRun.HandlePullRequestRunParams
+      );
+      const config = jest.mocked(getConfig)();
+      if (config.createReview) {
+        handleCreateReviewSpy(args);
       }
-    })
+      return [
+        ['file1.ts', 'Violation message 1', 'rule-id-1'],
+        ['file2.ts', 'Violation message 2', 'rule-id-2']
+      ];
+    }),
+    handleCreateReview: handleCreateReviewSpy,
+    default: jest.fn()
+  };
+});
+jest.mock('../src/getConfig', () => {
+  return {
+    __esModule: true,
+    default: jest.fn()
+  };
+});
 
-    await main.run()
-    expect(runMock).toHaveReturned()
+describe('main', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
 
-    // Verify that all of the core library functions were called correctly
-    expect(debugMock).toHaveBeenNthCalledWith(1, 'Waiting 500 milliseconds ...')
-    expect(debugMock).toHaveBeenNthCalledWith(
-      2,
-      expect.stringMatching(timeRegex)
-    )
-    expect(debugMock).toHaveBeenNthCalledWith(
-      3,
-      expect.stringMatching(timeRegex)
-    )
-    expect(setOutputMock).toHaveBeenNthCalledWith(
-      1,
-      'time',
-      expect.stringMatching(timeRegex)
-    )
-    expect(errorMock).not.toHaveBeenCalled()
-  })
+  it('checks out, handles a pr, creates a review with a proper config', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: true,
+      createReview: true,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
 
-  it('sets a failed status', async () => {
-    // Set the action's inputs as return values from core.getInput()
-    getInputMock.mockImplementation(name => {
-      switch (name) {
-        case 'milliseconds':
-          return 'this is not a number'
-        default:
-          return ''
-      }
-    })
+    await run();
 
-    await main.run()
-    expect(runMock).toHaveReturned()
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).toHaveBeenCalled();
+  });
 
-    // Verify that all of the core library functions were called correctly
-    expect(setFailedMock).toHaveBeenNthCalledWith(
-      1,
-      'milliseconds not a number'
-    )
-    expect(errorMock).not.toHaveBeenCalled()
-  })
-})
+  it('does not check out, handles a pr, creates a review with a proper config', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: true,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).not.toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).toHaveBeenCalled();
+  });
+
+  it('does not check out, handles a pr, does not create a review with a proper config', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).not.toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+
+  it('checks out, handles a push with a proper config', async () => {
+    github.context.eventName = GithubEventNames.PUSH;
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: true,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+
+  it('does not check out, handles a push with a proper config', async () => {
+    github.context.eventName = 'push';
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).not.toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+
+  it('checks out, analyzes code with a proper config', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: true,
+      checkout: true,
+      createReview: true,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+
+  it('does not check out, analyzes code with a proper config', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: true,
+      checkout: false,
+      createReview: true,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(checkoutRepository).not.toHaveBeenCalled();
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(uploadCodeScan.uploadCodeScan).toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+});

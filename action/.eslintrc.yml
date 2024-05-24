@@ -13,6 +13,8 @@ ignorePatterns:
   - '**/dist/.*'
   - '**/coverage/.*'
   - '*.json'
+  - '__tests__/'
+  - 'jestSetup.ts'
 
 parser: '@typescript-eslint/parser'
 
@@ -20,8 +22,7 @@ parserOptions:
   ecmaVersion: 2023
   sourceType: module
   project:
-    - './.github/linters/tsconfig.json'
-    - './tsconfig.json'
+    - 'tsconfig.json'
 
 plugins:
   - jest
@@ -44,7 +45,11 @@ rules:
     'no-console': 'off',
     'no-unused-vars': 'off',
     'prettier/prettier': 'error',
-    'semi': 'off',
+    'no-shadow': 'off',
+    '@typescript-eslint/no-shadow': 'error',
+    'semi': ['error', 'always'],
+    'semi-style': ['error', 'last'],
+    'filenames/match-regex': 'off',
     '@typescript-eslint/array-type': 'error',
     '@typescript-eslint/await-thenable': 'error',
     '@typescript-eslint/ban-ts-comment': 'error',
@@ -76,8 +81,26 @@ rules:
     '@typescript-eslint/promise-function-async': 'error',
     '@typescript-eslint/require-array-sort-compare': 'error',
     '@typescript-eslint/restrict-plus-operands': 'error',
-    '@typescript-eslint/semi': ['error', 'never'],
+    '@typescript-eslint/semi': ['error', 'always'],
     '@typescript-eslint/space-before-function-paren': 'off',
     '@typescript-eslint/type-annotation-spacing': 'error',
-    '@typescript-eslint/unbound-method': 'error'
+    '@typescript-eslint/unbound-method': 'error',
+    'func-style': ['error', 'declaration', { 'allowArrowFunctions': false }],
+    'sort-imports':
+      [
+        'error',
+        {
+          'ignoreCase': false,
+          'ignoreDeclarationSort': false,
+          'ignoreMemberSort': false,
+          'memberSyntaxSortOrder': ['none', 'all', 'multiple', 'single'],
+          'allowSeparatedGroups': false
+        }
+      ],
+    'sort-keys':
+      [
+        'error',
+        'asc',
+        { 'caseSensitive': true, 'natural': false, 'minKeys': 2 }
+      ]
   }

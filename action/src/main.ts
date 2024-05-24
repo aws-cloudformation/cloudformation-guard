@@ -1,26 +1,54 @@
-import * as core from '@actions/core'
-import { wait } from './wait'
+import * as core from '@actions/core';
+import { ErrorStrings, GithubEventNames } from './stringEnums';
+import { checkoutRepository } from './checkoutRepository';
+import { context } from '@actions/github';
+import getConfig from './getConfig';
+import { handlePullRequestRun } from './handlePullRequestRun';
+import { handlePushRun } from './handlePushRun';
+import { handleValidate } from './handleValidate';
+import { handleWriteActionSummary } from './handleWriteActionSummary';
+import { uploadCodeScan } from './uploadCodeScan';
 
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 export async function run(): Promise<void> {
+  const { analyze, checkout } = getConfig();
+  const { eventName } = context;
+
+  checkout && (await checkoutRepository());
+
   try {
-    const ms: string = core.getInput('milliseconds')
+    const result = await handleValidate();
+    const {
+      runs: [sarifRun]
+    } = result;
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
-
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
-
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    if (sarifRun.results.length) {
+      if (analyze) {
+        core.setFailed(ErrorStrings.VALIDATION_FAILURE);
+        await uploadCodeScan({ result });
+      } else {
+        const results =
+          eventName === GithubEventNames.PULL_REQUEST
+            ? await handlePullRequestRun({ run: sarifRun })
+            : await handlePushRun({ run: sarifRun });
+        if (results.length) {
+          core.setFailed(ErrorStrings.VALIDATION_FAILURE);
+          await handleWriteActionSummary({
+            results
+          });
+        }
+      }
+    }
   } catch (error) {
-    // Fail the workflow run if an error occurs
-    if (error instanceof Error) core.setFailed(error.message)
+    if (error instanceof Error) {
+      core.setFailed(`${ErrorStrings.ACTION_FAILURE}: ${error}`);
+    } else {
+      core.setFailed(
+        `${ErrorStrings.ACTION_FAILURE}: ${JSON.stringify(error)}`
+      );
+    }
   }
 }

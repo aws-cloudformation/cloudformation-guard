@@ -1,0 +1,40 @@
+name: 'CFN Guard GitHub Action'
+description: 'Validate templates using CFN Guard'
+author: 'Amazon Web Services'
+
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  rules:
+    description: 'Guard rules path relative to the root of the repository.'
+    required: true
+    default: '.'
+  data:
+    description: 'Template data path relative to the root of the repository.'
+    required: true
+    default: '.'
+  token:
+    description: 'GitHub token for API calls.'
+    required: false
+  checkout:
+    description: 'Checkout the repository if not using a composite action where cfn-guard follows actions/checkout.'
+    required: false
+    default: 'true'
+  analyze:
+    description: 'Upload the SARIF report to GitHubs code scanning dashboard.'
+    required: false
+    default: 'false'
+  create-review:
+    description: 'Create a pull request review with comments during pull request checks.'
+    required: false
+    default: 'true'
+
+outputs:
+  report:
+    description: 'Stringified report from cfn-guard'
+
+runs:
+  using: node20
+  main: ./action/dist/index.js

@@ -1,0 +1,51 @@
+name: Github Action CI
+on:
+  push:
+    paths:
+      - 'action/**'
+      - 'action.yml'
+  pull_request:
+    paths:
+      - 'action/**'
+      - 'action.yml'
+jobs:
+  run-unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./action
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v4.0.2
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run test
+      - run: npm run package
+      # This will fail the workflow if the `dist/` directory is different than
+      # expected.
+      - name: Compare Directories
+        id: diff
+        run: |
+          if [ ! -d dist/ ]; then
+            echo "Expected dist/ directory does not exist.  See status below:"
+            ls -la ./
+            exit 1
+          fi
+          if [ "$(git diff --ignore-space-at-eol --text dist/ | wc -l)" -gt "0" ]; then
+            echo "Detected uncommitted changes after build. See status below:"
+            git diff --ignore-space-at-eol --text dist/
+            exit 1
+          fi
+
+      # If `dist/` was different than expected, upload the expected version as a
+      # workflow artifact.
+      - if: ${{ failure() && steps.diff.outcome == 'failure' }}
+        name: Upload Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
