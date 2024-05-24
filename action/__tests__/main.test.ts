@@ -88,7 +88,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -109,7 +111,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -130,7 +134,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -152,7 +158,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).toHaveBeenCalled();
@@ -174,7 +182,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).toHaveBeenCalled();
@@ -195,7 +205,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
@@ -216,7 +228,9 @@ describe('main', () => {
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(ErrorStrings.VALIDATION_FAILURE);
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
     expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
