@@ -1,6 +1,6 @@
 name: cfn-guard Validate
 
-on: [push]
+on: [pull_request]
 
 jobs:
   guard:
@@ -12,3 +12,4 @@ jobs:
         with:
           rules: './guard/resources/validate/rules-dir/'
           data: './guard/resources/validate/data-dir/'
+          token: ${{ secrets.GITHUB_TOKEN }}
