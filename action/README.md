@@ -1,229 +1,135 @@
-# Create a GitHub Action Using TypeScript
+# CloudFormation Guard Github Action [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
-[![GitHub Super-Linter](https://github.com/actions/typescript-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
-![CI](https://github.com/actions/typescript-action/actions/workflows/ci.yml/badge.svg)
-[![Check dist/](https://github.com/actions/typescript-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/actions/typescript-action/actions/workflows/check-dist.yml)
-[![CodeQL](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml)
-[![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
+- [CloudFormation Guard Github Action ](#cloudformation-guard-github-action-)
+  - [About](#about)
+  - [Usage](#usage)
+    - [Pull Request Example](#pull-request-example)
+    - [Push Example](#push-example)
+    - [Code Scanning \& Analysis Example](#code-scanning--analysis-example)
+    - [Action Inputs](#action-inputs)
+    - [Action Outputs](#action-outputs)
 
-Use this template to bootstrap the creation of a TypeScript action. :rocket:
+## About
 
-This template includes compilation support, tests, a validation workflow,
-publishing, and versioning guidance.
+The CloudFormation Guard GitHub Action validates AWS CloudFormation templates
+using your defined CloudFormation Guard rules. It is designed to be used as a
+part of your GitHub Actions CI workflow, allowing you to automatically validate
+your CloudFormation templates whenever changes are made to your repository.
 
-If you are new, there's also a simpler introduction in the
-[Hello world JavaScript action repository](https://github.com/actions/hello-world-javascript-action).
+This action ensures that your CloudFormation templates adhere to your defined
+CloudFormation Guard rules, providing continuous validation and feedback during
+the development process. It can help catch potential issues early and maintain
+consistency across your CloudFormation templates.
 
-## Create Your Own Action
+This action performs the following tasks:
 
-To create your own action, you can use this repository as a template! Just
-follow the below instructions:
-
-1. Click the **Use this template** button at the top of the repository
-1. Select **Create a new repository**
-1. Select an owner and name for your new repository
-1. Click **Create repository**
-1. Clone your new repository
-
-> [!IMPORTANT]
->
-> Make sure to remove or update the [`CODEOWNERS`](./CODEOWNERS) file! For
-> details on how to use this file, see
-> [About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
-
-## Initial Setup
-
-After you've cloned the repository to your local machine or codespace, you'll
-need to perform some initial setup steps before you can develop your action.
-
-> [!NOTE]
->
-> You'll need to have a reasonably modern version of
-> [Node.js](https://nodejs.org) handy (20.x or later should work!). If you are
-> using a version manager like [`nodenv`](https://github.com/nodenv/nodenv) or
-> [`nvm`](https://github.com/nvm-sh/nvm), this template has a `.node-version`
-> file at the root of the repository that will be used to automatically switch
-> to the correct version when you `cd` into the repository. Additionally, this
-> `.node-version` file is used by GitHub Actions in any `actions/setup-node`
-> actions.
-
-1. :hammer_and_wrench: Install the dependencies
-
-   ```bash
-   npm install
-   ```
-
-1. :building_construction: Package the TypeScript for distribution
-
-   ```bash
-   npm run bundle
-   ```
-
-1. :white_check_mark: Run the tests
-
-   ```bash
-   $ npm test
-
-   PASS  ./index.test.js
-     ✓ throws invalid number (3ms)
-     ✓ wait 500 ms (504ms)
-     ✓ test runs (95ms)
-
-   ...
-   ```
-
-## Update the Action Metadata
-
-The [`action.yml`](action.yml) file defines metadata about your action, such as
-input(s) and output(s). For details about this file, see
-[Metadata syntax for GitHub Actions](https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions).
-
-When you copy this repository, update `action.yml` with the name, description,
-inputs, and outputs for your action.
-
-## Update the Action Code
-
-The [`src/`](./src/) directory is the heart of your action! This contains the
-source code that will be run when your action is invoked. You can replace the
-contents of this directory with your own code.
-
-There are a few things to keep in mind when writing your action code:
-
-- Most GitHub Actions toolkit and CI/CD operations are processed asynchronously.
-  In `main.ts`, you will see that the action is run in an `async` function.
-
-  ```javascript
-  import * as core from '@actions/core';
-  //...
-
-  async function run() {
-    try {
-      //...
-    } catch (error) {
-      core.setFailed(error.message);
-    }
-  }
-  ```
-
-  For more information about the GitHub Actions toolkit, see the
-  [documentation](https://github.com/actions/toolkit/blob/master/README.md).
-
-So, what are you waiting for? Go ahead and start customizing your action!
-
-1. Create a new branch
-
-   ```bash
-   git checkout -b releases/v1
-   ```
-
-1. Replace the contents of `src/` with your action code
-1. Add tests to `__tests__/` for your source code
-1. Format, test, and build the action
-
-   ```bash
-   npm run all
-   ```
-
-   > This step is important! It will run [`ncc`](https://github.com/vercel/ncc)
-   > to build the final JavaScript action code with all dependencies included.
-   > If you do not run this step, your action will not work correctly when it is
-   > used in a workflow. This step also includes the `--license` option for
-   > `ncc`, which will create a license file for all of the production node
-   > modules used in your project.
-
-1. Commit your changes
-
-   ```bash
-   git add .
-   git commit -m "My first action is ready!"
-   ```
-
-1. Push them to your repository
-
-   ```bash
-   git push -u origin releases/v1
-   ```
-
-1. Create a pull request and get feedback on your action
-1. Merge the pull request into the `main` branch
-
-Your action is now published! :rocket:
-
-For information about versioning your action, see
-[Versioning](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md)
-in the GitHub Actions toolkit.
-
-## Validate the Action
-
-You can now validate the action by referencing it in a workflow file. For
-example, [`ci.yml`](./.github/workflows/ci.yml) demonstrates how to reference an
-action in the same repository.
-
-```yaml
-steps:
-  - name: Checkout
-    id: checkout
-    uses: actions/checkout@v4
-
-  - name: Test Local Action
-    id: test-action
-    uses: ./
-    with:
-      milliseconds: 1000
-
-  - name: Print Output
-    id: output
-    run: echo "${{ steps.test-action.outputs.time }}"
-```
-
-For example workflow runs, check out the
-[Actions tab](https://github.com/actions/typescript-action/actions)! :rocket:
+1. **Checkout Repository**: If the `checkout` input is set to `true`, the action
+   will checkout the repository before running the validation. This allows you
+   to use this action as a standalone workflow without the necessity for
+   actions/checkout.
+2. **Validate CloudFormation Templates**: The action uses CloudFormation Guard
+   to validate the CloudFormation templates specified by the `data` input
+   against the rules specified by the `rules` input.
+3. **Handle Validation Results**: Depending on the type of GitHub event (pull
+   request or push), the action handles the validation results differently:
+   - For pull request events, if the `create-review` input is set to `true`, the
+     action will create a pull request review with comments along with output on
+     the action summary for any validation failures within the pull requests
+     changed files.
+     - **NOTE:** The max results on list files for a pull request is 3000. If
+       your pull requests tend to have more than 3000 files changed in them,
+       you'll also want to depend on `push`.
+   - For push events, the action will output the validation failures to the
+     action summary.
+4. **Upload Code Scan**: If the `analyze` input is set to `true`, the action
+   will upload the validation results in the SARIF format to GitHub's code
+   scanning dashboard.
 
 ## Usage
 
-After testing, you can create version tag(s) that developers can use to
-reference different stable versions of your action. For more information, see
-[Versioning](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md)
-in the GitHub Actions toolkit.
-
-To include the action in a workflow in another repository, you can use the
-`uses` syntax with the `@` symbol to reference a specific branch, tag, or commit
-hash.
+### Pull Request Example
 
 ```yaml
-steps:
-  - name: Checkout
-    id: checkout
-    uses: actions/checkout@v4
+name: CloudFormation Guard Validate
 
-  - name: Test Local Action
-    id: test-action
-    uses: actions/typescript-action@v1 # Commit with the `v1` tag
-    with:
-      milliseconds: 1000
+on:
+  pull_request:
 
-  - name: Print Output
-    id: output
-    run: echo "${{ steps.test-action.outputs.time }}"
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    name: CloudFormation Guard validate
+    steps:
+      - name: CloudFormation Guard validate
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        with:
+          rules: './path/to/rules'
+          data: './path/to/data'
+          token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-## Publishing a New Release
+### Push Example
 
-This project includes a helper script, [`script/release`](./script/release)
-designed to streamline the process of tagging and pushing new releases for
-GitHub Actions.
+```yaml
+name: CloudFormation Guard validate
 
-GitHub Actions allows users to select a specific version of the action to use,
-based on release tags. This script simplifies this process by performing the
-following steps:
+on:
+  push:
 
-1. **Retrieving the latest release tag:** The script starts by fetching the most
-   recent release tag by looking at the local data available in your repository.
-1. **Prompting for a new release tag:** The user is then prompted to enter a new
-   release tag. To assist with this, the script displays the latest release tag
-   and provides a regular expression to validate the format of the new tag.
-1. **Tagging the new release:** Once a valid new tag is entered, the script tags
-   the new release.
-1. **Pushing the new tag to the remote:** Finally, the script pushes the new tag
-   to the remote repository. From here, you will need to create a new release in
-   GitHub and users can easily reference the new tag in their workflows.
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    name: CloudFormation Guard validate
+    steps:
+      - name: CloudFormation Guard validate
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        with:
+          rules: './path/to/rules'
+          data: './path/to/data'
+```
+
+### Code Scanning & Analysis Example
+
+```yaml
+name: CloudFormation Guard Analysis
+
+on:
+  schedule:
+    - cron: '45 15 * * 4'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    name: CloudFormation Guard analyze
+    steps:
+      - name: CloudFormation Guard analyze
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        with:
+          rules: './path/to/rules'
+          data: './path/to/data'
+          analyze: true
+```
+
+### Action Inputs
+
+The action accepts the following inputs:
+
+| Name            | Description                                                                                                  | Default                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| `rules`         | Guard rules path relative to the root of the repository.                                                     | `.`                       |
+| `data`          | Template data path relative to the root of the repository.                                                   | `.`                       |
+| `token`         | GitHub token for API calls.                                                                                  | (optional for some usage) |
+| `checkout`      | Checkout the repository if not using a composite action where CloudFormation Guard follows actions/checkout. | `true`                    |
+| `analyze`       | Upload the SARIF report to GitHub's code scanning dashboard.                                                 | `false`                   |
+| `create-review` | Create a pull request review with comments during pull request checks.                                       | `true`                    |
+
+### Action Outputs
+
+The action outputs the following:
+
+| Name     | Description                                                          |
+| -------- | -------------------------------------------------------------------- |
+| `report` | A stringified SARIF report from the CloudFormation Guard validation. |
