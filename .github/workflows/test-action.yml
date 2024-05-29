@@ -1,11 +1,10 @@
 name: cfn-guard Validate
 
-on: [pull_request]
+on: [push]
 
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: cfn-guard validate
     steps:
       - name: cfn-guard Validate
@@ -13,4 +12,3 @@ jobs:
         with:
           rules: './guard/resources/validate/rules-dir/'
           data: './guard/resources/validate/data-dir/'
-          token: ${{ secrets.GITHUB_TOKEN }}
