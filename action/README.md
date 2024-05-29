@@ -58,7 +58,6 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
@@ -101,7 +100,6 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: CloudFormation Guard analyze
     steps:
       - name: CloudFormation Guard analyze

@@ -1,15 +1,17 @@
-name: cfn-guard Validate
+name: CloudFormation Guard Analysis
 
-on: [pull_request]
+on:
+  schedule:
+    - cron: '*/5 * * * *'
 
 jobs:
   guard:
     runs-on: ubuntu-latest
-    name: cfn-guard validate
+    name: CloudFormation Guard analyze
     steps:
-      - name: cfn-guard Validate
+      - name: CloudFormation Guard analyze
         uses: dannyvassallo/cloudformation-guard@action-v0.0.037
         with:
           rules: './guard/resources/validate/rules-dir/'
           data: './guard/resources/validate/data-dir/'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          analyze: true
