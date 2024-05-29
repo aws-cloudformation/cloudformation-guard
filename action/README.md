@@ -1,6 +1,6 @@
-# Cloudformation Guard Github Action [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
+# CloudFormation Guard Github Action [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
-- [Cloudformation Guard Github Action ](#cloudformation-guard-github-action-)
+- [CloudFormation Guard Github Action ](#cloudformation-guard-github-action-)
   - [About](#about)
   - [Usage](#usage)
     - [Pull Request Example](#pull-request-example)
@@ -11,13 +11,13 @@
 
 ## About
 
-The Cloudformation Guard GitHub Action validates AWS CloudFormation templates
-using your defined Cloudformation Guard rules. It is designed to be used as a
+The CloudFormation Guard GitHub Action validates AWS CloudFormation templates
+using your defined CloudFormation Guard rules. It is designed to be used as a
 part of your GitHub Actions CI workflow, allowing you to automatically validate
 your CloudFormation templates whenever changes are made to your repository.
 
 This action ensures that your CloudFormation templates adhere to your defined
-Cloudformation Guard rules, providing continuous validation and feedback during
+CloudFormation Guard rules, providing continuous validation and feedback during
 the development process. It can help catch potential issues early and maintain
 consistency across your CloudFormation templates.
 
@@ -27,7 +27,7 @@ This action performs the following tasks:
    will checkout the repository before running the validation. This allows you
    to use this action as a standalone workflow without the necessity for
    actions/checkout.
-2. **Validate CloudFormation Templates**: The action uses Cloudformation Guard
+2. **Validate CloudFormation Templates**: The action uses CloudFormation Guard
    to validate the CloudFormation templates specified by the `data` input
    against the rules specified by the `rules` input.
 3. **Handle Validation Results**: Depending on the type of GitHub event (pull
@@ -50,7 +50,7 @@ This action performs the following tasks:
 ### Pull Request Example
 
 ```yaml
-name: Cloudformation Guard Validate
+name: CloudFormation Guard Validate
 
 on:
   pull_request:
@@ -59,9 +59,9 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     permissions: write-all
-    name: Cloudformation Guard validate
+    name: CloudFormation Guard validate
     steps:
-      - name: Cloudformation Guard validate
+      - name: CloudFormation Guard validate
         uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
         with:
           rules: './path/to/rules'
@@ -72,7 +72,7 @@ jobs:
 ### Push Example
 
 ```yaml
-name: Cloudformation Guard validate
+name: CloudFormation Guard validate
 
 on:
   push:
@@ -81,9 +81,9 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     permissions: write-all
-    name: Cloudformation Guard validate
+    name: CloudFormation Guard validate
     steps:
-      - name: Cloudformation Guard validate
+      - name: CloudFormation Guard validate
         uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
         with:
           rules: './path/to/rules'
@@ -93,7 +93,7 @@ jobs:
 ### Code Scanning & Analysis Example
 
 ```yaml
-name: Cloudformation Guard Analysis
+name: CloudFormation Guard Analysis
 
 on:
   schedule:
@@ -103,9 +103,9 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     permissions: write-all
-    name: Cloudformation Guard analyze
+    name: CloudFormation Guard analyze
     steps:
-      - name: Cloudformation Guard analyze
+      - name: CloudFormation Guard analyze
         uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
         with:
           rules: './path/to/rules'
@@ -122,7 +122,7 @@ The action accepts the following inputs:
 | `rules`         | Guard rules path relative to the root of the repository.                                                     | `.`                       |
 | `data`          | Template data path relative to the root of the repository.                                                   | `.`                       |
 | `token`         | GitHub token for API calls.                                                                                  | (optional for some usage) |
-| `checkout`      | Checkout the repository if not using a composite action where Cloudformation Guard follows actions/checkout. | `true`                    |
+| `checkout`      | Checkout the repository if not using a composite action where CloudFormation Guard follows actions/checkout. | `true`                    |
 | `analyze`       | Upload the SARIF report to GitHub's code scanning dashboard.                                                 | `false`                   |
 | `create-review` | Create a pull request review with comments during pull request checks.                                       | `true`                    |
 
@@ -132,4 +132,4 @@ The action outputs the following:
 
 | Name     | Description                                                          |
 | -------- | -------------------------------------------------------------------- |
-| `report` | A stringified SARIF report from the Cloudformation Guard validation. |
+| `report` | A stringified SARIF report from the CloudFormation Guard validation. |
