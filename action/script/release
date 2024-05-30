@@ -37,15 +37,15 @@ fi
 echo -e "The latest release tag is: ${BLUE}${latest_tag}${OFF}"
 
 # Prompt the user for the new release tag
-read -r -p 'Enter a new release tag (vX.X.X format): ' new_tag
+read -r -p 'Enter a new release tag (action-vX.X.X format): ' new_tag
 
 # Validate the new release tag
-tag_regex='v[0-9]+\.[0-9]+\.[0-9]+$'
+tag_regex='action-v[0-9]+\.[0-9]+\.[0-9]+$'
 if echo "$new_tag" | grep -q -E "$tag_regex"; then
 	echo -e "Tag: ${BLUE}$new_tag${OFF} is valid"
 else
 	# Release tag is not `vX.X.X` format
-	echo -e "Tag: ${BLUE}$new_tag${OFF} is ${RED}not valid${OFF} (must be in vX.X.X format)"
+	echo -e "Tag: ${BLUE}$new_tag${OFF} is ${RED}not valid${OFF} (must be in action-vX.X.X format)"
 	exit 1
 fi
 

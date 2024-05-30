@@ -8,6 +8,9 @@
     - [Code Scanning \& Analysis Example](#code-scanning--analysis-example)
     - [Action Inputs](#action-inputs)
     - [Action Outputs](#action-outputs)
+  - [Development](#development)
+  - [Testing](#testing)
+  - [Creating a release](#creating-a-release)
 
 ## About
 
@@ -58,11 +61,10 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
         with:
           rules: './path/to/rules'
           data: './path/to/data'
@@ -80,11 +82,10 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
         with:
           rules: './path/to/rules'
           data: './path/to/data'
@@ -102,15 +103,15 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    permissions: write-all
     name: CloudFormation Guard analyze
     steps:
       - name: CloudFormation Guard analyze
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.0
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
         with:
           rules: './path/to/rules'
           data: './path/to/data'
           analyze: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ### Action Inputs
@@ -133,3 +134,37 @@ The action outputs the following:
 | Name     | Description                                                          |
 | -------- | -------------------------------------------------------------------- |
 | `report` | A stringified SARIF report from the CloudFormation Guard validation. |
+
+## Development
+
+To install dependencies and watch for file changes run the following.
+
+```shell
+npm install
+npm package:watch
+```
+
+To automatically fix formatting issues run the following.
+
+```shell
+npm run lint:fix
+```
+
+## Testing
+
+To run tests against your changes run the following.
+
+```shell
+npm run test
+```
+
+## Creating a release
+
+To create a new release with the latest bundle run the following and follow the
+prompts.
+
+```shell
+npm run package
+# COMMIT THE CHANGED BUNDLE
+npm run release
+```
