@@ -58,17 +58,25 @@ name: CloudFormation Guard Validate
 on:
   pull_request:
 
+# only required for workflows in private repositories when checkout is true
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   guard:
     runs-on: ubuntu-latest
+    permissions:
+      # only required when create-review is true
+      pull-requests: write
+      # only required for workflows in private repositories
+      contents: read
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.2
         with:
           rules: './path/to/rules'
           data: './path/to/data'
-          token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ### Push Example
@@ -79,19 +87,27 @@ name: CloudFormation Guard validate
 on:
   push:
 
+# only required for workflows in private repositories when checkout is true
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   guard:
     runs-on: ubuntu-latest
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.2
         with:
           rules: './path/to/rules'
           data: './path/to/data'
 ```
 
 ### Code Scanning & Analysis Example
+
+NOTE: If you are using a private repo, you will need to enable code scanning for
+your repository. See
+[https://docs.github.com/en/code-security/code-scanning/troubleshooting-code-scanning/cannot-enable-codeql-in-a-private-repository](https://docs.github.com/en/code-security/code-scanning/troubleshooting-code-scanning/cannot-enable-codeql-in-a-private-repository)
 
 ```yaml
 name: CloudFormation Guard Analysis
@@ -100,32 +116,41 @@ on:
   schedule:
     - cron: '45 15 * * 4'
 
+# only required for workflows in private repositories when checkout is true
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   guard:
     runs-on: ubuntu-latest
+    permissions:
+      # required for all workflows
+      security-events: write
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
     name: CloudFormation Guard analyze
     steps:
       - name: CloudFormation Guard analyze
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.1
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.2
         with:
           rules: './path/to/rules'
           data: './path/to/data'
           analyze: true
-          token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ### Action Inputs
 
 The action accepts the following inputs:
 
-| Name            | Description                                                                                                  | Default                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| `rules`         | Guard rules path relative to the root of the repository.                                                     | `.`                       |
-| `data`          | Template data path relative to the root of the repository.                                                   | `.`                       |
-| `token`         | GitHub token for API calls.                                                                                  | (optional for some usage) |
-| `checkout`      | Checkout the repository if not using a composite action where CloudFormation Guard follows actions/checkout. | `true`                    |
-| `analyze`       | Upload the SARIF report to GitHub's code scanning dashboard.                                                 | `false`                   |
-| `create-review` | Create a pull request review with comments during pull request checks.                                       | `true`                    |
+| Name            | Description                                                                                                  | Default               |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | --------------------- |
+| `rules`         | Guard rules path relative to the root of the repository.                                                     | `.`                   |
+| `data`          | Template data path relative to the root of the repository.                                                   | `.`                   |
+| `token`         | GitHub token for API calls.                                                                                  | `${{ github.token }}` |
+| `checkout`      | Checkout the repository if not using a composite action where CloudFormation Guard follows actions/checkout. | `true`                |
+| `analyze`       | Upload the SARIF report to GitHub's code scanning dashboard.                                                 | `false`               |
+| `create-review` | Create a pull request review with comments during pull request checks.                                       | `true`                |
 
 ### Action Outputs
 

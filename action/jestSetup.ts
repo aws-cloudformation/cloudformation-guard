@@ -2,10 +2,14 @@ import { context } from '@actions/github';
 import { jest } from '@jest/globals';
 
 context.eventName = 'pull_request';
+context.sha = 'test-sha';
 context.payload = {
   ref: 'refs/heads/main',
   pull_request: {
-    number: 123
+    number: 123,
+    head: {
+      sha: 'sha'
+    }
   },
   head_commit: {
     id: 'test-commit-id'
@@ -16,7 +20,8 @@ context.payload = {
     owner: {
       login: 'owner'
     }
-  }
+  },
+  sha: 'test-sha'
 };
 
 jest.mock('@actions/exec', () => {
@@ -49,6 +54,13 @@ jest.mock('@actions/github', () => {
     },
     getOctokit: jest.fn().mockReturnValue({
       rest: {
+        repos: {
+          get: jest.fn().mockResolvedValue({
+            data: {
+              content: 'test-content'
+            }
+          } as never)
+        },
         pulls: {
           listFiles: jest.fn().mockResolvedValue({
             data: [
