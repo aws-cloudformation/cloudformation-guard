@@ -1,5 +1,5 @@
-name: 'CFN Guard GitHub Action'
-description: 'Validate templates using CFN Guard'
+name: 'CloudFormation Guard GitHub Action'
+description: 'Validate templates using CloudFormation Guard'
 author: 'Amazon Web Services'
 
 branding:
