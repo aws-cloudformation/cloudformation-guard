@@ -15,3 +15,4 @@ jobs:
           rules: './guard/resources/validate/rules-dir/'
           data: './guard/resources/validate/data-dir/'
           analyze: true
+          token: ${{ secrets.GITHUB_TOKEN }}
