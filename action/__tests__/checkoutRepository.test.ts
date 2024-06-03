@@ -50,18 +50,14 @@ describe('checkoutRepository', () => {
 
   it('should checkout the pull request ref for a private repository', async () => {
     context.eventName = GithubEventNames.PULL_REQUEST;
-    jest
-      .spyOn(githubActions, 'getOctokit')
-      .mockReturnValue({
-        rest: {
-          repos: {
-            // @ts-ignore don't need a full repo get mock
-            get: jest
-              .fn()
-              .mockResolvedValue({ data: { private: true } } as never)
-          }
+    jest.spyOn(githubActions, 'getOctokit').mockReturnValue({
+      rest: {
+        repos: {
+          // @ts-ignore don't need a full repo get mock
+          get: jest.fn().mockResolvedValue({ data: { private: true } } as never)
         }
-      });
+      }
+    });
 
     jest.spyOn(exec, 'exec').mockImplementation(() => Promise.resolve(0));
     jest
@@ -77,18 +73,14 @@ describe('checkoutRepository', () => {
 
   it('should checkout the branch ref for a private repository', async () => {
     context.eventName = GithubEventNames.PUSH;
-    jest
-      .spyOn(githubActions, 'getOctokit')
-      .mockReturnValue({
-        rest: {
-          repos: {
-            // @ts-ignore don't need a full repo get mock
-            get: jest
-              .fn()
-              .mockResolvedValue({ data: { private: true } } as never)
-          }
+    jest.spyOn(githubActions, 'getOctokit').mockReturnValue({
+      rest: {
+        repos: {
+          // @ts-ignore don't need a full repo get mock
+          get: jest.fn().mockResolvedValue({ data: { private: true } } as never)
         }
-      });
+      }
+    });
     jest.spyOn(exec, 'exec').mockImplementation(() => Promise.resolve(0));
     jest
       .spyOn(checkoutPrivateRepository, 'checkoutPrivateRepository')

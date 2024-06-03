@@ -30946,20 +30946,53 @@ exports.blobToBase64 = blobToBase64;
 
 /***/ }),
 
-/***/ 9274:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ 9624:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkoutRepository = exports.checkoutPrivateRepository = exports.checkoutPublicRepository = void 0;
+exports.checkoutPrivateRepository = void 0;
 const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
 const exec_1 = __nccwpck_require__(1514);
-const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+/**
+ * Checkout the appropriate ref for the users changes using gh cli.
+ * @returns {Promise<void>}
+ */
+async function checkoutPrivateRepository() {
+    const sha = github_1.context.sha;
+    const repository = github_1.context.payload.repository?.full_name;
+    try {
+        await (0, exec_1.exec)(`gh repo clone ${repository} .`);
+        if (github_1.context.eventName === stringEnums_1.GithubEventNames.PULL_REQUEST) {
+            const prNumber = github_1.context.payload.pull_request?.number;
+            await (0, exec_1.exec)(`gh pr checkout ${prNumber}`);
+        }
+        else {
+            await (0, exec_1.exec)('gh repo sync');
+            await (0, exec_1.exec)(`git checkout ${sha}`);
+        }
+    }
+    catch (error) {
+        throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
+    }
+}
+exports.checkoutPrivateRepository = checkoutPrivateRepository;
+
+
+/***/ }),
+
+/***/ 271:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkoutPublicRepository = void 0;
+const stringEnums_1 = __nccwpck_require__(4916);
+const github_1 = __nccwpck_require__(5438);
+const exec_1 = __nccwpck_require__(1514);
 /**
  * Checkout the appropriate ref for the users changes using git.
  * @returns {Promise<void>}
@@ -30985,29 +31018,25 @@ async function checkoutPublicRepository() {
     }
 }
 exports.checkoutPublicRepository = checkoutPublicRepository;
-/**
- * Checkout the appropriate ref for the users changes using gh cli.
- * @returns {Promise<void>}
- */
-async function checkoutPrivateRepository() {
-    const sha = github_1.context.sha;
-    const repository = github_1.context.payload.repository?.full_name;
-    try {
-        await (0, exec_1.exec)(`gh repo clone ${repository} .`);
-        if (github_1.context.eventName === stringEnums_1.GithubEventNames.PULL_REQUEST) {
-            const prNumber = github_1.context.payload.pull_request?.number;
-            await (0, exec_1.exec)(`gh pr checkout ${prNumber}`);
-        }
-        else {
-            await (0, exec_1.exec)('gh repo sync');
-            await (0, exec_1.exec)(`git checkout ${sha}`);
-        }
-    }
-    catch (error) {
-        throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
-    }
-}
-exports.checkoutPrivateRepository = checkoutPrivateRepository;
+
+
+/***/ }),
+
+/***/ 9274:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkoutRepository = void 0;
+const github_1 = __nccwpck_require__(5438);
+const stringEnums_1 = __nccwpck_require__(4916);
+const checkoutPrivateRepository_1 = __nccwpck_require__(9624);
+const checkoutPublicRepository_1 = __nccwpck_require__(271);
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Check if the repository is private and call the appropriate checkout function.
  * @returns {Promise<void>}
@@ -31026,10 +31055,10 @@ async function checkoutRepository() {
         });
         const isPrivate = repoData.private;
         if (isPrivate) {
-            await checkoutPrivateRepository();
+            await (0, checkoutPrivateRepository_1.checkoutPrivateRepository)();
         }
         else {
-            await checkoutPublicRepository();
+            await (0, checkoutPublicRepository_1.checkoutPublicRepository)();
         }
     }
     catch (error) {
