@@ -1,24 +1,35 @@
-import { ErrorStrings, GithubEventNames } from './stringEnums';
-import { context } from '@actions/github';
-import { exec } from '@actions/exec';
+import { context, getOctokit } from '@actions/github';
+import { ErrorStrings } from './stringEnums';
+import { checkoutPrivateRepository } from './checkoutPrivateRepository';
+import { checkoutPublicRepository } from './checkoutPublicRepository';
+import getConfig from './getConfig';
 
 /**
- * Checkout the appropriate ref for the users changes.
+ * Check if the repository is private and call the appropriate checkout function.
  * @returns {Promise<void>}
  */
 export async function checkoutRepository(): Promise<void> {
-  const ref = context.payload.ref;
+  const { token } = getConfig();
   const repository = context.payload.repository?.full_name;
+
+  if (!repository) {
+    throw new Error(ErrorStrings.CHECKOUT_REPOSITORY_ERROR);
+  }
+
+  const octokit = getOctokit(token);
+
   try {
-    await exec('git init');
-    await exec(`git remote add origin https://github.com/${repository}.git`);
-    if (context.eventName === GithubEventNames.PULL_REQUEST) {
-      const prRef = `refs/pull/${context.payload.pull_request?.number}/merge`;
-      await exec(`git fetch origin ${prRef}`);
-      await exec(`git checkout -qf FETCH_HEAD`);
+    const { data: repoData } = await octokit.rest.repos.get({
+      owner: context.repo.owner,
+      repo: context.repo.repo
+    });
+
+    const isPrivate = repoData.private;
+
+    if (isPrivate) {
+      await checkoutPrivateRepository();
     } else {
-      await exec(`git fetch origin ${ref}`);
-      await exec(`git checkout FETCH_HEAD`);
+      await checkoutPublicRepository();
     }
   } catch (error) {
     throw new Error(`${ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);

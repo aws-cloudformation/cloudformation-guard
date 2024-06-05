@@ -41,13 +41,23 @@ export async function handleCreateReview({
     filesWithViolationsInPr.includes(comment.path)
   );
 
-  await octokit.rest.pulls.createReview({
-    ...context.repo,
-    comments,
-    commit_id: context.payload.head_commit,
-    event: 'COMMENT',
-    pull_number: pull_request.number
-  });
+  for (const comment of comments) {
+    try {
+      await octokit.rest.pulls.createReview({
+        ...context.repo,
+        comments: [comment],
+        commit_id: pull_request.head.sha,
+        event: 'COMMENT',
+        pull_number: pull_request.number
+      });
+    } catch (error) {
+      // This logs out if the comment couldn't post
+      // because the line position isn't a part of the diff.
+      // This should not be a problem because we can only
+      // review what we can see.
+      console.error(error);
+    }
+  }
 }
 
 /**
