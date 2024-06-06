@@ -20,6 +20,7 @@ export async function uploadCodeScan({
   const {
     payload: {
       ref,
+      sha,
       head_commit: { id }
     }
   } = context;
@@ -31,7 +32,7 @@ export async function uploadCodeScan({
   const sarif = await compressAndEncode(stringifiedResult);
   const params = {
     ...context.repo,
-    commit_sha: id,
+    commit_sha: id ?? sha,
     headers,
     ref,
     sarif
