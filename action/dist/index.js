@@ -31454,7 +31454,7 @@ async function run() {
         const { runs: [sarifRun] } = result;
         if (sarifRun.results.length) {
             if (analyze) {
-                core.setFailed(stringEnums_1.ErrorStrings.VALIDATION_FAILURE);
+                core.setFailed(`${stringEnums_1.ErrorStrings.VALIDATION_FAILURE} ${stringEnums_1.ErrorStrings.SECURITY_TAB}`);
                 await (0, uploadCodeScan_1.uploadCodeScan)({ result });
             }
             else {
@@ -31502,6 +31502,7 @@ var ErrorStrings;
     ErrorStrings["CHECKOUT_REPOSITORY_ERROR"] = "Error checking out repository";
     ErrorStrings["PULL_REQUEST_ERROR"] = "Tried to handle pull request result but could not find PR context.";
     ErrorStrings["VALIDATION_FAILURE"] = "Validation failure. cfn-guard found violations.";
+    ErrorStrings["SECURITY_TAB"] = "Check the security tab for results.";
 })(ErrorStrings || (exports.ErrorStrings = ErrorStrings = {}));
 var SummaryStrings;
 (function (SummaryStrings) {
