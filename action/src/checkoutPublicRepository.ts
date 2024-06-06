@@ -8,6 +8,7 @@ import { exec } from '@actions/exec';
  */
 export async function checkoutPublicRepository(): Promise<void> {
   const ref = context.payload.ref;
+  console.warn('hello', context);
   const repository = context.payload.repository?.full_name;
   try {
     await exec('git init');
