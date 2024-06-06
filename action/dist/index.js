@@ -31535,7 +31535,7 @@ const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 async function uploadCodeScan({ result }) {
     const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
     const { token } = (0, getConfig_1.default)();
-    const { payload: { ref, sha, head_commit: { id } } } = github_1.context;
+    const { payload: { ref, sha, head_commit } } = github_1.context;
     const octokit = (0, github_1.getOctokit)(token);
     const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
     const stringifiedResult = JSON.stringify(result);
@@ -31544,7 +31544,7 @@ async function uploadCodeScan({ result }) {
     const sarif = await (0, compressAndEncode_1.compressAndEncode)(stringifiedResult);
     const params = {
         ...github_1.context.repo,
-        commit_sha: id ?? sha,
+        commit_sha: head_commit?.id ?? sha,
         headers,
         ref,
         sarif

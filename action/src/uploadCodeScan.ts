@@ -18,11 +18,7 @@ export async function uploadCodeScan({
   const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
   const { token } = getConfig();
   const {
-    payload: {
-      ref,
-      sha,
-      head_commit: { id }
-    }
+    payload: { ref, sha, head_commit }
   } = context;
   const octokit = getOctokit(token);
   const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
@@ -32,7 +28,7 @@ export async function uploadCodeScan({
   const sarif = await compressAndEncode(stringifiedResult);
   const params = {
     ...context.repo,
-    commit_sha: id ?? sha,
+    commit_sha: head_commit?.id ?? sha,
     headers,
     ref,
     sarif
