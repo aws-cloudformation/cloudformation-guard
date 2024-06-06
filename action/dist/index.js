@@ -30998,8 +30998,7 @@ const exec_1 = __nccwpck_require__(1514);
  * @returns {Promise<void>}
  */
 async function checkoutPublicRepository() {
-    const ref = github_1.context.payload.ref;
-    console.warn('hello', github_1.context);
+    const ref = github_1.context.payload.ref ?? github_1.context.ref;
     const repository = github_1.context.payload.repository?.full_name;
     try {
         await (0, exec_1.exec)('git init');
