@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import { SarifReport } from 'cfn-guard';
 import { compressAndEncode } from './compressAndEncode';
@@ -37,4 +38,6 @@ export async function uploadCodeScan({
   };
 
   await octokit.request(ENDPOINT, params);
+
+  core.info('Check the security tab for code scan results.');
 }
