@@ -206,7 +206,7 @@ describe('main', () => {
     await run();
 
     expect(core.setFailed).toHaveBeenCalledWith(
-      ErrorStrings.VALIDATION_FAILURE
+      `${ErrorStrings.VALIDATION_FAILURE} ${ErrorStrings.SECURITY_TAB}`
     );
     expect(checkoutRepository).toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();
@@ -229,7 +229,7 @@ describe('main', () => {
     await run();
 
     expect(core.setFailed).toHaveBeenCalledWith(
-      ErrorStrings.VALIDATION_FAILURE
+      `${ErrorStrings.VALIDATION_FAILURE} ${ErrorStrings.SECURITY_TAB}`
     );
     expect(checkoutRepository).not.toHaveBeenCalled();
     expect(handleValidate.handleValidate).toHaveBeenCalled();

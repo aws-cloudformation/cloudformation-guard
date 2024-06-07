@@ -27,7 +27,9 @@ export async function run(): Promise<void> {
 
     if (sarifRun.results.length) {
       if (analyze) {
-        core.setFailed(ErrorStrings.VALIDATION_FAILURE);
+        core.setFailed(
+          `${ErrorStrings.VALIDATION_FAILURE} ${ErrorStrings.SECURITY_TAB}`
+        );
         await uploadCodeScan({ result });
       } else {
         const results =
