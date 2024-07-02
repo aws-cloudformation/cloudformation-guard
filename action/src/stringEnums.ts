@@ -8,7 +8,8 @@ export enum ErrorStrings {
   CHECKOUT_REPOSITORY_ERROR = 'Error checking out repository',
   PULL_REQUEST_ERROR = 'Tried to handle pull request result but could not find PR context.',
   VALIDATION_FAILURE = 'Validation failure. cfn-guard found violations.',
-  SECURITY_TAB = 'Check the security tab for results.'
+  SECURITY_TAB = 'Check the security tab for results.',
+  PATH_ERROR = 'Could not navigate to supplied path. Either path is wrong or the runner is using an unsupported operating system.'
 }
 
 export enum SummaryStrings {

@@ -1,4 +1,5 @@
 import { SarifRun } from 'cfn-guard';
+import debugLog from './debugLog';
 
 type HandlePushRunParams = {
   run: SarifRun;
@@ -13,6 +14,8 @@ type HandlePushRunParams = {
 export async function handlePushRun({
   run
 }: HandlePushRunParams): Promise<string[][]> {
+  debugLog('Handling push run...');
+
   return run.results.map(
     ({ locations: [location], ruleId, message: { text } }) => [
       `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,

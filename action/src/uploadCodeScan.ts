@@ -1,6 +1,7 @@
 import { context, getOctokit } from '@actions/github';
 import { SarifReport } from 'cfn-guard';
 import { compressAndEncode } from './compressAndEncode';
+import debugLog from './debugLog';
 import getConfig from './getConfig';
 
 export type UploadCodeScanParams = {
@@ -15,6 +16,7 @@ export type UploadCodeScanParams = {
 export async function uploadCodeScan({
   result
 }: UploadCodeScanParams): Promise<void> {
+  debugLog('Uploading results...');
   const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
   const { token } = getConfig();
   const {

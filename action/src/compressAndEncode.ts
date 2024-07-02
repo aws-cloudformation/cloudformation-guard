@@ -1,4 +1,5 @@
 import { blobToBase64 } from './blobToBase64';
+import debugLog from './debugLog';
 import zlib from 'zlib';
 /**
  * Compresses and encodes the input string using gzip and base64.
@@ -6,6 +7,8 @@ import zlib from 'zlib';
  * @returns {Promise<string>} - The compressed and base64-encoded string.
  */
 export async function compressAndEncode(input: string): Promise<string> {
+  debugLog('Compressing results...');
+
   const byteArray = Buffer.from(input, 'utf8');
   const gzip = zlib.createGzip();
 

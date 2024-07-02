@@ -10,7 +10,9 @@ jest.mock('@actions/core', () => {
           write: jest.fn()
         })
       })
-    }
+    },
+    getBooleanInput: jest.fn(),
+    getInput: jest.fn()
   };
 });
 

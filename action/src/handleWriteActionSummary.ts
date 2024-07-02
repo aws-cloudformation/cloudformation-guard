@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 import { SummaryStrings } from './stringEnums';
+import debugLog from './debugLog';
 
 type HandleWriteActionSummaryParams = {
   results: string[][];
@@ -14,6 +15,8 @@ type HandleWriteActionSummaryParams = {
 export async function handleWriteActionSummary({
   results
 }: HandleWriteActionSummaryParams): Promise<void> {
+  debugLog('Writing summary...');
+
   await core.summary
     .addHeading(SummaryStrings.HEADING)
     .addTable([

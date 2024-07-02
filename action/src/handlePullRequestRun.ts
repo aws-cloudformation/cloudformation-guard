@@ -1,7 +1,9 @@
 import { context, getOctokit } from '@actions/github';
 import { ErrorStrings } from './stringEnums';
 import { SarifRun } from 'cfn-guard';
+import debugLog from './debugLog';
 import getConfig from './getConfig';
+import { removeRootPath } from './utils';
 
 export type HandlePullRequestRunParams = {
   run: SarifRun;
@@ -41,6 +43,10 @@ export async function handleCreateReview({
     filesWithViolationsInPr.includes(comment.path)
   );
 
+  debugLog(
+    `Creating a review with comments: ${JSON.stringify(comments, null, 2)}`
+  );
+
   for (const comment of comments) {
     try {
       await octokit.rest.pulls.createReview({
@@ -70,8 +76,10 @@ export async function handleCreateReview({
 export async function handlePullRequestRun({
   run
 }: HandlePullRequestRunParams): Promise<string[][]> {
+  debugLog('Handling PR run...');
+
   const MAX_PER_PAGE = 3000;
-  const { token, createReview } = getConfig();
+  const { token, createReview, path: root } = getConfig();
   const octokit = getOctokit(token);
   const { pull_request } = context.payload;
 
@@ -87,16 +95,30 @@ export async function handlePullRequestRun({
 
   const filesChanged = listFiles.data.map(({ filename }) => filename);
 
-  const tmpComments = run.results.map(result => ({
-    body: result.message.text,
-    path: result.locations[0].physicalLocation.artifactLocation.uri,
-    position: result.locations[0].physicalLocation.region.startLine
-  }));
+  debugLog(`Files changed: ${JSON.stringify(filesChanged, null, 2)}`);
+
+  const tmpComments = run.results.map(result => {
+    const uri = result.locations[0].physicalLocation.artifactLocation.uri;
+    const path = root?.length ? removeRootPath(uri) : uri;
+    return {
+      body: result.message.text,
+      path,
+      position: result.locations[0].physicalLocation.region.startLine
+    };
+  });
 
   const filesWithViolations = tmpComments.map(({ path }) => path);
 
+  debugLog(
+    `Files with violations: ${JSON.stringify(filesWithViolations, null, 2)}`
+  );
+
   const filesWithViolationsInPr = filesChanged.filter(value =>
     filesWithViolations.includes(value)
+  );
+
+  debugLog(
+    `Files with violations in PR: ${JSON.stringify(filesWithViolationsInPr, null, 2)}`
   );
 
   filesWithViolationsInPr.length &&
@@ -107,16 +129,17 @@ export async function handlePullRequestRun({
     }));
 
   return run.results
-    .map(({ locations: [location], ruleId, message: { text } }) =>
-      filesWithViolationsInPr.includes(
-        location.physicalLocation.artifactLocation.uri
+    .map(({ locations: [location], ruleId, message: { text } }) => {
+      const uri = location.physicalLocation.artifactLocation.uri;
+      return filesWithViolationsInPr.includes(
+        root?.length ? removeRootPath(uri) : uri
       )
         ? [
-            `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+            `❌ ${uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
             text,
             ruleId
           ]
-        : []
-    )
+        : [];
+    })
     .filter(result => result.some(Boolean));
 }
