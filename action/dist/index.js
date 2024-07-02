@@ -31659,7 +31659,7 @@ const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Handle adding the root when a user supplies a path
  *
- * @function removeRootPath
+ * @function addRootPath
  * @param {string} path - A file path
  * @returns {string}
  */
