@@ -151,6 +151,8 @@ The action accepts the following inputs:
 | `checkout`      | Checkout the repository if not using a composite action where CloudFormation Guard follows actions/checkout. | `true`                |
 | `analyze`       | Upload the SARIF report to GitHub's code scanning dashboard.                                                 | `false`               |
 | `create-review` | Create a pull request review with comments during pull request checks.                                       | `true`                |
+| `path`          | When using the 'path' param with actions/checkout, also pass it here for PR based checks.                                        | `''`                  |
+| `debug`         | Enable logging for bug reports / debugging.                                                                  | `false`               |
 
 ### Action Outputs
 

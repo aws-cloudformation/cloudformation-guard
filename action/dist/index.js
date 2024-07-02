@@ -30914,19 +30914,24 @@ function wrappy (fn, cb) {
 /***/ }),
 
 /***/ 1453:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.blobToBase64 = void 0;
 const stream_1 = __nccwpck_require__(2781);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 /**
  * Converts a Buffer to a base64-encoded string.
  * @param {Buffer} blob - The Buffer to be converted to base64.
  * @returns {Promise<string>} - The base64-encoded string.
  */
 async function blobToBase64(blob) {
+    (0, debugLog_1.default)('Encoding results...');
     const reader = new stream_1.Readable();
     reader._read = () => { }; // _read is required but you can noop it
     reader.push(blob);
@@ -30947,29 +30952,36 @@ exports.blobToBase64 = blobToBase64;
 /***/ }),
 
 /***/ 9624:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutPrivateRepository = void 0;
 const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const exec_1 = __nccwpck_require__(1514);
 /**
  * Checkout the appropriate ref for the users changes using gh cli.
  * @returns {Promise<void>}
  */
 async function checkoutPrivateRepository() {
+    (0, debugLog_1.default)('Checking out private repo');
     const sha = github_1.context.sha;
     const repository = github_1.context.payload.repository?.full_name;
     try {
         await (0, exec_1.exec)(`gh repo clone ${repository} .`);
         if (github_1.context.eventName === stringEnums_1.GithubEventNames.PULL_REQUEST) {
             const prNumber = github_1.context.payload.pull_request?.number;
+            (0, debugLog_1.default)(`Checking out PR ${prNumber}`);
             await (0, exec_1.exec)(`gh pr checkout ${prNumber}`);
         }
         else {
+            (0, debugLog_1.default)(`Checking out SHA ${sha}`);
             await (0, exec_1.exec)('gh repo sync');
             await (0, exec_1.exec)(`git checkout ${sha}`);
         }
@@ -30992,12 +31004,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutPublicRepository = void 0;
 const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
+const debugLog_1 = __nccwpck_require__(498);
 const exec_1 = __nccwpck_require__(1514);
 /**
  * Checkout the appropriate ref for the users changes using git.
  * @returns {Promise<void>}
  */
 async function checkoutPublicRepository() {
+    (0, debugLog_1.debugLog)('Checking out public repo');
     const ref = github_1.context.payload.ref ?? github_1.context.ref;
     const repository = github_1.context.payload.repository?.full_name;
     try {
@@ -31005,10 +31019,12 @@ async function checkoutPublicRepository() {
         await (0, exec_1.exec)(`git remote add origin https://github.com/${repository}.git`);
         if (github_1.context.eventName === stringEnums_1.GithubEventNames.PULL_REQUEST) {
             const prRef = `refs/pull/${github_1.context.payload.pull_request?.number}/merge`;
+            (0, debugLog_1.debugLog)(`Checking out PR ref ${prRef}`);
             await (0, exec_1.exec)(`git fetch origin ${prRef}`);
             await (0, exec_1.exec)(`git checkout -qf FETCH_HEAD`);
         }
         else {
+            (0, debugLog_1.debugLog)(`Checking out ref ${ref}`);
             await (0, exec_1.exec)(`git fetch origin ${ref}`);
             await (0, exec_1.exec)(`git checkout FETCH_HEAD`);
         }
@@ -31036,12 +31052,14 @@ const github_1 = __nccwpck_require__(5438);
 const stringEnums_1 = __nccwpck_require__(4916);
 const checkoutPrivateRepository_1 = __nccwpck_require__(9624);
 const checkoutPublicRepository_1 = __nccwpck_require__(271);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Check if the repository is private and call the appropriate checkout function.
  * @returns {Promise<void>}
  */
 async function checkoutRepository() {
+    (0, debugLog_1.default)('Checking out repo');
     const { token } = (0, getConfig_1.default)();
     const repository = github_1.context.payload.repository?.full_name;
     if (!repository) {
@@ -31082,6 +31100,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.compressAndEncode = void 0;
 const blobToBase64_1 = __nccwpck_require__(1453);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const zlib_1 = __importDefault(__nccwpck_require__(9796));
 /**
  * Compresses and encodes the input string using gzip and base64.
@@ -31089,6 +31108,7 @@ const zlib_1 = __importDefault(__nccwpck_require__(9796));
  * @returns {Promise<string>} - The compressed and base64-encoded string.
  */
 async function compressAndEncode(input) {
+    (0, debugLog_1.default)('Compressing results...');
     const byteArray = Buffer.from(input, 'utf8');
     const gzip = zlib_1.default.createGzip();
     const compressedData = await new Promise((resolve, reject) => {
@@ -31109,6 +31129,34 @@ async function compressAndEncode(input) {
     return base64;
 }
 exports.compressAndEncode = compressAndEncode;
+
+
+/***/ }),
+
+/***/ 498:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.debugLog = void 0;
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+/**
+ * Prints a message to the console when debug is true
+ * @param {string} msg - The string to logged.
+ * @returns {void}
+ */
+function debugLog(msg) {
+    const { debug } = (0, getConfig_1.default)();
+    if (debug) {
+        console.log(msg);
+    }
+}
+exports.debugLog = debugLog;
+exports["default"] = debugLog;
 
 
 /***/ }),
@@ -31154,6 +31202,8 @@ function getConfig() {
         checkout: core.getBooleanInput('checkout'),
         createReview: core.getBooleanInput('create-review'),
         dataPath: core.getInput('data'),
+        debug: core.getBooleanInput('debug'),
+        path: core.getInput('path'),
         rulesPath: core.getInput('rules'),
         token: core.getInput('token')
     };
@@ -31176,7 +31226,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handlePullRequestRun = exports.handleCreateReview = void 0;
 const github_1 = __nccwpck_require__(5438);
 const stringEnums_1 = __nccwpck_require__(4916);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+const utils_1 = __nccwpck_require__(1314);
 /**
  * Handle the creation of a review on a pull request.
  *
@@ -31194,6 +31246,7 @@ async function handleCreateReview({ tmpComments, filesWithViolationsInPr }) {
         return;
     const octokit = (0, github_1.getOctokit)(token);
     const comments = tmpComments.filter(comment => filesWithViolationsInPr.includes(comment.path));
+    (0, debugLog_1.default)(`Creating a review with comments: ${JSON.stringify(comments, null, 2)}`);
     for (const comment of comments) {
         try {
             await octokit.rest.pulls.createReview({
@@ -31222,8 +31275,9 @@ exports.handleCreateReview = handleCreateReview;
  * @throws {Error} - Throws an error if the pull request context cannot be found.
  */
 async function handlePullRequestRun({ run }) {
+    (0, debugLog_1.default)('Handling PR run...');
     const MAX_PER_PAGE = 3000;
-    const { token, createReview } = (0, getConfig_1.default)();
+    const { token, createReview, path: root } = (0, getConfig_1.default)();
     const octokit = (0, github_1.getOctokit)(token);
     const { pull_request } = github_1.context.payload;
     if (!pull_request) {
@@ -31235,13 +31289,20 @@ async function handlePullRequestRun({ run }) {
         pull_number: pull_request.number
     });
     const filesChanged = listFiles.data.map(({ filename }) => filename);
-    const tmpComments = run.results.map(result => ({
-        body: result.message.text,
-        path: result.locations[0].physicalLocation.artifactLocation.uri,
-        position: result.locations[0].physicalLocation.region.startLine
-    }));
+    (0, debugLog_1.default)(`Files changed: ${JSON.stringify(filesChanged, null, 2)}`);
+    const tmpComments = run.results.map(result => {
+        const uri = result.locations[0].physicalLocation.artifactLocation.uri;
+        const path = root?.length ? (0, utils_1.removeRootPath)(uri) : uri;
+        return {
+            body: result.message.text,
+            path,
+            position: result.locations[0].physicalLocation.region.startLine
+        };
+    });
     const filesWithViolations = tmpComments.map(({ path }) => path);
+    (0, debugLog_1.default)(`Files with violations: ${JSON.stringify(filesWithViolations, null, 2)}`);
     const filesWithViolationsInPr = filesChanged.filter(value => filesWithViolations.includes(value));
+    (0, debugLog_1.default)(`Files with violations in PR: ${JSON.stringify(filesWithViolationsInPr, null, 2)}`);
     filesWithViolationsInPr.length &&
         createReview &&
         (await handleCreateReview({
@@ -31249,13 +31310,16 @@ async function handlePullRequestRun({ run }) {
             tmpComments
         }));
     return run.results
-        .map(({ locations: [location], ruleId, message: { text } }) => filesWithViolationsInPr.includes(location.physicalLocation.artifactLocation.uri)
-        ? [
-            `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
-            text,
-            ruleId
-        ]
-        : [])
+        .map(({ locations: [location], ruleId, message: { text } }) => {
+        const uri = location.physicalLocation.artifactLocation.uri;
+        return filesWithViolationsInPr.includes(root?.length ? (0, utils_1.removeRootPath)(uri) : uri)
+            ? [
+                `❌ ${uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+                text,
+                ruleId
+            ]
+            : [];
+    })
         .filter(result => result.some(Boolean));
 }
 exports.handlePullRequestRun = handlePullRequestRun;
@@ -31264,12 +31328,16 @@ exports.handlePullRequestRun = handlePullRequestRun;
 /***/ }),
 
 /***/ 5802:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handlePushRun = void 0;
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 /**
  * Handles the execution of a push run for the CFN Guard action.
  * @param {HandlePushRunParams} params - The parameters for the push run.
@@ -31277,6 +31345,7 @@ exports.handlePushRun = void 0;
  * @returns {Promise<string[][]>} - An array of arrays, where each inner array represents a violation with the following format: [file path, violation message, rule ID].
  */
 async function handlePushRun({ run }) {
+    (0, debugLog_1.default)('Handling push run...');
     return run.results.map(({ locations: [location], ruleId, message: { text } }) => [
         `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
         text,
@@ -31323,17 +31392,22 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleValidate = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const cfn_guard_1 = __nccwpck_require__(7848);
+const utils_1 = __nccwpck_require__(1314);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Handles the validation of the CloudFormation templates using CFN Guard.
  * @returns {Promise<SarifReport>} - The SARIF report containing the validation results.
  */
 async function handleValidate() {
-    const { rulesPath, dataPath } = (0, getConfig_1.default)();
+    const { rulesPath, dataPath, path } = (0, getConfig_1.default)();
+    (0, debugLog_1.default)(`Rules path sent to validation: ${rulesPath}`);
+    (0, debugLog_1.default)(`Data path sent to validation: ${dataPath}`);
     const result = await (0, cfn_guard_1.validate)({
-        dataPath,
-        rulesPath
+        dataPath: path.length ? (0, utils_1.addRootPath)(dataPath) : dataPath,
+        rulesPath: path.length ? (0, utils_1.addRootPath)(rulesPath) : rulesPath
     });
+    (0, debugLog_1.default)(`Validation result: ${JSON.stringify(result, null, 2)}`);
     core.setOutput('result', JSON.stringify(result, null, 2));
     return result;
 }
@@ -31370,10 +31444,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     __setModuleDefault(result, mod);
     return result;
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleWriteActionSummary = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const stringEnums_1 = __nccwpck_require__(4916);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 /**
  * Writes a summary of the validation results to the GitHub Actions summary.
  * @param {HandleWriteActionSummaryParams} params - The parameters for writing the action summary.
@@ -31381,6 +31459,7 @@ const stringEnums_1 = __nccwpck_require__(4916);
  * @returns {Promise<void>} - Resolves when the action summary has been written.
  */
 async function handleWriteActionSummary({ results }) {
+    (0, debugLog_1.default)('Writing summary...');
     await core.summary
         .addHeading(stringEnums_1.SummaryStrings.HEADING)
         .addTable([
@@ -31435,6 +31514,7 @@ const core = __importStar(__nccwpck_require__(2186));
 const stringEnums_1 = __nccwpck_require__(4916);
 const checkoutRepository_1 = __nccwpck_require__(9274);
 const github_1 = __nccwpck_require__(5438);
+const debugLog_1 = __nccwpck_require__(498);
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 const handlePullRequestRun_1 = __nccwpck_require__(4879);
 const handlePushRun_1 = __nccwpck_require__(5802);
@@ -31446,14 +31526,19 @@ const uploadCodeScan_1 = __nccwpck_require__(1806);
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 async function run() {
+    (0, debugLog_1.debugLog)('Running action');
     const { analyze, checkout } = (0, getConfig_1.default)();
     const { eventName } = github_1.context;
-    checkout && (await (0, checkoutRepository_1.checkoutRepository)());
+    (0, debugLog_1.debugLog)(`Event type: ${eventName}`);
+    if (checkout) {
+        await (0, checkoutRepository_1.checkoutRepository)();
+    }
     try {
         const result = await (0, handleValidate_1.handleValidate)();
         const { runs: [sarifRun] } = result;
         if (sarifRun.results.length) {
             if (analyze) {
+                (0, debugLog_1.debugLog)('Using analyze');
                 core.setFailed(`${stringEnums_1.ErrorStrings.VALIDATION_FAILURE} ${stringEnums_1.ErrorStrings.SECURITY_TAB}`);
                 await (0, uploadCodeScan_1.uploadCodeScan)({ result });
             }
@@ -31503,6 +31588,7 @@ var ErrorStrings;
     ErrorStrings["PULL_REQUEST_ERROR"] = "Tried to handle pull request result but could not find PR context.";
     ErrorStrings["VALIDATION_FAILURE"] = "Validation failure. cfn-guard found violations.";
     ErrorStrings["SECURITY_TAB"] = "Check the security tab for results.";
+    ErrorStrings["PATH_ERROR"] = "Could not navigate to supplied path. Either path is wrong or the runner is using an unsupported operating system.";
 })(ErrorStrings || (exports.ErrorStrings = ErrorStrings = {}));
 var SummaryStrings;
 (function (SummaryStrings) {
@@ -31527,6 +31613,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uploadCodeScan = void 0;
 const github_1 = __nccwpck_require__(5438);
 const compressAndEncode_1 = __nccwpck_require__(8492);
+const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Uploads the SARIF report to the GitHub Code Scanning API.
@@ -31534,6 +31621,7 @@ const getConfig_1 = __importDefault(__nccwpck_require__(5677));
  * @returns {Promise<void>} - Resolves when the code scan has been uploaded successfully.
  */
 async function uploadCodeScan({ result }) {
+    (0, debugLog_1.default)('Uploading results...');
     const ENDPOINT = 'POST /repos/{owner}/{repo}/code-scanning/sarifs';
     const { token } = (0, getConfig_1.default)();
     const { payload: { ref, head_commit }, ref: contextRef, sha } = github_1.context;
@@ -31553,6 +31641,57 @@ async function uploadCodeScan({ result }) {
     await octokit.request(ENDPOINT, params);
 }
 exports.uploadCodeScan = uploadCodeScan;
+
+
+/***/ }),
+
+/***/ 1314:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.removeRootPath = exports.addRootPath = void 0;
+const getConfig_1 = __importDefault(__nccwpck_require__(5677));
+/**
+ * Handle adding the root when a user supplies a path
+ *
+ * @function removeRootPath
+ * @param {string} path - A file path
+ * @returns {string}
+ */
+function addRootPath(path) {
+    const { path: root } = (0, getConfig_1.default)();
+    if (path.startsWith('./')) {
+        return `${root}${path.slice(1)}`;
+    }
+    else if (!path.startsWith(root)) {
+        return `${root}/${path}`;
+    }
+    return path;
+}
+exports.addRootPath = addRootPath;
+/**
+ * Handle removing the root when a user supplies a path
+ *
+ * @function removeRootPath
+ * @param {string} uri - File location URI
+ * @returns {string}
+ */
+function removeRootPath(uri) {
+    const { path } = (0, getConfig_1.default)();
+    if (uri.startsWith(path)) {
+        const pathWithoutRoot = uri.slice(path.length);
+        return pathWithoutRoot.startsWith('/')
+            ? pathWithoutRoot.slice(1)
+            : pathWithoutRoot;
+    }
+    return uri;
+}
+exports.removeRootPath = removeRootPath;
 
 
 /***/ }),
