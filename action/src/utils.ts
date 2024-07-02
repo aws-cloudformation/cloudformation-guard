@@ -3,7 +3,7 @@ import getConfig from './getConfig';
 /**
  * Handle adding the root when a user supplies a path
  *
- * @function removeRootPath
+ * @function addRootPath
  * @param {string} path - A file path
  * @returns {string}
  */
