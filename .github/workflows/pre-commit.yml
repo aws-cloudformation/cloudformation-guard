@@ -2,14 +2,18 @@ name: Pre-Commit Hook CI
 on:
   push:
     paths:
-      - 'pre_commit_hooks/**'
-      - 'pre_commit_hooks_tests/**'
-      - '.github/workflows/pre-commit.yml'
+      - pre_commit_hooks/**
+      - pre_commit_hooks_tests/**
+      - .github/workflows/pre-commit.yml
+      - .pre-commit-config.yaml
+      - .pre-commit-hooks.yaml
   pull_request:
     paths:
-      - 'pre_commit_hooks/**'
-      - 'pre_commit_hooks_tests/**'
-      - '.github/workflows/pre-commit.yml'
+      - pre_commit_hooks/**
+      - pre_commit_hooks_tests/**
+      - .github/workflows/pre-commit.yml
+      - .pre-commit-config.yaml
+      - .pre-commit-hooks.yaml
 jobs:
   run-unit-tests-and-lint:
     runs-on: ubuntu-latest
