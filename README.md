@@ -654,6 +654,8 @@ repos:
             files: ^path/to/resources.* # Same directory supplied to the --dir arg so that rule and test file changes trigger a run
 ```
 
+**NOTE**: The args for the pre-commit hook are not identical to the flags you would pass directly to Guard. In the case of this hook, you cannot pass a `data` flag to `validate` as it depends on the `filenames` from the hook and you can only use the `dir` flag for the `test` hook.
+
 ## <a name="devcontainer"></a> Contribute using the DevContainer in VSCode
 
 ### Setup
