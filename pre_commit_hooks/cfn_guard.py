@@ -2,7 +2,6 @@
 This module contains the logic for the cfn-guard pre-commit hook
 """
 
-import json
 import os
 import platform
 import shutil
@@ -10,16 +9,18 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import argparse
 from pathlib import Path
 from typing import Sequence, Union
 from urllib.request import Request, urlopen
 
-# pylint: disable=C0301
-LATEST_RELEASE_URL = (
-    "https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest"
-)
 BIN_NAME = "cfn-guard"
 UNSUPPORTED_OS_MSG = "Unsupported operating system. Could not install cfn-guard."
+UNKNOWN_OPERATION_MSG = (
+    "Unknown operation. cfn-guard pre-commit-hook only supports validate and test commands."
+)
+# Hardcode this so the pre-commit-hook rev is tied to a specific version
+GUARD_BINARY_VERSION = "3.1.1"
 
 release_urls_dict = {
     # pylint: disable=C0301
@@ -66,16 +67,6 @@ def request(url: str):
     return Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
 
-def get_latest_tag() -> str:
-    """Get the latest release tag from Github"""
-
-    req = request(LATEST_RELEASE_URL)
-
-    with urlopen(req) as response:
-        data = response.read().decode("utf-8")
-        return json.loads(data)["tag_name"]
-
-
 def get_binary_name() -> str:
     """Get an OS specific binary name"""
 
@@ -84,15 +75,14 @@ def get_binary_name() -> str:
 
 def install_cfn_guard():
     """
-    Install the latest cfn-guard to the install_dir to avoid
+    Install the cfn-guard to the install_dir to avoid
     global version conflicts with existing installations, rust,
     and cargo.
     """
-    latest_tag = get_latest_tag()
     binary_name = get_binary_name()
 
     if current_os in supported_oses:
-        url = release_urls_dict[current_os].replace("TAG", latest_tag)
+        url = release_urls_dict[current_os].replace("TAG", GUARD_BINARY_VERSION)
         # Download tarball of release from Github
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             with urlopen(url) as response:
@@ -124,7 +114,7 @@ def install_cfn_guard():
         raise CfnGuardPreCommitError(f"{UNSUPPORTED_OS_MSG}: {current_os}", code=1)
 
 
-def run_cfn_guard(args: Sequence[str]) -> int:
+def run_cfn_guard(args: str) -> int:
     """Pass arguments to and run cfn-guard"""
 
     binary_name = get_binary_name()
@@ -132,10 +122,10 @@ def run_cfn_guard(args: Sequence[str]) -> int:
 
     if os.path.exists(binary_path):
         project_root: str = os.getcwd()
-        cmd = [binary_path] + list(args)
+        cmd = f"{binary_path} {args}"
 
         try:
-            result = subprocess.run(" ".join(cmd), cwd=project_root, shell=True, check=True)
+            result = subprocess.run(cmd, cwd=project_root, shell=True, check=True)
             return result.returncode
         except subprocess.CalledProcessError as e:
             return e.returncode
@@ -147,12 +137,32 @@ def run_cfn_guard(args: Sequence[str]) -> int:
 
 def main(argv: Union[Sequence[str], None] = None) -> int:
     """Entry point for the pre-commit hook"""
-
-    # This only serves to chop the first arg (the filename) when running the script directly
     if argv is None:
         argv = sys.argv[1:]
 
-    return run_cfn_guard(argv)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("filenames", nargs="*", help="Files to validate")
+    parser.add_argument("--operation", action="append", help="cfn-guard operation", required=True)
+    parser.add_argument("--rules", action="append", help="Rules file/directory")
+    parser.add_argument("--dir", action="append", help="Test & rules directory")
+
+    args = parser.parse_args(argv)
+
+    exit_code = 0
+
+    for filename in args.filenames:
+        if args.operation[0] == "validate":
+            cmd = f"validate --rules={args.rules[0]} --data={filename}"
+        elif args.operation[0] == "test":
+            cmd = f"test --dir={args.dir[0]}"
+        else:
+            raise CfnGuardPreCommitError(UNKNOWN_OPERATION_MSG)
+
+        result = run_cfn_guard(cmd)
+        if result != 0:
+            exit_code = result
+
+    return exit_code
 
 
 # Handle invocation from python directly

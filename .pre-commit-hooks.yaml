@@ -5,4 +5,4 @@
     language: python
     verbose: true
     always_run: true
-    pass_filenames: false
+    pass_filenames: true
