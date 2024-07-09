@@ -2,6 +2,7 @@ import { context, getOctokit } from '@actions/github';
 import { ErrorStrings } from './stringEnums';
 import { checkoutPrivateRepository } from './checkoutPrivateRepository';
 import { checkoutPublicRepository } from './checkoutPublicRepository';
+import debugLog from './debugLog';
 import getConfig from './getConfig';
 
 /**
@@ -9,6 +10,7 @@ import getConfig from './getConfig';
  * @returns {Promise<void>}
  */
 export async function checkoutRepository(): Promise<void> {
+  debugLog('Checking out repo');
   const { token } = getConfig();
   const repository = context.payload.repository?.full_name;
 

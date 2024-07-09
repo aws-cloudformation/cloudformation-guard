@@ -90,6 +90,8 @@ jest.mock('@actions/core', () => {
           return 'test-data-path';
         case 'token':
           return 'test-token';
+        case 'path':
+          return '';
         default:
           return '';
       }
@@ -102,6 +104,8 @@ jest.mock('@actions/core', () => {
           return true;
         case 'create-review':
           return true;
+        case 'debug':
+          return false;
         default:
           return false;
       }
