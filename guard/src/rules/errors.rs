@@ -73,16 +73,15 @@ pub enum InternalError {
 pub struct Errors(pub Vec<Error>);
 
 impl std::fmt::Display for Errors {
-    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let vec = self
             .0
             .iter()
             .map(|e| format!("{e:#?}"))
             .collect::<Vec<String>>();
 
-        format!("{:?}", &vec);
-
-        Ok(())
+        let formatted = format!("{:?}", &vec);
+        writeln!(f, "{}", formatted)
     }
 }
 
