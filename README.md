@@ -43,6 +43,7 @@ Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl
 * [AWS Rule Registry](#registry)
 * [Use Guard as a Docker Image](#docker)
 * [Use Guard as a CI tool](#ci)
+* [Use Guard as a pre-commit hook](#pre-commit-hook)
 * [Contribute using the DevContainer in VSCode](#devcontainer)
 * [License](#license)
 
@@ -629,6 +630,31 @@ Guard is great for CI checks with the Junit output format, making the process of
 ![CircleCI](images/circleci.png)
 
 [Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.circleci/config.yml)
+
+## <a name="pre-commit-hook"></a> Use Guard as a pre-commit hook
+
+Guard is available as a pre-commit hook and offers both the `test` and `validate` operations. You can use them by adding a variation of the following configuration to your `.pre-commit-config.yaml` file:
+
+```yaml
+repos:
+-   repo: https://github.com/aws-cloudformation/cloudformation-guard
+    rev: pre-commit-v0.0.1
+    hooks:
+        # Validate
+        -   id: cfn-guard
+            args:
+                - --operation=validate # Specify the validate operation
+                - --rules=path/to/rules/ # Rules directory
+            files: ^path/to/data/.* # Directory to watch for changes and validate against
+        # Test
+        -   id: cfn-guard
+            args:
+                - --operation=test # Specify the test operation
+                - --dir=path/to/resources/ # Directory that contains rules & their tests
+            files: ^path/to/resources.* # Same directory supplied to the --dir arg so that rule and test file changes trigger a run
+```
+
+**NOTE**: The args for the pre-commit hook are not identical to the flags you would pass directly to Guard. In the case of this hook, you cannot pass a `data` flag to `validate` as it depends on the `filenames` from the hook and you can only use the `dir` flag for the `test` hook.
 
 ## <a name="devcontainer"></a> Contribute using the DevContainer in VSCode
 
