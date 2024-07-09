@@ -1,0 +1,135 @@
+name: Pre-Commit Hook CI
+on:
+  push:
+    paths:
+      - 'pre_commit_hooks/**'
+      - 'pre_commit_hooks_tests/**'
+      - '.github/workflows/pre-commit.yml'
+  pull_request:
+    paths:
+      - 'pre_commit_hooks/**'
+      - 'pre_commit_hooks_tests/**'
+      - '.github/workflows/pre-commit.yml'
+jobs:
+  run-unit-tests-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit tests & linters
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          architecture: 'x64'
+      - run: pip install -r requirements-dev.txt
+      - run: pytest ./pre_commit_hooks_tests/
+      - run: ruff check ./pre_commit_hooks_tests/ ./pre_commit_hooks
+      - run: mypy ./pre_commit_hooks/ ./pre_commit_hooks_tests/
+      - run: black --check .
+  validate-integ-test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install pre-commit
+      - run: pre-commit install
+      - run: echo >> ./guard/resources/validate/data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml
+      - run: git add .
+      - name: Run pre-commit hook
+        run: |
+          output=$(pre-commit run 2>&1 || true)
+          echo $output
+          if ! echo $output | grep -q "exit code: 19"; then
+            echo "Expected output not found"
+            exit 1
+          fi
+  test-integ-test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install pre-commit
+      - run: pre-commit install
+      - run: echo >> ./pre_commit_hooks_tests/resources/s3_bucket_logging_enabled.guard
+      - run: git add .
+      - name: Run pre-commit hook
+        run: |
+          output=$(pre-commit run 2>&1 || true)
+          echo $output
+          if ! echo $output | grep -q "exit code: 7"; then
+            echo "Expected output not found"
+            exit 1
+          fi
+  validate-integ-test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install pre-commit
+      - run: pre-commit install
+      - run: echo >> ./guard/resources/validate/data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml
+      - run: git add .
+      - name: Run pre-commit hook
+        run: |
+          output=$(pre-commit run 2>&1 || true)
+          echo $output
+          if ! echo $output | grep -q "exit code: 19"; then
+            echo "Expected output not found"
+            exit 1
+          fi
+  test-integ-test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install pre-commit
+      - run: pre-commit install
+      - run: echo >> ./pre_commit_hooks_tests/resources/s3_bucket_logging_enabled.guard
+      - run: git add .
+      - name: Run pre-commit hook
+        run: |
+          output=$(pre-commit run 2>&1 || true)
+          echo $output
+          if ! echo $output | grep -q "exit code: 7"; then
+            echo "Expected output not found"
+            exit 1
+          fi
+  validate-integ-test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.0'
+      - run: pip install pre-commit
+      - run: pre-commit install
+      - run: '"`n" | Out-File -Append ./guard/resources/validate/data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml'
+      - run: git add .
+      - name: Run pre-commit hook
+        shell: powershell
+        run: |
+          $output = pre-commit run | Out-String
+          if ($output | Select-String -Pattern "exit code: 19") {
+              exit 0
+          } else {
+            Write-Host "Expected output not found"
+            Write-Host $output
+            exit 1
+          }
+  test-integ-test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.0'
+      - run: pip install pre-commit
+      - run: pre-commit install
+      - run: '"`n" | Out-File -Append ./pre_commit_hooks_tests/resources/s3_bucket_logging_enabled.guard'
+      - run: git add .
+      - name: Run pre-commit hook
+        shell: powershell
+        run: |
+          $output = pre-commit run | Out-String
+          if ($output | Select-String -Pattern "exit code: 7") {
+              exit 0
+          } else {
+            Write-Host "Expected output not found"
+            Write-Host $output
+            exit 1
+          }
