@@ -81,7 +81,7 @@ impl std::fmt::Display for Errors {
             .collect::<Vec<String>>();
 
         let formatted = format!("{:?}", &vec);
-        writeln!(f, "{}", formatted)
+        write!(f, "{}", formatted)
     }
 }
 
