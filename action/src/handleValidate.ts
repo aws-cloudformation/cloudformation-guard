@@ -13,20 +13,14 @@ export async function handleValidate(): Promise<SarifReport> {
   debugLog(`Rules path sent to validation: ${rulesPath}`);
   debugLog(`Data path sent to validation: ${dataPath}`);
 
-  let result: SarifReport | null = null;
-
-  try {
-    result = await validate({
-      dataPath: path.length ? addRootPath(dataPath) : dataPath,
-      rulesPath: path.length ? addRootPath(rulesPath) : rulesPath
-    });
-  } catch (error) {
-    console.error(error);
-  }
+  const result = await validate({
+    dataPath: path.length ? addRootPath(dataPath) : dataPath,
+    rulesPath: path.length ? addRootPath(rulesPath) : rulesPath
+  });
 
   debugLog(`Validation result: ${JSON.stringify(result, null, 2)}`);
 
   core.setOutput('result', JSON.stringify(result, null, 2));
 
-  return result as SarifReport;
+  return result;
 }
