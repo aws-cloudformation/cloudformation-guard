@@ -31403,17 +31403,10 @@ async function handleValidate() {
     const { rulesPath, dataPath, path } = (0, getConfig_1.default)();
     (0, debugLog_1.default)(`Rules path sent to validation: ${rulesPath}`);
     (0, debugLog_1.default)(`Data path sent to validation: ${dataPath}`);
-    let result = null;
-    try {
-        result = await (0, cfn_guard_1.validate)({
-            dataPath: path.length ? (0, utils_1.addRootPath)(dataPath) : dataPath,
-            rulesPath: path.length ? (0, utils_1.addRootPath)(rulesPath) : rulesPath
-        });
-    }
-    catch (error) {
-        console.error(error);
-    }
-    (0, debugLog_1.default)(`Validation result: ${JSON.stringify(result, null, 2)}`);
+    const result = await (0, cfn_guard_1.validate)({
+        dataPath: path.length ? (0, utils_1.addRootPath)(dataPath) : dataPath,
+        rulesPath: path.length ? (0, utils_1.addRootPath)(rulesPath) : rulesPath
+    });
     (0, debugLog_1.default)(`Validation result: ${JSON.stringify(result, null, 2)}`);
     core.setOutput('result', JSON.stringify(result, null, 2));
     return result;
