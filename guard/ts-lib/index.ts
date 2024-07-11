@@ -84,11 +84,13 @@ export type SarifShortDescription = {
 const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): SarifReport => {
   const dataPattern = /DATA_STDIN\[(\d+)\]/g;
   const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+  const isWindows = process.platform === 'win32';
 
   const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match: string, index: string) => {
     const fileIndex = parseInt(index, 10) - 1;
     const fileName = dataNames[fileIndex];
-    return fileName ? fileName.replace(/^\//, '') : match;
+
+    return fileName ? fileName.split(isWindows ? '\\' : '/').join('') : match;
   }).replace(rulesPattern, (match: string, index: string) => {
     const ruleIndex = parseInt(index, 10) - 1;
     const ruleName = rulesNames[ruleIndex];
@@ -100,7 +102,7 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
   }));
 
   return JSON.parse(output);
-}
+};
 
   async function readFiles(dirPath: string, supportedExtensions: string[]): Promise<TraversalResult> {
     const fileNames: string[] = [];
