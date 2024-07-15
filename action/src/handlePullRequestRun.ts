@@ -20,6 +20,63 @@ type HandleCreateReviewParams = {
   filesWithViolationsInPr: string[];
 };
 
+type PRCommentResponse = Promise<
+  {
+    id: number;
+    body?: string | undefined;
+    path: string;
+    line: number;
+    position: number;
+  }[]
+>;
+
+/**
+ * Get a list of all PR comments
+ *
+ * @async
+ * @function getPrComments
+ * @returns {Promise<PRCommentResponse>}
+ */
+export async function getPrComments(): PRCommentResponse {
+  debugLog('Getting review comments...');
+  if (!context.payload?.pull_request) return [];
+  const ENDPOINT = 'GET /repos/{owner}/{repo}/pulls/{issue_number}/comments';
+  const { token } = getConfig();
+  const octokit = getOctokit(token);
+  const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
+  const params = {
+    ...context.repo,
+    headers,
+    issue_number: context.payload?.pull_request?.number
+  };
+
+  return (await octokit.request(ENDPOINT, params)).data;
+}
+
+/**
+ * Delete a comment from a pull request.
+ *
+ * @async
+ * @function deleteComment
+ * @param {number} comment_id - The ID of the comment to delete.
+ * @returns {Promise<void>}
+ */
+export async function deleteComment(comment_id: number): Promise<void> {
+  debugLog(`Deleting comment: ${comment_id}`);
+  const { token } = getConfig();
+  const octokit = getOctokit(token);
+  await octokit.request(
+    'DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}',
+    {
+      ...context.repo,
+      comment_id,
+      headers: {
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    }
+  );
+}
+
 /**
  * Handle the creation of a review on a pull request.
  *
@@ -37,17 +94,44 @@ export async function handleCreateReview({
   const { token } = getConfig();
   const { pull_request } = context.payload;
   if (!pull_request) return;
+
   const octokit = getOctokit(token);
 
   const comments = tmpComments.filter(comment =>
     filesWithViolationsInPr.includes(comment.path)
   );
 
+  const prComments = await getPrComments();
+
   debugLog(
     `Creating a review with comments: ${JSON.stringify(comments, null, 2)}`
   );
 
   for (const comment of comments) {
+    // Find existing comments - in case of previous
+    // failures there may be more than one so this
+    // finds multiple matches and iterates over them
+    // to try and delete them
+    const existingCommentIds = prComments
+      .map(
+        prComment =>
+          comment.body === prComment.body &&
+          comment.path === prComment.path &&
+          comment.position === prComment.position &&
+          prComment.id
+      )
+      .filter(Boolean) as number[];
+    if (existingCommentIds.length) {
+      for (const id of existingCommentIds) {
+        try {
+          await deleteComment(id);
+        } catch (error) {
+          // If it can't delete a comment, it shouldn't
+          // break the action
+          console.error(error);
+        }
+      }
+    }
     try {
       await octokit.rest.pulls.createReview({
         ...context.repo,

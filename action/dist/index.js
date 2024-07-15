@@ -7621,15 +7621,16 @@ exports.validate = void 0;
 const guard_1 = __nccwpck_require__(3012);
 const path = __nccwpck_require__(9411);
 const fs = __nccwpck_require__(7147);
-const DATA_FILE_SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json", ".jsn", ".template"];
-const RULE_FILE_SUPPORTED_EXTENSIONS = [".guard", ".ruleset"];
+const DATA_FILE_SUPPORTED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsn', '.template'];
+const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
 const formatOutput = ({ result, rulesNames, dataNames }) => {
     const dataPattern = /DATA_STDIN\[(\d+)\]/g;
     const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+    const isWindows = process.platform === 'win32';
     const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
         const fileIndex = parseInt(index, 10) - 1;
         const fileName = dataNames[fileIndex];
-        return fileName ? fileName.replace(/^\//, '') : match;
+        return fileName ? (isWindows ? fileName.split('\\').join('/') : fileName) : match;
     }).replace(rulesPattern, (match, index) => {
         const ruleIndex = parseInt(index, 10) - 1;
         const ruleName = rulesNames[ruleIndex];
@@ -7648,7 +7649,7 @@ async function readFiles(dirPath, supportedExtensions) {
     const readPromises = files.map(async (file) => {
         const filePath = path.join(dirPath, file.name);
         if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
-            const content = await fs.promises.readFile(filePath, "utf8");
+            const content = await fs.promises.readFile(filePath, 'utf8');
             fileNames.push(filePath);
             fileContents.push(content);
         }
@@ -31223,12 +31224,56 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handlePullRequestRun = exports.handleCreateReview = void 0;
+exports.handlePullRequestRun = exports.handleCreateReview = exports.deleteComment = exports.getPrComments = void 0;
 const github_1 = __nccwpck_require__(5438);
 const stringEnums_1 = __nccwpck_require__(4916);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 const utils_1 = __nccwpck_require__(1314);
+/**
+ * Get a list of all PR comments
+ *
+ * @async
+ * @function getPrComments
+ * @returns {Promise<PRCommentResponse>}
+ */
+async function getPrComments() {
+    (0, debugLog_1.default)('Getting review comments...');
+    if (!github_1.context.payload?.pull_request)
+        return [];
+    const ENDPOINT = 'GET /repos/{owner}/{repo}/pulls/{issue_number}/comments';
+    const { token } = (0, getConfig_1.default)();
+    const octokit = (0, github_1.getOctokit)(token);
+    const headers = { 'X-GitHub-Api-Version': '2022-11-28' };
+    const params = {
+        ...github_1.context.repo,
+        headers,
+        issue_number: github_1.context.payload?.pull_request?.number
+    };
+    return (await octokit.request(ENDPOINT, params)).data;
+}
+exports.getPrComments = getPrComments;
+/**
+ * Delete a comment from a pull request.
+ *
+ * @async
+ * @function deleteComment
+ * @param {number} comment_id - The ID of the comment to delete.
+ * @returns {Promise<void>}
+ */
+async function deleteComment(comment_id) {
+    (0, debugLog_1.default)(`Deleting comment: ${comment_id}`);
+    const { token } = (0, getConfig_1.default)();
+    const octokit = (0, github_1.getOctokit)(token);
+    await octokit.request('DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}', {
+        ...github_1.context.repo,
+        comment_id,
+        headers: {
+            'X-GitHub-Api-Version': '2022-11-28'
+        }
+    });
+}
+exports.deleteComment = deleteComment;
 /**
  * Handle the creation of a review on a pull request.
  *
@@ -31246,8 +31291,31 @@ async function handleCreateReview({ tmpComments, filesWithViolationsInPr }) {
         return;
     const octokit = (0, github_1.getOctokit)(token);
     const comments = tmpComments.filter(comment => filesWithViolationsInPr.includes(comment.path));
+    const prComments = await getPrComments();
     (0, debugLog_1.default)(`Creating a review with comments: ${JSON.stringify(comments, null, 2)}`);
     for (const comment of comments) {
+        // Find existing comments - in case of previous
+        // failures there may be more than one so this
+        // finds multiple matches and iterates over them
+        // to try and delete them
+        const existingCommentIds = prComments
+            .map(prComment => comment.body === prComment.body &&
+            comment.path === prComment.path &&
+            comment.position === prComment.position &&
+            prComment.id)
+            .filter(Boolean);
+        if (existingCommentIds.length) {
+            for (const id of existingCommentIds) {
+                try {
+                    await deleteComment(id);
+                }
+                catch (error) {
+                    // If it can't delete a comment, it shouldn't
+                    // break the action
+                    console.error(error);
+                }
+            }
+        }
         try {
             await octokit.rest.pulls.createReview({
                 ...github_1.context.repo,
