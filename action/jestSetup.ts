@@ -71,7 +71,8 @@ jest.mock('@actions/github', () => {
           } as never),
           createReview: jest.fn()
         }
-      }
+      },
+      request: jest.fn().mockReturnValue({ data: [] })
     })
   };
 });
