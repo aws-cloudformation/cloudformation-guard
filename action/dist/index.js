@@ -31230,6 +31230,13 @@ const stringEnums_1 = __nccwpck_require__(4916);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 const utils_1 = __nccwpck_require__(1314);
+/**
+ * Get a list of all PR comments
+ *
+ * @async
+ * @function getPrComments
+ * @returns {Promise<PRCommentResponse>}
+ */
 async function getPrComments() {
     (0, debugLog_1.default)('Getting review comments...');
     if (!github_1.context.payload?.pull_request)
@@ -31246,6 +31253,14 @@ async function getPrComments() {
     return (await octokit.request(ENDPOINT, params)).data;
 }
 exports.getPrComments = getPrComments;
+/**
+ * Delete a comment from a pull request.
+ *
+ * @async
+ * @function deleteComment
+ * @param {number} comment_id - The ID of the comment to delete.
+ * @returns {Promise<void>}
+ */
 async function deleteComment(comment_id) {
     (0, debugLog_1.default)(`Deleting comment: ${comment_id}`);
     const { token } = (0, getConfig_1.default)();

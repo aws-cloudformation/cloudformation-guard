@@ -30,6 +30,13 @@ type PRCommentResponse = Promise<
   }[]
 >;
 
+/**
+ * Get a list of all PR comments
+ *
+ * @async
+ * @function getPrComments
+ * @returns {Promise<PRCommentResponse>}
+ */
 export async function getPrComments(): PRCommentResponse {
   debugLog('Getting review comments...');
   if (!context.payload?.pull_request) return [];
@@ -46,6 +53,14 @@ export async function getPrComments(): PRCommentResponse {
   return (await octokit.request(ENDPOINT, params)).data;
 }
 
+/**
+ * Delete a comment from a pull request.
+ *
+ * @async
+ * @function deleteComment
+ * @param {number} comment_id - The ID of the comment to delete.
+ * @returns {Promise<void>}
+ */
 export async function deleteComment(comment_id: number): Promise<void> {
   debugLog(`Deleting comment: ${comment_id}`);
   const { token } = getConfig();
