@@ -13,7 +13,7 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
     const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
         const fileIndex = parseInt(index, 10) - 1;
         const fileName = dataNames[fileIndex];
-        return fileName ? fileName.split(isWindows ? '\\' : '/').join('') : match;
+        return fileName ? (isWindows ? fileName.split('\\').join('/') : fileName) : match;
     }).replace(rulesPattern, (match, index) => {
         const ruleIndex = parseInt(index, 10) - 1;
         const ruleName = rulesNames[ruleIndex];
