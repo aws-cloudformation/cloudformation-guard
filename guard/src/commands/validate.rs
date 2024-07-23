@@ -282,9 +282,8 @@ impl Executable for Validate {
                         if file.path().is_file() {
                             let name = file
                                 .path()
-                                // path output occasionally includes double slashes '//'
-                                // without calling canonicalize()
-                                .canonicalize()?
+                                .to_path_buf()
+                                .into_os_string()
                                 .to_str()
                                 .map_or("".to_string(), String::from);
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
