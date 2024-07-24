@@ -42,6 +42,7 @@ Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl
 * [Built-in functions & stateful rules](#functions)
 * [AWS Rule Registry](#registry)
 * [Use Guard as a Docker Image](#docker)
+* [Use Guard as a Github Action](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/action#readme)
 * [Use Guard as a CI tool](#ci)
 * [Use Guard as a pre-commit hook](#pre-commit-hook)
 * [Contribute using the DevContainer in VSCode](#devcontainer)
