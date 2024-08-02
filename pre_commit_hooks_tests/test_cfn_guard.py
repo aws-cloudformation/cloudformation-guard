@@ -11,7 +11,7 @@ import os.path
 
 
 def get_guard_resource_path(relative_path):
-    return os.path.join(os.path.abspath(__file__ + "/../../")) + "/guard/resources/" + relative_path
+    return os.path.join(os.path.abspath(__file__ + "/../../")) + "/guard/resources" + relative_path
 
 
 def test_validate_failing_template():
@@ -30,17 +30,16 @@ def test_validate_failing_template():
 
 def test_validate_passing_template():
     """Test a success validate case."""
-    rule = get_guard_resource_path("/validate/rules-dir/s3_bucket_public_read_prohibited.guard")
+    first_rule = get_guard_resource_path(
+        "/validate/rules-dir/s3_bucket_public_read_prohibited.guard"
+    )
+    second_rule = get_guard_resource_path(
+        "/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard"
+    )
     data = get_guard_resource_path(
         "/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml"
     )
-    ret = main(
-        [
-            data,
-            "--operation=validate",
-            f"--rules={rule}",
-        ]
-    )
+    ret = main([data, "--operation=validate", f"--rules={first_rule}", f"--rules={second_rule}"])
     assert ret == 0
 
 
