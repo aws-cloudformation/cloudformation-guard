@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/aws-cloudformation/cloudformation-guard
-    rev: pre-commit-v0.0.1
+    rev: pre-commit-v0.0.2
     hooks:
         -   id: cfn-guard
             args:

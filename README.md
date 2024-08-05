@@ -639,7 +639,7 @@ Guard is available as a pre-commit hook and offers both the `test` and `validate
 ```yaml
 repos:
 -   repo: https://github.com/aws-cloudformation/cloudformation-guard
-    rev: pre-commit-v0.0.1
+    rev: pre-commit-v0.0.2
     hooks:
         # Validate
         -   id: cfn-guard
@@ -680,3 +680,4 @@ repos:
 ## License
 
 This project is licensed under the Apache-2.0 License.
+
