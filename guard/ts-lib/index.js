@@ -28,9 +28,9 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
 async function readFiles(dirPath, supportedExtensions) {
     const fileNames = [];
     const fileContents = [];
-    const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const files = await fs.promises.readdir(dirPath, { withFileTypes: true, recursive: true });
     const readPromises = files.map(async (file) => {
-        const filePath = path.join(dirPath, file.name);
+        const filePath = path.join(file.path, file.name);
         if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
             const content = await fs.promises.readFile(filePath, 'utf8');
             fileNames.push(filePath);
