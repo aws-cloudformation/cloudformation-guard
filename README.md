@@ -173,7 +173,7 @@ These tenets help guide the development of the Guard DSL:
 By default this is built for macOS-12 (Monterey). See [OS Matrix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
 
 1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
-2. Cut-n-paste the commands below (change version=X for other versions)
+2. Cut-n-paste the commands below (default latest, add `-s -- -v <VERSION>` for other versions ie. `-s -- -v 3.1.1`)
 ```bash
 $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
@@ -190,7 +190,7 @@ You would not need to modify `$PATH` this way.
 ##### Ubuntu
 
 1. Open any terminal of your choice
-2. Cut-n-paste the commands below (change version=X for other versions)
+2. Cut-n-paste the commands below (default latest, add `-s -- -v <VERSION>` for other versions ie. `-s -- -v 3.1.1`)
 ```bash
 $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
