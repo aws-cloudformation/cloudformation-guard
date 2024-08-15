@@ -71,8 +71,8 @@ get_version() {
 		esac
 	done
 	# If version is not provided default to the latest version.
-	if [[ -z "$VERSION" ]] ; then
-		echo $(get_latest_release)
+	if [ -z "$VERSION" ] ; then
+		get_latest_release
 	else
 		echo "$VERSION"
 	fi
