@@ -10,8 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::Location;
-use crate::rules::path_value::{MapValue, PathAwareValue};
+use crate::rules::path_value::{Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -24,8 +23,10 @@ use inflector::cases::*;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
+use std::convert::TryFrom;
 use std::rc::Rc;
 use std::vec::Vec;
+
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: Rc<PathAwareValue>,
     resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
@@ -1174,22 +1175,74 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
-pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
-    let expected_num_args = match name {
-        "join" => 2,
-        "substring" | "regex_replace" => 3,
-        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" | "parse_string"
-        | "parse_boolean" | "parse_float" | "parse_int" | "parse_char" => 1,
-        _ => {
-            return Err(Error::ParseError(format!(
-                "no such function named {name} exists"
-            )));
+#[derive(Debug)]
+pub(crate) enum Function {
+    Join,
+    Substring,
+    RegexReplace,
+    Count,
+    JsonParse,
+    ToUpper,
+    ToLower,
+    UrlDecode,
+    ParseString,
+    ParseBoolean,
+    ParseFloat,
+    ParseInt,
+    ParseChar,
+}
+
+impl TryFrom<&str> for Function {
+    type Error = Error;
+
+    fn try_from(name: &str) -> std::result::Result<Self, Self::Error> {
+        match name {
+            "join" => Ok(Function::Join),
+            "substring" => Ok(Function::Substring),
+            "regex_replace" => Ok(Function::RegexReplace),
+            "count" => Ok(Function::Count),
+            "json_parse" => Ok(Function::JsonParse),
+            "to_upper" => Ok(Function::ToUpper),
+            "to_lower" => Ok(Function::ToLower),
+            "url_decode" => Ok(Function::UrlDecode),
+            "parse_string" => Ok(Function::ParseString),
+            "parse_boolean" => Ok(Function::ParseBoolean),
+            "parse_float" => Ok(Function::ParseFloat),
+            "parse_int" => Ok(Function::ParseInt),
+            "parse_char" => Ok(Function::ParseChar),
+            _ => Err(Error::ParseError(format!(
+                "No function with the name '{name}' exists.",
+            ))),
         }
+    }
+}
+
+pub(crate) fn validate_number_of_params(func: &Function, num_args: usize) -> Result<()> {
+    let valid_num_args = match func {
+        Function::Join => vec![2],
+        Function::Substring | Function::RegexReplace => vec![3],
+        Function::Count
+        | Function::JsonParse
+        | Function::ToUpper
+        | Function::ToLower
+        | Function::UrlDecode
+        | Function::ParseString
+        | Function::ParseBoolean
+        | Function::ParseFloat
+        | Function::ParseInt
+        | Function::ParseChar => vec![1],
     };
 
-    if expected_num_args != num_args {
+    if !valid_num_args.contains(&num_args) {
         return Err(Error::ParseError(format!(
-            "{name} function requires {expected_num_args} arguments be passed, but received {num_args}"
+            "{:?} function requires {} arguments be passed, but received {}",
+            func,
+            if valid_num_args.len() == 1 {
+                valid_num_args[0].to_string()
+            } else {
+                format!("either {} or {}", valid_num_args[0], valid_num_args[1])
+            },
+            num_args
         )));
     }
 
@@ -1198,13 +1251,13 @@ pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<(
 
 // TODO: look into the possibility of abstracting functions into structs that all implement
 pub(crate) fn try_handle_function_call(
-    fn_name: &str,
+    func: Function,
     args: &[Vec<QueryResult>],
 ) -> Result<Vec<Option<PathAwareValue>>> {
-    let value = match fn_name {
-        "count" => vec![Some(count(&args[0]))],
-        "json_parse" => json_parse(&args[0])?,
-        "regex_replace" => {
+    let value = match func {
+        Function::Count => vec![Some(count(&args[0]))],
+        Function::JsonParse => json_parse(&args[0])?,
+        Function::RegexReplace => {
             let substring_err_msg = |index| {
                 let arg = match index {
                     2 => "second",
@@ -1233,7 +1286,7 @@ pub(crate) fn try_handle_function_call(
 
             regex_replace(&args[0], extracted_expr, replaced_expr)?
         }
-        "substring" => {
+        Function::Substring => {
             let substring_err_msg = |index| {
                 let arg = match index {
                     2 => "second",
@@ -1264,9 +1317,9 @@ pub(crate) fn try_handle_function_call(
 
             substring(&args[0], from, to)?
         }
-        "to_upper" => to_upper(&args[0])?,
-        "to_lower" => to_lower(&args[0])?,
-        "join" => {
+        Function::ToUpper => to_upper(&args[0])?,
+        Function::ToLower => to_lower(&args[0])?,
+        Function::Join => {
             let res = match &args[1][0] {
                 QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
@@ -1284,13 +1337,12 @@ pub(crate) fn try_handle_function_call(
 
             vec![Some(res)]
         }
-        "url_decode" => url_decode(&args[0])?,
-        "parse_int" => parse_int(&args[0])?,
-        "parse_float" => parse_float(&args[0])?,
-        "parse_string" => parse_str(&args[0])?,
-        "parse_boolean" => parse_bool(&args[0])?,
-        "parse_char" => parse_char(&args[0])?,
-        function => return Err(Error::ParseError(format!("No function named {function}"))),
+        Function::UrlDecode => url_decode(&args[0])?,
+        Function::ParseInt => parse_int(&args[0])?,
+        Function::ParseFloat => parse_float(&args[0])?,
+        Function::ParseString => parse_str(&args[0])?,
+        Function::ParseBoolean => parse_bool(&args[0])?,
+        Function::ParseChar => parse_char(&args[0])?,
     };
 
     Ok(value)
@@ -2266,7 +2318,8 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
     parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Vec<QueryResult>> {
-    validate_number_of_params(name, parameters.len())?;
+    let func = Function::try_from(name)?;
+    validate_number_of_params(&func, parameters.len())?;
     let args =
         parameters
             .iter()
@@ -2290,7 +2343,7 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(try_handle_function_call(name, &args)?
+    Ok(try_handle_function_call(func, &args)?
         .into_iter()
         .flatten()
         .map(Rc::new)

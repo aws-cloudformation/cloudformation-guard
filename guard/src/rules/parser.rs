@@ -1093,11 +1093,8 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
         var_name,
         delimited(
             char('('),
-            separated_nonempty_list(
-                char(','),
-                cut(delimited(multispace0, let_value, multispace0)),
-            ),
-            cut(char(')')),
+            separated_list(char(','), delimited(multispace0, let_value, multispace0)),
+            char(')'),
         ),
     ))(input)
 }
@@ -1715,13 +1712,10 @@ fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
     delimited(
         char('('),
         map(
-            separated_nonempty_list(
-                char(','),
-                cut(delimited(multispace0, var_name, multispace0)),
-            ),
+            separated_list(char(','), delimited(multispace0, var_name, multispace0)),
             |v| v.into_iter().collect::<indexmap::IndexSet<String>>(),
         ),
-        cut(char(')')),
+        char(')'),
     )(input)
 }
 

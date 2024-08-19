@@ -364,15 +364,13 @@ impl<'loc> std::fmt::Display for AccessQuery<'loc> {
 
 impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}(", self.name)?;
-        let last_index = self.parameters.len() - 1;
-        for (idx, each_param) in self.parameters.iter().enumerate() {
-            write!(f, "{}", each_param)?;
-            if idx != last_index {
-                write!(f, ", ")?;
-            }
-        }
-        write!(f, ")")?;
+        let params = self
+            .parameters
+            .iter()
+            .map(|each| each.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        write!(f, "({})", params)?;
         Ok(())
     }
 }
