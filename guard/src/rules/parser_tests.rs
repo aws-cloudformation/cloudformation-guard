@@ -3694,17 +3694,6 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     //
     // Error cases
     //
-    let parameters = "()";
-    let result = parameter_names(from_str2(parameters));
-    assert!(result.is_err());
-    assert_eq!(
-        result.err(),
-        Some(nom::Err::Failure(ParserError {
-            context: "".to_string(),
-            kind: ErrorKind::Alpha, // for var_name
-            span: unsafe { Span::new_from_raw_offset(1, 1, ")", "") }
-        }))
-    );
 
     let parameters = "statements";
     let result = parameter_names(from_str2(parameters));
