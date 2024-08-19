@@ -1,7 +1,7 @@
 # This ruleset checks if Parameters are configured correctly.
-# It is usefull if you must have the same parameters in multiple templates (e.g. for tagging or name schema)
+# It is useful if you must have the same parameters in multiple templates (e.g. for tagging or name schema)
 
-# Exception that proves the rule. ;D Maybe you have templates which does not need those parameters. In this scenario we have the cloudformation templates from https://github.com/aws-solutions/aws-waf-security-automations in our template dir. The exlude list is based of the template description. You can use Metadata or other ways as well. 
+# Exception that proves the rule. ;D Maybe you have templates which does not need those parameters. In this scenario we have the cloudformation templates from https://github.com/aws-solutions/aws-waf-security-automations in our template dir. The exclude list is based of the template description. You can use Metadata or other ways as well. 
 let exclude = [
   /(SO0006-FA) - Security Automations for AWS WAF - FA:/,
   /(SO0006-WebACL) - Security Automations for AWS WAF:/,
