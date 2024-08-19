@@ -1,8 +1,9 @@
 #!/bin/sh
-# This scripts downloads and installs cfn-guard latest version from github releases
-# It detects platforms, downloads the pre-built binary for the latest version installs
+# This script downloads and installs cfn-guard from GitHub releases.
+# It uses the latest release by default, but can be used to install a specific version using the -v option.
+# It detects platforms, downloads the pre-built binary for the specified version (default latest), installs
 # it in the ~/.guard/$MAJOR_VER/cfn-guard-v$MAJOR_VER-$OS_TYPE-latest/cfn-guard and symlinks ~/.guard/bin
-# to the latest one
+# to the last installed binary.
 
 main() {
 	if ! (check_cmd curl || check_cmd wget); then
@@ -17,11 +18,12 @@ main() {
 
 	get_os_type
 	get_arch_type
-	get_latest_release |
+	get_version "$@" |
 		while
-			read -r MAJOR_VER
 			read -r VERSION
 		do
+			echo "Installing cfn-guard version '${VERSION}'..."
+			MAJOR_VER=$(echo "$VERSION" | awk -F '.' '{ print $1 }')
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
 			get_os_type
@@ -56,10 +58,29 @@ get_os_type() {
 	esac
 }
 
+get_version() {
+	# Get the version from the -v option, if provided.
+	while getopts 'v:' OPTION; do
+		case "$OPTION" in
+			v)
+				VERSION="$OPTARG"
+				;;
+			?)
+				err "Usage: install-guard.sh [-v <version>]"
+				;;
+		esac
+	done
+	# If version is not provided default to the latest version.
+	if [ -z "$VERSION" ] ; then
+		get_latest_release
+	else
+		echo "$VERSION"
+	fi
+}
+
 get_latest_release() {
 	download https://api.github.com/repos/aws-cloudformation/cloudformation-guard/releases/latest |
-		awk -F '"' '/tag_name/ { print $4 }' |
-		awk -F '.' '{ print $1 "\n" $0 }'
+		awk -F '"' '/tag_name/ { print $4 }'
 }
 
 err() {
@@ -108,4 +129,5 @@ get_arch_type() {
 	esac
 }
 
-main
+# Pass any arguments provided to main function.
+main "$@"
