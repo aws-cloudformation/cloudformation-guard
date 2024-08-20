@@ -370,8 +370,7 @@ impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
             .map(|each| each.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        write!(f, "({})", params)?;
-        Ok(())
+        write!(f, "({})", params)
     }
 }
 

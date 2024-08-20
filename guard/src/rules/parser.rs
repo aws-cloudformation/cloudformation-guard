@@ -24,6 +24,7 @@ use nom::{FindSubstring, InputTake, Slice};
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
+use crate::rules::eval_context::FunctionName;
 use crate::rules::exprs::*;
 use crate::rules::path_value::{Path, PathAwareValue};
 use crate::rules::values::*;
@@ -1065,11 +1066,32 @@ fn function_expr(input: Span) -> IResult<Span, FunctionExpr> {
         column: input.get_column() as u32,
     };
     let (input, (name, parameters)) = call_expr(input)?;
+
+    let name = FunctionName::try_from(name.as_str()).map_err(|e| {
+        nom::Err::Error(ParserError {
+            context: e.to_string(),
+            span: input,
+            kind: ErrorKind::AlphaNumeric,
+        })
+    })?;
+
+    if parameters.len() != name.get_expected_number_of_args() {
+        return Err(nom::Err::Error(ParserError {
+            context: format!(
+                "function: {name} requires: {} parameters to be passed, but received: {}",
+                name.get_expected_number_of_args(),
+                parameters.len()
+            ),
+            span: input,
+            kind: ErrorKind::AlphaNumeric,
+        }));
+    }
+
     Ok((
         input,
         FunctionExpr {
             location,
-            name,
+            name: name.to_string(),
             parameters,
         },
     ))

@@ -3712,7 +3712,7 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     assert!(result.is_err());
     assert_eq!(
         result.err(),
-        Some(nom::Err::Failure(ParserError {
+        Some(nom::Err::Error(ParserError {
             // expect failure to not close
             kind: ErrorKind::Char, // no ')'
             context: "".to_string(),
@@ -3725,11 +3725,11 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     assert!(result.is_err());
     assert_eq!(
         result.err(),
-        Some(nom::Err::Failure(ParserError {
+        Some(nom::Err::Error(ParserError {
             // expect failure to not close
-            kind: ErrorKind::Alpha, // due to var_name
+            kind: ErrorKind::Char, // due to var_name
             context: "".to_string(),
-            span: unsafe { Span::new_from_raw_offset("(statements,".len(), 1, ")", "") }
+            span: unsafe { Span::new_from_raw_offset("(statements".len(), 1, ",)", "") }
         }))
     );
 

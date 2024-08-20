@@ -1176,7 +1176,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 }
 
 #[derive(Debug)]
-pub(crate) enum Function {
+pub(crate) enum FunctionName {
     Join,
     Substring,
     RegexReplace,
@@ -1192,24 +1192,64 @@ pub(crate) enum Function {
     ParseChar,
 }
 
-impl TryFrom<&str> for Function {
+impl FunctionName {
+    pub fn get_expected_number_of_args(&self) -> usize {
+        match self {
+            FunctionName::Join => 2,
+            FunctionName::Substring | FunctionName::RegexReplace => 3,
+            FunctionName::Count
+            | FunctionName::JsonParse
+            | FunctionName::ToUpper
+            | FunctionName::ToLower
+            | FunctionName::UrlDecode
+            | FunctionName::ParseString
+            | FunctionName::ParseBoolean
+            | FunctionName::ParseFloat
+            | FunctionName::ParseInt
+            | FunctionName::ParseChar => 1,
+        }
+    }
+}
+
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            FunctionName::Join => "join",
+            FunctionName::Substring => "substring",
+            FunctionName::RegexReplace => "regex_replace",
+            FunctionName::Count => "count",
+            FunctionName::JsonParse => "json_parse",
+            FunctionName::ToUpper => "to_upper",
+            FunctionName::ToLower => "to_lower",
+            FunctionName::UrlDecode => "url_decode",
+            FunctionName::ParseString => "parse_string",
+            FunctionName::ParseBoolean => "parse_boolean",
+            FunctionName::ParseFloat => "parse_float",
+            FunctionName::ParseInt => "parse_int",
+            FunctionName::ParseChar => "parse_char",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+impl TryFrom<&str> for FunctionName {
     type Error = Error;
 
     fn try_from(name: &str) -> std::result::Result<Self, Self::Error> {
         match name {
-            "join" => Ok(Function::Join),
-            "substring" => Ok(Function::Substring),
-            "regex_replace" => Ok(Function::RegexReplace),
-            "count" => Ok(Function::Count),
-            "json_parse" => Ok(Function::JsonParse),
-            "to_upper" => Ok(Function::ToUpper),
-            "to_lower" => Ok(Function::ToLower),
-            "url_decode" => Ok(Function::UrlDecode),
-            "parse_string" => Ok(Function::ParseString),
-            "parse_boolean" => Ok(Function::ParseBoolean),
-            "parse_float" => Ok(Function::ParseFloat),
-            "parse_int" => Ok(Function::ParseInt),
-            "parse_char" => Ok(Function::ParseChar),
+            "join" => Ok(FunctionName::Join),
+            "substring" => Ok(FunctionName::Substring),
+            "regex_replace" => Ok(FunctionName::RegexReplace),
+            "count" => Ok(FunctionName::Count),
+            "json_parse" => Ok(FunctionName::JsonParse),
+            "to_upper" => Ok(FunctionName::ToUpper),
+            "to_lower" => Ok(FunctionName::ToLower),
+            "url_decode" => Ok(FunctionName::UrlDecode),
+            "parse_string" => Ok(FunctionName::ParseString),
+            "parse_boolean" => Ok(FunctionName::ParseBoolean),
+            "parse_float" => Ok(FunctionName::ParseFloat),
+            "parse_int" => Ok(FunctionName::ParseInt),
+            "parse_char" => Ok(FunctionName::ParseChar),
             _ => Err(Error::ParseError(format!(
                 "No function with the name '{name}' exists.",
             ))),
@@ -1217,32 +1257,12 @@ impl TryFrom<&str> for Function {
     }
 }
 
-pub(crate) fn validate_number_of_params(func: &Function, num_args: usize) -> Result<()> {
-    let valid_num_args = match func {
-        Function::Join => vec![2],
-        Function::Substring | Function::RegexReplace => vec![3],
-        Function::Count
-        | Function::JsonParse
-        | Function::ToUpper
-        | Function::ToLower
-        | Function::UrlDecode
-        | Function::ParseString
-        | Function::ParseBoolean
-        | Function::ParseFloat
-        | Function::ParseInt
-        | Function::ParseChar => vec![1],
-    };
+pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
+    let expected_num_args = FunctionName::try_from(name)?.get_expected_number_of_args();
 
-    if !valid_num_args.contains(&num_args) {
+    if expected_num_args != num_args {
         return Err(Error::ParseError(format!(
-            "{:?} function requires {} arguments be passed, but received {}",
-            func,
-            if valid_num_args.len() == 1 {
-                valid_num_args[0].to_string()
-            } else {
-                format!("either {} or {}", valid_num_args[0], valid_num_args[1])
-            },
-            num_args
+            "{name} function requires {expected_num_args} arguments be passed, but received {num_args}"
         )));
     }
 
@@ -1251,13 +1271,13 @@ pub(crate) fn validate_number_of_params(func: &Function, num_args: usize) -> Res
 
 // TODO: look into the possibility of abstracting functions into structs that all implement
 pub(crate) fn try_handle_function_call(
-    func: Function,
+    func: FunctionName,
     args: &[Vec<QueryResult>],
 ) -> Result<Vec<Option<PathAwareValue>>> {
     let value = match func {
-        Function::Count => vec![Some(count(&args[0]))],
-        Function::JsonParse => json_parse(&args[0])?,
-        Function::RegexReplace => {
+        FunctionName::Count => vec![Some(count(&args[0]))],
+        FunctionName::JsonParse => json_parse(&args[0])?,
+        FunctionName::RegexReplace => {
             let substring_err_msg = |index| {
                 let arg = match index {
                     2 => "second",
@@ -1286,7 +1306,7 @@ pub(crate) fn try_handle_function_call(
 
             regex_replace(&args[0], extracted_expr, replaced_expr)?
         }
-        Function::Substring => {
+        FunctionName::Substring => {
             let substring_err_msg = |index| {
                 let arg = match index {
                     2 => "second",
@@ -1317,9 +1337,9 @@ pub(crate) fn try_handle_function_call(
 
             substring(&args[0], from, to)?
         }
-        Function::ToUpper => to_upper(&args[0])?,
-        Function::ToLower => to_lower(&args[0])?,
-        Function::Join => {
+        FunctionName::ToUpper => to_upper(&args[0])?,
+        FunctionName::ToLower => to_lower(&args[0])?,
+        FunctionName::Join => {
             let res = match &args[1][0] {
                 QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
@@ -1337,12 +1357,12 @@ pub(crate) fn try_handle_function_call(
 
             vec![Some(res)]
         }
-        Function::UrlDecode => url_decode(&args[0])?,
-        Function::ParseInt => parse_int(&args[0])?,
-        Function::ParseFloat => parse_float(&args[0])?,
-        Function::ParseString => parse_str(&args[0])?,
-        Function::ParseBoolean => parse_bool(&args[0])?,
-        Function::ParseChar => parse_char(&args[0])?,
+        FunctionName::UrlDecode => url_decode(&args[0])?,
+        FunctionName::ParseInt => parse_int(&args[0])?,
+        FunctionName::ParseFloat => parse_float(&args[0])?,
+        FunctionName::ParseString => parse_str(&args[0])?,
+        FunctionName::ParseBoolean => parse_bool(&args[0])?,
+        FunctionName::ParseChar => parse_char(&args[0])?,
     };
 
     Ok(value)
@@ -2318,8 +2338,8 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
     parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Vec<QueryResult>> {
-    let func = Function::try_from(name)?;
-    validate_number_of_params(&func, parameters.len())?;
+    let func = FunctionName::try_from(name)?;
+    validate_number_of_params(&func.to_string(), parameters.len())?;
     let args =
         parameters
             .iter()
