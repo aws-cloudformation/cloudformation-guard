@@ -7,6 +7,8 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
 
+use super::eval_context::FunctionName;
+
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
     pub(crate) line: u32,
@@ -215,7 +217,7 @@ pub(crate) struct ParameterizedNamedRuleClause<'loc> {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FunctionExpr<'loc> {
     pub(crate) parameters: Vec<LetValue<'loc>>,
-    pub(crate) name: String,
+    pub(crate) name: FunctionName,
     pub(crate) location: FileLocation<'loc>,
 }
 
@@ -369,8 +371,8 @@ impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
             .iter()
             .map(|each| each.to_string())
             .collect::<Vec<_>>()
-            .join(",");
-        write!(f, "({})", params)
+            .join(", ");
+        write!(f, "{}({})", &self.name, params)
     }
 }
 

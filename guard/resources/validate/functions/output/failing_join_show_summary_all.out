@@ -25,7 +25,7 @@ Resource = newServer {
 
         }
       }
-      Check =  a,b EQUALS  (%collection,",") {
+      Check =  a,b EQUALS  join(%collection, ",") {
         ComparisonError {
           Message          = Violation: The joined value does not match the expected result
           Error            = Check was not compliant as property [/Resources/newServer/Collection/0[L:12,C:8]] was not present in [(resolved, Path=/Resources/newServer/Collection/0[L:12,C:8] Value="a,b,c")]

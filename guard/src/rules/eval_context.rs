@@ -1175,7 +1175,8 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
-#[derive(Debug)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum FunctionName {
     Join,
     Substring,
@@ -1255,18 +1256,6 @@ impl TryFrom<&str> for FunctionName {
             ))),
         }
     }
-}
-
-pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
-    let expected_num_args = FunctionName::try_from(name)?.get_expected_number_of_args();
-
-    if expected_num_args != num_args {
-        return Err(Error::ParseError(format!(
-            "{name} function requires {expected_num_args} arguments be passed, but received {num_args}"
-        )));
-    }
-
-    Ok(())
 }
 
 // TODO: look into the possibility of abstracting functions into structs that all implement
@@ -2334,12 +2323,10 @@ pub(crate) fn simplified_json_from_root<'value>(
 }
 
 pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
-    name: &str,
+    name: &FunctionName,
     parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Vec<QueryResult>> {
-    let func = FunctionName::try_from(name)?;
-    validate_number_of_params(&func.to_string(), parameters.len())?;
     let args =
         parameters
             .iter()
@@ -2363,7 +2350,7 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(try_handle_function_call(func, &args)?
+    Ok(try_handle_function_call(name.to_owned(), &args)?
         .into_iter()
         .flatten()
         .map(Rc::new)
