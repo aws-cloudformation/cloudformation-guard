@@ -1258,79 +1258,138 @@ impl TryFrom<&str> for FunctionName {
     }
 }
 
+struct CountFunction;
+struct JsonParseFunction;
+struct RegexReplaceFunction;
+struct SubstringFunction;
+struct ToUpperFunction;
+struct ToLowerFunction;
+struct JoinFunction;
+struct UrlDecodeFunction;
+struct ParseIntFunction;
+struct ParseFloatFunction;
+struct ParseStringFunction;
+struct ParseBooleanFunction;
+struct ParseCharFunction;
+
 trait Callable {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>>;
 }
 
 impl Callable for FunctionName {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
-        let value = match self {
-            FunctionName::Count => vec![Some(count(&args[0]))],
-            FunctionName::JsonParse => json_parse(&args[0])?,
-            FunctionName::RegexReplace => {
-                let substring_err_msg = |index| {
-                    let arg = match index {
-                        2 => "second",
-                        3 => "third",
-                        _ => unreachable!(),
-                    };
+        match self {
+            FunctionName::Count => CountFunction.call(args),
+            FunctionName::JsonParse => JsonParseFunction.call(args),
+            FunctionName::RegexReplace => RegexReplaceFunction.call(args),
+            FunctionName::Substring => SubstringFunction.call(args),
+            FunctionName::ToUpper => ToUpperFunction.call(args),
+            FunctionName::ToLower => ToLowerFunction.call(args),
+            FunctionName::Join => JoinFunction.call(args),
+            FunctionName::UrlDecode => UrlDecodeFunction.call(args),
+            FunctionName::ParseInt => ParseIntFunction.call(args),
+            FunctionName::ParseFloat => ParseFloatFunction.call(args),
+            FunctionName::ParseString => ParseStringFunction.call(args),
+            FunctionName::ParseBoolean => ParseBooleanFunction.call(args),
+            FunctionName::ParseChar => ParseCharFunction.call(args),
+        }
+    }
+}
 
-                    format!("regex_replace function requires the {arg} argument to be a string")
-                };
+impl Callable for CountFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        Ok(vec![Some(count(&args[0]))])
+    }
+}
 
-                let extracted_expr = match &args[1][0] {
-                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                        PathAwareValue::String((_, s)) => s,
-                        _ => return Err(Error::ParseError(substring_err_msg(2))),
-                    },
-                    _ => return Err(Error::ParseError(substring_err_msg(2))),
-                };
+impl Callable for JsonParseFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        json_parse(&args[0])
+    }
+}
 
-                let replaced_expr = match &args[2][0] {
-                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                        PathAwareValue::String((_, s)) => s,
-                        _ => return Err(Error::ParseError(substring_err_msg(3))),
-                    },
-                    _ => return Err(Error::ParseError(substring_err_msg(3))),
-                };
+impl Callable for RegexReplaceFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
 
-                regex_replace(&args[0], extracted_expr, replaced_expr)?
-            }
-            FunctionName::Substring => {
-                let substring_err_msg = |index| {
-                    let arg = match index {
-                        2 => "second",
-                        3 => "third",
-                        _ => unreachable!(),
-                    };
+            format!("regex_replace function requires the {arg} argument to be a string")
+        };
 
-                    format!("substring function requires the {arg} argument to be a number")
-                };
+        let extracted_expr = match &args[1][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
 
-                let from = match &args[1][0] {
-                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                        _ => return Err(Error::ParseError(substring_err_msg(2))),
-                    },
-                    _ => return Err(Error::ParseError(substring_err_msg(2))),
-                };
+        let replaced_expr = match &args[2][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
 
-                let to = match &args[2][0] {
-                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                        _ => return Err(Error::ParseError(substring_err_msg(3))),
-                    },
-                    _ => return Err(Error::ParseError(substring_err_msg(3))),
-                };
+        regex_replace(&args[0], extracted_expr, replaced_expr)
+    }
+}
 
-                substring(&args[0], from, to)?
-            }
-            FunctionName::ToUpper => to_upper(&args[0])?,
-            FunctionName::ToLower => to_lower(&args[0])?,
-            FunctionName::Join => {
-                let res = match &args[1][0] {
+impl Callable for SubstringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
+
+            format!("substring function requires the {arg} argument to be a number")
+        };
+
+        let from = match &args[1][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
+
+        let to = match &args[2][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
+
+        substring(&args[0], from, to)
+    }
+}
+
+impl Callable for ToUpperFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_upper(&args[0])
+    }
+}
+
+impl Callable for ToLowerFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_lower(&args[0])
+    }
+}
+
+impl Callable for JoinFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let res =
+            match &args[1][0] {
                 QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
                     PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
@@ -1345,25 +1404,44 @@ impl Callable for FunctionName {
                 }
             }?;
 
-                vec![Some(res)]
-            }
-            FunctionName::UrlDecode => url_decode(&args[0])?,
-            FunctionName::ParseInt => parse_int(&args[0])?,
-            FunctionName::ParseFloat => parse_float(&args[0])?,
-            FunctionName::ParseString => parse_str(&args[0])?,
-            FunctionName::ParseBoolean => parse_bool(&args[0])?,
-            FunctionName::ParseChar => parse_char(&args[0])?,
-        };
-
-        Ok(value)
+        Ok(vec![Some(res)])
     }
 }
 
-pub(crate) fn try_handle_function_call(
-    func: &FunctionName,
-    args: &[Vec<QueryResult>],
-) -> Result<Vec<Option<PathAwareValue>>> {
-    func.call(args)
+impl Callable for UrlDecodeFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        url_decode(&args[0])
+    }
+}
+
+impl Callable for ParseIntFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_int(&args[0])
+    }
+}
+
+impl Callable for ParseFloatFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_float(&args[0])
+    }
+}
+
+impl Callable for ParseStringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_str(&args[0])
+    }
+}
+
+impl Callable for ParseBooleanFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_bool(&args[0])
+    }
+}
+
+impl Callable for ParseCharFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_char(&args[0])
+    }
 }
 
 impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
@@ -2359,7 +2437,8 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(try_handle_function_call(name, &args)?
+    Ok(name
+        .call(&args)?
         .into_iter()
         .flatten()
         .map(Rc::new)

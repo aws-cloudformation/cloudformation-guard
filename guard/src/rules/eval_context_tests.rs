@@ -507,7 +507,7 @@ fn test_handle_function_call() -> Result<()> {
         vec![replaced.clone()],
     ];
 
-    let res = try_handle_function_call(&FunctionName::RegexReplace, &args)?;
+    let res = FunctionName::RegexReplace.call(&args)?;
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!("aws/123456789012/us-west-2/newservice-Table/extracted", val);
@@ -521,7 +521,7 @@ fn test_handle_function_call() -> Result<()> {
         query_results2,
         vec![replaced.clone()],
     ];
-    let res = try_handle_function_call(&FunctionName::RegexReplace, &args);
+    let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
@@ -538,7 +538,7 @@ fn test_handle_function_call() -> Result<()> {
         vec![extracted.clone()],
         query_results2,
     ];
-    let res = try_handle_function_call(&FunctionName::RegexReplace, &args);
+    let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
@@ -551,7 +551,7 @@ fn test_handle_function_call() -> Result<()> {
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
     let args = vec![query_results2, vec![extracted.clone()], vec![replaced]];
-    let res = try_handle_function_call(&FunctionName::RegexReplace, &args)?;
+    let res = FunctionName::RegexReplace.call(&args)?;
     assert_eq!(res.len(), 1);
     assert!(res[0].is_none());
 
@@ -563,7 +563,7 @@ fn test_handle_function_call() -> Result<()> {
 
     // substring - happy path
     let args = vec![query_results.clone(), vec![from.clone()], vec![to.clone()]];
-    let res = try_handle_function_call(&FunctionName::Substring, &args)?;
+    let res = FunctionName::Substring.call(&args)?;
 
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
@@ -574,13 +574,13 @@ fn test_handle_function_call() -> Result<()> {
     let not_a_string = AccessQuery::try_from("resources.ec2.properties.tags")?.query;
     let query_results2 = eval.query(&not_a_string)?;
     let args = vec![query_results2, vec![from.clone()], vec![to.clone()]];
-    let res = try_handle_function_call(&FunctionName::Substring, &args)?;
+    let res = FunctionName::Substring.call(&args)?;
     assert_eq!(res.len(), 1);
     assert!(res[0].is_none());
 
     // second argument is not a number
     let args = vec![query_results.clone(), vec![extracted.clone()], vec![to]];
-    let res = try_handle_function_call(&FunctionName::Substring, &args);
+    let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
@@ -591,7 +591,7 @@ fn test_handle_function_call() -> Result<()> {
 
     // third argument is not a number
     let args = vec![query_results.clone(), vec![from.clone()], vec![extracted]];
-    let res = try_handle_function_call(&FunctionName::Substring, &args);
+    let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
@@ -610,7 +610,7 @@ fn test_handle_function_call() -> Result<()> {
     let string_delim = QueryResult::Literal(Rc::new(string_delim_query));
 
     let args = vec![image_id_result.clone(), vec![char_delim]];
-    let res = try_handle_function_call(&FunctionName::Join, &args)?;
+    let res = FunctionName::Join.call(&args)?;
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!(
@@ -620,7 +620,7 @@ fn test_handle_function_call() -> Result<()> {
     }
 
     let args = vec![image_id_result.clone(), vec![string_delim]];
-    let res = try_handle_function_call(&FunctionName::Join, &args)?;
+    let res = FunctionName::Join.call(&args)?;
     let path_value = res[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!(
@@ -630,7 +630,7 @@ fn test_handle_function_call() -> Result<()> {
     }
 
     let args = vec![image_id_result, vec![from]];
-    let res = try_handle_function_call(&FunctionName::Join, &args);
+    let res = FunctionName::Join.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(matches!(err, Error::ParseError(_)));
