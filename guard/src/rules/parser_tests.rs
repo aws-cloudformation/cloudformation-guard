@@ -3694,17 +3694,6 @@ fn rule_parameters_parse_test() -> Result<(), Error> {
     //
     // Error cases
     //
-    let parameters = "()";
-    let result = parameter_names(from_str2(parameters));
-    assert!(result.is_err());
-    assert_eq!(
-        result.err(),
-        Some(nom::Err::Failure(ParserError {
-            context: "".to_string(),
-            kind: ErrorKind::Alpha, // for var_name
-            span: unsafe { Span::new_from_raw_offset(1, 1, ")", "") }
-        }))
-    );
 
     let parameters = "statements";
     let result = parameter_names(from_str2(parameters));
@@ -4328,7 +4317,7 @@ fn parameters_guard_clause_multiple() -> Result<(), Error> {
                     query: vec![QueryPart::Key("%var".to_string())],
                     match_all: true,
                 })],
-                name: "count".to_string(),
+                name: FunctionName::Count,
                 location: FileLocation {
                     line: 7,
                     column: 9,
@@ -4362,7 +4351,7 @@ fn parameterized_rule_single_param_function_with_one_argument() -> Result<(), Er
                 query: vec![QueryPart::Key("%var".to_string())],
                 match_all: true,
             })],
-            name: "count".to_string(),
+            name: FunctionName::Count,
             location: FileLocation {
                 line: 1,
                 column: 37,
@@ -4403,7 +4392,7 @@ fn parameterized_rule_single_param_function_with_multiple_arguments() -> Result<
                     "${1}/${4}/${3}/${2}-${5}".to_string(),
                 ))?),
             ],
-            name: "regex_replace".to_string(),
+            name: FunctionName::RegexReplace,
             location: FileLocation {
                 line: 1,
                 column: 37,
@@ -4538,7 +4527,7 @@ fn test_variable_capture_syntax() -> Result<(), Error> {
 fn test_builtin_function_call_expr() -> Result<(), Error> {
     let call_expr = "count(Resources.*)";
     let function = FunctionExpr::try_from(call_expr)?;
-    assert_eq!(function.name, "count");
+    assert_eq!(function.name, FunctionName::Count);
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
     assert!(matches!(parameter, LetValue::AccessClause(_)));
@@ -4555,7 +4544,7 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     let call_expr =
         r#"json_parse(Resources[ Type == 'AWS::SNS::TopicPolicy' ].Properties.PolicyDocument)"#;
     let function = FunctionExpr::try_from(call_expr)?;
-    assert_eq!(function.name, "json_parse");
+    assert_eq!(function.name, FunctionName::JsonParse);
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
     assert!(matches!(parameter, LetValue::AccessClause(_)));
@@ -4567,7 +4556,7 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     let call_expr =
         r#"json_parse(Resources[ Type == 'AWS::SNS::TopicPolicy' ].Properties.PolicyDocument)"#;
     let function = FunctionExpr::try_from(call_expr)?;
-    assert_eq!(function.name, "json_parse");
+    assert_eq!(function.name, FunctionName::JsonParse);
     assert_eq!(function.parameters.len(), 1);
     let parameter = &function.parameters[0];
     assert!(matches!(parameter, LetValue::AccessClause(_)));
@@ -4578,7 +4567,7 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
 
     let call_expr = r#"substring(%sqs_queues.Arn, 0, 6)"#;
     let function = FunctionExpr::try_from(call_expr)?;
-    assert_eq!(function.name, "substring");
+    assert_eq!(function.name, FunctionName::Substring);
     assert_eq!(function.parameters.len(), 3);
     let parameter = &function.parameters[0];
     assert!(matches!(parameter, LetValue::AccessClause(_)));
@@ -4673,7 +4662,7 @@ fn test_parse_assignment_with_function_call() {
     assert!(matches!(function, LetValue::FunctionCall(_)));
 
     if let LetValue::FunctionCall(function) = function {
-        assert_eq!(function.name, "count");
+        assert_eq!(function.name, FunctionName::Count);
         assert_eq!(function.parameters.len(), 1);
         assert!(matches!(function.parameters[0], LetValue::AccessClause(_)));
     }
@@ -4690,7 +4679,7 @@ fn test_parse_assignment_with_function_call2() {
     assert!(matches!(function, LetValue::FunctionCall(_)));
 
     if let LetValue::FunctionCall(function) = function {
-        assert_eq!(function.name, "regex_replace");
+        assert_eq!(function.name, FunctionName::RegexReplace);
         assert_eq!(function.parameters.len(), 3);
         assert!(matches!(
             function.parameters[1],

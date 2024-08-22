@@ -7,6 +7,8 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
 
+use super::eval_context::FunctionName;
+
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FileLocation<'loc> {
     pub(crate) line: u32,
@@ -215,7 +217,7 @@ pub(crate) struct ParameterizedNamedRuleClause<'loc> {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct FunctionExpr<'loc> {
     pub(crate) parameters: Vec<LetValue<'loc>>,
-    pub(crate) name: String,
+    pub(crate) name: FunctionName,
     pub(crate) location: FileLocation<'loc>,
 }
 
@@ -364,16 +366,13 @@ impl<'loc> std::fmt::Display for AccessQuery<'loc> {
 
 impl<'loc> std::fmt::Display for FunctionExpr<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}(", self.name)?;
-        let last_index = self.parameters.len() - 1;
-        for (idx, each_param) in self.parameters.iter().enumerate() {
-            write!(f, "{}", each_param)?;
-            if idx != last_index {
-                write!(f, ", ")?;
-            }
-        }
-        write!(f, ")")?;
-        Ok(())
+        let params = self
+            .parameters
+            .iter()
+            .map(|each| each.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{}({})", &self.name, params)
     }
 }
 

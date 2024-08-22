@@ -10,8 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::Location;
-use crate::rules::path_value::{MapValue, PathAwareValue};
+use crate::rules::path_value::{Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -24,8 +23,10 @@ use inflector::cases::*;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
+use std::convert::TryFrom;
 use std::rc::Rc;
 use std::vec::Vec;
+
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: Rc<PathAwareValue>,
     resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
@@ -1174,100 +1175,221 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 }
 
-pub(crate) fn validate_number_of_params(name: &str, num_args: usize) -> Result<()> {
-    let expected_num_args = match name {
-        "join" => 2,
-        "substring" | "regex_replace" => 3,
-        "count" | "json_parse" | "to_upper" | "to_lower" | "url_decode" | "parse_string"
-        | "parse_boolean" | "parse_float" | "parse_int" | "parse_char" => 1,
-        _ => {
-            return Err(Error::ParseError(format!(
-                "no such function named {name} exists"
-            )));
-        }
-    };
-
-    if expected_num_args != num_args {
-        return Err(Error::ParseError(format!(
-            "{name} function requires {expected_num_args} arguments be passed, but received {num_args}"
-        )));
-    }
-
-    Ok(())
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FunctionName {
+    Join,
+    Substring,
+    RegexReplace,
+    Count,
+    JsonParse,
+    ToUpper,
+    ToLower,
+    UrlDecode,
+    ParseString,
+    ParseBoolean,
+    ParseFloat,
+    ParseInt,
+    ParseChar,
 }
 
-// TODO: look into the possibility of abstracting functions into structs that all implement
-pub(crate) fn try_handle_function_call(
-    fn_name: &str,
-    args: &[Vec<QueryResult>],
-) -> Result<Vec<Option<PathAwareValue>>> {
-    let value = match fn_name {
-        "count" => vec![Some(count(&args[0]))],
-        "json_parse" => json_parse(&args[0])?,
-        "regex_replace" => {
-            let substring_err_msg = |index| {
-                let arg = match index {
-                    2 => "second",
-                    3 => "third",
-                    _ => unreachable!(),
-                };
-
-                format!("regex_replace function requires the {arg} argument to be a string")
-            };
-
-            let extracted_expr = match &args[1][0] {
-                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                    PathAwareValue::String((_, s)) => s,
-                    _ => return Err(Error::ParseError(substring_err_msg(2))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            };
-
-            let replaced_expr = match &args[2][0] {
-                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                    PathAwareValue::String((_, s)) => s,
-                    _ => return Err(Error::ParseError(substring_err_msg(3))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            };
-
-            regex_replace(&args[0], extracted_expr, replaced_expr)?
+impl FunctionName {
+    pub fn get_expected_number_of_args(&self) -> usize {
+        match self {
+            FunctionName::Join => 2,
+            FunctionName::Substring | FunctionName::RegexReplace => 3,
+            FunctionName::Count
+            | FunctionName::JsonParse
+            | FunctionName::ToUpper
+            | FunctionName::ToLower
+            | FunctionName::UrlDecode
+            | FunctionName::ParseString
+            | FunctionName::ParseBoolean
+            | FunctionName::ParseFloat
+            | FunctionName::ParseInt
+            | FunctionName::ParseChar => 1,
         }
-        "substring" => {
-            let substring_err_msg = |index| {
-                let arg = match index {
-                    2 => "second",
-                    3 => "third",
-                    _ => unreachable!(),
-                };
+    }
+}
 
-                format!("substring function requires the {arg} argument to be a number")
-            };
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            FunctionName::Join => "join",
+            FunctionName::Substring => "substring",
+            FunctionName::RegexReplace => "regex_replace",
+            FunctionName::Count => "count",
+            FunctionName::JsonParse => "json_parse",
+            FunctionName::ToUpper => "to_upper",
+            FunctionName::ToLower => "to_lower",
+            FunctionName::UrlDecode => "url_decode",
+            FunctionName::ParseString => "parse_string",
+            FunctionName::ParseBoolean => "parse_boolean",
+            FunctionName::ParseFloat => "parse_float",
+            FunctionName::ParseInt => "parse_int",
+            FunctionName::ParseChar => "parse_char",
+        };
+        write!(f, "{}", name)
+    }
+}
 
-            let from = match &args[1][0] {
-                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                    _ => return Err(Error::ParseError(substring_err_msg(2))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            };
+impl TryFrom<&str> for FunctionName {
+    type Error = Error;
 
-            let to = match &args[2][0] {
-                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                    _ => return Err(Error::ParseError(substring_err_msg(3))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            };
-
-            substring(&args[0], from, to)?
+    fn try_from(name: &str) -> std::result::Result<Self, Self::Error> {
+        match name {
+            "join" => Ok(FunctionName::Join),
+            "substring" => Ok(FunctionName::Substring),
+            "regex_replace" => Ok(FunctionName::RegexReplace),
+            "count" => Ok(FunctionName::Count),
+            "json_parse" => Ok(FunctionName::JsonParse),
+            "to_upper" => Ok(FunctionName::ToUpper),
+            "to_lower" => Ok(FunctionName::ToLower),
+            "url_decode" => Ok(FunctionName::UrlDecode),
+            "parse_string" => Ok(FunctionName::ParseString),
+            "parse_boolean" => Ok(FunctionName::ParseBoolean),
+            "parse_float" => Ok(FunctionName::ParseFloat),
+            "parse_int" => Ok(FunctionName::ParseInt),
+            "parse_char" => Ok(FunctionName::ParseChar),
+            _ => Err(Error::ParseError(format!(
+                "No function with the name '{name}' exists.",
+            ))),
         }
-        "to_upper" => to_upper(&args[0])?,
-        "to_lower" => to_lower(&args[0])?,
-        "join" => {
-            let res = match &args[1][0] {
+    }
+}
+
+struct CountFunction;
+struct JsonParseFunction;
+struct RegexReplaceFunction;
+struct SubstringFunction;
+struct ToUpperFunction;
+struct ToLowerFunction;
+struct JoinFunction;
+struct UrlDecodeFunction;
+struct ParseIntFunction;
+struct ParseFloatFunction;
+struct ParseStringFunction;
+struct ParseBooleanFunction;
+struct ParseCharFunction;
+
+trait Callable {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>>;
+}
+
+impl Callable for FunctionName {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        match self {
+            FunctionName::Count => CountFunction.call(args),
+            FunctionName::JsonParse => JsonParseFunction.call(args),
+            FunctionName::RegexReplace => RegexReplaceFunction.call(args),
+            FunctionName::Substring => SubstringFunction.call(args),
+            FunctionName::ToUpper => ToUpperFunction.call(args),
+            FunctionName::ToLower => ToLowerFunction.call(args),
+            FunctionName::Join => JoinFunction.call(args),
+            FunctionName::UrlDecode => UrlDecodeFunction.call(args),
+            FunctionName::ParseInt => ParseIntFunction.call(args),
+            FunctionName::ParseFloat => ParseFloatFunction.call(args),
+            FunctionName::ParseString => ParseStringFunction.call(args),
+            FunctionName::ParseBoolean => ParseBooleanFunction.call(args),
+            FunctionName::ParseChar => ParseCharFunction.call(args),
+        }
+    }
+}
+
+impl Callable for CountFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        Ok(vec![Some(count(&args[0]))])
+    }
+}
+
+impl Callable for JsonParseFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        json_parse(&args[0])
+    }
+}
+
+impl Callable for RegexReplaceFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
+
+            format!("regex_replace function requires the {arg} argument to be a string")
+        };
+
+        let extracted_expr = match &args[1][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
+
+        let replaced_expr = match &args[2][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
+
+        regex_replace(&args[0], extracted_expr, replaced_expr)
+    }
+}
+
+impl Callable for SubstringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
+
+            format!("substring function requires the {arg} argument to be a number")
+        };
+
+        let from = match &args[1][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
+
+        let to = match &args[2][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
+
+        substring(&args[0], from, to)
+    }
+}
+
+impl Callable for ToUpperFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_upper(&args[0])
+    }
+}
+
+impl Callable for ToLowerFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_lower(&args[0])
+    }
+}
+
+impl Callable for JoinFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let res =
+            match &args[1][0] {
                 QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
                     PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
@@ -1282,18 +1404,44 @@ pub(crate) fn try_handle_function_call(
                 }
             }?;
 
-            vec![Some(res)]
-        }
-        "url_decode" => url_decode(&args[0])?,
-        "parse_int" => parse_int(&args[0])?,
-        "parse_float" => parse_float(&args[0])?,
-        "parse_string" => parse_str(&args[0])?,
-        "parse_boolean" => parse_bool(&args[0])?,
-        "parse_char" => parse_char(&args[0])?,
-        function => return Err(Error::ParseError(format!("No function named {function}"))),
-    };
+        Ok(vec![Some(res)])
+    }
+}
 
-    Ok(value)
+impl Callable for UrlDecodeFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        url_decode(&args[0])
+    }
+}
+
+impl Callable for ParseIntFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_int(&args[0])
+    }
+}
+
+impl Callable for ParseFloatFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_float(&args[0])
+    }
+}
+
+impl Callable for ParseStringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_str(&args[0])
+    }
+}
+
+impl Callable for ParseBooleanFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_bool(&args[0])
+    }
+}
+
+impl Callable for ParseCharFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_char(&args[0])
+    }
 }
 
 impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
@@ -2262,11 +2410,10 @@ pub(crate) fn simplified_json_from_root<'value>(
 }
 
 pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
-    name: &str,
+    name: &FunctionName,
     parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Vec<QueryResult>> {
-    validate_number_of_params(name, parameters.len())?;
     let args =
         parameters
             .iter()
@@ -2290,7 +2437,8 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(try_handle_function_call(name, &args)?
+    Ok(name
+        .call(&args)?
         .into_iter()
         .flatten()
         .map(Rc::new)

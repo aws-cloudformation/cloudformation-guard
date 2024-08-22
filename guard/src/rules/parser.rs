@@ -24,6 +24,7 @@ use nom::{FindSubstring, InputTake, Slice};
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
+use crate::rules::eval_context::FunctionName;
 use crate::rules::exprs::*;
 use crate::rules::path_value::{Path, PathAwareValue};
 use crate::rules::values::*;
@@ -1065,6 +1066,27 @@ fn function_expr(input: Span) -> IResult<Span, FunctionExpr> {
         column: input.get_column() as u32,
     };
     let (input, (name, parameters)) = call_expr(input)?;
+
+    let name = FunctionName::try_from(name.as_str()).map_err(|e| {
+        nom::Err::Error(ParserError {
+            context: e.to_string(),
+            span: input,
+            kind: ErrorKind::AlphaNumeric,
+        })
+    })?;
+
+    if parameters.len() != name.get_expected_number_of_args() {
+        return Err(nom::Err::Error(ParserError {
+            context: format!(
+                "function: {name} requires: {} parameters to be passed, but received: {}",
+                name.get_expected_number_of_args(),
+                parameters.len()
+            ),
+            span: input,
+            kind: ErrorKind::AlphaNumeric,
+        }));
+    }
+
     Ok((
         input,
         FunctionExpr {
@@ -1093,11 +1115,8 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
         var_name,
         delimited(
             char('('),
-            separated_nonempty_list(
-                char(','),
-                cut(delimited(multispace0, let_value, multispace0)),
-            ),
-            cut(char(')')),
+            separated_list(char(','), delimited(multispace0, let_value, multispace0)),
+            char(')'),
         ),
     ))(input)
 }
