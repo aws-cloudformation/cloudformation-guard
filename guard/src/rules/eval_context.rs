@@ -1258,78 +1258,79 @@ impl TryFrom<&str> for FunctionName {
     }
 }
 
-// TODO: look into the possibility of abstracting functions into structs that all implement
-pub(crate) fn try_handle_function_call(
-    func: FunctionName,
-    args: &[Vec<QueryResult>],
-) -> Result<Vec<Option<PathAwareValue>>> {
-    let value = match func {
-        FunctionName::Count => vec![Some(count(&args[0]))],
-        FunctionName::JsonParse => json_parse(&args[0])?,
-        FunctionName::RegexReplace => {
-            let substring_err_msg = |index| {
-                let arg = match index {
-                    2 => "second",
-                    3 => "third",
-                    _ => unreachable!(),
+trait Callable {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>>;
+}
+
+impl Callable for FunctionName {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let value = match self {
+            FunctionName::Count => vec![Some(count(&args[0]))],
+            FunctionName::JsonParse => json_parse(&args[0])?,
+            FunctionName::RegexReplace => {
+                let substring_err_msg = |index| {
+                    let arg = match index {
+                        2 => "second",
+                        3 => "third",
+                        _ => unreachable!(),
+                    };
+
+                    format!("regex_replace function requires the {arg} argument to be a string")
                 };
 
-                format!("regex_replace function requires the {arg} argument to be a string")
-            };
-
-            let extracted_expr = match &args[1][0] {
-                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                    PathAwareValue::String((_, s)) => s,
+                let extracted_expr = match &args[1][0] {
+                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                        PathAwareValue::String((_, s)) => s,
+                        _ => return Err(Error::ParseError(substring_err_msg(2))),
+                    },
                     _ => return Err(Error::ParseError(substring_err_msg(2))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            };
-
-            let replaced_expr = match &args[2][0] {
-                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
-                    PathAwareValue::String((_, s)) => s,
-                    _ => return Err(Error::ParseError(substring_err_msg(3))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            };
-
-            regex_replace(&args[0], extracted_expr, replaced_expr)?
-        }
-        FunctionName::Substring => {
-            let substring_err_msg = |index| {
-                let arg = match index {
-                    2 => "second",
-                    3 => "third",
-                    _ => unreachable!(),
                 };
 
-                format!("substring function requires the {arg} argument to be a number")
-            };
-
-            let from = match &args[1][0] {
-                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                    _ => return Err(Error::ParseError(substring_err_msg(2))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            };
-
-            let to = match &args[2][0] {
-                QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                    PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                    PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                let replaced_expr = match &args[2][0] {
+                    QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                        PathAwareValue::String((_, s)) => s,
+                        _ => return Err(Error::ParseError(substring_err_msg(3))),
+                    },
                     _ => return Err(Error::ParseError(substring_err_msg(3))),
-                },
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            };
+                };
 
-            substring(&args[0], from, to)?
-        }
-        FunctionName::ToUpper => to_upper(&args[0])?,
-        FunctionName::ToLower => to_lower(&args[0])?,
-        FunctionName::Join => {
-            let res = match &args[1][0] {
+                regex_replace(&args[0], extracted_expr, replaced_expr)?
+            }
+            FunctionName::Substring => {
+                let substring_err_msg = |index| {
+                    let arg = match index {
+                        2 => "second",
+                        3 => "third",
+                        _ => unreachable!(),
+                    };
+
+                    format!("substring function requires the {arg} argument to be a number")
+                };
+
+                let from = match &args[1][0] {
+                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                        _ => return Err(Error::ParseError(substring_err_msg(2))),
+                    },
+                    _ => return Err(Error::ParseError(substring_err_msg(2))),
+                };
+
+                let to = match &args[2][0] {
+                    QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                        PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                        PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                        _ => return Err(Error::ParseError(substring_err_msg(3))),
+                    },
+                    _ => return Err(Error::ParseError(substring_err_msg(3))),
+                };
+
+                substring(&args[0], from, to)?
+            }
+            FunctionName::ToUpper => to_upper(&args[0])?,
+            FunctionName::ToLower => to_lower(&args[0])?,
+            FunctionName::Join => {
+                let res = match &args[1][0] {
                 QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
                     PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
@@ -1344,17 +1345,25 @@ pub(crate) fn try_handle_function_call(
                 }
             }?;
 
-            vec![Some(res)]
-        }
-        FunctionName::UrlDecode => url_decode(&args[0])?,
-        FunctionName::ParseInt => parse_int(&args[0])?,
-        FunctionName::ParseFloat => parse_float(&args[0])?,
-        FunctionName::ParseString => parse_str(&args[0])?,
-        FunctionName::ParseBoolean => parse_bool(&args[0])?,
-        FunctionName::ParseChar => parse_char(&args[0])?,
-    };
+                vec![Some(res)]
+            }
+            FunctionName::UrlDecode => url_decode(&args[0])?,
+            FunctionName::ParseInt => parse_int(&args[0])?,
+            FunctionName::ParseFloat => parse_float(&args[0])?,
+            FunctionName::ParseString => parse_str(&args[0])?,
+            FunctionName::ParseBoolean => parse_bool(&args[0])?,
+            FunctionName::ParseChar => parse_char(&args[0])?,
+        };
 
-    Ok(value)
+        Ok(value)
+    }
+}
+
+pub(crate) fn try_handle_function_call(
+    func: &FunctionName,
+    args: &[Vec<QueryResult>],
+) -> Result<Vec<Option<PathAwareValue>>> {
+    func.call(args)
 }
 
 impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
@@ -2350,7 +2359,7 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(try_handle_function_call(name.to_owned(), &args)?
+    Ok(try_handle_function_call(name, &args)?
         .into_iter()
         .flatten()
         .map(Rc::new)
