@@ -25,12 +25,12 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
     }));
     return JSON.parse(output);
 };
-async function readFiles(pathOrFile, supportedExtensions) {
+async function readFiles(dirOrFile, supportedExtensions) {
     const fileNames = [];
     const fileContents = [];
-    const stat = await fs.promises.stat(pathOrFile);
+    const stat = await fs.promises.stat(dirOrFile);
     if (stat.isDirectory()) {
-        const files = await getAllFiles(pathOrFile, supportedExtensions);
+        const files = await getAllFiles(dirOrFile, supportedExtensions);
         const readPromises = files.map(async (file) => {
             const content = await fs.promises.readFile(file, 'utf8');
             fileNames.push(file);
@@ -38,9 +38,9 @@ async function readFiles(pathOrFile, supportedExtensions) {
         });
         await Promise.all(readPromises);
     }
-    else if (stat.isFile() && supportedExtensions.includes(path.extname(pathOrFile))) {
-        const content = await fs.promises.readFile(pathOrFile, 'utf8');
-        fileNames.push(pathOrFile);
+    else if (stat.isFile() && supportedExtensions.includes(path.extname(dirOrFile))) {
+        const content = await fs.promises.readFile(dirOrFile, 'utf8');
+        fileNames.push(dirOrFile);
         fileContents.push(content);
     }
     return {

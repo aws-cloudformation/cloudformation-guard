@@ -109,23 +109,23 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
   return JSON.parse(output);
 };
 
-async function readFiles(pathOrFile: string, supportedExtensions: string[]): Promise<TraversalResult> {
+async function readFiles(dirOrFile: string, supportedExtensions: string[]): Promise<TraversalResult> {
   const fileNames: string[] = [];
   const fileContents: string[] = [];
 
-  const stat = await fs.promises.stat(pathOrFile);
+  const stat = await fs.promises.stat(dirOrFile);
 
   if (stat.isDirectory()) {
-    const files = await getAllFiles(pathOrFile, supportedExtensions);
+    const files = await getAllFiles(dirOrFile, supportedExtensions);
     const readPromises = files.map(async (file) => {
       const content = await fs.promises.readFile(file, 'utf8');
       fileNames.push(file);
       fileContents.push(content);
     });
     await Promise.all(readPromises);
-  } else if (stat.isFile() && supportedExtensions.includes(path.extname(pathOrFile))) {
-    const content = await fs.promises.readFile(pathOrFile, 'utf8');
-    fileNames.push(pathOrFile);
+  } else if (stat.isFile() && supportedExtensions.includes(path.extname(dirOrFile))) {
+    const content = await fs.promises.readFile(dirOrFile, 'utf8');
+    fileNames.push(dirOrFile);
     fileContents.push(content);
   }
 
