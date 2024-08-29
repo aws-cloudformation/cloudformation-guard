@@ -109,25 +109,48 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
   return JSON.parse(output);
 };
 
-async function readFiles(dirPath: string, supportedExtensions: string[]): Promise<TraversalResult> {
+async function readFiles(pathOrFile: string, supportedExtensions: string[]): Promise<TraversalResult> {
   const fileNames: string[] = [];
   const fileContents: string[] = [];
 
-  const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
-  const readPromises = files.map(async (file) => {
-    const filePath = path.join(dirPath, file.name);
-    if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
-      const content = await fs.promises.readFile(filePath, 'utf8');
-      fileNames.push(filePath);
+  const stat = await fs.promises.stat(pathOrFile);
+
+  if (stat.isDirectory()) {
+    const files = await getAllFiles(pathOrFile, supportedExtensions);
+    const readPromises = files.map(async (file) => {
+      const content = await fs.promises.readFile(file, 'utf8');
+      fileNames.push(file);
       fileContents.push(content);
-    }
-  });
-  await Promise.all(readPromises);
+    });
+    await Promise.all(readPromises);
+  } else if (stat.isFile() && supportedExtensions.includes(path.extname(pathOrFile))) {
+    const content = await fs.promises.readFile(pathOrFile, 'utf8');
+    fileNames.push(pathOrFile);
+    fileContents.push(content);
+  }
 
   return {
     fileContents,
     fileNames,
   };
+}
+
+async function getAllFiles(dirPath: string, supportedExtensions: string[]): Promise<string[]> {
+  const files: string[] = [];
+
+  const dirEntries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+  const traversalPromises = dirEntries.map(async (entry) => {
+    const entryPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      const subFiles = await getAllFiles(entryPath, supportedExtensions);
+      files.push(...subFiles);
+    } else if (supportedExtensions.includes(path.extname(entryPath))) {
+      files.push(entryPath);
+    }
+  });
+  await Promise.all(traversalPromises);
+
+  return files;
 }
 
 export const validate = async ({ rulesPath, dataPath }: ValidateParams): Promise<SarifReport> => {

@@ -25,23 +25,44 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
     }));
     return JSON.parse(output);
 };
-async function readFiles(dirPath, supportedExtensions) {
+async function readFiles(pathOrFile, supportedExtensions) {
     const fileNames = [];
     const fileContents = [];
-    const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    const readPromises = files.map(async (file) => {
-        const filePath = path.join(dirPath, file.name);
-        if (!file.isDirectory() && supportedExtensions.includes(path.extname(filePath))) {
-            const content = await fs.promises.readFile(filePath, 'utf8');
-            fileNames.push(filePath);
+    const stat = await fs.promises.stat(pathOrFile);
+    if (stat.isDirectory()) {
+        const files = await getAllFiles(pathOrFile, supportedExtensions);
+        const readPromises = files.map(async (file) => {
+            const content = await fs.promises.readFile(file, 'utf8');
+            fileNames.push(file);
             fileContents.push(content);
-        }
-    });
-    await Promise.all(readPromises);
+        });
+        await Promise.all(readPromises);
+    }
+    else if (stat.isFile() && supportedExtensions.includes(path.extname(pathOrFile))) {
+        const content = await fs.promises.readFile(pathOrFile, 'utf8');
+        fileNames.push(pathOrFile);
+        fileContents.push(content);
+    }
     return {
         fileContents,
         fileNames,
     };
+}
+async function getAllFiles(dirPath, supportedExtensions) {
+    const files = [];
+    const dirEntries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const traversalPromises = dirEntries.map(async (entry) => {
+        const entryPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            const subFiles = await getAllFiles(entryPath, supportedExtensions);
+            files.push(...subFiles);
+        }
+        else if (supportedExtensions.includes(path.extname(entryPath))) {
+            files.push(entryPath);
+        }
+    });
+    await Promise.all(traversalPromises);
+    return files;
 }
 const validate = async ({ rulesPath, dataPath }) => {
     const rulesResult = await readFiles(rulesPath, RULE_FILE_SUPPORTED_EXTENSIONS);
