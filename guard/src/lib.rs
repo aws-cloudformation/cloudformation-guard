@@ -15,6 +15,14 @@ use crate::commands::test::Test;
 use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
+
+#[cfg(target_arch = "wasm32")]
+use crate::utils::reader::{ReadBuffer, Reader};
+#[cfg(target_arch = "wasm32")]
+use crate::utils::writer::WriteBuffer::Vec as WBVec;
+#[cfg(target_arch = "wasm32")]
+use std::io::Cursor;
+
 use wasm_bindgen::prelude::*;
 
 pub trait CommandBuilder<T: Executable> {
