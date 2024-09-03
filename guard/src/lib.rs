@@ -16,14 +16,13 @@ use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
 
-// The following imports are needed for wasm-pack to work
-// When executing npm run build or npm run build:wasm-pack
-#[allow(unused_imports)]
+#[cfg(target_arch = "wasm32")]
 use crate::utils::reader::{ReadBuffer, Reader};
-#[allow(unused_imports)]
+#[cfg(target_arch = "wasm32")]
 use crate::utils::writer::WriteBuffer::Vec as WBVec;
-#[allow(unused_imports)]
+#[cfg(target_arch = "wasm32")]
 use std::io::Cursor;
+
 use wasm_bindgen::prelude::*;
 
 pub trait CommandBuilder<T: Executable> {
