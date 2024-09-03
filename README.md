@@ -394,11 +394,11 @@ The container `app` does not contain CPU limits specified, which fails the overa
 
 #### Using Input Parameters
 
-Guard allows you to use input parameters for dynamic data lookups during validation. This feature is particularly useful when you need to reference external data in your rules.
+Guard allows you to use input parameters for dynamic data lookups during validation. This feature is particularly useful when you need to reference external data in your rules. However, when specifying input parameter keys, Guard requires that there are no conflicting paths.
 
 ##### How to use
 
-1. Use the `--input-parameters` or `-i` flag to specify files containing input parameters. Multiple input parameter files can be specified and will be combined to form a common context.
+1. Use the `--input-parameters` or `-i` flag to specify files containing input parameters. Multiple input parameter files can be specified and will be combined to form a common context. Input parameter keys can not have conflicting paths.
 2. Use the `--data` or `-d` flag to specify the actual template file to be validated.
 
 ##### Example Usage
