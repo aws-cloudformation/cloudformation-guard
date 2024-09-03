@@ -73,7 +73,7 @@ jobs:
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.4
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.5
         with:
           rules: './path/to/rules'
           data: './path/to/data'
@@ -97,7 +97,7 @@ jobs:
     name: CloudFormation Guard validate
     steps:
       - name: CloudFormation Guard validate
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.4
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.5
         with:
           rules: './path/to/rules'
           data: './path/to/data'
@@ -132,7 +132,7 @@ jobs:
     name: CloudFormation Guard analyze
     steps:
       - name: CloudFormation Guard analyze
-        uses: aws-cloudformation/cloudformation-guard@action-v0.0.4
+        uses: aws-cloudformation/cloudformation-guard@action-v0.0.5
         with:
           rules: './path/to/rules'
           data: './path/to/data'
