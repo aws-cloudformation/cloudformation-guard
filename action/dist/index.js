@@ -30944,7 +30944,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.blobToBase64 = void 0;
+exports.blobToBase64 = blobToBase64;
 const stream_1 = __nccwpck_require__(2781);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
 /**
@@ -30968,7 +30968,6 @@ async function blobToBase64(blob) {
         });
     });
 }
-exports.blobToBase64 = blobToBase64;
 
 
 /***/ }),
@@ -30982,7 +30981,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkoutPrivateRepository = void 0;
+exports.checkoutPrivateRepository = checkoutPrivateRepository;
 const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
@@ -31012,7 +31011,6 @@ async function checkoutPrivateRepository() {
         throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
     }
 }
-exports.checkoutPrivateRepository = checkoutPrivateRepository;
 
 
 /***/ }),
@@ -31023,7 +31021,7 @@ exports.checkoutPrivateRepository = checkoutPrivateRepository;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkoutPublicRepository = void 0;
+exports.checkoutPublicRepository = checkoutPublicRepository;
 const stringEnums_1 = __nccwpck_require__(4916);
 const github_1 = __nccwpck_require__(5438);
 const debugLog_1 = __nccwpck_require__(498);
@@ -31055,7 +31053,6 @@ async function checkoutPublicRepository() {
         throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
     }
 }
-exports.checkoutPublicRepository = checkoutPublicRepository;
 
 
 /***/ }),
@@ -31069,7 +31066,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkoutRepository = void 0;
+exports.checkoutRepository = checkoutRepository;
 const github_1 = __nccwpck_require__(5438);
 const stringEnums_1 = __nccwpck_require__(4916);
 const checkoutPrivateRepository_1 = __nccwpck_require__(9624);
@@ -31105,7 +31102,6 @@ async function checkoutRepository() {
         throw new Error(`${stringEnums_1.ErrorStrings.CHECKOUT_REPOSITORY_ERROR}: ${error}`);
     }
 }
-exports.checkoutRepository = checkoutRepository;
 exports["default"] = checkoutRepository;
 
 
@@ -31120,7 +31116,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.compressAndEncode = void 0;
+exports.compressAndEncode = compressAndEncode;
 const blobToBase64_1 = __nccwpck_require__(1453);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
 const zlib_1 = __importDefault(__nccwpck_require__(9796));
@@ -31150,7 +31146,6 @@ async function compressAndEncode(input) {
     const base64 = await (0, blobToBase64_1.blobToBase64)(compressedData);
     return base64;
 }
-exports.compressAndEncode = compressAndEncode;
 
 
 /***/ }),
@@ -31164,7 +31159,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.debugLog = void 0;
+exports.debugLog = debugLog;
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Prints a message to the console when debug is true
@@ -31177,7 +31172,6 @@ function debugLog(msg) {
         console.log(msg);
     }
 }
-exports.debugLog = debugLog;
 exports["default"] = debugLog;
 
 
@@ -31212,7 +31206,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getConfig = void 0;
+exports.getConfig = getConfig;
 const core = __importStar(__nccwpck_require__(2186));
 /**
  * Returns the config values in JSON format
@@ -31230,7 +31224,6 @@ function getConfig() {
         token: core.getInput('token')
     };
 }
-exports.getConfig = getConfig;
 exports["default"] = getConfig;
 
 
@@ -31245,7 +31238,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handlePullRequestRun = exports.handleCreateReview = exports.deleteComment = exports.getPrComments = void 0;
+exports.getPrComments = getPrComments;
+exports.deleteComment = deleteComment;
+exports.handleCreateReview = handleCreateReview;
+exports.handlePullRequestRun = handlePullRequestRun;
 const github_1 = __nccwpck_require__(5438);
 const stringEnums_1 = __nccwpck_require__(4916);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
@@ -31273,7 +31269,6 @@ async function getPrComments() {
     };
     return (await octokit.request(ENDPOINT, params)).data;
 }
-exports.getPrComments = getPrComments;
 /**
  * Delete a comment from a pull request.
  *
@@ -31294,7 +31289,6 @@ async function deleteComment(comment_id) {
         }
     });
 }
-exports.deleteComment = deleteComment;
 /**
  * Handle the creation of a review on a pull request.
  *
@@ -31355,7 +31349,6 @@ async function handleCreateReview({ tmpComments, filesWithViolationsInPr }) {
         }
     }
 }
-exports.handleCreateReview = handleCreateReview;
 /**
  * Handles formatting the reported execution of a pull request run for the CFN Guard action.
  * @param {HandlePullRequestRunParams} params - The parameters for the pull request run.
@@ -31411,7 +31404,6 @@ async function handlePullRequestRun({ run }) {
     })
         .filter(result => result.some(Boolean));
 }
-exports.handlePullRequestRun = handlePullRequestRun;
 
 
 /***/ }),
@@ -31425,7 +31417,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handlePushRun = void 0;
+exports.handlePushRun = handlePushRun;
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
 /**
  * Handles the execution of a push run for the CFN Guard action.
@@ -31441,7 +31433,6 @@ async function handlePushRun({ run }) {
         ruleId
     ]);
 }
-exports.handlePushRun = handlePushRun;
 
 
 /***/ }),
@@ -31478,7 +31469,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handleValidate = void 0;
+exports.handleValidate = handleValidate;
 const core = __importStar(__nccwpck_require__(2186));
 const cfn_guard_1 = __nccwpck_require__(7848);
 const utils_1 = __nccwpck_require__(1314);
@@ -31500,7 +31491,6 @@ async function handleValidate() {
     core.setOutput('result', JSON.stringify(result, null, 2));
     return result;
 }
-exports.handleValidate = handleValidate;
 
 
 /***/ }),
@@ -31537,7 +31527,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handleWriteActionSummary = void 0;
+exports.handleWriteActionSummary = handleWriteActionSummary;
 const core = __importStar(__nccwpck_require__(2186));
 const stringEnums_1 = __nccwpck_require__(4916);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
@@ -31561,7 +31551,6 @@ async function handleWriteActionSummary({ results }) {
     ])
         .write();
 }
-exports.handleWriteActionSummary = handleWriteActionSummary;
 
 
 /***/ }),
@@ -31598,7 +31587,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.run = void 0;
+exports.run = run;
 const core = __importStar(__nccwpck_require__(2186));
 const stringEnums_1 = __nccwpck_require__(4916);
 const checkoutRepository_1 = __nccwpck_require__(9274);
@@ -31653,7 +31642,6 @@ async function run() {
         }
     }
 }
-exports.run = run;
 
 
 /***/ }),
@@ -31699,7 +31687,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.uploadCodeScan = void 0;
+exports.uploadCodeScan = uploadCodeScan;
 const github_1 = __nccwpck_require__(5438);
 const compressAndEncode_1 = __nccwpck_require__(8492);
 const debugLog_1 = __importDefault(__nccwpck_require__(498));
@@ -31729,7 +31717,6 @@ async function uploadCodeScan({ result }) {
     };
     await octokit.request(ENDPOINT, params);
 }
-exports.uploadCodeScan = uploadCodeScan;
 
 
 /***/ }),
@@ -31743,7 +31730,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.removeRootPath = exports.addRootPath = void 0;
+exports.addRootPath = addRootPath;
+exports.removeRootPath = removeRootPath;
 const getConfig_1 = __importDefault(__nccwpck_require__(5677));
 /**
  * Handle adding the root when a user supplies a path
@@ -31762,7 +31750,6 @@ function addRootPath(path) {
     }
     return path;
 }
-exports.addRootPath = addRootPath;
 /**
  * Handle removing the root when a user supplies a path
  *
@@ -31780,7 +31767,6 @@ function removeRootPath(uri) {
     }
     return uri;
 }
-exports.removeRootPath = removeRootPath;
 
 
 /***/ }),
