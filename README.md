@@ -30,7 +30,7 @@ Guard can be used for the following domains:
 Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl0) to provide feedback about cfn-guard
 
 ## Table of Contents
-
+<!-- no toc -->
 * [FAQs](#faqs)
 * [Guard DSL](#guard-dsl)
   * [Tenets](#tenets)
@@ -637,7 +637,19 @@ Guard is great for CI checks with the Junit output format, making the process of
 Guard is available as a pre-commit hook and offers both the `test` and `validate` operations. You can use them by adding a variation of the following configuration to your `.pre-commit-config.yaml` file:
 
 ```yaml
+# Since the cfn-guard hook's tagging strategy is incompatible
+# with pre-commit's autoupdate feature, you may want to make an
+# exclusion for it using the pre-commit-update hook. If you don't
+# require the autoupdate feature, you may skip the pre-commit-update
+# hook.
 repos:
+# pre-commit-update hook
+-   repo: https://gitlab.com/vojko.pribudic.foss/pre-commit-update
+    rev: v0.4.0
+    hooks:
+    -   id: pre-commit-update
+        args: [--exclude, cfn-guard]
+# cfn-guard pre-commit hook
 -   repo: https://github.com/aws-cloudformation/cloudformation-guard
     rev: pre-commit-v0.0.2
     hooks:
@@ -680,4 +692,3 @@ repos:
 ## License
 
 This project is licensed under the Apache-2.0 License.
-
