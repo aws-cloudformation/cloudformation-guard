@@ -24,7 +24,7 @@ Resource = newServer {
                     9.        }
                    10.      Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
                    11.      Encoded: This%20string%20will%20be%20URL%20encoded
-                   12.    Collection:
+                   12.      UpdatedAt: "2024-08-15T00:00:00Z"
 
           }
         }
