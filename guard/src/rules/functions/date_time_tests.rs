@@ -35,7 +35,7 @@ fn test_parse_epoch(
     #[case] _expected_epoch: i64,
     #[case] should_error: bool,
 ) -> crate::rules::Result<()> {
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(VALUE_STR)?)?;
+    let value = PathAwareValue::try_from(serde_json::from_str::<serde_json::Value>(VALUE_STR)?)?;
 
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
