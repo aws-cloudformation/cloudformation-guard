@@ -29,7 +29,7 @@
     "coverage": "npx make-coverage-badge --output-path ./badges/coverage.svg",
     "format:write": "npx prettier --write .",
     "format:check": "npx prettier --check .",
-    "lint": "npx eslint . -c .eslintrc.yml",
+    "lint": "eslint . -c .eslintrc.yml",
     "lint:fix": "npm run lint -- --fix && npm run format:write",
     "package": "npx ncc build src/index.ts -o dist --source-map --license licenses.txt",
     "package:watch": "npm run package -- --watch",
@@ -78,6 +78,7 @@
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",
+    "@stylistic/eslint-plugin": "^2.8.0",
     "@types/jest": "^29.5.12",
     "@types/node": "^22.5.4",
     "@typescript-eslint/eslint-plugin": "^8.5.0",
