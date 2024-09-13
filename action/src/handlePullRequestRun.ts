@@ -205,12 +205,14 @@ export async function handlePullRequestRun({
     `Files with violations in PR: ${JSON.stringify(filesWithViolationsInPr, null, 2)}`
   );
 
-  filesWithViolationsInPr.length &&
-    createReview &&
-    (await handleCreateReview({
-      filesWithViolationsInPr,
-      tmpComments
-    }));
+  if (filesWithViolationsInPr.length) {
+    if (createReview) {
+      await handleCreateReview({
+        filesWithViolationsInPr,
+        tmpComments
+      });
+    }
+  }
 
   return run.results
     .map(({ locations: [location], ruleId, message: { text } }) => {

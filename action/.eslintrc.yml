@@ -19,7 +19,7 @@ ignorePatterns:
 parser: '@typescript-eslint/parser'
 
 parserOptions:
-  ecmaVersion: 2023
+  ecmaVersion: latest
   sourceType: module
   project:
     - 'tsconfig.json'
@@ -27,6 +27,7 @@ parserOptions:
 plugins:
   - jest
   - '@typescript-eslint'
+  - '@stylistic'
 
 extends:
   - eslint:recommended
@@ -58,7 +59,7 @@ rules:
       ['error', { 'accessibility': 'no-public' }],
     '@typescript-eslint/explicit-function-return-type':
       ['error', { 'allowExpressions': true }],
-    '@typescript-eslint/func-call-spacing': ['error', 'never'],
+    '@stylistic/func-call-spacing': ['error', 'never'],
     '@typescript-eslint/no-array-constructor': 'error',
     '@typescript-eslint/no-empty-interface': 'error',
     '@typescript-eslint/no-explicit-any': 'error',
@@ -81,9 +82,9 @@ rules:
     '@typescript-eslint/promise-function-async': 'error',
     '@typescript-eslint/require-array-sort-compare': 'error',
     '@typescript-eslint/restrict-plus-operands': 'error',
-    '@typescript-eslint/semi': ['error', 'always'],
+    '@stylistic/semi': ['error', 'always'],
     '@typescript-eslint/space-before-function-paren': 'off',
-    '@typescript-eslint/type-annotation-spacing': 'error',
+    '@stylistic/type-annotation-spacing': 'error',
     '@typescript-eslint/unbound-method': 'error',
     'func-style': ['error', 'declaration', { 'allowArrowFunctions': false }],
     'sort-imports':
