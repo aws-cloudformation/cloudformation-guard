@@ -10,37 +10,37 @@ Resource = newServer {
     ALL {
       Check =  %res EQUALS  "a,b" {
         ComparisonError {
-          Error            = Check was not compliant as property value [Path=/Resources/newServer/Collection/0[L:12,C:8] Value="a,b,c"] not equal to value [Path=[L:0,C:0] Value="a,b"].
-          PropertyPath    = /Resources/newServer/Collection/0[L:12,C:8]
+          Error            = Check was not compliant as property value [Path=/Resources/newServer/Collection/0[L:14,C:8] Value="a,b,c"] not equal to value [Path=[L:0,C:0] Value="a,b"].
+          PropertyPath    = /Resources/newServer/Collection/0[L:14,C:8]
           Operator        = EQUAL
           Value           = "a,b,c"
           ComparedWith    = "a,b"
           Code:
-               10.      Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
-               11.      Encoded: This%20string%20will%20be%20URL%20encoded
-               12.    Collection:
-               13.      - a
-               14.      - b
-               15.      - c
+               12.      UpdatedAt: "2024-08-15T00:00:00Z"
+               13.      CreatedAt: "2023-01-01T12:00:00Z"
+               14.    Collection:
+               15.      - a
+               16.      - b
+               17.      - c
 
         }
       }
       Check =  a,b EQUALS  join(%collection, ",") {
         ComparisonError {
           Message          = Violation: The joined value does not match the expected result
-          Error            = Check was not compliant as property [/Resources/newServer/Collection/0[L:12,C:8]] was not present in [(resolved, Path=/Resources/newServer/Collection/0[L:12,C:8] Value="a,b,c")]
+          Error            = Check was not compliant as property [/Resources/newServer/Collection/0[L:14,C:8]] was not present in [(resolved, Path=/Resources/newServer/Collection/0[L:14,C:8] Value="a,b,c")]
         }
-          PropertyPath    = /Resources/newServer/Collection/0[L:12,C:8]
+          PropertyPath    = /Resources/newServer/Collection/0[L:14,C:8]
           Operator        = EQUAL
           Value           = "a,b,c"
           ComparedWith    = ["a,b,c"]
           Code:
-               10.      Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
-               11.      Encoded: This%20string%20will%20be%20URL%20encoded
-               12.    Collection:
-               13.      - a
-               14.      - b
-               15.      - c
+               12.      UpdatedAt: "2024-08-15T00:00:00Z"
+               13.      CreatedAt: "2023-01-01T12:00:00Z"
+               14.    Collection:
+               15.      - a
+               16.      - b
+               17.      - c
 
       }
     }

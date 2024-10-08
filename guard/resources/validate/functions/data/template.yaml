@@ -9,6 +9,8 @@ Resources:
         }
       Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
       Encoded: This%20string%20will%20be%20URL%20encoded
+      UpdatedAt: "2024-08-15T00:00:00Z"
+      CreatedAt: "2023-01-01T12:00:00Z"
     Collection:
       - a
       - b
@@ -24,6 +26,12 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: "Version"
+          Value: "2023-07-15T00:00:00Z"
+        - Key: "Description"
+          Value: "A bucket created for testing date-time handling"
+
   bucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -32,6 +40,9 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: "CreatedAt"
+          Value: "2024-08-15T10:00:00Z"
   bucket2:
     Type: AWS::S3::Bucket
   bucket3:
@@ -47,3 +58,4 @@ Resources:
       DefaultInstanceWarmup: 1.5
       HealthCheckGracePeriod: 1
       HealthCheckType: "true"
+      UpdatedAt: "4024-08-10T00:00:00Z"
