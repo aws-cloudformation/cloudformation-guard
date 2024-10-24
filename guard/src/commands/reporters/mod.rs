@@ -93,7 +93,7 @@ struct JunitReporter<'reporter> {
 }
 
 impl<'reporter> JunitReporter<'reporter> {
-    /// Update exit code only if code takes more presedence than current exit code
+    /// Update exit code only if code takes more precedence than current exit code
     fn update_exit_code(&mut self, code: i32) {
         if code == ERROR_STATUS_CODE
             || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
