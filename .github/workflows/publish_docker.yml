@@ -1,0 +1,54 @@
+name: Deploy to ECR Public Gallery
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'guard/ts-lib/**'
+jobs:
+  build:
+    if: github.repository == 'aws-cloudformation/cloudformation-guard'
+    name: Build Image for Latest Commit
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.PUBLISHER_ROLE_NAME }}
+          role-session-name: PublishToElasticContainerRegistry
+
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+
+      - name: Build, tag, and push docker image to Amazon ECR Public
+        env:
+          REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REGISTRY_ALIAS: ${{ secrets.REGISTRY_ALIAS }}
+          REPOSITORY: cloudformation-guard
+        run: |
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          git_branch=${GITHUB_REF#refs/heads/}
+          commit_hash=${git_branch}.${git_hash}
+
+          prefix=$REGISTRY/$REGISTRY_ALIAS/$REPOSITORY
+          latest_image_tag=$prefix:latest
+          commit_hash_image_tag=$prefix:$commit_hash
+
+          docker build -t $latest_image_tag -t $commit_hash_image_tag .
+          docker push $commit_hash_image_tag
+
+          if [ ${git_branch} == 'main' ]
+          then
+            docker push $latest_image_tag
+          fi

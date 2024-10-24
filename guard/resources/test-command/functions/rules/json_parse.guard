@@ -1,0 +1,15 @@
+let template = Resources.*[ Type == 'AWS::New::Service']
+
+rule SOME_RULE when %template !empty {
+    let policy = %template.Properties.BucketPolicy.PolicyText
+    let res = json_parse(%policy)
+
+    %res !empty
+
+    %res.Statement[*]
+    {
+        Effect == "Deny"
+        Resource == "arn:aws:s3:::s3-test-123/*"
+    }
+}
+

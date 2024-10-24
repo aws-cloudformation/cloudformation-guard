@@ -1,0 +1,9 @@
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+rule SOME_RULE when %template !empty {
+    let props = %template.Properties
+    let stuff = %props.stuff
+    let other = %stuff.other
+    let collection = %other.dne.*
+    let res = count(%collection)
+    %res == 3
+}

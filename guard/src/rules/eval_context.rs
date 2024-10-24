@@ -1,21 +1,40 @@
-use crate::rules::exprs::{RulesFile, AccessQuery, Rule, LetExpr, LetValue, QueryPart, SliceDisplay, Block, GuardClause, Conjunctions, ParameterizedRule};
-use crate::rules::path_value::{PathAwareValue, MapValue};
-use std::collections::{HashMap, HashSet};
-use crate::rules::{QueryResult, Status, EvalContext, UnResolved, RecordType, NamedStatus, TypeBlockCheck, BlockCheck, ClauseCheck, UnaryValueCheck, ValueCheck, ComparisonClauseCheck, RecordTracer, InComparisonCheck};
-use crate::rules::Result;
-use crate::rules::errors::{Error, ErrorKind};
-use lazy_static::lazy_static;
-use inflector::cases::*;
-use serde::Serialize;
-use crate::rules::Status::SKIP;
+use crate::rules::errors::Error;
+use crate::rules::exprs::{
+    AccessQuery, Block, Conjunctions, FunctionExpr, GuardClause, LetExpr, LetValue,
+    ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
+};
+use crate::rules::functions::collections::count;
+use crate::rules::functions::converters::{
+    parse_bool, parse_char, parse_float, parse_int, parse_str,
+};
+use crate::rules::functions::strings::{
+    join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
+};
+use crate::rules::path_value::{Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
+use crate::rules::Result;
+use crate::rules::Status::SKIP;
+use crate::rules::{
+    BlockCheck, ClauseCheck, ComparisonClauseCheck, EvalContext, InComparisonCheck, NamedStatus,
+    QueryResult, RecordTracer, RecordType, Status, TypeBlockCheck, UnResolved, UnaryValueCheck,
+    ValueCheck,
+};
+use inflector::cases::*;
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
+use std::convert::TryFrom;
+use std::rc::Rc;
+use std::vec::Vec;
+
+use super::functions::date_time::{now, parse_epoch};
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
-    root: &'value PathAwareValue,
-    //resolved_variables: std::cell::RefCell<HashMap<&'value str, Vec<QueryResult<'value>>>>,
-    resolved_variables: HashMap<&'value str, Vec<QueryResult<'value>>>,
-    literals: HashMap<&'value str, &'value PathAwareValue>,
+    root: Rc<PathAwareValue>,
+    resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
+    literals: HashMap<&'value str, Rc<PathAwareValue>>,
     variable_queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
+    function_expressions: HashMap<&'value str, &'value FunctionExpr<'loc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -34,53 +53,26 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
-    pub fn reset_root(self, new_root: &'value PathAwareValue) -> Result<RootScope<'value, 'loc>> {
+    #[cfg(test)]
+    pub fn reset_root(self, new_root: Rc<PathAwareValue>) -> RootScope<'value, 'loc> {
         root_scope_with(
             self.scope.literals,
             self.scope.variable_queries,
             self.rules,
             self.parameterized_rules,
-            new_root)
+            self.scope.function_expressions,
+            new_root,
+        )
     }
 
     pub(crate) fn reset_recorder(&mut self) -> RecordTracker<'value> {
         std::mem::replace(
-            &mut self.recorder, RecordTracker {
+            &mut self.recorder,
+            RecordTracker {
                 final_event: None,
-                events: vec![]
-            }
+                events: vec![],
+            },
         )
-    }
-}
-
-pub(crate) fn reset_with<'value, 'loc: 'value>(
-    mut root_scope: RootScope<'value, 'loc>,
-    new_value: &'value PathAwareValue) -> RootScope<'value, 'loc>
-{
-    let variables = std::mem::replace(
-        &mut root_scope.scope.variable_queries, HashMap::new());
-    let literals = std::mem::replace(
-        &mut root_scope.scope.literals, HashMap::new()
-    );
-    let rules = std::mem::replace(
-        &mut root_scope.rules, HashMap::new()
-    );
-    let parameterized_rules = std::mem::replace(
-        &mut root_scope.parameterized_rules, HashMap::new()
-    );
-    let scope = Scope {
-        root: new_value,
-        //resolved_variables: std::cell::RefCell::new(HashMap::new()),
-        resolved_variables: HashMap::new(),
-        literals: literals,
-        variable_queries: variables
-    };
-    RootScope {
-        scope, rules, parameterized_rules, rules_status: HashMap::new(),
-        recorder: RecordTracker {
-            final_event: None,
-            events: vec![]
-        }
     }
 }
 
@@ -90,44 +82,53 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
 }
 
 pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
-    pub(crate) root: &'value PathAwareValue,
+    pub(crate) root: Rc<PathAwareValue>,
     pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
-fn extract_variables<'value, 'loc: 'value>(
-    expressions: &'value Vec<LetExpr<'loc>>)
-    -> Result<(HashMap<&'value str, &'value PathAwareValue>,
-               HashMap<&'value str, &'value AccessQuery<'loc>>)> {
+type ExtractedStatements<'value, 'loc> = (
+    HashMap<&'value str, Rc<PathAwareValue>>,
+    HashMap<&'value str, &'value AccessQuery<'loc>>,
+    HashMap<&'value str, &'value FunctionExpr<'loc>>,
+);
 
+fn extract_variables<'value, 'loc: 'value>(
+    expressions: &'value Vec<LetExpr<'loc>>,
+) -> ExtractedStatements<'value, 'loc> {
     let mut literals = HashMap::with_capacity(expressions.len());
     let mut queries = HashMap::with_capacity(expressions.len());
+    let mut functions = HashMap::with_capacity(expressions.len());
     for each in expressions {
         match &each.value {
             LetValue::Value(v) => {
-                literals.insert(each.var.as_str(), v);
-            },
+                literals.insert(each.var.as_str(), Rc::new(v.clone()));
+            }
 
             LetValue::AccessClause(query) => {
                 queries.insert(each.var.as_str(), query);
-            },
-
-            LetValue::FunctionCall(_) => todo!()
+            }
+            LetValue::FunctionCall(function) => {
+                functions.insert(each.var.as_str(), function);
+            }
         }
     }
-    Ok((literals, queries))
+
+    (literals, queries, functions)
 }
 
-fn retrieve_index<'value>(parent: &'value PathAwareValue,
-                          index: i32,
-                          elements: &'value Vec<PathAwareValue>,
-                          query: &[QueryPart<'_>]) -> QueryResult<'value> {
+fn retrieve_index(
+    parent: Rc<PathAwareValue>,
+    index: i32,
+    elements: &Vec<PathAwareValue>,
+    query: &[QueryPart<'_>],
+) -> QueryResult {
     let check = if index >= 0 { index } else { -index } as usize;
     if check < elements.len() {
-        QueryResult::Resolved(&elements[check])
+        QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
         QueryResult::UnResolved(
             UnResolved {
-                traversed_to: parent,
+                traversed_to: Rc::clone(&parent),
                 remaining_query: format!("{}", SliceDisplay(query)),
                 reason: Some(
                     format!("Array Index out of bounds for path = {} on index = {} inside Array = {:?}, remaining query = {}",
@@ -136,46 +137,63 @@ fn retrieve_index<'value>(parent: &'value PathAwareValue,
             }
         )
     }
-
 }
 
 fn accumulate<'value, 'loc: 'value>(
-    parent: &'value PathAwareValue,
+    parent: Rc<PathAwareValue>,
     query_index: usize,
     query: &'value [QueryPart<'loc>],
-    elements: &'value Vec<PathAwareValue>,
+    elements: &[PathAwareValue],
     resolver: &mut dyn EvalContext<'value, 'loc>,
-    converter: Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>> {
+    converter: Option<&dyn Fn(&str) -> String>,
+) -> Result<Vec<QueryResult>> {
     //
     // We are here when we are doing [*] for a list. It is an error if there are no
     // elements
     //
-    if elements.is_empty()  {
+    if elements.is_empty() {
         return to_unresolved_result(
-            parent,
-            format!("No more entries for value at path = {} on type = {} ",
-                    parent.self_path(), parent.type_info()),
-            &query[query_index..]
+            Rc::clone(&parent),
+            format!(
+                "No more entries for value at path = {} on type = {} ",
+                parent.self_path(),
+                parent.type_info()
+            ),
+            &query[query_index..],
         );
     }
 
     let mut accumulated = Vec::with_capacity(elements.len());
-    for (_index, each) in elements.iter().enumerate() {
-        accumulated.extend(query_retrieval_with_converter(query_index+1, query, each, resolver, converter)?);
+    for each in elements.iter() {
+        accumulated.extend(query_retrieval_with_converter(
+            query_index + 1,
+            query,
+            Rc::new(each.clone()),
+            resolver,
+            converter,
+        )?);
     }
     Ok(accumulated)
-
 }
 
 fn accumulate_map<'value, 'loc: 'value, F>(
-    parent: &'value PathAwareValue,
-    map: &'value MapValue,
+    parent: Rc<PathAwareValue>,
+    map: &MapValue,
     query_index: usize,
     query: &'value [QueryPart<'loc>],
     resolver: &mut dyn EvalContext<'value, 'loc>,
     converter: Option<&dyn Fn(&str) -> String>,
-    func: F) -> Result<Vec<QueryResult<'value>>>
-    where F: Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
+    func: F,
+) -> Result<Vec<QueryResult>>
+where
+    F: Fn(
+        usize,
+        &'value [QueryPart<'loc>],
+        Rc<PathAwareValue>,
+        Rc<PathAwareValue>,
+        &mut dyn EvalContext<'value, 'loc>,
+        Option<&dyn Fn(&str) -> String>,
+    ) -> Result<Vec<QueryResult>>,
 {
     //
     // We are here when we are doing * all values for map. It is an error if there are no
@@ -183,48 +201,63 @@ fn accumulate_map<'value, 'loc: 'value, F>(
     //
     if map.is_empty() {
         return to_unresolved_result(
-            parent,
-            format!("No more entries for value at path = {} on type = {} ",
-                    parent.self_path(), parent.type_info()),
-            &query[query_index..]
+            Rc::clone(&parent),
+            format!(
+                "No more entries for value at path = {} on type = {} ",
+                parent.self_path(),
+                parent.type_info()
+            ),
+            &query[query_index..],
         );
     }
 
     let mut resolved = Vec::with_capacity(map.values.len());
+
     for (key, each) in map.keys.iter().zip(map.values.values()) {
-        let mut val_resolver = ValueScope{ root: each, parent: resolver };
-        resolved.extend(
-            func(query_index+1, query, key, each, &mut val_resolver, converter)?)
+        let mut val_resolver = ValueScope {
+            root: Rc::new(each.clone()),
+            parent: resolver,
+        };
+        resolved.extend(func(
+            query_index + 1,
+            query,
+            Rc::new(key.clone()),
+            Rc::new(each.clone()),
+            &mut val_resolver,
+            converter,
+        )?)
     }
+
     Ok(resolved)
 }
 
-    fn to_unresolved_value<'value>(
-        current: &'value PathAwareValue,
-        reason: String,
-        query: &[QueryPart<'_>]) -> QueryResult<'value> {
-    QueryResult::UnResolved(
-        UnResolved {
-            traversed_to: current,
-            reason: Some(reason),
-            remaining_query: format!("{}", SliceDisplay(query))
-        }
-    )
+fn to_unresolved_value(
+    current: Rc<PathAwareValue>,
+    reason: String,
+    query: &[QueryPart<'_>],
+) -> QueryResult {
+    QueryResult::UnResolved(UnResolved {
+        traversed_to: Rc::clone(&current),
+        reason: Some(reason),
+        remaining_query: format!("{}", SliceDisplay(query)),
+    })
 }
 
-fn to_unresolved_result<'value>(
-    current: &'value PathAwareValue,
+fn to_unresolved_result(
+    current: Rc<PathAwareValue>,
     reason: String,
-    query: &[QueryPart<'_>]) -> Result<Vec<QueryResult<'value>>> {
+    query: &[QueryPart],
+) -> Result<Vec<QueryResult>> {
     Ok(vec![to_unresolved_value(current, reason, query)])
 }
 
-fn map_resolved<'value, F>(
-    _current: &'value PathAwareValue,
-    query_result: QueryResult<'value>,
-    func: F)
-    -> Result<Vec<QueryResult<'value>>>
-       where F: FnOnce(&'value PathAwareValue) -> Result<Vec<QueryResult<'value>>>
+fn map_resolved<F>(
+    _current: &PathAwareValue,
+    query_result: QueryResult,
+    func: F,
+) -> Result<Vec<QueryResult>>
+where
+    F: FnOnce(Rc<PathAwareValue>) -> Result<Vec<QueryResult>>,
 {
     match query_result {
         QueryResult::Resolved(res) => func(res),
@@ -232,28 +265,44 @@ fn map_resolved<'value, F>(
     }
 }
 
-fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<GuardClause<'loc>>, name: &'value Option<String>)
-    -> impl Fn(usize, &'value [QueryPart<'loc>], &'value PathAwareValue, &'value PathAwareValue, &mut dyn EvalContext<'value, 'loc>, Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>>
-{
+fn check_and_delegate<'value, 'loc: 'value>(
+    conjunctions: &'value Conjunctions<GuardClause<'loc>>,
+    name: &'value Option<String>,
+) -> impl Fn(
+    usize,
+    &'value [QueryPart<'loc>],
+    Rc<PathAwareValue>,
+    Rc<PathAwareValue>,
+    &mut dyn EvalContext<'value, 'loc>,
+    Option<&dyn Fn(&str) -> String>,
+) -> Result<Vec<QueryResult>> {
     move |index, query, key, value, eval_context, converter| {
         let context = format!("Filter/Map#{}", conjunctions.len());
         eval_context.start_record(&context)?;
         match super::eval::eval_conjunction_clauses(
-            conjunctions, eval_context, super::eval::eval_guard_clause) {
+            conjunctions,
+            eval_context,
+            super::eval::eval_guard_clause,
+        ) {
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
                 if let Some(key_name) = name {
                     if status == Status::PASS {
-                        eval_context.add_variable_capture_key(key_name.as_ref(), key)?;
+                        eval_context
+                            .add_variable_capture_key(key_name.as_ref(), Rc::clone(&key))?;
                     }
                 }
                 match status {
-                    Status::PASS => {
-                        query_retrieval_with_converter(index, query, value, eval_context, converter)
-                    },
-                    _ => Ok(vec![])
+                    Status::PASS => query_retrieval_with_converter(
+                        index,
+                        query,
+                        Rc::clone(&value),
+                        eval_context,
+                        converter,
+                    ),
+                    _ => Ok(vec![]),
                 }
-            },
+            }
 
             Err(e) => {
                 eval_context.end_record(&context, RecordType::Filter(Status::FAIL))?;
@@ -263,100 +312,118 @@ fn check_and_delegate<'value, 'loc: 'value>(conjunctions: &'value Conjunctions<G
     }
 }
 
+type Converters = &'static [(fn(&str) -> bool, fn(&str) -> String)];
 lazy_static! {
-    static ref CONVERTERS: &'static [(fn(&str) -> bool, fn(&str) -> String)] =
-        &[
-            (camelcase::is_camel_case, camelcase::to_camel_case),
-            (classcase::is_class_case, classcase::to_class_case),
-            (kebabcase::is_kebab_case, kebabcase::to_kebab_case),
-            (pascalcase::is_pascal_case, pascalcase::to_pascal_case),
-            (snakecase::is_snake_case, snakecase::to_snake_case),
-            (titlecase::is_title_case, titlecase::to_title_case),
-            (traincase::is_train_case, traincase::to_train_case),
-        ];
+    #[allow(clippy::type_complexity)]
+    static ref CONVERTERS: Converters = &[
+        (camelcase::is_camel_case, camelcase::to_camel_case),
+        (classcase::is_class_case, classcase::to_class_case),
+        (kebabcase::is_kebab_case, kebabcase::to_kebab_case),
+        (pascalcase::is_pascal_case, pascalcase::to_pascal_case),
+        (snakecase::is_snake_case, snakecase::to_snake_case),
+        (titlecase::is_title_case, titlecase::to_title_case),
+        (traincase::is_train_case, traincase::to_train_case),
+    ];
 }
 
 fn query_retrieval<'value, 'loc: 'value>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
-    current: &'value PathAwareValue,
-    resolver: &mut dyn EvalContext<'value, 'loc>) -> Result<Vec<QueryResult<'value>>> {
-    query_retrieval_with_converter(
-        query_index, query, current, resolver, None,
-    )
+    current: Rc<PathAwareValue>,
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+) -> Result<Vec<QueryResult>> {
+    query_retrieval_with_converter(query_index, query, current, resolver, None)
 }
 
 fn query_retrieval_with_converter<'value, 'loc: 'value>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
-    current: &'value PathAwareValue,
+    current: Rc<PathAwareValue>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
-    converter: Option<&dyn Fn(&str) -> String>) -> Result<Vec<QueryResult<'value>>> {
-
+    converter: Option<&dyn Fn(&str) -> String>,
+) -> Result<Vec<QueryResult>> {
     if query_index >= query.len() {
-        return Ok(vec![QueryResult::Resolved(current)])
+        return Ok(vec![QueryResult::Resolved(Rc::clone(&current))]);
     }
 
     if query_index == 0 && query[query_index].is_variable() {
         let retrieved = resolver.resolve_variable(query[query_index].variable().unwrap())?;
         let mut resolved = Vec::with_capacity(retrieved.len());
         for each in retrieved {
-            match each {
+            match &each {
                 QueryResult::UnResolved(ur) => {
-                    resolved.push(QueryResult::UnResolved(ur));
-                },
-                QueryResult::Literal(value) |
-                QueryResult::Resolved(value) => {
-                    let index = if query_index+1 < query.len() {
-                        match &query[query_index+1] {
-                            QueryPart::AllIndices(_name) => query_index+2,
-                            _ => query_index+1
+                    resolved.push(QueryResult::UnResolved(ur.clone()));
+                }
+                QueryResult::Literal(value) | QueryResult::Resolved(value) => {
+                    let index = if query_index + 1 < query.len() {
+                        match &query[query_index + 1] {
+                            QueryPart::AllIndices(_name) => query_index + 2,
+                            _ => query_index + 1,
                         }
-                    } else { query_index+1 };
+                    } else {
+                        query_index + 1
+                    };
 
                     if index < query.len() {
-                        let mut scope = ValueScope { root: value, parent: resolver };
-                        resolved.extend(query_retrieval_with_converter(index, query, value, &mut scope, converter)?);
-                    }
-                    else {
+                        let mut scope = ValueScope {
+                            root: Rc::clone(value),
+                            parent: resolver,
+                        };
+                        resolved.extend(query_retrieval_with_converter(
+                            index,
+                            query,
+                            Rc::clone(value),
+                            &mut scope,
+                            converter,
+                        )?);
+                    } else {
                         resolved.push(each)
                     }
                 }
             }
         }
-        return Ok(resolved)
+        return Ok(resolved);
     }
 
     match &query[query_index] {
         QueryPart::This => {
-            query_retrieval_with_converter(query_index+1, query, current, resolver, converter)
-        },
+            query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
+        }
 
-        QueryPart::Key(key) => {
-            match key.parse::<i32>() {
-                Ok(idx) => {
-                    match current {
-                        PathAwareValue::List((_, list)) => {
-                            map_resolved(current,
-                                         retrieve_index(current, idx, list, query),
-                                         |val| query_retrieval_with_converter(query_index+1, query, val, resolver, converter))
-                        }
+        QueryPart::Key(key) => match key.parse::<i32>() {
+            Ok(idx) => match &*current {
+                PathAwareValue::List((_, list)) => map_resolved(
+                    &current,
+                    retrieve_index(Rc::clone(&current), idx, list, query),
+                    |val| {
+                        query_retrieval_with_converter(
+                            query_index + 1,
+                            query,
+                            val,
+                            resolver,
+                            converter,
+                        )
+                    },
+                ),
 
-                        _ =>
-                            to_unresolved_result(
-                                current,
-                                format!("Attempting to retrieve from index {} but type is not an array at path {}", idx, current.self_path()),
-                                query)
-                    }
-                },
+                _ => to_unresolved_result(
+                    Rc::clone(&current),
+                    format!(
+                        "Attempting to retrieve from index {} but type is not an array at path {}",
+                        idx,
+                        (*current).self_path()
+                    ),
+                    query,
+                ),
+            },
 
-                Err(_) =>
-                    if let PathAwareValue::Map((path, map)) = current {
-                        if query[query_index].is_variable() {
-                            let var = query[query_index].variable().unwrap();
-                            let keys = resolver.resolve_variable(var)?;
-                            let keys = if query.len() > query_index+1 {
-                                match &query[query_index+1] {
+            Err(_) => {
+                if let PathAwareValue::Map((path, map)) = &*current {
+                    if query[query_index].is_variable() {
+                        let var = query[query_index].variable().unwrap();
+                        let keys = resolver.resolve_variable(var)?;
+                        let keys = if query.len() > query_index + 1 {
+                            match &query[query_index+1] {
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                     QueryPart::Index(index) => {
                                         let check = if *index >= 0 { *index } else { -*index } as usize;
@@ -372,54 +439,57 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         }
                                     },
 
-                                    _ => return Err(Error::new(ErrorKind::IncompatibleError(
+                                    _ => return Err(Error::IncompatibleError(
                                         format!("This type of query {} based variable interpolation is not supported {}, {}",
-                                                query[1], current.type_info(), SliceDisplay(query)))))
+                                                query[1], current.type_info(), SliceDisplay(query))))
                                 }
-                            } else {
-                                keys
-                            };
+                        } else {
+                            keys
+                        };
 
-
-                            let mut acc = Vec::with_capacity(keys.len());
-                            for each_key in keys {
-                                match each_key {
-                                    QueryResult::UnResolved(ur) => {
-                                        acc.extend(
+                        let mut acc = Vec::with_capacity(keys.len());
+                        for each_key in keys {
+                            match each_key {
+                                QueryResult::UnResolved(ur) => {
+                                    acc.extend(
                                             to_unresolved_result(
-                                                current,
+                                                Rc::clone(&current),
                                                 format!("Keys returned for variable {} could not completely resolve. Path traversed until {}{}",
                                                         var, ur.traversed_to.self_path(), ur.reason.map_or("".to_string(), |msg| msg)
                                                 ),
                                                 &query[query_index..]
                                             )?
                                         );
-                                    },
-
-                                    QueryResult::Literal(key) |
-                                    QueryResult::Resolved(key) => {
-                                        if let PathAwareValue::String((_, k)) = key {
-                                            if let Some(next) = map.values.get(k) {
-                                                acc.extend(query_retrieval_with_converter(query_index+1, query, next, resolver, converter)?);
-                                            } else {
-                                                acc.extend(
+                                }
+                                QueryResult::Resolved(key) | QueryResult::Literal(key) => {
+                                    if let PathAwareValue::String((_, k)) = &*key {
+                                        if let Some(next) = map.values.get(k) {
+                                            acc.extend(query_retrieval_with_converter(
+                                                query_index + 1,
+                                                query,
+                                                Rc::new(next.clone()),
+                                                resolver,
+                                                converter,
+                                            )?);
+                                        } else {
+                                            acc.extend(
                                                     to_unresolved_result(
-                                                        current,
+                                                Rc::clone(&current),
                                                         format!("Could not locate key = {} inside struct at path = {}", k, path),
                                                         &query[query_index..]
                                                     )?
                                                 );
-                                            }
-                                        } else if let PathAwareValue::List((_, inner)) = key {
-                                            for each_key in inner {
-                                                match each_key {
+                                        }
+                                    } else if let PathAwareValue::List((_, inner)) = &*key {
+                                        for each_key in inner {
+                                            match &each_key {
                                                     PathAwareValue::String((path, key_to_match)) => {
                                                         if let Some(next) = map.values.get(key_to_match) {
-                                                            acc.extend(query_retrieval_with_converter(query_index + 1, query, next, resolver, converter)?);
+                                                            acc.extend(query_retrieval_with_converter(query_index + 1, query, Rc::new(next.clone()), resolver, converter)?);
                                                         } else {
                                                             acc.extend(
                                                                 to_unresolved_result(
-                                                                    current,
+                                                                Rc::clone(&current),
                                                                     format!("Could not locate key = {} inside struct at path = {}", key_to_match, path),
                                                                     &query[query_index..]
                                                                 )?
@@ -427,116 +497,156 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                                         }
                                                     },
 
-                                                    rest => {
-                                                        return Err(Error::new(
-                                                            ErrorKind::NotComparable(
+                                                    _rest => {
+                                                        return Err(Error
+                                                            ::NotComparable(
                                                                 format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
                                                                         SliceDisplay(query),
                                                                         key.type_info(),
                                                                         key.self_value()
                                                                 )
-                                                            )
+
                                                         ))
                                                     }
                                                 }
-                                            }
                                         }
-                                        else {
-                                            return Err(Error::new(
-                                                ErrorKind::NotComparable(
+                                    } else {
+                                        return Err(Error
+                                               ::NotComparable(
                                                     format!("Variable projections inside Query {}, is returning a non-string value for key {}, {:?}",
                                                             SliceDisplay(query),
                                                             key.type_info(),
                                                             key.self_value()
                                                     )
-                                                )
-                                            ))
-                                        }
+
+                                            ));
                                     }
                                 }
                             }
-                            Ok(acc)
-                        } else {
-                            match map.values.get(key) {
-                                Some(val) =>
-                                    return query_retrieval_with_converter(query_index+1, query, val, resolver, converter),
+                        }
+                        Ok(acc)
+                    } else {
+                        match map.values.get(key) {
+                            Some(val) => {
+                                return query_retrieval_with_converter(
+                                    query_index + 1,
+                                    query,
+                                    Rc::new(val.clone()),
+                                    resolver,
+                                    converter,
+                                )
+                            }
+
+                            None => match converter {
+                                Some(func) => {
+                                    let converted = func(key.as_str());
+                                    if let Some(val) = map.values.get(&converted) {
+                                        return query_retrieval_with_converter(
+                                            query_index + 1,
+                                            query,
+                                            Rc::new(val.clone()),
+                                            resolver,
+                                            converter,
+                                        );
+                                    }
+                                }
 
                                 None => {
-                                    match converter {
-                                        Some(func) => {
-                                            let converted = func(key.as_str());
-                                            if let Some(val) = map.values.get(&converted) {
-                                                return query_retrieval_with_converter(query_index+1, query, val, resolver, converter)
-                                            }
-                                        },
-
-                                        None => {
-                                            for (_, each_converter) in CONVERTERS.iter() {
-                                                if let Some(val) = map.values.get(&each_converter(key.as_str())) {
-                                                    return query_retrieval_with_converter(query_index+1, query, val, resolver, Some(each_converter))
-                                                }
-                                            }
+                                    for (_, each_converter) in CONVERTERS.iter() {
+                                        if let Some(val) =
+                                            map.values.get(&each_converter(key.as_str()))
+                                        {
+                                            return query_retrieval_with_converter(
+                                                query_index + 1,
+                                                query,
+                                                Rc::new(val.clone()),
+                                                resolver,
+                                                Some(each_converter),
+                                            );
                                         }
                                     }
                                 }
-                            }
-
-                            to_unresolved_result(
-                                current,
-                                format!("Could not find key {} inside struct at path {}", key, path),
-                                &query[query_index..]
-                            )
+                            },
                         }
-                    } else {
+
                         to_unresolved_result(
-                            current,
+                            Rc::clone(&current),
+                            format!("Could not find key {} inside struct at path {}", key, path),
+                            &query[query_index..],
+                        )
+                    }
+                } else {
+                    to_unresolved_result(
+                            Rc::clone(&current),
                             format!("Attempting to retrieve from key {} but type is not an struct type at path {}, Type = {}, Value = {:?}",
                                     key, current.self_path(), current.type_info(), current),
                             &query[query_index..])
-                    }
+                }
             }
         },
 
-        QueryPart::Index(index) => {
-            match current {
-                PathAwareValue::List((_, list)) => {
-                    map_resolved(current,
-                                 retrieve_index(current, *index, list, query),
-                                 |val| query_retrieval_with_converter(query_index+1, query, val, resolver, converter))
-                }
+        QueryPart::Index(index) => match &*current {
+            PathAwareValue::List((_, list)) => map_resolved(
+                &current,
+                retrieve_index(Rc::clone(&current), *index, list, query),
+                |val| {
+                    query_retrieval_with_converter(query_index + 1, query, val, resolver, converter)
+                },
+            ),
 
-                _ =>
-                    to_unresolved_result(
-                        current,
-                        format!("Attempting to retrieve from index {} but type is not an array at path {}", index, current.self_path()),
-                        &query[query_index..])
-            }
+            _ => to_unresolved_result(
+                Rc::clone(&current),
+                format!(
+                    "Attempting to retrieve from index {} but type is not an array at path {}, \
+                    type {}",
+                    index,
+                    current.self_path(),
+                    current.type_info()
+                ),
+                &query[query_index..],
+            ),
         },
 
         QueryPart::AllIndices(name) => {
-            match current {
-                PathAwareValue::List((_path, elements)) => {
-                    accumulate(current, query_index, query, elements, resolver, converter)
-                },
+            match &*current {
+                PathAwareValue::List((_, elements)) => accumulate(
+                    Rc::clone(&current),
+                    query_index,
+                    query,
+                    elements,
+                    resolver,
+                    converter,
+                ),
 
                 PathAwareValue::Map((_, map)) => {
                     if name.is_none() {
-                        query_retrieval_with_converter(query_index+1, query, current, resolver, converter)
-                    }
-                    else {
-                        let name = name.as_ref().unwrap().as_str();
-                        accumulate_map(current, map, query_index, query, resolver, converter,
-                                       |index,
-                                        query,
-                                        key,
-                                        value,
-                                        context,
-                                        converter| {
-                                           context.add_variable_capture_key(name, key)?;
-                                           query_retrieval_with_converter(index, query, value, context, converter)
-                                       }
+                        query_retrieval_with_converter(
+                            query_index + 1,
+                            query,
+                            Rc::clone(&current),
+                            resolver,
+                            converter,
                         )
-
+                    } else {
+                        let name = name.as_ref().unwrap().as_str();
+                        accumulate_map(
+                            Rc::clone(&current),
+                            map,
+                            query_index,
+                            query,
+                            resolver,
+                            converter,
+                            |index, query, key, value, context, converter| {
+                                context.add_variable_capture_key(name, Rc::clone(&key))?;
+                                query_retrieval_with_converter(
+                                    index,
+                                    query,
+                                    Rc::clone(&value),
+                                    context,
+                                    converter,
+                                )
+                            },
+                        )
                     }
                 }
 
@@ -545,255 +655,317 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 // single values often are accepted. So proceed to the next
                 // part of your query
                 //
-                rest => {
-                    query_retrieval_with_converter(query_index+1, query, rest, resolver, converter)
-                }
+                rest => query_retrieval_with_converter(
+                    query_index + 1,
+                    query,
+                    Rc::new(rest.clone()),
+                    resolver,
+                    converter,
+                ),
             }
-        },
+        }
 
         QueryPart::AllValues(name) => {
-            match current {
+            match &*current {
                 //
                 // Supporting old format
                 //
-                PathAwareValue::List((_path, elements)) => {
-                    accumulate(current, query_index, query, elements, resolver, converter)
-                },
+                PathAwareValue::List((_path, elements)) => accumulate(
+                    Rc::clone(&current),
+                    query_index,
+                    query,
+                    elements,
+                    resolver,
+                    converter,
+                ),
 
                 PathAwareValue::Map((_path, map)) => {
                     let (report, name) = match name {
                         Some(n) => (true, n.as_str()),
-                        None => (false, "")
+                        None => (false, ""),
                     };
-                    accumulate_map(current, map, query_index, query, resolver, converter,
-                                   |index,
-                                    query,
-                                    key,
-                                    value,
-                                    context,
-                                    converter| {
-                                    if report {
-                                        context.add_variable_capture_key(name, key)?;
-                                    }
-                                       query_retrieval_with_converter(index, query, value, context, converter)
-                                   }
+                    accumulate_map(
+                        Rc::clone(&current),
+                        map,
+                        query_index,
+                        query,
+                        resolver,
+                        converter,
+                        |index, query, key, value, context, converter| {
+                            if report {
+                                context.add_variable_capture_key(name, Rc::clone(&key))?;
+                            }
+                            query_retrieval_with_converter(
+                                index,
+                                query,
+                                Rc::clone(&value),
+                                context,
+                                converter,
+                            )
+                        },
                     )
-                },
+                }
 
                 //
                 // Often in the place where a list of values is accepted
                 // single values often are accepted. So proceed to the next
                 // part of your query
                 //
-                rest => {
-                    query_retrieval_with_converter(query_index+1, query, rest, resolver, converter)
-                }
+                rest => query_retrieval_with_converter(
+                    query_index + 1,
+                    query,
+                    Rc::new(rest.clone()),
+                    resolver,
+                    converter,
+                ),
             }
-        },
+        }
 
-        QueryPart::Filter(name, conjunctions) => {
-            match current {
-                PathAwareValue::Map((_path, map)) => {
-                    match &query[query_index-1] {
-                        QueryPart::AllValues(_name) |
-                        QueryPart::AllIndices(_name) => {
-                            check_and_delegate(conjunctions, &None)(query_index+1, query, current, current, resolver, converter)
-                        },
-
-                        QueryPart::Key(_) => {
-//
-//                            Ideal solution, see https://github.com/rust-lang/rust/issues/41078
-//
-//                            accumulate_map(
-//                                map, query_index, query, resolver,
-//                                |index, query:&'value [QueryPart<'_>], value:&'value PathAwareValue, context: &dyn EvalContext<'value>| {
-//                                    match super::eval::eval_conjunction_clauses(
-//                                        conjunctions, resolver, super::eval::eval_guard_clause)? {
-//                                        Status::PASS => query_retrieval_with_converter(index+1, query, current, resolver, converter),
-//                                        _ => Ok(vec![])
-//                                    }
-//                                })
-                            if !map.is_empty() {
-                                accumulate_map(
-                                    current, map, query_index, query, resolver, converter, check_and_delegate(conjunctions, name)
-                                )
-                            } else {
-                                Ok(vec![])
-                            }
-                        },
-
-                        _ => unreachable!()
-                    }
-                },
-
-                PathAwareValue::List((_path, list)) => {
-                    let mut selected = Vec::with_capacity(list.len());
-                    for each in list {
-                        let context = format!("Filter/List#{}", conjunctions.len());
-                        resolver.start_record(&context)?;
-                        let mut val_resolver = ValueScope { root: each, parent: resolver };
-                        let result = match super::eval::eval_conjunction_clauses(
-                            conjunctions, &mut val_resolver, super::eval::eval_guard_clause) {
-                            Ok(status) => {
-                                resolver.end_record(&context, RecordType::Filter(status))?;
-                                match status {
-                                    Status::PASS => {
-                                        query_retrieval_with_converter(query_index + 1, query, each, resolver, converter)?
-                                    },
-                                    _ => vec![]
-                                }
-                            },
-
-                            Err(e) => {
-                                resolver.end_record(&context, RecordType::Filter(Status::FAIL))?;
-                                return Err(e)
-                            }
-                        };
-                        selected.extend(result);
-                    }
-                    Ok(selected)
+        QueryPart::Filter(name, conjunctions) => match &*current {
+            PathAwareValue::Map((_path, map)) => match &query[query_index - 1] {
+                QueryPart::AllValues(_name) | QueryPart::AllIndices(_name) => {
+                    check_and_delegate(conjunctions, &None)(
+                        query_index + 1,
+                        query,
+                        Rc::clone(&current),
+                        Rc::clone(&current),
+                        resolver,
+                        converter,
+                    )
                 }
 
-                _ => if let QueryPart::AllIndices(_) = &query[query_index-1] {
-                    let mut val_resolver = ValueScope { root: current, parent: resolver };
-                    match super::eval::eval_conjunction_clauses(
-                            conjunctions, &mut val_resolver, super::eval::eval_guard_clause) {
+                QueryPart::Key(_) => {
+                    if !map.is_empty() {
+                        accumulate_map(
+                            Rc::clone(&current),
+                            map,
+                            query_index,
+                            query,
+                            resolver,
+                            converter,
+                            check_and_delegate(conjunctions, name),
+                        )
+                    } else {
+                        Ok(vec![])
+                    }
+                }
+
+                _ => unreachable!(),
+            },
+
+            PathAwareValue::List((_path, list)) => {
+                let mut selected = Vec::with_capacity(list.len());
+                for each in list {
+                    let context = format!("Filter/List#{}", conjunctions.len());
+                    resolver.start_record(&context)?;
+                    let mut val_resolver = ValueScope {
+                        root: Rc::new(each.clone()),
+                        parent: resolver,
+                    };
+                    let result = match super::eval::eval_conjunction_clauses(
+                        conjunctions,
+                        &mut val_resolver,
+                        super::eval::eval_guard_clause,
+                    ) {
                         Ok(status) => {
+                            resolver.end_record(&context, RecordType::Filter(status))?;
                             match status {
-                                Status::PASS => {
-                                    query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
-                                },
-                                _ => Ok(vec![])
+                                Status::PASS => query_retrieval_with_converter(
+                                    query_index + 1,
+                                    query,
+                                    Rc::new(each.clone()),
+                                    resolver,
+                                    converter,
+                                )?,
+                                _ => vec![],
                             }
-                        },
-                        Err(e) => {
-                            return Err(e)
                         }
+
+                        Err(e) => {
+                            resolver.end_record(&context, RecordType::Filter(Status::FAIL))?;
+                            return Err(e);
+                        }
+                    };
+                    selected.extend(result);
+                }
+                Ok(selected)
+            }
+
+            _ => {
+                if let QueryPart::AllIndices(_) = &query[query_index - 1] {
+                    let mut val_resolver = ValueScope {
+                        root: Rc::clone(&current),
+                        parent: resolver,
+                    };
+                    match super::eval::eval_conjunction_clauses(
+                        conjunctions,
+                        &mut val_resolver,
+                        super::eval::eval_guard_clause,
+                    ) {
+                        Ok(status) => match status {
+                            Status::PASS => query_retrieval_with_converter(
+                                query_index + 1,
+                                query,
+                                Rc::clone(&current),
+                                resolver,
+                                converter,
+                            ),
+                            _ => Ok(vec![]),
+                        },
+                        Err(e) => Err(e),
                     }
                 } else {
                     to_unresolved_result(
-                        current,
-                        format!("Filter on value type that was not a struct or array {} {}", current.type_info(), current.self_path()),
-                        &query[query_index..])
+                        Rc::clone(&current),
+                        format!(
+                            "Filter on value type that was not a struct or array {} {}",
+                            current.type_info(),
+                            current.self_path()
+                        ),
+                        &query[query_index..],
+                    )
                 }
             }
         },
 
-        QueryPart::MapKeyFilter(_name, map_key_filter) => {
-            match current {
-                PathAwareValue::Map((_path, map)) => {
-                    let mut selected = Vec::with_capacity(map.values.len());
-                    let rhs = match &map_key_filter.compare_with {
-                        LetValue::AccessClause(acc_query) => {
-                            let values = query_retrieval_with_converter(0, &acc_query.query, current, resolver, converter)?;
-                            values
-                        },
+        QueryPart::MapKeyFilter(_name, map_key_filter) => match &*current {
+            PathAwareValue::Map((_path, map)) => {
+                let mut selected = Vec::with_capacity(map.values.len());
+                let rhs = match &map_key_filter.compare_with {
+                    LetValue::AccessClause(acc_query) => query_retrieval_with_converter(
+                        0,
+                        &acc_query.query,
+                        Rc::clone(&current),
+                        resolver,
+                        converter,
+                    )?,
 
-                        LetValue::Value(path_value) => {
-                            vec![QueryResult::Literal(path_value)]
-                        },
-
-                        LetValue::FunctionCall(_) => todo!(),
-                    };
-
-                    let lhs = map.keys.iter().map(|p| QueryResult::Resolved(p))
-                        .collect::<Vec<QueryResult<'_>>>();
-
-                    let results = super::eval::real_binary_operation(
-                        &lhs,
-                        &rhs,
-                        map_key_filter.comparator,
-                        "".to_string(),
-                        None,
-                        resolver
-                    )?;
-
-                    let results = match results {
-                        super::eval::EvaluationResult::QueryValueResult(r) => r,
-                        _ => unreachable!()
-                    };
-
-                    for each_result in results {
-                        match each_result {
-                            (QueryResult::Resolved(key), Status::PASS) => {
-                                if let PathAwareValue::String((_, key_name))= key {
-                                    selected.push(
-                                        QueryResult::Resolved(
-                                            map.values.get(key_name.as_str()).unwrap()));
-                                }
-                            },
-
-                            (QueryResult::UnResolved(ur), _) => {
-                                selected.push(QueryResult::UnResolved(ur));
-                            },
-
-                            (_, _) => {
-                                continue;
-                            }
-                        }
+                    LetValue::Value(path_value) => {
+                        vec![QueryResult::Literal(Rc::new(path_value.clone()))]
                     }
 
-                    let mut extended = Vec::with_capacity(selected.len());
-                    for each in selected {
-                        match each {
-                            QueryResult::Literal(r) |
-                            QueryResult::Resolved(r) => {
-                                extended.extend(
-                                    query_retrieval_with_converter(query_index+1, query, r, resolver, converter)?
-                                );
-                            },
+                    LetValue::FunctionCall(FunctionExpr {
+                        parameters, name, ..
+                    }) => resolve_function(name, parameters, resolver)?,
+                };
 
-                            QueryResult::UnResolved(ur) => {
-                                extended.push(QueryResult::UnResolved(ur));
+                let lhs = map
+                    .keys
+                    .iter()
+                    .cloned()
+                    .map(Rc::new)
+                    .map(QueryResult::Resolved)
+                    .collect::<Vec<QueryResult>>();
+
+                let results = super::eval::real_binary_operation(
+                    &lhs,
+                    &rhs,
+                    map_key_filter.comparator,
+                    "".to_string(),
+                    None,
+                    resolver,
+                )?;
+
+                let results = match results {
+                    super::eval::EvaluationResult::QueryValueResult(r) => r,
+                    _ => unreachable!(),
+                };
+
+                for each_result in results {
+                    match each_result {
+                        (QueryResult::Resolved(key), Status::PASS) => {
+                            if let PathAwareValue::String((_, key_name)) = &*key {
+                                selected.push(QueryResult::Resolved(Rc::new(
+                                    map.values.get(key_name.as_str()).unwrap().clone(),
+                                )));
                             }
                         }
-                    }
-                    Ok(extended)
-                },
 
-                _ => to_unresolved_result(
-                    current,
-                    format!("Map Filter for keys was not a struct {} {}", current.type_info(), current.self_path()),
-                    &query[query_index..])
+                        (QueryResult::UnResolved(ur), _) => {
+                            selected.push(QueryResult::UnResolved(ur));
+                        }
+
+                        (_, _) => {
+                            continue;
+                        }
+                    }
+                }
+
+                let mut extended = Vec::with_capacity(selected.len());
+                for each in selected {
+                    match each {
+                        QueryResult::Literal(r) | QueryResult::Resolved(r) => {
+                            extended.extend(query_retrieval_with_converter(
+                                query_index + 1,
+                                query,
+                                r,
+                                resolver,
+                                converter,
+                            )?);
+                        }
+                        QueryResult::UnResolved(ur) => {
+                            extended.push(QueryResult::UnResolved(ur));
+                        }
+                    }
+                }
+                Ok(extended)
             }
-        }
+
+            _ => to_unresolved_result(
+                Rc::clone(&current),
+                format!(
+                    "Map Filter for keys was not a struct {} {}",
+                    current.type_info(),
+                    current.self_path()
+                ),
+                &query[query_index..],
+            ),
+        },
     }
 }
-
 
 pub(crate) fn root_scope<'value, 'loc: 'value>(
     rules_file: &'value RulesFile<'loc>,
-    root: &'value PathAwareValue) -> Result<RootScope<'value, 'loc>>
-{
-    let (literals, queries) =
-        extract_variables(&rules_file.assignments)?;
+    root: Rc<PathAwareValue>,
+) -> RootScope<'value, 'loc> {
+    let (literals, queries, function_expressions) = extract_variables(&rules_file.assignments);
     let mut lookup_cache = HashMap::with_capacity(rules_file.guard_rules.len());
     for rule in &rules_file.guard_rules {
-        lookup_cache.entry(rule.rule_name.as_str()).or_insert(vec![]).push(rule);
+        lookup_cache
+            .entry(rule.rule_name.as_str())
+            .or_insert(vec![])
+            .push(rule);
     }
 
-    let mut parameterized_rules = HashMap::with_capacity(
-        rules_file.parameterized_rules.len());
-    for pr in rules_file.parameterized_rules.iter(){
+    let mut parameterized_rules = HashMap::with_capacity(rules_file.parameterized_rules.len());
+    for pr in rules_file.parameterized_rules.iter() {
         parameterized_rules.insert(pr.rule.rule_name.as_str(), pr);
     }
-    root_scope_with(literals, queries, lookup_cache,  parameterized_rules, root)
+    root_scope_with(
+        literals,
+        queries,
+        lookup_cache,
+        parameterized_rules,
+        function_expressions,
+        root,
+    )
 }
 
 pub(crate) fn root_scope_with<'value, 'loc: 'value>(
-    literals: HashMap<&'value str, &'value PathAwareValue>,
+    literals: HashMap<&'value str, Rc<PathAwareValue>>,
     queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
     lookup_cache: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
-    parameterized_rules: HashMap<&'value str,&'value ParameterizedRule<'loc>>,
-    root: &'value PathAwareValue)
-    -> Result<RootScope<'value, 'loc>>
-{
-    Ok(RootScope {
+    parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
+    function_expressions: HashMap<&'value str, &'value FunctionExpr<'loc>>,
+    root: Rc<PathAwareValue>,
+) -> RootScope<'value, 'loc> {
+    RootScope {
         scope: Scope {
             root,
             literals,
             variable_queries: queries,
             //resolved_variables: std::cell::RefCell::new(HashMap::new()),
+            function_expressions,
             resolved_variables: HashMap::new(),
         },
         rules: lookup_cache,
@@ -801,28 +973,28 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         rules_status: HashMap::new(),
         recorder: RecordTracker {
             final_event: None,
-            events: vec![]
-        }
-    })
+            events: vec![],
+        },
+    }
 }
 
 pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
-    root: &'value PathAwareValue,
-    parent: &'eval mut dyn EvalContext<'value, 'loc>) -> Result<BlockScope<'value, 'loc, 'eval>> {
-
-    let (literals, variable_queries) =
-        extract_variables(&block.assignments)?;
-    Ok(BlockScope {
+    root: Rc<PathAwareValue>,
+    parent: &'eval mut dyn EvalContext<'value, 'loc>,
+) -> BlockScope<'value, 'loc, 'eval> {
+    let (literals, variable_queries, function_expressions) = extract_variables(&block.assignments);
+    BlockScope {
         scope: Scope {
             literals,
             variable_queries,
             root,
             //resolved_variables: std::cell::RefCell::new(HashMap::new()),
             resolved_variables: HashMap::new(),
+            function_expressions,
         },
-        parent
-    })
+        parent,
+    }
 }
 
 pub(crate) struct RecordTracker<'value> {
@@ -831,10 +1003,11 @@ pub(crate) struct RecordTracker<'value> {
 }
 
 impl<'value> RecordTracker<'value> {
+    #[cfg(test)]
     pub(crate) fn new() -> RecordTracker<'value> {
         RecordTracker {
             events: vec![],
-            final_event: None
+            final_event: None,
         }
     }
     pub(crate) fn extract(mut self) -> EventRecord<'value> {
@@ -847,7 +1020,7 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
         self.events.push(EventRecord {
             context: context.to_string(),
             container: None,
-            children: vec![]
+            children: vec![],
         });
         Ok(())
     }
@@ -855,19 +1028,21 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
         let matched = match self.events.pop() {
             Some(mut event) => {
-                if &event.context != context {
-                    return Err(Error::new(ErrorKind::IncompatibleError(
-                        format!("Event Record context start and end does not match {}", context)
-                    )))
+                if event.context != context {
+                    return Err(Error::IncompatibleError(format!(
+                        "Event Record context start and end does not match {}",
+                        context
+                    )));
                 }
 
                 event.container = Some(record);
                 event
-            },
+            }
 
             None => {
-                return Err(Error::new(ErrorKind::IncompatibleError(
-                    format!("Event Record end with context {} did not have a corresponding start", context)
+                return Err(Error::IncompatibleError(format!(
+                    "Event Record end with context {} did not have a corresponding start",
+                    context
                 )))
             }
         };
@@ -875,7 +1050,7 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
         match self.events.last_mut() {
             Some(parent) => {
                 parent.children.push(matched);
-            },
+            }
 
             None => {
                 self.final_event.replace(matched);
@@ -886,36 +1061,44 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
 }
 
 impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc> {
-
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
-        query_retrieval(0, query, self.scope.root, self)
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
+        let root = self.root();
+        query_retrieval(0, query, root, self)
     }
 
-    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+    fn find_parameterized_rule(
+        &mut self,
+        rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>> {
         match self.parameterized_rules.get(rule_name) {
             Some(r) => Ok(*r),
-            _ => Err(Error::new(ErrorKind::MissingValue(
-                format!("Parameterized Rule with name {} was not found, candiate {:?}",
-                        rule_name, self.parameterized_rules.keys())
-            )))
+            _ => Err(Error::MissingValue(format!(
+                "Parameterized Rule with name {} was not found, candidate {:?}",
+                rule_name,
+                self.parameterized_rules.keys()
+            ))),
         }
     }
 
-
-    fn root(&mut self) -> &'value PathAwareValue {
-        self.scope.root
+    fn root(&mut self) -> Rc<PathAwareValue> {
+        Rc::clone(&self.scope.root)
     }
 
+    #[allow(clippy::never_loop)]
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
         if let Some(status) = self.rules_status.get(rule_name) {
-            return Ok(*status)
+            return Ok(*status);
         }
 
         let rule = match self.rules.get(rule_name) {
             Some(rule) => rule.clone(),
-            None => return Err(Error::new(ErrorKind::MissingValue(
-                format!("Rule {} by that name does not exist, Rule Names = {:?}",
-                        rule_name, self.rules.keys()))))
+            None => {
+                return Err(Error::MissingValue(format!(
+                    "Rule {} by that name does not exist, Rule Names = {:?}",
+                    rule_name,
+                    self.rules.keys()
+                )))
+            }
         };
 
         let status = 'done: loop {
@@ -925,54 +1108,365 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                     break 'done status;
                 }
             }
-            break SKIP
+            break SKIP;
         };
 
-        // let status = super::eval::eval_rule(rule, self)?;
         self.rules_status.insert(rule_name, status);
         Ok(status)
-
-//        self.rules.get(rule_name).map_or_else(
-//            || Err(Error::new(ErrorKind::MissingValue(
-//                format!("Rule {} by that name does not exist, Rule Names = {:?}",
-//                        rule_name, self.rules.keys())
-//            ))),
-//            |rule| super::eval::eval_rule(*rule, self)
-//        )
     }
 
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Literal(*val)])
+            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
         }
 
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
-            return Ok(values.clone())
+            return Ok(values.clone());
+        }
+
+        if let Some(FunctionExpr {
+            parameters, name, ..
+        }) = self.scope.function_expressions.get(variable_name)
+        {
+            let result = resolve_function(name, parameters, self)?;
+            self.scope
+                .resolved_variables
+                .insert(variable_name, result.clone());
+
+            return Ok(result);
         }
 
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
-            None => return Err(Error::new(ErrorKind::MissingValue(
-                format!("Could not resolve variable by name {} across scopes", variable_name)
-            )))
+            None => {
+                return Err(Error::MissingValue(format!(
+                    "Could not resolve variable by name {} across scopes",
+                    variable_name
+                )))
+            }
         };
 
         let match_all = query.match_all;
 
-        let result = query_retrieval(0, &query.query, self.scope.root, self)?;
+        let result = query_retrieval(0, &query.query, self.root(), self)?;
         let result = if !match_all {
-            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
+            result
+                .into_iter()
+                .filter(|q| matches!(q, QueryResult::Resolved(_)))
+                .collect()
         } else {
             result
         };
-        self.scope.resolved_variables.insert(variable_name, result.clone());
-        return Ok(result);
+        self.scope
+            .resolved_variables
+            .insert(variable_name, result.clone());
+        Ok(result)
     }
 
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
-        self.scope.resolved_variables.entry(variable_name).or_default()
-            .push(QueryResult::Resolved(key));
+    fn add_variable_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.scope
+            .resolved_variables
+            .entry(variable_name)
+            .or_default()
+            .push(QueryResult::Resolved(Rc::clone(&key)));
         Ok(())
+    }
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FunctionName {
+    Count,
+    Join,
+    JsonParse,
+    Now,
+    ParseBoolean,
+    ParseChar,
+    ParseEpoch,
+    ParseFloat,
+    ParseInt,
+    ParseString,
+    RegexReplace,
+    Substring,
+    ToLower,
+    ToUpper,
+    UrlDecode,
+}
+
+impl FunctionName {
+    pub fn get_expected_number_of_args(&self) -> usize {
+        match self {
+            FunctionName::Join => 2,
+            FunctionName::Substring | FunctionName::RegexReplace => 3,
+            FunctionName::Count
+            | FunctionName::JsonParse
+            | FunctionName::ToUpper
+            | FunctionName::ToLower
+            | FunctionName::UrlDecode
+            | FunctionName::ParseString
+            | FunctionName::ParseBoolean
+            | FunctionName::ParseFloat
+            | FunctionName::ParseInt
+            | FunctionName::ParseEpoch
+            | FunctionName::ParseChar => 1,
+            FunctionName::Now => 0,
+        }
+    }
+}
+
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            FunctionName::Count => "count",
+            FunctionName::Join => "join",
+            FunctionName::JsonParse => "json_parse",
+            FunctionName::Now => "now",
+            FunctionName::ParseBoolean => "parse_boolean",
+            FunctionName::ParseChar => "parse_char",
+            FunctionName::ParseEpoch => "parse_epoch",
+            FunctionName::ParseFloat => "parse_float",
+            FunctionName::ParseInt => "parse_int",
+            FunctionName::ParseString => "parse_string",
+            FunctionName::RegexReplace => "regex_replace",
+            FunctionName::Substring => "substring",
+            FunctionName::ToLower => "to_lower",
+            FunctionName::ToUpper => "to_upper",
+            FunctionName::UrlDecode => "url_decode",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+impl TryFrom<&str> for FunctionName {
+    type Error = Error;
+
+    fn try_from(name: &str) -> std::result::Result<Self, Self::Error> {
+        match name {
+            "count" => Ok(FunctionName::Count),
+            "join" => Ok(FunctionName::Join),
+            "json_parse" => Ok(FunctionName::JsonParse),
+            "now" => Ok(FunctionName::Now),
+            "parse_boolean" => Ok(FunctionName::ParseBoolean),
+            "parse_char" => Ok(FunctionName::ParseChar),
+            "parse_epoch" => Ok(FunctionName::ParseEpoch),
+            "parse_float" => Ok(FunctionName::ParseFloat),
+            "parse_int" => Ok(FunctionName::ParseInt),
+            "parse_string" => Ok(FunctionName::ParseString),
+            "regex_replace" => Ok(FunctionName::RegexReplace),
+            "substring" => Ok(FunctionName::Substring),
+            "to_lower" => Ok(FunctionName::ToLower),
+            "to_upper" => Ok(FunctionName::ToUpper),
+            "url_decode" => Ok(FunctionName::UrlDecode),
+            _ => Err(Error::ParseError(format!(
+                "No function with the name '{name}' exists.",
+            ))),
+        }
+    }
+}
+
+struct CountFunction;
+struct JsonParseFunction;
+struct RegexReplaceFunction;
+struct SubstringFunction;
+struct ToUpperFunction;
+struct ToLowerFunction;
+struct JoinFunction;
+struct UrlDecodeFunction;
+struct ParseIntFunction;
+struct ParseFloatFunction;
+struct ParseStringFunction;
+struct ParseBooleanFunction;
+struct ParseCharFunction;
+struct ParseEpochFunction;
+struct NowFunction;
+
+trait Callable {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>>;
+}
+
+impl Callable for FunctionName {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        match self {
+            FunctionName::Count => CountFunction.call(args),
+            FunctionName::JsonParse => JsonParseFunction.call(args),
+            FunctionName::RegexReplace => RegexReplaceFunction.call(args),
+            FunctionName::Substring => SubstringFunction.call(args),
+            FunctionName::ToUpper => ToUpperFunction.call(args),
+            FunctionName::ToLower => ToLowerFunction.call(args),
+            FunctionName::Join => JoinFunction.call(args),
+            FunctionName::UrlDecode => UrlDecodeFunction.call(args),
+            FunctionName::ParseInt => ParseIntFunction.call(args),
+            FunctionName::ParseFloat => ParseFloatFunction.call(args),
+            FunctionName::ParseString => ParseStringFunction.call(args),
+            FunctionName::ParseBoolean => ParseBooleanFunction.call(args),
+            FunctionName::ParseChar => ParseCharFunction.call(args),
+            FunctionName::ParseEpoch => ParseEpochFunction.call(args),
+            FunctionName::Now => NowFunction.call(args),
+        }
+    }
+}
+
+impl Callable for ParseEpochFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_epoch(&args[0])
+    }
+}
+
+impl Callable for NowFunction {
+    fn call(&self, _args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        now()
+    }
+}
+
+impl Callable for CountFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        Ok(vec![Some(count(&args[0]))])
+    }
+}
+
+impl Callable for JsonParseFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        json_parse(&args[0])
+    }
+}
+
+impl Callable for RegexReplaceFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
+
+            format!("regex_replace function requires the {arg} argument to be a string")
+        };
+
+        let extracted_expr = match &args[1][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
+
+        let replaced_expr = match &args[2][0] {
+            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                PathAwareValue::String((_, s)) => s,
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
+
+        regex_replace(&args[0], extracted_expr, replaced_expr)
+    }
+}
+
+impl Callable for SubstringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let substring_err_msg = |index| {
+            let arg = match index {
+                2 => "second",
+                3 => "third",
+                _ => unreachable!(),
+            };
+
+            format!("substring function requires the {arg} argument to be a number")
+        };
+
+        let from = match &args[1][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(2))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(2))),
+        };
+
+        let to = match &args[2][0] {
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
+                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
+                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
+                _ => return Err(Error::ParseError(substring_err_msg(3))),
+            },
+            _ => return Err(Error::ParseError(substring_err_msg(3))),
+        };
+
+        substring(&args[0], from, to)
+    }
+}
+
+impl Callable for ToUpperFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_upper(&args[0])
+    }
+}
+
+impl Callable for ToLowerFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        to_lower(&args[0])
+    }
+}
+
+impl Callable for JoinFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        let res =
+            match &args[1][0] {
+                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+                    PathAwareValue::String((_, s)) => join(&args[0], s),
+                    PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
+                    _ => return Err(Error::ParseError(String::from(
+                        "join function requires the second argument to be either a char or string",
+                    ))),
+                },
+                _ => {
+                    return Err(Error::ParseError(String::from(
+                        "join function requires the second argument to be either a char or string",
+                    )))
+                }
+            }?;
+
+        Ok(vec![Some(res)])
+    }
+}
+
+impl Callable for UrlDecodeFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        url_decode(&args[0])
+    }
+}
+
+impl Callable for ParseIntFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_int(&args[0])
+    }
+}
+
+impl Callable for ParseFloatFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_float(&args[0])
+    }
+}
+
+impl Callable for ParseStringFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_str(&args[0])
+    }
+}
+
+impl Callable for ParseBooleanFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_bool(&args[0])
+    }
+}
+
+impl Callable for ParseCharFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        parse_char(&args[0])
     }
 }
 
@@ -987,29 +1481,34 @@ impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
-        query_retrieval(0, query, self.root, self.parent)
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
+        query_retrieval(0, query, self.root(), self.parent)
     }
 
-    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+    fn find_parameterized_rule(
+        &mut self,
+        rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>> {
         self.parent.find_parameterized_rule(rule_name)
     }
 
-
-    fn root(&mut self) -> &'value PathAwareValue {
-        self.root
+    fn root(&mut self) -> Rc<PathAwareValue> {
+        Rc::clone(&self.root)
     }
 
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
         self.parent.rule_status(rule_name)
     }
 
-
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
         self.parent.resolve_variable(variable_name)
     }
 
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+    fn add_variable_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
     }
 }
@@ -1024,51 +1523,75 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'e
     }
 }
 
-
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'value, 'loc, 'eval> {
-    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult<'value>>> {
-        query_retrieval(0, query, self.scope.root, self)
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
+        query_retrieval(0, query, self.root(), self)
     }
 
-    fn find_parameterized_rule(&mut self, rule_name: &str) -> Result<&'value ParameterizedRule<'loc>> {
+    fn find_parameterized_rule(
+        &mut self,
+        rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>> {
         self.parent.find_parameterized_rule(rule_name)
     }
 
-    fn root(&mut self) -> &'value PathAwareValue {
-        self.scope.root
+    fn root(&mut self) -> Rc<PathAwareValue> {
+        Rc::clone(&self.scope.root)
     }
 
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
         self.parent.rule_status(rule_name)
     }
 
-    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult<'value>>> {
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Literal(*val)])
+            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
         }
 
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
-            return Ok(values.clone())
+            return Ok(values.clone());
+        }
+
+        if let Some(FunctionExpr {
+            parameters, name, ..
+        }) = self.scope.function_expressions.get(variable_name)
+        {
+            let result = resolve_function(name, parameters, self)?;
+            self.scope
+                .resolved_variables
+                .insert(variable_name, result.clone());
+
+            return Ok(result);
         }
 
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
-            None => return self.parent.resolve_variable(variable_name)
+            None => return self.parent.resolve_variable(variable_name),
         };
 
         let match_all = query.match_all;
 
-        let result = query_retrieval(0, &query.query, self.scope.root, self)?;
+        let result = query_retrieval(0, &query.query, self.root(), self)?;
         let result = if !match_all {
-            result.into_iter().filter(|q| matches!(q, QueryResult::Resolved(_))).collect()
+            result
+                .into_iter()
+                .filter(|q| matches!(q, QueryResult::Resolved(_)))
+                .collect()
         } else {
             result
         };
-        self.scope.resolved_variables.insert(variable_name, result.clone());
-        return Ok(result);
+        self.scope
+            .resolved_variables
+            .insert(variable_name, result.clone());
+
+        Ok(result)
     }
 
-    fn add_variable_capture_key(&mut self, variable_name: &'value str, key: &'value PathAwareValue) -> Result<()> {
+    fn add_variable_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
     }
 }
@@ -1083,24 +1606,38 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'l
     }
 }
 
-
-
-#[derive(Clone, Debug,Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub(crate) struct Messages {
     pub(crate) custom_message: Option<String>,
-    pub(crate) error_message: Option<String>
+    pub(crate) error_message: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) location: Option<Location>,
 }
 
 pub(crate) type Metadata = HashMap<String, String>;
 
-#[derive(Clone, Debug,Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default)]
 pub(crate) struct FileReport<'value> {
-   pub(crate) name: &'value str,
-   pub(crate) metadata: Metadata,
-   pub(crate) status: Status,
-   pub(crate) not_compliant: Vec<ClauseReport<'value>>,
-   pub(crate) not_applicable: HashSet<String>,
-   pub(crate) compliant: HashSet<String>,
+    pub(crate) name: &'value str,
+    pub(crate) metadata: Metadata,
+    pub(crate) status: Status,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
+    pub(crate) not_compliant: Vec<ClauseReport<'value>>,
+    pub(crate) not_applicable: BTreeSet<String>,
+    pub(crate) compliant: BTreeSet<String>,
+}
+
+impl<'value> FileReport<'value> {
+    pub(crate) fn combine(&mut self, report: FileReport<'value>) {
+        if report.name != self.name {
+            panic!("Incompatible to merge")
+        }
+        self.status = self.status.and(report.status);
+        self.metadata.extend(report.metadata);
+        self.not_compliant.extend(report.not_compliant);
+        self.compliant.extend(report.compliant);
+        self.not_applicable.extend(report.not_applicable);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -1108,113 +1645,121 @@ pub(crate) struct RuleReport<'value> {
     pub(crate) name: &'value str,
     pub(crate) metadata: Metadata,
     pub(crate) messages: Messages,
-    pub(crate) checks: Vec<ClauseReport<'value>>
+    pub(crate) checks: Vec<ClauseReport<'value>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct UnaryComparison<'value> {
-   pub(crate) value: &'value PathAwareValue,
-   pub(crate) comparison: (CmpOperator, bool),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct ValueUnResolved<'value> {
-    pub(crate) value: UnResolved<'value>,
+pub(crate) struct UnaryComparison {
+    pub(crate) value: Rc<PathAwareValue>,
     pub(crate) comparison: (CmpOperator, bool),
 }
 
-#[derive(Clone, Debug,Serialize)]
-pub(crate) enum UnaryCheck<'value> {
-    UnResolved(ValueUnResolved<'value>),
-    Resolved(UnaryComparison<'value>),
-    UnResolvedContext(String)
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ValueUnResolved {
+    pub(crate) value: UnResolved,
+    pub(crate) comparison: (CmpOperator, bool),
 }
 
-impl<'value> ValueComparisons<'value> for UnaryCheck<'value> {
-    fn value_from(&self) -> Option<&'value PathAwareValue> {
+#[derive(Clone, Debug, Serialize)]
+pub(crate) enum UnaryCheck {
+    UnResolved(ValueUnResolved),
+    Resolved(UnaryComparison),
+    UnResolvedContext(String),
+}
+
+impl ValueComparisons for UnaryCheck {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>> {
         match self {
-            UnaryCheck::UnResolved(ur) => Some(ur.value.traversed_to),
-            UnaryCheck::Resolved(uc) => Some(uc.value),
+            UnaryCheck::UnResolved(ur) => Some(ur.value.traversed_to.clone()),
+            UnaryCheck::Resolved(uc) => Some(uc.value.clone()),
             UnaryCheck::UnResolvedContext(_) => None,
         }
     }
 }
 
-
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct UnaryReport<'value> {
+pub(crate) struct UnaryReport {
+    pub(crate) check: UnaryCheck,
     pub(crate) context: String,
     pub(crate) messages: Messages,
-    pub(crate) check: UnaryCheck<'value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct BinaryComparison<'value> {
-   pub(crate) from: &'value PathAwareValue,
-   pub(crate) to: &'value PathAwareValue,
-   pub(crate) comparison: (CmpOperator, bool)
+pub(crate) struct BinaryComparison {
+    pub(crate) from: Rc<PathAwareValue>,
+    pub(crate) to: Rc<PathAwareValue>,
+    pub(crate) comparison: (CmpOperator, bool),
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct InComparison<'value> {
-    pub(crate) from: &'value PathAwareValue,
-    pub(crate) to: Vec<&'value PathAwareValue>,
-    pub(crate) comparison: (CmpOperator, bool)
+pub(crate) struct InComparison {
+    pub(crate) from: Rc<PathAwareValue>,
+    pub(crate) to: Vec<Rc<PathAwareValue>>,
+    pub(crate) comparison: (CmpOperator, bool),
 }
 
-#[derive(Clone, Debug,Serialize)]
-pub(crate) enum BinaryCheck<'value> {
-    UnResolved(ValueUnResolved<'value>),
-    Resolved(BinaryComparison<'value>),
-    InResolved(InComparison<'value>)
+#[derive(Clone, Debug, Serialize)]
+pub(crate) enum BinaryCheck {
+    UnResolved(ValueUnResolved),
+    Resolved(BinaryComparison),
+    InResolved(InComparison),
 }
 
-impl<'value> ValueComparisons<'value> for BinaryCheck<'value> {
-    fn value_from(&self) -> Option<&'value PathAwareValue> {
+impl ValueComparisons for BinaryCheck {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>> {
         match self {
-            BinaryCheck::UnResolved(vur) => Some(vur.value.traversed_to),
-            BinaryCheck::Resolved(res) => Some(res.from),
-            BinaryCheck::InResolved(inr) => Some(inr.from)
+            BinaryCheck::UnResolved(vur) => Some(vur.value.traversed_to.clone()),
+            BinaryCheck::Resolved(res) => Some(res.from.clone()),
+            BinaryCheck::InResolved(inr) => Some(inr.from.clone()),
         }
     }
 
-    fn value_to(&self) -> Option<&'value PathAwareValue> {
+    fn value_to(&self) -> Option<Rc<PathAwareValue>> {
         match self {
-            BinaryCheck::Resolved(bc) => Some(bc.to),
-            _ => None
+            BinaryCheck::Resolved(bc) => Some(bc.to.clone()),
+            _ => None,
         }
     }
 }
 
-#[derive(Clone, Debug,Serialize)]
-pub(crate) struct BinaryReport<'value> {
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct BinaryReport {
     pub(crate) context: String,
     pub(crate) messages: Messages,
-    pub(crate) check: BinaryCheck<'value>,
+    pub(crate) check: BinaryCheck,
 }
 
-#[derive(Clone, Debug,Serialize)]
-pub(crate) enum GuardClauseReport<'value> {
-    Unary(UnaryReport<'value>),
-    Binary(BinaryReport<'value>),
+#[derive(Clone, Debug, Serialize)]
+pub(crate) enum GuardClauseReport {
+    Unary(UnaryReport),
+    Binary(BinaryReport),
 }
 
-pub(crate) trait ValueComparisons<'from> {
-    fn value_from(&self) -> Option<&'from PathAwareValue>;
-    fn value_to(&self) -> Option<&'from PathAwareValue> {
+impl GuardClauseReport {
+    fn get_message(&self) -> Messages {
+        match self {
+            GuardClauseReport::Unary(unary_report) => unary_report.messages.clone(),
+            GuardClauseReport::Binary(binary_report) => binary_report.messages.clone(),
+        }
+    }
+}
+
+pub(crate) trait ValueComparisons {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>>;
+    fn value_to(&self) -> Option<Rc<PathAwareValue>> {
         None
     }
 }
 
-impl<'value> ValueComparisons<'value> for GuardClauseReport<'value> {
-    fn value_from(&self) -> Option<&'value PathAwareValue> {
+impl ValueComparisons for GuardClauseReport {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>> {
         match self {
             GuardClauseReport::Binary(br) => br.check.value_from(),
             GuardClauseReport::Unary(ur) => ur.check.value_from(),
         }
     }
 
-    fn value_to(&self) -> Option<&'value PathAwareValue> {
+    fn value_to(&self) -> Option<Rc<PathAwareValue>> {
         match self {
             GuardClauseReport::Binary(br) => br.check.value_to(),
             GuardClauseReport::Unary(ur) => ur.check.value_to(),
@@ -1228,256 +1773,424 @@ pub(crate) struct DisjunctionsReport<'value> {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct GuardBlockReport<'value> {
+pub(crate) struct GuardBlockReport {
     pub(crate) context: String,
     pub(crate) messages: Messages,
-    pub(crate) unresolved: Option<UnResolved<'value>>,
+    pub(crate) unresolved: Option<UnResolved>,
 }
 
-impl<'value> ValueComparisons<'value> for GuardBlockReport<'value> {
-    fn value_from(&self) -> Option<&'value PathAwareValue> {
+impl ValueComparisons for GuardBlockReport {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>> {
         if let Some(ur) = &self.unresolved {
-            return Some(ur.traversed_to)
+            return Some(ur.traversed_to.clone());
         }
         None
     }
 }
 
-#[derive(Clone, Debug,Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) enum ClauseReport<'value> {
     Rule(RuleReport<'value>),
-    Block(GuardBlockReport<'value>),
+    Block(GuardBlockReport),
     Disjunctions(DisjunctionsReport<'value>),
-    Clause(GuardClauseReport<'value>),
+    Clause(GuardClauseReport),
 }
 
 impl<'value> ClauseReport<'value> {
-    pub(crate) fn is_rule(&self) -> bool {
-        if let Self::Rule(_) = self { true } else { false }
-    }
-
-    pub(crate) fn is_block(&self) -> bool {
-        if let Self::Block(_) = self { true } else { false }
-    }
-
-    pub(crate) fn is_disjunctions(&self) -> bool {
-        if let Self::Disjunctions(_) = self { true } else { false }
-    }
-
-    pub(crate) fn is_clause(&self) -> bool {
-        if let Self::Clause(_) = self { true } else { false }
-    }
-
-    pub(crate) fn rule(&self) -> Option<&RuleReport> {
-        if let Self::Rule(rr) = self { Some(rr) } else { None }
-    }
-
-    pub(crate) fn block(&self) -> Option<&GuardBlockReport> {
-        if let Self::Block(rr) = self { Some(rr) } else { None }
-    }
-
-    pub(crate) fn disjunctions(&self) -> Option<&DisjunctionsReport> {
-        if let Self::Disjunctions(rr) = self { Some(rr) } else { None }
-    }
-
-    pub(crate) fn clause(&self) -> Option<&GuardClauseReport> {
-        if let Self::Clause(gc) = self { Some(gc) } else { None }
-    }
-
     pub(crate) fn key(&self, parent: &str) -> String {
         match self {
-            Self::Rule(RuleReport{name, ..}) => format!("{}/{}", parent, name),
+            Self::Rule(RuleReport { name, .. }) => format!("{}/{}", parent, name),
             Self::Block(_) => format!("{}/B[{:p}]", parent, self),
             Self::Disjunctions(_) => format!("{}/Or[{:p}]", parent, self),
-            Self::Clause(_) => format!("{}/C[{:p}]", parent, self)
+            Self::Clause(_) => format!("{}/C[{:p}]", parent, self),
         }
     }
 
+    pub fn get_message(&self) -> Vec<Messages> {
+        match self {
+            ClauseReport::Rule(rule) => rule.checks.iter().fold(vec![], |mut messages, report| {
+                messages.append(&mut report.get_message());
+                messages
+            }),
+            ClauseReport::Block(block) => vec![block.messages.clone()],
+            ClauseReport::Disjunctions(disjunctions) => {
+                disjunctions
+                    .checks
+                    .iter()
+                    .fold(vec![], |mut messages, report| {
+                        messages.append(&mut report.get_message());
+                        messages
+                    })
+            }
+            ClauseReport::Clause(clause) => vec![clause.get_message()],
+        }
+    }
 }
 
-impl<'value> ValueComparisons<'value> for ClauseReport<'value> {
-    fn value_from(&self) -> Option<&'value PathAwareValue> {
+impl<'value> ValueComparisons for ClauseReport<'value> {
+    fn value_from(&self) -> Option<Rc<PathAwareValue>> {
         match self {
             Self::Block(b) => b.value_from(),
             Self::Clause(c) => c.value_from(),
-            _ => None
+            _ => None,
         }
     }
 
-    fn value_to(&self) -> Option<&'value PathAwareValue> {
+    fn value_to(&self) -> Option<Rc<PathAwareValue>> {
         match self {
             Self::Block(b) => b.value_to(),
             Self::Clause(c) => c.value_to(),
-            _ => None
+            _ => None,
         }
     }
 }
-
 
 pub(crate) fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
     let (cmp, not) = cmp;
     if cmp.is_unary() {
         match cmp {
-            CmpOperator::Exists => if not { "NOT EXISTS" } else { "EXISTS" },
-            CmpOperator::Empty => if not { "NOT EMPTY" } else { "EMPTY" },
-            CmpOperator::IsList => if not { "NOT LIST" } else { "IS LIST" },
-            CmpOperator::IsMap => if not { "NOT STRUCT" } else { "IS STRUCT" },
-            CmpOperator::IsString => if not { "NOT STRING" } else { "IS STRING" }
-            _ => unreachable!()
+            CmpOperator::Exists => {
+                if not {
+                    "NOT EXISTS"
+                } else {
+                    "EXISTS"
+                }
+            }
+            CmpOperator::Empty => {
+                if not {
+                    "NOT EMPTY"
+                } else {
+                    "EMPTY"
+                }
+            }
+            CmpOperator::IsList => {
+                if not {
+                    "NOT LIST"
+                } else {
+                    "IS LIST"
+                }
+            }
+            CmpOperator::IsMap => {
+                if not {
+                    "NOT STRUCT"
+                } else {
+                    "IS STRUCT"
+                }
+            }
+            CmpOperator::IsString => {
+                if not {
+                    "NOT STRING"
+                } else {
+                    "IS STRING"
+                }
+            }
+            CmpOperator::IsFloat => {
+                if not {
+                    "NOT FLOAT"
+                } else {
+                    "IS FLOAT"
+                }
+            }
+            CmpOperator::IsNull => {
+                if not {
+                    "NOT NULL"
+                } else {
+                    "IS NULL"
+                }
+            }
+            CmpOperator::IsBool => {
+                if not {
+                    "NOT BOOL"
+                } else {
+                    "IS BOOl"
+                }
+            }
+            CmpOperator::IsInt => {
+                if not {
+                    "NOT INT"
+                } else {
+                    "IS INT"
+                }
+            }
+            _ => unreachable!(),
         }
-    }
-    else {
+    } else {
         match cmp {
-            CmpOperator::Eq => if not { "NOT EQUAL" } else { "EQUAL" },
-            CmpOperator::Le => if not { "NOT LESS THAN EQUAL" } else { "LESS THAN EQUAL" },
-            CmpOperator::Lt => if not { "NOT LESS THAN" } else { "LESS THAN" },
-            CmpOperator::Ge => if not { "NOT GREATER THAN EQUAL" } else { "GREATER THAN EQUAL" },
-            CmpOperator::Gt => if not { "NOT GREATER THAN" } else { "GREATER THAN" },
-            CmpOperator::In => if not { "NOT IN" } else { "IN" },
-            _ => unreachable!()
+            CmpOperator::Eq => {
+                if not {
+                    "NOT EQUAL"
+                } else {
+                    "EQUAL"
+                }
+            }
+            CmpOperator::Le => {
+                if not {
+                    "NOT LESS THAN EQUAL"
+                } else {
+                    "LESS THAN EQUAL"
+                }
+            }
+            CmpOperator::Lt => {
+                if not {
+                    "NOT LESS THAN"
+                } else {
+                    "LESS THAN"
+                }
+            }
+            CmpOperator::Ge => {
+                if not {
+                    "NOT GREATER THAN EQUAL"
+                } else {
+                    "GREATER THAN EQUAL"
+                }
+            }
+            CmpOperator::Gt => {
+                if not {
+                    "NOT GREATER THAN"
+                } else {
+                    "GREATER THAN"
+                }
+            }
+            CmpOperator::In => {
+                if not {
+                    "NOT IN"
+                } else {
+                    "IN"
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }
 
-fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -> Vec<ClauseReport<'value>> {
+fn report_all_failed_clauses_for_rules<'value>(
+    checks: &[EventRecord<'value>],
+) -> Vec<ClauseReport<'value>> {
     let mut clauses = Vec::with_capacity(checks.len());
     for current in checks {
         match &current.container {
-            Some(RecordType::RuleCheck(NamedStatus{name, status: Status::FAIL, message})) => {
+            Some(RecordType::RuleCheck(NamedStatus {
+                name,
+                status: Status::FAIL,
+                message,
+            })) => {
                 clauses.push(ClauseReport::Rule(RuleReport {
-                    name: *name,
+                    name,
                     checks: report_all_failed_clauses_for_rules(&current.children),
                     messages: Messages {
                         custom_message: message.clone(),
-                        error_message: None
+                        error_message: None,
+                        location: None,
                     },
                     ..Default::default()
                 }));
-            },
+            }
 
-            Some(RecordType::BlockGuardCheck(BlockCheck{status: Status::FAIL, ..})) => {
+            Some(RecordType::BlockGuardCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) => {
                 if current.children.is_empty() {
-                    clauses.push(ClauseReport::Block(GuardBlockReport{
+                    clauses.push(ClauseReport::Block(GuardBlockReport {
                         context: current.context.clone(),
                         messages: Messages {
-                            error_message: Some(String::from("query for block clause did not retrieve any value")),
+                            error_message: Some(String::from(
+                                "query for block clause did not retrieve any value",
+                            )),
                             custom_message: None,
+                            location: None,
                         },
                         unresolved: None,
                     }));
-                }
-                else {
+                } else {
                     clauses.extend(report_all_failed_clauses_for_rules(&current.children));
                 }
-            },
+            }
 
-            Some(RecordType::Disjunction(BlockCheck{status: Status::FAIL, ..})) => {
+            Some(RecordType::Disjunction(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) => {
                 clauses.push(ClauseReport::Disjunctions(DisjunctionsReport {
-                    checks: report_all_failed_clauses_for_rules(&current.children)
+                    checks: report_all_failed_clauses_for_rules(&current.children),
                 }));
             }
 
-            Some(RecordType::GuardClauseBlockCheck(BlockCheck{status: Status::FAIL, ..}))       |
-            Some(RecordType::TypeBlock(Status::FAIL)) |
-            Some(RecordType::TypeCheck(TypeBlockCheck{block: BlockCheck{status: Status::FAIL, ..}, ..})) |
-            Some(RecordType::WhenCheck(BlockCheck{status: Status::FAIL, ..})) => {
+            Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            }))
+            | Some(RecordType::TypeBlock(Status::FAIL))
+            | Some(RecordType::TypeCheck(TypeBlockCheck {
+                block:
+                    BlockCheck {
+                        status: Status::FAIL,
+                        ..
+                    },
+                ..
+            }))
+            | Some(RecordType::WhenCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) => {
                 clauses.extend(report_all_failed_clauses_for_rules(&current.children));
-            },
+            }
 
-            Some(RecordType::ClauseValueCheck(clause)) => {
-                match clause {
-                    ClauseCheck::NoValueForEmptyCheck(msg) => {
-                        let custom_message = msg.as_ref()
-                            .map_or("".to_string(),
-                                    |s| format!("{}", s.replace("\n", ";")));
+            Some(RecordType::ClauseValueCheck(clause)) => match clause {
+                ClauseCheck::NoValueForEmptyCheck(msg) => {
+                    let custom_message = msg
+                        .as_ref()
+                        .map_or("".to_string(), |s| s.replace('\n', ";"));
 
-                        let error_message = format!(
-                            "Check was not compliant as variable in context [{}] was not empty",
-                            current.context
-                        );
-                        clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+                    let error_message = format!(
+                        "Check was not compliant as variable in context [{}] was not empty",
+                        current.context
+                    );
+                    clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
+                        UnaryReport {
                             context: current.context.clone(),
                             check: UnaryCheck::UnResolvedContext(current.context.to_string()),
                             messages: Messages {
                                 custom_message: Some(custom_message),
                                 error_message: Some(error_message),
-                            }
-                        })))
-                    }
+                                location: None,
+                            },
+                        },
+                    )))
+                }
 
-                    ClauseCheck::Success => {},
+                ClauseCheck::Success => {}
 
-                    ClauseCheck::DependentRule(missing) => {
-                        let message = missing.custom_message.as_ref()
-                            .map_or("", String::as_str);
-                        let error_message = format!(
+                ClauseCheck::DependentRule(missing) => {
+                    let message = missing.custom_message.as_ref().map_or("", String::as_str);
+                    let error_message = format!(
                             "Check was not compliant as dependent rule [{rule}] did not PASS. Context [{cxt}]",
                             rule=missing.rule,
                             cxt=current.context,
                         );
-                        clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport{
+                    clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
+                        UnaryReport {
                             messages: Messages {
                                 custom_message: Some(message.to_string()),
                                 error_message: Some(error_message),
+                                location: None,
                             },
                             context: current.context.clone(),
                             check: UnaryCheck::UnResolvedContext(missing.rule.to_string()),
-                        })));
-                    },
+                        },
+                    )));
+                }
 
-                    ClauseCheck::MissingBlockValue(missing) => {
-                        let (property, far, ur) = match &missing.from {
-                            QueryResult::UnResolved(ur) => {
-                                (ur.remaining_query.as_str(), ur.traversed_to, ur)
-                            },
-                            _ => unreachable!()
-                        };
-                        let message = missing.custom_message.as_ref()
-                            .map_or("", String::as_str);
-                        let error_message = format!(
+                ClauseCheck::MissingBlockValue(missing) => {
+                    let (property, far, ur) = match &missing.from {
+                        QueryResult::UnResolved(ur) => {
+                            (ur.remaining_query.as_str(), ur.traversed_to.clone(), ur)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let message = missing.custom_message.as_ref().map_or("", String::as_str);
+                    let error_message = format!(
                             "Check was not compliant as property [{}] is missing. Value traversed to [{}]",
                             property,
                             far
                         );
-                        clauses.push(
-                            ClauseReport::Block(GuardBlockReport{
-                                context: current.context.clone(),
-                                messages: Messages {
-                                    custom_message: Some(message.to_string()),
-                                    error_message: Some(error_message),
-                                },
-                                unresolved: Some(ur.clone())
-                            })
-                        );
-                    },
+                    clauses.push(ClauseReport::Block(GuardBlockReport {
+                        context: current.context.clone(),
+                        messages: Messages {
+                            custom_message: Some(message.to_string()),
+                            error_message: Some(error_message),
+                            location: None,
+                        },
+                        unresolved: Some(ur.clone()),
+                    }));
+                }
 
-                    ClauseCheck::Unary(
-                        UnaryValueCheck{
-                            comparison: (cmp, not),
-                            value: ValueCheck{
-                                status: Status::FAIL,
-                                from,
-                                message,
-                                custom_message
-                            }}) => {
-                        let cmp_msg = match cmp {
-                            CmpOperator::Exists => if *not { "existed" } else { "did not exist" },
-                            CmpOperator::Empty => if *not { "was empty"} else { "was not empty" },
-                            CmpOperator::IsList => if *not { "was a list " } else { "was not list" },
-                            CmpOperator::IsMap => if *not { "was a struct" } else { "was not struct" },
-                            CmpOperator::IsString => if *not { "was a string " } else { "was not string" },
-                            _ => unreachable!()
-                        };
+                ClauseCheck::Unary(UnaryValueCheck {
+                    comparison: (cmp, not),
+                    value:
+                        ValueCheck {
+                            status: Status::FAIL,
+                            from,
+                            message,
+                            custom_message,
+                        },
+                }) => {
+                    use CmpOperator::*;
+                    let cmp_msg = match cmp {
+                        Exists => {
+                            if *not {
+                                "existed"
+                            } else {
+                                "did not exist"
+                            }
+                        }
+                        Empty => {
+                            if *not {
+                                "was empty"
+                            } else {
+                                "was not empty"
+                            }
+                        }
+                        IsList => {
+                            if *not {
+                                "was a list "
+                            } else {
+                                "was not list"
+                            }
+                        }
+                        IsMap => {
+                            if *not {
+                                "was a struct"
+                            } else {
+                                "was not struct"
+                            }
+                        }
+                        IsString => {
+                            if *not {
+                                "was a string "
+                            } else {
+                                "was not string"
+                            }
+                        }
+                        IsInt => {
+                            if *not {
+                                "was int"
+                            } else {
+                                "was not int"
+                            }
+                        }
+                        IsBool => {
+                            if *not {
+                                "was bool"
+                            } else {
+                                "was not bool"
+                            }
+                        }
+                        IsNull => {
+                            if *not {
+                                "was null"
+                            } else {
+                                "was not null"
+                            }
+                        }
+                        _ => {
+                            if *not {
+                                "was float"
+                            } else {
+                                "was not float"
+                            }
+                        }
+                    };
 
-                        let custom_message = custom_message.as_ref()
-                            .map_or("".to_string(),
-                                    |s| format!("{}", s.replace("\n", ";")));
+                    let custom_message = custom_message
+                        .as_ref()
+                        .map_or(String::default(), |s| s.to_string());
 
-                        let error_message = message.as_ref()
-                            .map_or("".to_string(),
-                                    |s| format!( "Error = [{}]", s));
+                    let error_message = message
+                        .as_ref()
+                        .map_or("".to_string(), |s| format!("Error = [{}]", s));
 
-                        let (message, check) = match from {
+                    let (message, check) = match from {
                             QueryResult::Literal(_) => unreachable!(),
                             QueryResult::Resolved(res) => {
                                 (
@@ -1489,7 +2202,7 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                                     ),
                                     UnaryCheck::Resolved(UnaryComparison {
                                         comparison: (*cmp, *not),
-                                        value: *res,
+                                        value: res.clone(),
                                     })
                                 )
 
@@ -1511,72 +2224,75 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                             }
                         };
 
-                        clauses.push(
-                            ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
-                                messages: Messages {
-                                    custom_message: Some(custom_message),
-                                    error_message: Some(message),
-                                },
-                                context: current.context.clone(),
-                                check
-                            }))
-                        );
-                    },
+                    clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
+                        UnaryReport {
+                            messages: Messages {
+                                custom_message: Some(custom_message),
+                                error_message: Some(message),
+                                location: Some(
+                                    from.unresolved_traversed_to()
+                                        .map_or(Location::default(), |val| val.self_path().1),
+                                ),
+                            },
+                            context: current.context.clone(),
+                            check,
+                        },
+                    )));
+                }
 
+                ClauseCheck::Comparison(ComparisonClauseCheck {
+                    custom_message,
+                    message,
+                    comparison: (cmp, not),
+                    from,
+                    status: Status::FAIL,
+                    to,
+                }) => {
+                    let custom_message = custom_message
+                        .as_ref()
+                        .map_or(String::default(), |s| s.to_string());
 
-                    ClauseCheck::Comparison(
-                        ComparisonClauseCheck{
-                            custom_message,
-                            message,
-                            comparison: (cmp, not),
-                            from,
-                            status: Status::FAIL,
-                            to
-                        }) => {
-                        let custom_message = custom_message.as_ref()
-                            .map_or("".to_string(),
-                                    |s| format!("{}", s.replace("\n", ";")));
+                    let error_message = message
+                        .as_ref()
+                        .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
-                        let error_message = message.as_ref()
-                            .map_or("".to_string(),
-                                    |s| format!( " Error = [{}]", s));
-
-                        match from {
-                            QueryResult::Literal(_) => unreachable!(),
-                            QueryResult::UnResolved(to_unres) => {
-                                let message = format!(
+                    match from {
+                        QueryResult::Literal(_) => unreachable!(),
+                        QueryResult::UnResolved(to_unres) => {
+                            let message = format!(
                                     "Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}",
                                     remain=to_unres.remaining_query,
                                     to=to_unres.traversed_to,
                                     err=error_message
                                 );
-                                clauses.push(ClauseReport::Clause(
-                                    GuardClauseReport::Binary(BinaryReport {
-                                        context: current.context.to_string(),
-                                        messages: Messages {
-                                            custom_message: Some(custom_message),
-                                            error_message: Some(message),
-                                        },
-                                        check: BinaryCheck::UnResolved(ValueUnResolved{
-                                            comparison: (*cmp, *not),
-                                            value: to_unres.clone()
-                                        })
-                                    })
-                                ));
-                            },
+                            clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
+                                BinaryReport {
+                                    context: current.context.to_string(),
+                                    messages: Messages {
+                                        custom_message: Some(custom_message),
+                                        error_message: Some(message),
+                                        location: Some(to_unres.traversed_to.self_path().1),
+                                    },
+                                    check: BinaryCheck::UnResolved(ValueUnResolved {
+                                        comparison: (*cmp, *not),
+                                        value: to_unres.clone(),
+                                    }),
+                                },
+                            )));
+                        }
 
-                            QueryResult::Resolved(res) => {
-                                if let Some(to) = to {
-                                    match to {
-                                        QueryResult::Literal(_) => unreachable!(),
-                                        QueryResult::Resolved(to_res) => {
-                                            let message = format!(
+                        QueryResult::Resolved(res) => {
+                            if let Some(to) = to {
+                                match to {
+                                    QueryResult::Literal(_) => unreachable!(),
+                                    QueryResult::Resolved(to_res) => {
+                                        let message = format!(
                                                 "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",
                                                 from=res,
                                                 to=to_res,
                                                 op_msg=match cmp {
                                                     CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
-                                                    CmpOperator::Le => if *not { "less than equal to" } else { "less than equal to" },
+                                                    CmpOperator::Le => if *not { "less than equal to" } else { "not less than equal to" },
                                                     CmpOperator::Lt => if *not { "less than" } else { "not less than" },
                                                     CmpOperator::Ge => if *not { "greater than equal to" } else { "not greater than equal" },
                                                     CmpOperator::Gt => if *not { "greater than" } else { "not greater than" },
@@ -1585,97 +2301,98 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
                                                 },
                                                 err=error_message
                                             );
-                                            clauses.push(
-                                                ClauseReport::Clause(
-                                                    GuardClauseReport::Binary(BinaryReport {
-                                                        check: BinaryCheck::Resolved(
-                                                            BinaryComparison{
-                                                                to: *to_res,
-                                                                from: res,
-                                                                comparison: (*cmp, *not),
-                                                            }
-                                                        ),
-                                                        context: current.context.to_string(),
-                                                        messages: Messages {
-                                                            error_message: Some(message),
-                                                            custom_message: Some(custom_message)
-                                                        }
-                                                    })
-                                                )
-                                            )
+                                        clauses.push(ClauseReport::Clause(
+                                            GuardClauseReport::Binary(BinaryReport {
+                                                check: BinaryCheck::Resolved(BinaryComparison {
+                                                    to: to_res.clone(),
+                                                    from: res.clone(),
+                                                    comparison: (*cmp, *not),
+                                                }),
+                                                context: current.context.to_string(),
+                                                messages: Messages {
+                                                    location: Some(to_res.clone().self_path().1),
+                                                    error_message: Some(message),
+                                                    custom_message: Some(custom_message),
+                                                },
+                                            }),
+                                        ))
+                                    }
 
-                                        },
-
-                                        QueryResult::UnResolved(to_unres) => {
-                                            let message = format!(
+                                    QueryResult::UnResolved(to_unres) => {
+                                        let message = format!(
                                                 "Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}",
                                                 remain=to_unres.remaining_query,
                                                 to=to_unres.traversed_to,
                                                 err=error_message
                                             );
-                                            clauses.push(ClauseReport::Clause(
-                                                GuardClauseReport::Binary(BinaryReport {
-                                                    context: current.context.to_string(),
-                                                    messages: Messages {
-                                                        custom_message: Some(custom_message),
-                                                        error_message: Some(message),
-                                                    },
-                                                    check: BinaryCheck::UnResolved(ValueUnResolved{
-                                                        comparison: (*cmp, *not),
-                                                        value: to_unres.clone()
-                                                    })
-                                                })
-                                            ));
-                                        },
+                                        clauses.push(ClauseReport::Clause(
+                                            GuardClauseReport::Binary(BinaryReport {
+                                                context: current.context.to_string(),
+                                                messages: Messages {
+                                                    custom_message: Some(custom_message),
+                                                    error_message: Some(message),
+                                                    location: Some(
+                                                        to_unres.traversed_to.self_path().1,
+                                                    ),
+                                                },
+                                                check: BinaryCheck::UnResolved(ValueUnResolved {
+                                                    comparison: (*cmp, *not),
+                                                    value: to_unres.clone(),
+                                                }),
+                                            }),
+                                        ));
                                     }
                                 }
-
                             }
                         }
-                    },
-
-                    ClauseCheck::InComparison(InComparisonCheck{
-                        status: Status::FAIL,
-                        from,
-                        to,
-                        custom_message,
-                        comparison, ..}) => {
-                        let error_message = format!(
-                            "Check was not compliant as property [{}] was not present in [{}]",
-                            from.resolved().unwrap().self_path(),
-                            SliceDisplay(to)
-                        );
-                        clauses.push(
-                            ClauseReport::Clause(
-                                GuardClauseReport::Binary(
-                                    BinaryReport {
-                                        context: current.context.to_string(),
-                                        messages: Messages {
-                                            custom_message: custom_message.clone(),
-                                            error_message: Some(error_message)
-                                        },
-                                        check: BinaryCheck::InResolved(InComparison {
-                                            from: from.resolved().map_or_else(|| from.unresolved_traversed_to().unwrap(), std::convert::identity),
-                                            to: to.iter()
-                                                .filter(|t| match t {
-                                                    QueryResult::Resolved(_) => true,
-                                                    _ => false,
-                                                }).map(|t| match t {
-                                                QueryResult::Resolved(v) => v,
-                                                QueryResult::UnResolved(ur) => ur.traversed_to,
-                                                QueryResult::Literal(l) => *l,
-                                            }).collect(),
-                                            comparison: *comparison
-                                        })
-                                    }
-                                )
-                            )
-                        );
                     }
-
-                    _ => {}
                 }
-            }
+
+                ClauseCheck::InComparison(InComparisonCheck {
+                    status: Status::FAIL,
+                    from,
+                    to,
+                    custom_message,
+                    comparison,
+                    ..
+                }) => {
+                    let error_message = format!(
+                        "Check was not compliant as property [{}] was not present in [{}]",
+                        from.resolved().unwrap().self_path(),
+                        SliceDisplay(to)
+                    );
+                    clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
+                        BinaryReport {
+                            context: current.context.to_string(),
+                            messages: Messages {
+                                custom_message: custom_message.clone(),
+                                error_message: Some(error_message),
+                                location: Some(from.resolved().unwrap().self_path().1),
+                            },
+                            check: BinaryCheck::InResolved(InComparison {
+                                from: match from.resolved() {
+                                    Some(val) => val,
+                                    None => match from.unresolved_traversed_to() {
+                                        Some(val) => val,
+                                        None => unreachable!(),
+                                    },
+                                },
+                                to: to
+                                    .iter()
+                                    .filter(|t| matches!(t, QueryResult::Resolved(_)))
+                                    .map(|t| match t {
+                                        QueryResult::Resolved(v) => v.clone(),
+                                        _ => unreachable!(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                                comparison: *comparison,
+                            }),
+                        },
+                    )));
+                }
+
+                _ => {}
+            },
 
             _ => {}
         }
@@ -1683,43 +2400,78 @@ fn report_all_failed_clauses_for_rules<'value>(checks: &[EventRecord<'value>]) -
     clauses
 }
 
-pub(crate) fn simplifed_json_from_root<'value>(root: &EventRecord<'value>) -> Result<FileReport<'value>> {
+pub(crate) fn simplified_json_from_root<'value>(
+    root: &EventRecord<'value>,
+) -> Result<FileReport<'value>> {
     Ok(match &root.container {
-        Some(file_status) => {
-            match file_status {
-                RecordType::FileCheck(NamedStatus{name, status, message}) => {
-                    let mut pass = HashSet::with_capacity(root.children.len());
-                    let mut skip = HashSet::with_capacity(root.children.len());
-                    for each in &root.children {
-                        if let Some(rule) = &each.container {
-                            if let RecordType::RuleCheck(NamedStatus { status, message, name }) = rule {
-                                match *status {
-                                    Status::PASS => { pass.insert(name.to_string()); },
-                                    Status::SKIP => { skip.insert(name.to_string()); },
-                                    _ => {}
-                                }
-                            }
+        Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
+            let mut pass: BTreeSet<String> = BTreeSet::new();
+            let mut skip: BTreeSet<String> = BTreeSet::new();
+            for each in &root.children {
+                if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) =
+                    &each.container
+                {
+                    match *status {
+                        Status::PASS => {
+                            pass.insert(name.to_string());
                         }
+                        SKIP => {
+                            skip.insert(name.to_string());
+                        }
+                        _ => {}
                     }
-                    FileReport {
-                        status: *status,
-                        name: *name,
-                        not_compliant: report_all_failed_clauses_for_rules(&root.children),
-                        not_applicable: skip,
-                        compliant: pass,
-                        ..Default::default()
-                    }
-                },
-
-                _ => unreachable!()
+                }
             }
-        },
-
-        None => unreachable!()
+            FileReport {
+                status: *status,
+                name,
+                not_compliant: report_all_failed_clauses_for_rules(&root.children),
+                not_applicable: skip,
+                compliant: pass,
+                ..Default::default()
+            }
+        }
+        _ => unreachable!(),
     })
+}
+
+pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
+    name: &FunctionName,
+    parameters: &'value [LetValue<'loc>],
+    resolver: &'eval mut dyn EvalContext<'value, 'loc>,
+) -> Result<Vec<QueryResult>> {
+    let args =
+        parameters
+            .iter()
+            .try_fold(vec![], |mut args, param| -> Result<Vec<Vec<QueryResult>>> {
+                match param {
+                    LetValue::Value(value) => {
+                        args.push(vec![QueryResult::Literal(Rc::new(value.clone()))])
+                    }
+                    LetValue::AccessClause(clause) => {
+                        let resolved_query = resolver.query(&clause.query)?;
+                        args.push(resolved_query);
+                    }
+                    LetValue::FunctionCall(FunctionExpr {
+                        parameters, name, ..
+                    }) => {
+                        let result = resolve_function(name, parameters, resolver)?;
+                        args.push(result);
+                    }
+                }
+
+                Ok(args)
+            })?;
+
+    Ok(name
+        .call(&args)?
+        .into_iter()
+        .flatten()
+        .map(Rc::new)
+        .map(QueryResult::Resolved)
+        .collect::<Vec<_>>())
 }
 
 #[cfg(test)]
 #[path = "eval_context_tests.rs"]
 pub(super) mod eval_context_tests;
-

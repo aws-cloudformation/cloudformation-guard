@@ -1,0 +1,35 @@
+name: Typescript Library CI
+on:
+  push:
+    paths:
+      - 'guard/ts-lib/**'
+  pull_request:
+    paths:
+      - 'guard/ts-lib/**'
+jobs:
+  run-unit-tests-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./guard
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v4.0.2
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run lint
+      - run: npm test
+  run-unit-tests-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./guard
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v4.0.2
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run lint
+      - run: npm test

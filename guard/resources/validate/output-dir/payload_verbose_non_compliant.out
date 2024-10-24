@@ -1,0 +1,105 @@
+STDIN Status = FAIL
+FAILED rules
+s3_bucket_public_read_prohibited.guard/S3_BUCKET_PUBLIC_READ_PROHIBITED    FAIL
+---
+Evaluating data STDIN against rules s3_bucket_public_read_prohibited.guard
+Number of non-compliant resources 1
+Resource = MyBucket {
+  Type      = AWS::S3::Bucket
+  Rule = S3_BUCKET_PUBLIC_READ_PROHIBITED {
+    ALL {
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS   {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.BlockPublicAcls
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.BlockPublicPolicy
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.IgnorePublicAcls
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true {
+        Message {
+          Violation: S3 Bucket Public Write Access controls need to be restricted.
+          Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
+        }
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.RestrictPublicBuckets
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+    }
+  }
+}
+`- File(STDIN, Status=FAIL)[Context=File(rules=1)]
+   `- Rule(S3_BUCKET_PUBLIC_READ_PROHIBITED, Status=FAIL)[Context=S3_BUCKET_PUBLIC_READ_PROHIBITED]
+      |- Rule/When(Status=PASS)[Context=Rule#S3_BUCKET_PUBLIC_READ_PROHIBITED/When]
+      |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited not EMPTY  ]
+      |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#1]
+      |     |  `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
+      |     |     `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
+      |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_bucket_public_read_prohibited not EMPTY  ]
+      |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  ]
+      |  `- GuardClauseUnaryCheck(Status=FAIL, Comparison= EXISTS, Value-At=(unresolved, Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}))[Context= %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  ]
+      |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true]
+      |  `- GuardClauseBinaryCheck(Status=FAIL, Comparison= EQUALS, from=(unresolved, Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}), to=)[Context= %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true]
+      |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true]
+      |  `- GuardClauseBinaryCheck(Status=FAIL, Comparison= EQUALS, from=(unresolved, Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}), to=)[Context= %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true]
+      |- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true]
+      |  `- GuardClauseBinaryCheck(Status=FAIL, Comparison= EQUALS, from=(unresolved, Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}), to=)[Context= %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true]
+      `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true]
+         `- GuardClauseBinaryCheck(Status=FAIL, Comparison= EQUALS, from=(unresolved, Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}), to=)[Context= %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true]

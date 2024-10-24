@@ -4,49 +4,41 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
 
-use clap::{App, Arg, ArgGroup, ArgMatches};
+use clap::{Args, ValueEnum};
 use colored::*;
 use enumflags2::BitFlags;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use Type::CFNTemplate;
-
-use crate::command::Command;
-use crate::commands::aws_meta_appender::MetadataAppender;
-use crate::commands::files::{alpabetical, iterate_over, last_modified};
-use crate::commands::tracker::{StackTracker, StatusContext};
-use crate::commands::validate::summary_table::SummaryType;
-use crate::commands::validate::tf::TfAware;
+use crate::commands::files::{alphabetical, iterate_over, last_modified, walk_dir};
+use crate::commands::reporters::validate::structured::StructuredEvaluator;
+use crate::commands::reporters::validate::summary_table::{self, SummaryType};
+use crate::commands::reporters::validate::tf::TfAware;
+use crate::commands::reporters::validate::{cfn, generic_summary};
+use crate::commands::tracker::StatusContext;
 use crate::commands::{
-    ALPHABETICAL, DATA, DATA_FILE_SUPPORTED_EXTENSIONS, INPUT_PARAMETERS, LAST_MODIFIED,
-    OUTPUT_FORMAT, PAYLOAD, PREVIOUS_ENGINE, PRINT_JSON, REQUIRED_FLAGS, RULES,
-    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_CLAUSE_FAILURES, SHOW_SUMMARY, TYPE, VALIDATE, VERBOSE,
+    Executable, ALPHABETICAL, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE,
+    FAILURE_STATUS_CODE, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
+    RULE_FILE_SUPPORTED_EXTENSIONS, SHOW_SUMMARY, STRUCTURED, SUCCESS_STATUS_CODE, TYPE, VERBOSE,
 };
-use crate::rules::errors::{Error, ErrorKind};
+use crate::rules::errors::{Error, InternalError};
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplifed_json_from_root, EventRecord};
-use crate::rules::evaluate::RootScope;
+use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
-use crate::rules::values::CmpOperator;
-use crate::rules::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
-
-mod cfn;
-mod cfn_reporter;
-mod common;
-mod console_reporter;
-pub(crate) mod generic_summary;
-mod summary_table;
-mod tf;
+use crate::rules::{Result, Status};
+use crate::utils::reader::Reader;
+use crate::utils::writer::Writer;
+use wasm_bindgen::prelude::*;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub(crate) struct DataFile {
-    content: String,
-    path_value: PathAwareValue,
-    name: String,
+    pub(crate) content: String,
+    pub(crate) path_value: PathAwareValue,
+    pub(crate) name: String,
 }
 
 #[derive(Copy, Eq, Clone, Debug, PartialEq)]
@@ -55,12 +47,67 @@ pub(crate) enum Type {
     Generic,
 }
 
+impl From<&str> for Type {
+    fn from(value: &str) -> Self {
+        match value {
+            "CFNTemplate" => Type::CFNTemplate,
+            _ => Type::Generic,
+        }
+    }
+}
+
+#[wasm_bindgen]
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Copy, Eq, Clone, Debug, PartialEq)]
-pub(crate) enum OutputFormatType {
+#[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
+pub enum OutputFormatType {
+    #[default]
     SingleLineSummary,
     JSON,
     YAML,
+    Junit,
+    Sarif,
+}
+
+#[wasm_bindgen]
+#[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
+pub enum ShowSummaryType {
+    All,
+    Pass,
+    #[default]
+    Fail,
+    Skip,
+    None,
+}
+
+impl From<&str> for ShowSummaryType {
+    fn from(value: &str) -> Self {
+        match value {
+            "all" => ShowSummaryType::All,
+            "fail" => ShowSummaryType::Fail,
+            "pass" => ShowSummaryType::Pass,
+            "none" => ShowSummaryType::None,
+            "skip" => ShowSummaryType::Skip,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl OutputFormatType {
+    pub(crate) fn is_structured(&self) -> bool {
+        !matches!(self, Self::SingleLineSummary)
+    }
+}
+
+impl From<&str> for OutputFormatType {
+    fn from(value: &str) -> Self {
+        match value {
+            "single-line-summary" => OutputFormatType::SingleLineSummary,
+            "json" => OutputFormatType::JSON,
+            "junit" => OutputFormatType::Junit,
+            "sarif" => OutputFormatType::Sarif,
+            _ => OutputFormatType::YAML,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -93,176 +140,202 @@ pub(crate) trait Reporter: Debug {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Validate {}
-
-#[derive(Deserialize, Debug)]
-pub(crate) struct Payload {
-    #[serde(rename = "rules")]
-    list_of_rules: Vec<String>,
-    #[serde(rename = "data")]
-    list_of_data: Vec<String>,
+#[derive(Debug, Clone, Eq, PartialEq, Args)]
+#[clap(group=clap::ArgGroup::new(REQUIRED_FLAGS).args([RULES.0, PAYLOAD.0]).required(true))]
+#[clap(about=ABOUT)]
+#[clap(arg_required_else_help = true)]
+/// .
+/// The Validate command evaluates rules against data files to determine success or failure
+pub struct Validate {
+    #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
+    /// conflicts with payload
+    pub(crate) rules: Vec<String>,
+    #[arg(short, long, help=DATA_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    /// a list of paths that point to data files, or a directory containing data files  for the rules to be evaluated against. Only JSON, or YAML files will be used
+    /// conflicts with payload
+    pub(crate) data: Vec<String>,
+    #[arg(short, long, help=INPUT_PARAMETERS_HELP, num_args=0..)]
+    /// a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
+    pub(crate) input_params: Vec<String>,
+    #[arg(name=TYPE.0, short, long, help=TEMPLATE_TYPE_HELP, value_parser=TEMPLATE_TYPE)]
+    #[deprecated(since = "3.0.0", note = "this field does not get evaluated")]
+    pub(crate) template_type: Option<String>,
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    /// Specify the format in which the output should be displayed
+    /// default is single-line-summary
+    /// if junit is used, `structured` attributed must be set to true
+    pub(crate) output_format: OutputFormatType,
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail], value_delimiter=',')]
+    /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
+    /// default is failed
+    /// must be set to none if used together with the structured flag
+    pub(crate) show_summary: Vec<ShowSummaryType>,
+    #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
+    /// Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
+    pub(crate) alphabetical: bool,
+    #[arg(name="last-modified", short=LAST_MODIFIED.1, long, help=LAST_MODIFIED_HELP, conflicts_with=ALPHABETICAL.0)]
+    /// Validate files in a directory ordered by last modified times, conflicts with `alphabetical` field
+    pub(crate) last_modified: bool,
+    #[arg(short, long, help=VERBOSE_HELP)]
+    /// Output verbose logging, conflicts with `structured` field
+    /// default is false
+    pub(crate) verbose: bool,
+    #[arg(name="print-json", short=PRINT_JSON.1, long, help=PRINT_JSON_HELP)]
+    /// Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
+    /// conflicts with the `structured` attribute
+    /// default is false
+    pub(crate) print_json: bool,
+    #[arg(short=PAYLOAD.1, long, help=PAYLOAD_HELP)]
+    /// Tells the command that rules, and data will be passed via a reader, as a json payload.
+    /// Conflicts with both rules, and data
+    /// default is false
+    pub(crate) payload: bool,
+    #[arg(short=STRUCTURED.1, long, help=STRUCTURED_HELP, conflicts_with_all=vec![PRINT_JSON.0, VERBOSE.0])]
+    /// Prints the output which must be specified to JSON/YAML/JUnit in a structured format
+    /// Conflicts with the following attributes `verbose`, `print-json`, `output-format` when set
+    /// to "single-line-summary", show-summary when set to anything other than "none"
+    /// default is false
+    pub(crate) structured: bool,
 }
 
 impl Validate {
-    pub fn new() -> Self {
-        Validate {}
+    fn validate_construct(
+        &self,
+        summary_type: &BitFlags<SummaryType, u8>,
+    ) -> crate::rules::Result<()> {
+        if self.structured && !summary_type.is_empty() {
+            return Err(Error::IllegalArguments(String::from(
+                "Cannot provide a summary-type other than `none` when the `structured` flag is present",
+            )));
+        } else if self.structured
+            && matches!(self.output_format, OutputFormatType::SingleLineSummary)
+        {
+            return Err(Error::IllegalArguments(String::from(
+                "single-line-summary is not able to be used when the `structured` flag is present",
+            )));
+        }
+
+        if matches!(self.output_format, OutputFormatType::Junit) && !self.structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to junit",
+            )));
+        }
+
+        if matches!(self.output_format, OutputFormatType::Sarif) && !self.structured {
+            return Err(Error::IllegalArguments(String::from(
+                "the structured flag must be set when output is set to sarif",
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn get_comparator(&self) -> fn(&walkdir::DirEntry, &walkdir::DirEntry) -> cmp::Ordering {
+        match self.last_modified {
+            true => last_modified,
+            false => alphabetical,
+        }
     }
 }
 
-impl Command for Validate {
-    fn name(&self) -> &'static str {
-        VALIDATE
-    }
+impl Executable for Validate {
+    /// .
+    /// evaluates the given rules, against the given data files.
+    ///
+    /// This function will return an error if
+    /// - conflicting attributes have been set
+    /// - any of the specified paths do not exist
+    /// - parse errors occur in the rule file
+    /// - illegal json or yaml syntax present in any of the data/input parameter files
+    /// - both rules is empty, and payload is false
+    #[allow(deprecated)]
+    fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        let summary_type = self
+            .show_summary
+            .iter()
+            .fold(BitFlags::empty(), |mut st, elem| {
+                match elem {
+                    ShowSummaryType::Pass => st.insert(SummaryType::PASS),
+                    ShowSummaryType::Fail => st.insert(SummaryType::FAIL),
+                    ShowSummaryType::Skip => st.insert(SummaryType::SKIP),
+                    ShowSummaryType::None => return BitFlags::empty(),
+                    ShowSummaryType::All => {
+                        st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
+                    }
+                };
+                st
+            });
 
-    fn command(&self) -> App<'static, 'static> {
-        App::new(VALIDATE)
-            .about(r#"Evaluates rules against the data files to determine success or failure.
-You can point rules flag to a rules directory and point data flag to a data directory.
-When pointed to a directory it will read all rules in the directory file and evaluate
-them against the data files found in the directory. The command can also point to a
-single file and it would work as well.
-Note - When pointing the command to a directory, the directory may not contain a mix of
-rules and data files. The directory being pointed to must contain only data files,
-or rules files.
-"#)
-            .arg(Arg::with_name(RULES.0).long(RULES.0).short(RULES.1).takes_value(true)
-                .help("Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
-                          \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset")
-                .multiple(true).conflicts_with("payload"))
-            .arg(Arg::with_name(DATA.0).long(DATA.0).short(DATA.1).takes_value(true)
-                .help("Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
-                          \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                .multiple(true).conflicts_with("payload"))
-            .arg(Arg::with_name(INPUT_PARAMETERS.0).long(INPUT_PARAMETERS.0).short(INPUT_PARAMETERS.1).takes_value(true)
-                     .help("Provide a data file or directory of data files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
-                           All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
-                           expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
-                          \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
-                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template")
-                     .multiple(true))
-            .arg(Arg::with_name(TYPE.0).long(TYPE.0).short(TYPE.1).takes_value(true).possible_values(&["CFNTemplate"])
-                .help("Specify the type of data file used for improved messaging"))
-            .arg(Arg::with_name(OUTPUT_FORMAT.0).long(OUTPUT_FORMAT.0).short(OUTPUT_FORMAT.1).takes_value(true)
-                .possible_values(&["json","yaml","single-line-summary"])
-                .default_value("single-line-summary")
-                .help("Specify the format in which the output should be displayed"))
-            .arg(Arg::with_name(PREVIOUS_ENGINE.0).long(PREVIOUS_ENGINE.0).short(PREVIOUS_ENGINE.1).takes_value(false)
-                .help("Uses the old engine for evaluation. This parameter will allow customers to evaluate old changes before migrating"))
-            .arg(Arg::with_name(SHOW_SUMMARY.0).long(SHOW_SUMMARY.0).short(SHOW_SUMMARY.1).takes_value(true).use_delimiter(true).multiple(true)
-                .possible_values(&["none", "all", "pass", "fail", "skip"])
-                .default_value("fail")
-                .help("Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)"))
-            .arg(Arg::with_name(SHOW_CLAUSE_FAILURES.0).long(SHOW_CLAUSE_FAILURES.0).short(SHOW_CLAUSE_FAILURES.1).takes_value(false).required(false)
-                .help("Show clause failure along with summary"))
-            .arg(Arg::with_name(ALPHABETICAL.0).long(ALPHABETICAL.0).short(ALPHABETICAL.1).required(false).help("Validate files in a directory ordered alphabetically"))
-            .arg(Arg::with_name(LAST_MODIFIED.0).long(LAST_MODIFIED.0).short(LAST_MODIFIED.1).required(false).conflicts_with(ALPHABETICAL.0)
-                .help("Validate files in a directory ordered by last modified times"))
-            .arg(Arg::with_name(VERBOSE.0).long(VERBOSE.0).short(VERBOSE.1).required(false)
-                .help("Verbose logging"))
-            .arg(Arg::with_name(PRINT_JSON.0).long(PRINT_JSON.0).short(PRINT_JSON.1).required(false)
-                .help("Print output in json format"))
-            .arg(Arg::with_name(PAYLOAD.0).long(PAYLOAD.0).short(PAYLOAD.1)
-                .help("Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
-                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified."))
-            .group(ArgGroup::with_name(REQUIRED_FLAGS)
-                .args(&[RULES.0, PAYLOAD.0])
-                .required(true))
-    }
+        self.validate_construct(&summary_type)?;
 
-    fn execute(&self, app: &ArgMatches<'_>) -> Result<i32> {
-        let cmp = if app.is_present(LAST_MODIFIED.0) {
-            last_modified
-        } else {
-            alpabetical
-        };
+        let cmp = self.get_comparator();
 
-        let empty_path = Path::new("");
-        let mut streams: Vec<DataFile> = Vec::new();
-        let data_files: Vec<DataFile> = match app.values_of(DATA.0) {
-            Some(list_of_file_or_dir) => {
-                for file_or_dir in list_of_file_or_dir {
+        let data_files = match self.data.is_empty() {
+            false => {
+                let mut streams = Vec::new();
+
+                for file_or_dir in &self.data {
                     validate_path(file_or_dir)?;
-                    let base = PathBuf::from_str(file_or_dir)?;
-                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                    let base = resolve_path(file_or_dir)?;
+                    for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
-                                .file_name()
+                                .path()
+                                // path output occasionally includes double slashes '//'
+                                // without calling canonicalize()
+                                .canonicalize()?
                                 .to_str()
                                 .map_or("".to_string(), String::from);
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
                                 let mut content = String::new();
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
-                                let path = file.path();
-                                let relative = match path.strip_prefix(base.as_path()) {
-                                    Ok(p) => {
-                                        if p != empty_path {
-                                            format!("{}", p.display())
-                                        } else {
-                                            path.file_name().unwrap().to_str().unwrap().to_string()
-                                        }
-                                    }
-                                    Err(_) => format!("{}", path.display()),
-                                };
-                                let path_value = match get_path_aware_value_from_data(&content) {
-                                    Ok(t) => t,
-                                    Err(e) => return Err(e),
-                                };
-                                streams.push(DataFile {
-                                    name: relative,
-                                    path_value,
-                                    content,
-                                });
+
+                                let data_file = build_data_file(content, name)?;
+                                streams.push(data_file);
                             }
                         }
                     }
                 }
                 streams
             }
-            None => {
-                if app.is_present(RULES.0) {
+            true => {
+                if !self.rules.is_empty() {
                     let mut content = String::new();
-                    let mut reader = BufReader::new(std::io::stdin());
                     reader.read_to_string(&mut content)?;
-                    let path_value = match get_path_aware_value_from_data(&content) {
-                        Ok(t) => t,
-                        Err(e) => return Err(e),
-                    };
-                    streams.push(DataFile {
-                        name: "STDIN".to_string(),
-                        path_value,
-                        content,
-                    });
-                    streams
+
+                    let data_file = build_data_file(content, "STDIN".to_string())?;
+
+                    vec![data_file]
                 } else {
                     vec![]
                 } // expect Payload, since rules aren't specified
             }
         };
 
-        let extra_data = match app.values_of(INPUT_PARAMETERS.0) {
-            Some(list_of_file_or_dir) => {
+        let extra_data = match self.input_params.is_empty() {
+            false => {
                 let mut primary_path_value: Option<PathAwareValue> = None;
-                for file_or_dir in list_of_file_or_dir {
+
+                for file_or_dir in &self.input_params {
                     validate_path(file_or_dir)?;
-                    let base = PathBuf::from_str(file_or_dir)?;
-                    for file in walkdir::WalkDir::new(base.clone()).into_iter().flatten() {
+                    let base = resolve_path(file_or_dir)?;
+
+                    for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
                             let name = file
                                 .file_name()
                                 .to_str()
                                 .map_or("".to_string(), String::from);
+
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
                                 let mut content = String::new();
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
-                                let path_value = match get_path_aware_value_from_data(&content) {
-                                    Ok(t) => t,
-                                    Err(e) => return Err(e),
-                                };
+
+                                let DataFile { path_value, .. } = build_data_file(content, name)?;
+
                                 primary_path_value = match primary_path_value {
                                     Some(current) => Some(current.merge(path_value)?),
                                     None => Some(path_value),
@@ -273,72 +346,33 @@ or rules files.
                 }
                 primary_path_value
             }
-            None => None,
+            true => None,
         };
 
-        let verbose = app.is_present(VERBOSE.0);
+        let mut exit_code = SUCCESS_STATUS_CODE;
 
-        let data_type = match app.value_of(TYPE.0) {
-            Some(t) => {
-                if t == "CFNTemplate" {
-                    CFNTemplate
-                } else {
-                    Type::Generic
-                }
-            }
-            None => Type::Generic,
+        let data_type = self
+            .template_type
+            .as_ref()
+            .map_or(Type::Generic, |t| Type::from(t.as_str()));
+
+        let cmp = if self.last_modified {
+            last_modified
+        } else {
+            alphabetical
         };
 
-        let output_type = match app.value_of(OUTPUT_FORMAT.0) {
-            Some(o) => {
-                if o == "single-line-summary" {
-                    OutputFormatType::SingleLineSummary
-                } else if o == "json" {
-                    OutputFormatType::JSON
-                } else {
-                    OutputFormatType::YAML
-                }
-            }
-            None => OutputFormatType::SingleLineSummary,
-        };
-
-        let summary_type: BitFlags<SummaryType> =
-            app.values_of(SHOW_SUMMARY.0)
-                .map_or(SummaryType::FAIL.into(), |v| {
-                    v.fold(BitFlags::empty(), |mut st, elem| {
-                        match elem {
-                            "pass" => st.insert(SummaryType::PASS),
-                            "fail" => st.insert(SummaryType::FAIL),
-                            "skip" => st.insert(SummaryType::SKIP),
-                            "none" => return BitFlags::empty(),
-                            "all" => {
-                                st.insert(SummaryType::PASS | SummaryType::FAIL | SummaryType::SKIP)
-                            }
-                            _ => unreachable!(),
-                        };
-                        st
-                    })
-                });
-
-        let print_json = app.is_present(PRINT_JSON.0);
-        let show_clause_failures = app.is_present(SHOW_CLAUSE_FAILURES.0);
-        let new_version_eval_engine = !app.is_present(PREVIOUS_ENGINE.0);
-
-        let mut exit_code = 0;
-        if app.is_present(RULES.0) {
-            let list_of_file_or_dir = app.values_of(RULES.0).unwrap();
+        if !self.rules.is_empty() {
             let mut rules = Vec::new();
-            for file_or_dir in list_of_file_or_dir {
+
+            for file_or_dir in &self.rules {
                 validate_path(file_or_dir)?;
-                let base = PathBuf::from_str(file_or_dir)?;
+                let base = resolve_path(file_or_dir)?;
+
                 if base.is_file() {
                     rules.push(base.clone())
                 } else {
-                    for entry in walkdir::WalkDir::new(base.clone())
-                        .sort_by(cmp)
-                        .into_iter()
-                        .flatten()
-                    {
+                    for entry in walk_dir(base, cmp) {
                         if entry.path().is_file()
                             && entry
                                 .path()
@@ -353,464 +387,325 @@ or rules files.
                     }
                 }
             }
-            for each_file_content in iterate_over(&rules, |content, file| {
-                Ok((
-                    content,
-                    match file.strip_prefix(&file) {
-                        Ok(path) => {
-                            if path == empty_path {
-                                file.file_name().unwrap().to_str().unwrap().to_string()
-                            } else {
-                                format!("{}", path.display())
-                            }
-                        }
-                        Err(_) => format!("{}", file.display()),
-                    },
-                ))
-            }) {
-                match each_file_content {
-                    Err(e) => println!("Unable read content from file {}", e),
-                    Ok((file_content, rule_file_name)) => {
-                        let span =
-                            crate::rules::parser::Span::new_extra(&file_content, &rule_file_name);
-                        match crate::rules::parser::rules_file(span) {
-                            Err(e) => {
-                                println!(
-                                    "Parsing error handling rule file = {}, Error = {}",
-                                    rule_file_name.underline(),
-                                    e
-                                );
-                                println!("---");
-                                exit_code = 5;
-                                continue;
-                            }
 
-                            Ok(rules) => {
-                                match evaluate_against_data_input(
+            exit_code = match self.structured {
+                true => {
+                    let rule_info = get_rule_info(&rules, writer)?;
+                    let mut evaluator = StructuredEvaluator {
+                        rule_info: &rule_info,
+                        input_params: extra_data,
+                        data: data_files,
+                        output: self.output_format,
+                        writer,
+                        exit_code,
+                    };
+                    evaluator.evaluate()?
+                }
+
+                false => {
+                    for each_file_content in iterate_over(&rules, |content, file| {
+                        Ok(RuleFileInfo {
+                            content,
+                            file_name: get_file_name(file, file),
+                        })
+                    }) {
+                        match each_file_content {
+                            Err(e) => {
+                                writer.write_err(format!("Unable read content from file {e}"))?
+                            }
+                            Ok(rule) => {
+                                let status = evaluate_rule(
                                     data_type,
-                                    output_type,
-                                    extra_data.clone(),
+                                    self.output_format,
+                                    &extra_data,
                                     &data_files,
-                                    &rules,
-                                    &rule_file_name,
-                                    verbose,
-                                    print_json,
-                                    show_clause_failures,
-                                    new_version_eval_engine,
+                                    rule,
+                                    self.verbose,
+                                    self.print_json,
                                     summary_type,
-                                )? {
-                                    Status::SKIP | Status::PASS => continue,
-                                    Status::FAIL => {
-                                        exit_code = 5;
-                                    }
+                                    writer,
+                                )?;
+
+                                if status != SUCCESS_STATUS_CODE {
+                                    exit_code = status
                                 }
                             }
                         }
                     }
+                    exit_code
                 }
-            }
-        } else {
+            };
+        } else if self.payload {
             let mut context = String::new();
-            let mut reader = BufReader::new(std::io::stdin());
             reader.read_to_string(&mut context)?;
-            let payload: Payload = deserialize_payload(&context)?;
-            let mut data_collection: Vec<DataFile> = Vec::new();
-            for (i, data) in payload.list_of_data.iter().enumerate() {
-                let content = data.to_string();
-                let path_value = match get_path_aware_value_from_data(&content) {
-                    Ok(t) => t,
-                    Err(e) => return Err(e),
-                };
-                data_collection.push(DataFile {
-                    name: format!("DATA_STDIN[{}]", i + 1),
-                    path_value,
-                    content,
-                });
-            }
-            let rules_collection: Vec<(String, String)> = payload
+            let payload = deserialize_payload(&context)?;
+
+            let data_collection = payload.list_of_data.iter().enumerate().try_fold(
+                vec![],
+                |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
+                    let content = data.to_string();
+                    let name = format!("DATA_STDIN[{}]", i + 1);
+                    let data_file = build_data_file(content, name)?;
+
+                    data_collection.push(data_file);
+
+                    Ok(data_collection)
+                },
+            )?;
+
+            let rule_info = payload
                 .list_of_rules
                 .iter()
                 .enumerate()
-                .map(|(i, rules)| (rules.to_string(), format!("RULES_STDIN[{}]", i + 1)))
-                .collect();
+                .map(|(i, rules)| RuleFileInfo {
+                    content: rules.to_string(),
+                    file_name: format!("RULES_STDIN[{}]", i + 1),
+                })
+                .collect::<Vec<_>>();
 
-            for (each_rules, location) in rules_collection {
-                match parse_rules(&each_rules, &location) {
-                    Err(e) => {
-                        println!(
-                            "Parsing error handling rules = {}, Error = {}",
-                            location.underline(),
-                            e
-                        );
-                        println!("---");
-                        exit_code = 5;
-                        continue;
-                    }
-
-                    Ok(rules) => {
-                        match evaluate_against_data_input(
+            exit_code = match self.structured {
+                true => {
+                    let mut evaluator = StructuredEvaluator {
+                        rule_info: &rule_info,
+                        input_params: extra_data,
+                        data: data_collection,
+                        output: self.output_format,
+                        writer,
+                        exit_code,
+                    };
+                    evaluator.evaluate()?
+                }
+                false => {
+                    for rule in rule_info {
+                        let status = evaluate_rule(
                             data_type,
-                            output_type,
-                            None,
+                            self.output_format,
+                            &None,
                             &data_collection,
-                            &rules,
-                            &location,
-                            verbose,
-                            print_json,
-                            show_clause_failures,
-                            new_version_eval_engine,
+                            rule,
+                            self.verbose,
+                            self.print_json,
                             summary_type,
-                        )? {
-                            Status::SKIP | Status::PASS => continue,
-                            Status::FAIL => {
-                                exit_code = 5;
-                            }
+                            writer,
+                        )?;
+
+                        if status != SUCCESS_STATUS_CODE {
+                            exit_code = status;
                         }
                     }
+                    exit_code
                 }
-            }
+            };
+        } else {
+            unreachable!()
         }
+
         Ok(exit_code)
     }
 }
 
+#[derive(Deserialize, Debug)]
+pub(crate) struct Payload {
+    #[serde(rename = "rules")]
+    list_of_rules: Vec<String>,
+    #[serde(rename = "data")]
+    list_of_data: Vec<String>,
+}
+
+const ABOUT: &str = r#"Evaluates rules against the data files to determine success or failure.
+You can point rules flag to a rules directory and point data flag to a data directory.
+When pointed to a directory it will read all rules in the directory file and evaluate
+them against the data files found in the directory. The command can also point to a
+single file and it would work as well.
+Note - When pointing the command to a directory, the directory may not contain a mix of
+rules and data files. The directory being pointed to must contain only data files,
+or rules files.
+"#;
+
+// const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
+const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
+const RULES_HELP: &str = "Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
+                          \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset";
+const DATA_HELP: &str = "Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --data template1.yaml --data ./data-dir1 --data template2.yaml\
+                          \nFor directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template";
+const INPUT_PARAMETERS_HELP: &str = "Provide a parameter file or directory of parameter files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. \
+                           All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is \
+                           expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.\
+                          \nExample:\n --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml\
+                          \nFor directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template";
+const TEMPLATE_TYPE_HELP: &str =
+    "Specify the type of data file used for improved messaging - ex: CFNTemplate";
+pub(crate) const OUTPUT_FORMAT_HELP: &str =
+    "Specify the format in which the output should be displayed";
+const SHOW_SUMMARY_HELP: &str = "Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)";
+const ALPHABETICAL_HELP: &str = "Validate files in a directory ordered alphabetically";
+const LAST_MODIFIED_HELP: &str = "Validate files in a directory ordered by last modified times";
+const VERBOSE_HELP: &str = "Verbose logging";
+const PRINT_JSON_HELP: &str = "Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated";
+const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
+                version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
+const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_rule(
+    data_type: Type,
+    output: OutputFormatType,
+    extra_data: &Option<PathAwareValue>,
+    data_files: &Vec<DataFile>,
+    rule: RuleFileInfo,
+    verbose: bool,
+    print_json: bool,
+    summary_type: BitFlags<SummaryType>,
+    writer: &mut Writer,
+) -> Result<i32> {
+    let RuleFileInfo { content, file_name } = &rule;
+    match parse_rules(content, file_name) {
+        Err(e) => {
+            writer.write_err(format!(
+                "Parsing error handling rule file = {}, Error = {e}\n---",
+                file_name.underline(),
+            ))?;
+
+            return Ok(ERROR_STATUS_CODE);
+        }
+
+        Ok(Some(rule)) => {
+            let status = evaluate_against_data_input(
+                data_type,
+                output,
+                extra_data,
+                data_files,
+                &rule,
+                file_name,
+                verbose,
+                print_json,
+                summary_type,
+                writer,
+            )?;
+
+            if status == Status::FAIL {
+                return Ok(FAILURE_STATUS_CODE);
+            }
+        }
+        Ok(None) => return Ok(SUCCESS_STATUS_CODE),
+    }
+
+    Ok(SUCCESS_STATUS_CODE)
+}
+
 pub(crate) fn validate_path(base: &str) -> Result<()> {
-    match Path::new(base).exists() {
-        true => Ok(()),
-        false => Err(Error::new(ErrorKind::FileNotFoundError(base.to_string()))),
+    #[cfg(target_arch = "wasm32")]
+    {
+        path_exists(base).map_err(Error::from).and_then(|exists| {
+            if exists {
+                Ok(())
+            } else {
+                Err(Error::FileNotFoundError(base.to_string()))
+            }
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if Path::new(base).exists() {
+            Ok(())
+        } else {
+            Err(Error::FileNotFoundError(base.to_string()))
+        }
     }
 }
 
-pub fn validate_and_return_json(data: &str, rules: &str) -> Result<String> {
-    let input_data = match serde_json::from_str::<serde_json::Value>(data) {
-        Ok(value) => PathAwareValue::try_from(value),
-        Err(e) => return Err(Error::new(ErrorKind::ParseError(e.to_string()))),
-    };
+#[wasm_bindgen]
+extern "C" {
+    type Buffer;
+}
 
-    let span = crate::rules::parser::Span::new_extra(rules, "lambda");
+#[wasm_bindgen(module = "fs")]
+extern "C" {
+    #[wasm_bindgen(js_name = existsSync, catch)]
+    fn path_exists(path: &str) -> Result<bool>;
+    #[wasm_bindgen(js_name = readDirSync, catch)]
+    fn read_dir(path: &str) -> Result<String>;
+}
 
-    match crate::rules::parser::rules_file(span) {
-        Ok(rules) => match input_data {
-            Ok(root) => {
-                let mut root_scope = root_scope(&rules, &root)?;
-                let _status = eval_rules_file(&rules, &mut root_scope)?;
-                let tracker = root_scope.reset_recorder();
-                let event = tracker.final_event.unwrap();
-                let file_report = simplifed_json_from_root(&event)?;
-                Ok(serde_json::to_string_pretty(&file_report)?)
-            }
-            Err(e) => Err(e),
-        },
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+#[wasm_bindgen(module = "path")]
+extern "C" {
+    #[wasm_bindgen(js_name = resolve, catch)]
+    fn path_resolve(path: &str) -> Result<String>;
+}
+
+pub fn resolve_path(file_or_dir: &str) -> Result<PathBuf> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok(PathBuf::from_str(&path_resolve(file_or_dir)?)?)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(PathBuf::from_str(file_or_dir)?)
     }
 }
 
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
+        Err(e) => Err(Error::ParseError(e.to_string())),
     }
 }
 
-fn parse_rules<'r>(rules_file_content: &'r str, rules_file_name: &'r str) -> Result<RulesFile<'r>> {
+pub fn parse_rules<'r>(
+    rules_file_content: &'r str,
+    rules_file_name: &'r str,
+) -> Result<Option<RulesFile<'r>>> {
     let span = crate::rules::parser::Span::new_extra(rules_file_content, rules_file_name);
     crate::rules::parser::rules_file(span)
-}
-
-#[derive(Debug)]
-pub(crate) struct ConsoleReporter<'r> {
-    root_context: StackTracker<'r>,
-    reporters: &'r Vec<&'r dyn Reporter>,
-    rules_file_name: &'r str,
-    data_file_name: &'r str,
-    verbose: bool,
-    print_json: bool,
-    show_clause_failures: bool,
-}
-
-fn indent_spaces(indent: usize) {
-    for _idx in 0..indent {
-        print!("{}", INDENT)
-    }
 }
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool) {
+#[allow(clippy::uninlined_format_args)]
+fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, writer: &mut Writer) {
     let prefix_current = if last { "`- " } else { "|- " };
-    println!("{}{}{}", prefix, prefix_current, current);
+    writeln!(writer, "{}{}{}", prefix, prefix_current, current)
+        .expect("Unable to write to the output");
 
     let prefix_child = if last { "   " } else { "|  " };
     let prefix = prefix + prefix_child;
     if !current.children.is_empty() {
         let last_child = current.children.len() - 1;
         for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child);
+            pprint_tree(child, prefix.clone(), i == last_child, writer);
         }
     }
 }
 
-pub(crate) fn print_verbose_tree(root: &EventRecord<'_>) {
-    pprint_tree(root, "".to_string(), true);
-}
-
-pub(super) fn print_context(cxt: &StatusContext, depth: usize) {
-    let header = format!(
-        "{}({}, {})",
-        cxt.eval_type,
-        cxt.context,
-        common::colored_string(cxt.status)
-    )
-    .underline();
-    //let depth = cxt.indent;
-    let _sub_indent = depth + 1;
-    indent_spaces(depth - 1);
-    println!("{}", header);
-    match &cxt.from {
-        Some(v) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("From: {:?}", v);
-        }
-        None => {}
-    }
-    match &cxt.to {
-        Some(v) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("To: {:?}", v);
-        }
-        None => {}
-    }
-    match &cxt.msg {
-        Some(message) => {
-            indent_spaces(depth);
-            print!("|  ");
-            println!("Message: {}", message);
-        }
-        None => {}
-    }
-
-    for child in &cxt.children {
-        print_context(child, depth + 1)
-    }
-}
-
-fn print_failing_clause(rules_file_name: &str, rule: &StatusContext, longest: usize) {
-    print!(
-        "{file}/{rule:<0$}",
-        longest + 4,
-        file = rules_file_name,
-        rule = rule.context
-    );
-    let longest = rules_file_name.len() + longest;
-    let mut first = true;
-    for (index, matched) in common::find_all_failing_clauses(rule).iter().enumerate() {
-        let matched = *matched;
-        let header = format!(
-            "{}({})",
-            common::colored_string(matched.status),
-            matched.context
-        )
-        .underline();
-        if !first {
-            print!("{space:>longest$}", space = " ", longest = longest + 4)
-        }
-        let clause = format!("Clause #{}", index + 1).bold();
-        println!("{header:<20}{content}", header = clause, content = header);
-        match &matched.from {
-            Some(from) => {
-                print!("{space:>longest$}", space = " ", longest = longest + 4);
-                let content = format!("Comparing {:?}", from);
-                print!("{header:<20}{content}", header = " ", content = content);
-            }
-            None => {}
-        }
-        match &matched.to {
-            Some(to) => {
-                println!(" with {:?} failed", to);
-            }
-            None => {
-                println!()
-            }
-        }
-        match &matched.msg {
-            Some(m) => {
-                for each in m.split('\n') {
-                    print!("{space:>longest$}", space = " ", longest = longest + 4 + 20);
-                    println!("{}", each);
-                }
-            }
-            None => {
-                println!();
-            }
-        }
-        if first {
-            first = false;
-        }
-    }
-}
-
-impl<'r> ConsoleReporter<'r> {
-    pub(crate) fn new(
-        root: StackTracker<'r>,
-        renderers: &'r Vec<&'r dyn Reporter>,
-        rules_file_name: &'r str,
-        data_file_name: &'r str,
-        verbose: bool,
-        print_json: bool,
-        show_clause_failures: bool,
-    ) -> Self {
-        ConsoleReporter {
-            root_context: root,
-            reporters: renderers,
-            rules_file_name,
-            data_file_name,
-            verbose,
-            print_json,
-            show_clause_failures,
-        }
-    }
-
-    pub fn get_result_json(
-        self,
-        root: &PathAwareValue,
-        output_format_type: OutputFormatType,
-    ) -> Result<String> {
-        let stack = self.root_context.stack();
-        let top = stack.first().unwrap();
-        if self.verbose {
-            Ok(serde_json::to_string_pretty(&top.children).unwrap())
-        } else {
-            let mut output = Vec::new();
-            let longest = get_longest(top);
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                partition_failed_and_rest(top);
-
-            let traversal = Traversal::from(root);
-
-            for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut output,
-                    top.status,
-                    &failed,
-                    &rest,
-                    longest,
-                    self.rules_file_name,
-                    self.data_file_name,
-                    &traversal,
-                    output_format_type,
-                )?;
-            }
-
-            match String::from_utf8(output) {
-                Ok(s) => Ok(s),
-                Err(e) => Err(Error::new(ErrorKind::ParseError(e.to_string()))),
-            }
-        }
-    }
-
-    fn report(self, root: &PathAwareValue, output_format_type: OutputFormatType) -> Result<()> {
-        let stack = self.root_context.stack();
-        let top = stack.first().unwrap();
-        let mut output = Box::new(std::io::stdout()) as Box<dyn Write>;
-
-        if self.verbose && self.print_json {
-            let serialized_user = serde_json::to_string_pretty(&top.children).unwrap();
-            println!("{}", serialized_user);
-        } else {
-            let longest = get_longest(top);
-
-            let (failed, rest): (Vec<&StatusContext>, Vec<&StatusContext>) =
-                partition_failed_and_rest(top);
-
-            let traversal = Traversal::from(root);
-
-            for each_reporter in self.reporters {
-                each_reporter.report(
-                    &mut output,
-                    top.status,
-                    &failed,
-                    &rest,
-                    longest,
-                    self.rules_file_name,
-                    self.data_file_name,
-                    &traversal,
-                    output_format_type,
-                )?;
-            }
-
-            if self.show_clause_failures {
-                println!("{}", "Clause Failure Summary".bold());
-                for each in failed {
-                    print_failing_clause(self.rules_file_name, each, longest);
-                }
-            }
-
-            if self.verbose {
-                println!("Evaluation Tree");
-                for each in &top.children {
-                    print_context(each, 1);
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-const INDENT: &str = "    ";
-
-impl<'r> EvaluationContext for ConsoleReporter<'r> {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
-        self.root_context.resolve_variable(variable)
-    }
-
-    fn rule_status(&self, rule_name: &str) -> Result<Status> {
-        self.root_context.rule_status(rule_name)
-    }
-
-    fn end_evaluation(
-        &self,
-        eval_type: EvaluationType,
-        context: &str,
-        msg: String,
-        from: Option<PathAwareValue>,
-        to: Option<PathAwareValue>,
-        status: Option<Status>,
-        cmp: Option<(CmpOperator, bool)>,
-    ) {
-        self.root_context
-            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
-    }
-
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
-        self.root_context.start_evaluation(eval_type, context);
-    }
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut Writer) {
+    pprint_tree(root, "".to_string(), true, writer);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_against_data_input<'r>(
     _data_type: Type,
     output: OutputFormatType,
-    extra_data: Option<PathAwareValue>,
+    extra_data: &Option<PathAwareValue>,
     data_files: &'r Vec<DataFile>,
     rules: &RulesFile<'_>,
     rules_file_name: &'r str,
     verbose: bool,
     print_json: bool,
-    show_clause_failures: bool,
-    new_engine_version: bool,
     summary_table: BitFlags<SummaryType>,
+    mut write_output: &mut Writer,
 ) -> Result<Status> {
     let mut overall = Status::PASS;
-    let mut write_output = Box::new(std::io::stdout()) as Box<dyn Write>;
     let generic: Box<dyn Reporter> =
-        Box::new(generic_summary::GenericSummary::new()) as Box<dyn Reporter>;
+        Box::new(generic_summary::GenericSummary::new(summary_table)) as Box<dyn Reporter>;
     let tf: Box<dyn Reporter> = Box::new(TfAware::new_with(generic.as_ref())) as Box<dyn Reporter>;
     let cfn: Box<dyn Reporter> =
         Box::new(cfn::CfnAware::new_with(tf.as_ref())) as Box<dyn Reporter>;
+
     let reporter: Box<dyn Reporter> = if summary_table.is_empty() {
         cfn
     } else {
@@ -819,97 +714,117 @@ fn evaluate_against_data_input<'r>(
             cfn.as_ref(),
         )) as Box<dyn Reporter>
     };
+
     for file in data_files {
-        if new_engine_version {
-            let each = match &extra_data {
-                Some(data) => data.clone().merge(file.path_value.clone())?,
-                None => file.path_value.clone(),
-            };
-            let traversal = Traversal::from(&each);
-            let mut root_scope = root_scope(rules, &each)?;
-            let status = eval_rules_file(rules, &mut root_scope)?;
-            let root_record = root_scope.reset_recorder().extract();
-            reporter.report_eval(
-                &mut write_output,
-                status,
-                &root_record,
-                rules_file_name,
-                &file.name,
-                &file.content,
-                &traversal,
-                output,
-            )?;
-            if verbose {
-                print_verbose_tree(&root_record);
-            }
-            if print_json {
-                println!("{}", serde_json::to_string_pretty(&root_record)?)
-            }
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
-        } else {
-            let each = &file.path_value;
-            let root_context = RootScope::new(rules, each);
-            let stacker = StackTracker::new(&root_context);
-            let renderers = vec![reporter.as_ref()];
-            let reporter = ConsoleReporter::new(
-                stacker,
-                &renderers,
-                rules_file_name,
-                &file.name,
-                verbose,
-                print_json,
-                show_clause_failures,
-            );
-            let appender = MetadataAppender {
-                delegate: &reporter,
-                root_context: each,
-            };
-            let status = rules.evaluate(each, &appender)?;
-            reporter.report(each, output)?;
-            if status == Status::FAIL {
-                overall = Status::FAIL
-            }
+        let each = match &extra_data {
+            Some(data) => data.clone().merge(file.path_value.clone())?,
+            None => file.path_value.clone(),
+        };
+        let traversal = Traversal::from(&each);
+        let mut root_scope = root_scope(rules, Rc::new(each.clone()));
+        let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
+
+        let root_record = root_scope.reset_recorder().extract();
+
+        reporter.report_eval(
+            &mut write_output,
+            status,
+            &root_record,
+            rules_file_name,
+            &file.name,
+            &file.content,
+            &traversal,
+            output,
+        )?;
+
+        if verbose {
+            print_verbose_tree(&root_record, write_output);
+        }
+
+        if print_json {
+            writeln!(
+                write_output,
+                "{}",
+                serde_json::to_string_pretty(&root_record)?
+            )
+            .expect("Unable to write to the output");
+        }
+
+        if status == Status::FAIL {
+            overall = Status::FAIL
         }
     }
     Ok(overall)
 }
 
-fn get_path_aware_value_from_data(content: &String) -> Result<PathAwareValue> {
+fn build_data_file(content: String, name: String) -> Result<DataFile> {
     if content.trim().is_empty() {
-        Err(Error::new(ErrorKind::ParseError("blank data".to_string())))
-    } else {
-        let path_value = match crate::rules::values::read_from(content) {
-            Ok(value) => PathAwareValue::try_from(value)?,
-            Err(_) => {
-                let str_len: usize = cmp::min(content.len(), 100);
-                return Err(Error::new(ErrorKind::ParseError(format!(
-                    "data beginning with \n{}\n ...",
-                    &content[..str_len]
-                ))));
-            }
-        };
-        Ok(path_value)
+        return Err(Error::ParseError(format!(
+            "Unable to parse a template from data file: {name} is empty"
+        )));
     }
+
+    let path_value = match crate::rules::values::read_from(&content) {
+        Ok(value) => PathAwareValue::try_from(value)?,
+        Err(e) => {
+            if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
+                return Err(Error::ParseError(e.to_string()));
+            }
+
+            let str_len: usize = cmp::min(content.len(), 100);
+            return Err(Error::ParseError(format!(
+                "Error encountered while parsing data file: {name}, data beginning with \n{}\n ...",
+                &content[..str_len]
+            )));
+        }
+    };
+
+    Ok(DataFile {
+        name,
+        path_value,
+        content,
+    })
 }
 
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
     extensions.iter().any(|extension| name.ends_with(extension))
 }
 
-fn partition_failed_and_rest(top: &StatusContext) -> (Vec<&StatusContext>, Vec<&StatusContext>) {
-    top.children
-        .iter()
-        .partition(|ctx| matches!((*ctx).status, Some(Status::FAIL)))
+fn get_file_name(file: &Path, base: &Path) -> String {
+    let empty_path = Path::new("");
+    match file.strip_prefix(base) {
+        Ok(path) => {
+            if path == empty_path {
+                file.file_name().unwrap().to_str().unwrap().to_string()
+            } else {
+                format!("{}", path.display())
+            }
+        }
+        Err(_) => format!("{}", file.display()),
+    }
 }
 
-fn get_longest(top: &StatusContext) -> usize {
-    top.children
-        .iter()
-        .max_by(|f, s| (*f).context.len().cmp(&(*s).context.len()))
-        .map(|elem| elem.context.len())
-        .unwrap_or(20)
+fn get_rule_info(rules: &[PathBuf], writer: &mut Writer) -> Result<Vec<RuleFileInfo>> {
+    iterate_over(rules, |content, file| {
+        Ok(RuleFileInfo {
+            content,
+            file_name: get_file_name(file, file),
+        })
+    })
+    .try_fold(vec![], |mut res, rule| -> Result<Vec<RuleFileInfo>> {
+        if let Err(e) = rule {
+            writer.write_err(format!("Unable to read content from file {e}"))?;
+            return Err(e);
+        }
+
+        res.push(rule?);
+        Ok(res)
+    })
+}
+
+pub(crate) struct RuleFileInfo {
+    pub(crate) content: String,
+    pub(crate) file_name: String,
 }
 
 #[cfg(test)]

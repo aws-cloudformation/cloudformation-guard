@@ -5,8 +5,9 @@ use std::{
     ptr::{addr_of, NonNull},
 };
 
-use unsafe_libyaml as sys;
 use crate::rules::path_value::Location;
+#[allow(clippy::unsafe_removed_from_name)]
+use unsafe_libyaml as sys;
 
 pub(crate) struct Owned<T, Init = T> {
     ptr: NonNull<T>,
@@ -51,7 +52,6 @@ impl<T, Init> Drop for Owned<T, Init> {
         let _ = unsafe { Box::from_raw(self.ptr.as_ptr()) };
     }
 }
-
 
 pub(crate) fn system_mark_to_location(mark: sys::yaml_mark_t) -> Location {
     Location {

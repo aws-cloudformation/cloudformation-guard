@@ -1,0 +1,14 @@
+repos:
+-   repo: https://github.com/aws-cloudformation/cloudformation-guard
+    rev: pre-commit-v0.0.2
+    hooks:
+        -   id: cfn-guard
+            args:
+                - --operation=validate
+                - --rules=guard/resources/validate/rules-dir/
+            files: ^guard/resources/validate/data-dir/.*
+        -   id: cfn-guard
+            args:
+                - --operation=test
+                - --dir=pre_commit_hooks_tests/resources/
+            files: ^pre_commit_hooks_tests/resources.*

@@ -304,17 +304,17 @@
         "Action" : "lambda:InvokeFunction",
         "FunctionName" : {
           "Fn::GetAtt" : [
-            "EnableShapshot",
+            "EnableSnapshot",
             "Arn"
           ]
         },
         "Principal"    : "*"
       }
     },
-    "EnableShapshotTrigger"              : {
+    "EnableSnapshotTrigger"              : {
       "Condition" : "EnableBackups",
       "DependsOn" : [
-        "EnableShapshot",
+        "EnableSnapshot",
         "LambdaExecutePermission",
         "RedisReplicationGroup"
       ],
@@ -322,7 +322,7 @@
       "Properties" : {
         "ServiceToken" : {
           "Fn::GetAtt" : [
-            "EnableShapshot",
+            "EnableSnapshot",
             "Arn"
           ]
         },
@@ -337,7 +337,7 @@
         }
       }
     },
-    "EnableShapshot"                     : {
+    "EnableSnapshot"                     : {
       "Condition" : "EnableBackups",
       "Type"      : "AWS::Lambda::Function",
       "DeletionPolicy" : "Delete",

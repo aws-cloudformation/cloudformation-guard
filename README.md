@@ -1,30 +1,36 @@
-**Note:**
-We are excited to release Guard 2.1! We recommend building locally from source code or to install using pre-built binaries. Due to dependencies on [one of the PRs](https://github.com/chyh1990/yaml-rust/pull/180) for [yaml-rust](https://github.com/chyh1990/yaml-rust) library, we are not currently able to publish to various package managers including crates.io.
-
 # AWS CloudFormation Guard
 
 **Validate Cloud Environments with Policy-as-Code**
 
-AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies. 
+AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.
 
-Guard 2.1 release is a complete re-write of the earlier 1.0 version to make the tool general-purpose. With Guard 2.1, developers can continue writing policies for CloudFormation Templates. In addition, developers can use Guard in the following business domains:
+The Guard 3.0 release introduces support for stateful rules through built-in functions, SAM CLI as an alternative deployment method for `cfn-guard-lambda`, command auto-completions for shell, advanced regular expressions, improved handling of intrinsic functions for the test command, as well as the `--structured` flag to the validate command to emit JSON/YAML parseable output.  Note that previously written tests may have to be reviewed due to the corrected behavior of intrinsic function handling.  Please see the release notes for full details and examples.
+
+Guard can be used for the following domains:
 
 1. **Preventative Governance and Compliance (shift left):** validate Infrastructure-as-code (IaC) or infrastructure/service compositions such as CloudFormation Templates, CloudFormation ChangeSets, Terraform JSON configuration files, Kubernetes configurations, and more against Guard policies representing your organizational best practices for security, compliance, and more. For example, developers can use Guard policies with
-    1. Terraform plan (in JSON format) for deployment safety assessment checks or Terraform state files to detect live state deviations.
+    1. Terraform plan (**in JSON format**) for deployment safety assessment checks or Terraform state files to detect live state deviations.
     2. Static assessment of IaC templates to determine network reachability like Amazon Redshift cluster deployed inside a VPC and prevent the provision of such stacks.
 2. **Detective Governance and Compliance:** validate conformity of Configuration Management Database (CMDB) resources such as AWS Config-based configuration items (CIs). For example, developers can use Guard policies against AWS Config CIs to continuously monitor state of deployed AWS and non-AWS resources, detect violations from policies, and trigger remediation.
-3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 2.1, you can prevent such changes in your CI/CD pipelines. 
+3. **Deployment Safety:** validate CloudFormation ChangeSets to ensure changes are safe before deployment. For example, renaming an Amazon DynamoDB Table will cause a replacement of the Table. With Guard 3.0, you can prevent such changes in your CI/CD pipelines.
 
-> **NOTE**: If you are using Guard 1.0, we highly recommend adopting Guard 2.1 because Guard 2.1 is a major release that introduces multiple features to simplify your current policy-as-code experience. Guard 2.1 is backward incompatible with your Guard 1.0 rules and can result in breaking changes. To migrate from Guard 1.0 to Guard 2.1, 1) use migrate command to transition your existing 1.0 rules to 2.0 rules and 2) read all new Guard 2.1 features.
-> 
-> You can find code related to Guard 2.1 on the main branch of the repo and code related to Guard 1.0 on [Guard1.0 branch](https://github.com/aws-cloudformation/cloudformation-guard/tree/Guard1.0) of the repo.
+> **NOTE**: If you are using Guard 1.0 rules, we highly recommend adopting the latest version of Guard to simplify your current policy-as-code experience. Guard 2.0 and higher versions are backward incompatible with your Guard 1.0 rules and can result in breaking changes. The Guard 2.0 release was a complete re-write of the earlier 1.0 version to make the tool general-purpose.
+>
+> To migrate from Guard 1.0 rules to use the updated grammar, follow the steps given below.
+> 1. Pull the release artifacts for the latest `2.x.x` release from the corresponding release page listed [here](https://github.com/aws-cloudformation/cloudformation-guard/releases).
+> 2. Use `migrate` command to transition your existing 1.0 rules to use the updated grammar
+> 3. Read about all new Guard features from the latest release, and modify your rules for enhanced experience
+
 
 **Guard In Action**
 
 ![Guard In Action](images/guard-demo.gif)
 
-## Table of Contents
+**Customer Feedback**
+Take this [survey](https://amazonmr.au1.qualtrics.com/jfe/form/SV_bpyzpfoYGGuuUl0) to provide feedback about cfn-guard
 
+## Table of Contents
+<!-- no toc -->
 * [FAQs](#faqs)
 * [Guard DSL](#guard-dsl)
   * [Tenets](#tenets)
@@ -32,6 +38,14 @@ Guard 2.1 release is a complete re-write of the earlier 1.0 version to make the 
 * [Guard CLI](#guard-cli)
   * [Installation](#installation)
   * [How does Guard CLI work?](#how-does-guard-cli-work?)
+* [Rule authoring references](#references)
+* [Built-in functions & stateful rules](#functions)
+* [AWS Rule Registry](#registry)
+* [Use Guard as a Docker Image](#docker)
+* [Use Guard as a Github Action](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/action#readme)
+* [Use Guard as a CI tool](#ci)
+* [Use Guard as a pre-commit hook](#pre-commit-hook)
+* [Contribute using the DevContainer in VSCode](#devcontainer)
 * [License](#license)
 
 ## FAQs
@@ -40,7 +54,7 @@ Guard 2.1 release is a complete re-write of the earlier 1.0 version to make the 
 > Guard is an open-source command line interface (CLI) that provides developers a general purpose domain-specific language (DSL) to express policy-as-code and then validate their JSON- and YAML-formatted data against that code. Guard’s DSL is a simple, powerful, and expressive declarative language to define policies. It is built on the foundation of clauses, which are assertions that evaluate to `true` or `false`. Examples clauses can include simple validations like all Amazon Simple Storage Service (S3) buckets must have versioning enabled, or combined to express complex validations like preventing public network reachability of Amazon Redshift clusters placed in a subnet. Guard has support for looping, queries with filtering, cross query joins, single shot variable assignments, conditional executions, and composable rules. These features help developers to express simple and advanced policies for various domains.
 
 **2) What Guard is not?**
-> Guard **is not** a general-purpose programming language. It is a purpose-built DSL that is designed for policy definition and evaluation. Both non-technical people and developers can easily pick up Guard. Guard is human-readable and machine enforceable.
+> Guard **is not** a general-purpose programming language. It is a **purpose-built** DSL that is designed for policy definition and evaluation. Both non-technical people and developers can easily pick up Guard. Guard is human-readable and machine enforceable.
 
 **3) Where can I use Guard?**
 > You can use Guard to define any type of policy for evaluation. You can apply Guard in the context of multiple domains: a) validating IaC/service compositions such as [CloudFormation Templates](https://aws.amazon.com/cloudformation/resources/templates/), Terraform JSON configuration files, and Kubernetes configurations, b) verifying conformity of CMDB resources such as AWS Config-based CIs, and c) assessing security postures across resources like AWS Security Hub. The policy language and expression is common to all of them, based on simple Guard clauses.
@@ -49,22 +63,22 @@ Guard 2.1 release is a complete re-write of the earlier 1.0 version to make the 
 > Clause is an assertion that evaluates to true or false. Clauses can either use binary operations to compare two values (e.g `==, >` and `in`), or unary operations that takes only one value (e.g. `exists, empty,` and  `is_list`).  Here is a sample clause that compares `Type` to be a `AWS::S3::Bucket` :
 
 ```
-Type == /AWS::S3::Bucket/  
+Type == /AWS::S3::Bucket/
 ```
 
 **4) What are the supported** **types** **that can I use to define clauses?**
 > Guard supports all primitives `string, integer (64), float (64), bool, char, regex` and specialized range expression like `r(10, 200)`, for specifying ranges of values. It supports general key value pair maps (a.k.a associative arrays/struct) like `{ "my-map": { "nested-maps": [ { "key": 10, "value": 20 } ] } },` and arrays of primitives or key-value pair maps like `[10, 20, 30] or [{ Key: "MyApp", Value: "PROD}, ..]`.
 
 **5) What binary and unary comparison operators can I use?**
-> *Unary Operators:* `exists, empty, is_string, is_list, is_struct, not(!)`
+> *Unary Operators:* `exists, empty, is_string, is_list, is_struct, is_bool, is_int, is_float, not(!)`
 > *Binary Operators:* `==, !=, >, >=, <, <=, IN `
 >
-> Most operators are self-explanatory. A few important points: 
+> Most operators are self-explanatory. A few important points:
 >
 > 1. Refer [Guard: Clauses](docs/CLAUSES.md) to understand the usage of `exists` and `empty` operators
 > 2. Clause `ports >= [10, 20, 30]` implies that every element for `ports` is `>= 30`. If your intention is range, then express it as `r[10, 30]` .
 > 3. Clause `ports >= 100` can have ports resolve to an array `[121, 200, 443]`. This check ensures that every element returned was >= 100, and in the example shown this evaluates to `true.`
-> 4. `IN` operator for collections (does not work for `string` type) to check if any value matches. For example:  
+> 4. `IN` operator for collections (does not work for `string` type) to check if any value matches. For example:
 
 ```
 Properties.SslPolicy IN ["ELBSecurityPolicy-TLS-1-2-2017-01", "ELBSecurityPolicy-TLS-1-2-Ext-2018-06"]
@@ -81,13 +95,13 @@ rule s3_bucket_name_encryption_check when %s3_buckets !empty {
     %s3_buckets {
         Properties {
              # common prefix
-             BucketName == /^MyCompanyPrefix/ 
-             
+             BucketName == /^MyCompanyPrefix/
+
              # encryption MUST BE on
              BucketEncryption.ServerSideEncryptionConfiguration[*] {
-                # only KMS 
-                ServerSideEncryptionByDefault.SSEAlgorithm IN 
-                    ["aws:KMS"] 
+                # only KMS
+                ServerSideEncryptionByDefault.SSEAlgorithm IN
+                    ["aws:KMS"]
              }
         }
     }
@@ -107,14 +121,14 @@ rule s3_bucket_name_encryption_check when %s3_buckets !empty {
 > Guard is a DSL and an accompanying CLI tool that allows easy-to-use definitions for declaring and enforcing policies. Today the tool supports local file-based execution of a category of policies. Guard doesn’t support the following things today, along with workarounds for some:
 >
 > 1. Sourcing of rules from external locations such as GitHub Release and S3 bucket. If you want this feature natively in Guard, please raise an issue or +1 an existing issue.
-> 2. Ability to import Guard policy file by reference (local file or GitHub, S3, etc.). It currently only supports a directory on disk of policy files, that it would execute. 
+> 2. Ability to import Guard policy file by reference (local file or GitHub, S3, etc.). It currently only supports a directory on disk of policy files, that it would execute.
 > 3. Parameter/Vault resolution for IaC tools such as CloudFormation or Terraform. Before you ask, the answer is NO. We will not add native support in Guard as the engine is general-purpose. If you need CloudFormation resolution support, raise an issue and we might have a solution for you. We do not support HCL natively. We do, however, support Terraform Plan in JSON to run policies against for deployment safety. If you need HCL support, raise an issue as well.
-> 4. Ability to reference variables like `%s3_buckets`, inside error messages. Both JSON/Console output for evaluation results contain some of this information for inference. We also do not support using variable references to create dynamic regex expressions. However, we support variable references inside queries for cross join support, like `Resources.%references.Properties.Tags`.  
-> 5. Support for specifying variable names when accessing map or list elements to cature these values. For example, consider this check `Resources[resource_name].Properties.Tags not empty`, here `resource_name` captures the key or index value. The information is tracked as a part of the evaluation context today and  present in both console/JSON outputs. This support will be extended to regex expression variable captures as well.
-> 6. There are [known issues](docs/KNOWN_ISSUES.md) with potential workarounds that we are tracking towards resolution 
+> 4. Ability to reference variables like `%s3_buckets`, inside error messages. Both JSON/Console output for evaluation results contain some of this information for inference. We also do not support using variable references to create dynamic regex expressions. However, we support variable references inside queries for cross join support, like `Resources.%references.Properties.Tags`.
+> 5. Support for specifying variable names when accessing map or list elements to capture these values. For example, consider this check `Resources[resource_name].Properties.Tags not empty`, here `resource_name` captures the key or index value. The information is tracked as a part of the evaluation context today and  present in both console/JSON outputs. This support will be extended to regex expression variable captures as well.
+> 6. There are [known issues](docs/KNOWN_ISSUES.md) with potential workarounds that we are tracking towards resolution
 
 **11) What are we really thankful about?**
-> Where do we start? Hmm.... we want to thank Rust [language’s forums](https://users.rust-lang.org/), [build management, and amazing ecosystem](https://crates.io/) without which none of this would have been possible. We are not the greatest Rust practitioners, so if we did something that is not idiomatic Rust, please raise a PR. 
+> Where do we start? Hmm.... we want to thank Rust [language’s forums](https://users.rust-lang.org/), [build management, and amazing ecosystem](https://crates.io/) without which none of this would have been possible. We are not the greatest Rust practitioners, so if we did something that is not idiomatic Rust, please raise a PR.
 >
 > We want to make a special mention to [nom](https://github.com/Geal/nom) combinator parser framework to write our language parser in. This was an excellent decision that improved readability, testability, and composition. We highly recommend it. There are some rough edges, but it’s just a wonderful, awesome library. Thank you. Apart from that, we are consumers of many crates including [hyper](https://crates.io/crates/hyper) for HTTP handling, [simple logger](https://crates.io/crates/simple_logger), and many more. We also want to thank the open-source community for sharing their feedback with us through GitHub issues/PRs.
 >
@@ -122,13 +136,13 @@ rule s3_bucket_name_encryption_check when %s3_buckets !empty {
 
 ## Guard DSL
 
-### Tenets 
+### Tenets
 
 **(Unless you know better ones)**
 
 These tenets help guide the development of the Guard DSL:
 
-* **Simple**: The language must be simple for customers to author policy rules, simple to integrate with an integrated development environment (IDE), readable for human comprehension, and machine enforceable. 
+* **Simple**: The language must be simple for customers to author policy rules, simple to integrate with an integrated development environment (IDE), readable for human comprehension, and machine enforceable.
 
 * **Unambiguous**: The language must not allow for ambiguous interpretations that make it hard for customers to comprehend the policy evaluation. The tool is targeted for security and compliance related attestations that need the auditor to consistently and unambiguously understand rules and their evaluations.
 
@@ -156,10 +170,10 @@ These tenets help guide the development of the Guard DSL:
 
 ##### MacOS
 
-By default this is built for macOS-10 (Catalina). It has been tested to work on macOS-11 (Big Sur). See [OS Matrix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
+By default this is built for macOS-12 (Monterey). See [OS Matrix](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#github-hosted-runners)
 
 1. Open terminal of your choice. Default `Cmd+Space`, type `terminal`
-2. Cut-n-paste the commands below (change version=X for other versions)
+2. Cut-n-paste the commands below (default latest, add `-s -- -v <VERSION>` for other versions ie. `-s -- -v 3.1.1`)
 ```bash
 $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
@@ -176,12 +190,26 @@ You would not need to modify `$PATH` this way.
 ##### Ubuntu
 
 1. Open any terminal of your choice
-2. Cut-n-paste the commands below (change version=X for other versions)
+2. Cut-n-paste the commands below (default latest, add `-s -- -v <VERSION>` for other versions ie. `-s -- -v 3.1.1`)
 ```bash
 $ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
 ```
 
 Remember to add `~/.guard/bin/` to your `$PATH`.
+
+##### Windows
+
+1. Open PowerShell as Administrator
+2. Cut-n-paste the command below
+```shell
+$GuardWindowsInstallScript = Invoke-WebRequest https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.ps1; Invoke-Expression $($GuardWindowsInstallScript.Content)
+```
+
+If you get an error regarding authorization to execute the script run the follow before retrying step 2:
+
+```shell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
 
 #### Installation of Rust and Cargo
 
@@ -209,7 +237,7 @@ If building on `Ubuntu`, it is recommended to run `sudo apt-get update; sudo apt
 10. Run it and accept the defaults.
 
 #### Cargo-based Installation
-Now that you have [rust and cargo installed](https://doc.rust-lang.org/cargo/getting-started/installation.html), installation of cfn-guard is easy: 
+Now that you have [rust and cargo installed](https://doc.rust-lang.org/cargo/getting-started/installation.html), installation of cfn-guard is easy:
 
 ```bash
 $ cargo install cfn-guard
@@ -219,50 +247,51 @@ Check `help` to see if it is working.
 
 ```bash
 $ cfn-guard help
-cfn-guard 2.1
+cfn-guard 3.1.1
 
-  Guard is a general-purpose tool that provides a simple declarative syntax to define 
-  policy-as-code as rules to validate against any structed hierarchical data (like JSON/YAML).
-  Rules are composed of clauses expressed using Conjuctive Normal Form
+  Guard is a general-purpose tool that provides a simple declarative syntax to define
+  policy-as-code as rules to validate against any structured hierarchical data (like JSON/YAML).
+  Rules are composed of clauses expressed using Conjunctive Normal Form
   (fancy way of saying it is a logical AND of OR clauses). Guard has deep
   integration with CloudFormation templates for evaluation but is a general tool
   that equally works for any JSON- and YAML- data.
 
-USAGE:
-    cfn-guard [SUBCOMMAND]
+Usage: cfn-guard [COMMAND]
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+Commands:
+  parse-tree   Prints out the parse tree for the rules defined in the file.
+  test         Built in unit testing capability to validate a Guard rules file against
+               unit tests specified in YAML format to determine each individual rule's success
+               or failure testing.
 
-SUBCOMMANDS:
-    help          Prints this message or the help of the given subcommand(s)
-    migrate       Migrates 1.0 rules to 2.0 compatible rules.
-    parse-tree    Prints out the parse tree for the rules defined in the file.
-    rulegen       Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only
-                  CloudFormation templates)
-    test          Built in unit testing capability to validate a Guard rules file against
-                  unit tests specified in YAML format to determine each individual rule's success
-                  or failure testing.
-    validate      Evaluates rules against the data files to determine success or failure. 
-                  You can point rules flag to a rules directory and point data flag to a data directory. 
-                  When pointed to a directory it will read all rules in the directory file and evaluate 
-                  them against the data files found in the directory. The command can also point to a
-                  single file and it would work as well.
-                  Note - When pointing the command to a directory, the directory may not contain a mix of 
-                  rules and data files. The directory being pointed to must contain only data files,
-                  or rules files.
+  validate     Evaluates rules against the data files to determine success or failure.
+               You can point rules flag to a rules directory and point data flag to a data directory.
+               When pointed to a directory it will read all rules in the directory file and evaluate
+               them against the data files found in the directory. The command can also point to a
+               single file and it would work as well.
+               Note - When pointing the command to a directory, the directory may not contain a mix of
+               rules and data files. The directory being pointed to must contain only data files,
+               or rules files.
+
+  rulegen      Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
+  completions  Generate auto-completions for all the sub-commands in shell.
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
 ```
 
 ### How does Guard CLI work?
 
-The two common Guard CLI commands are `validate` and `test`. 
+The two common Guard CLI commands are `validate` and `test`.
 
 #### Validate
 
-Validate command is used when you need to assess the compliance or security posture as defined by a set of policy files against incoming JSON/YAML data. Common data payloads used are CloudFormation Templates, CloudFormation ChangeSets, Kubernetes Pod policies, Terraform Plan/Configuration in JSON format, and more. Here is an example run of the `validate` command for assessing Kubernetes Pod Container configurations 
+Validate command is used when you need to assess the compliance or security posture as defined by a set of policy files against incoming JSON/YAML data. Common data payloads used are CloudFormation Templates, CloudFormation ChangeSets, Kubernetes Pod policies, Terraform Plan/Configuration in JSON format, and more. Here is an example run of the `validate` command for assessing Kubernetes Pod Container configurations
 
-1. Save the sample policy rules file below as `k8s-pod-containers-limits.guard`: 
+1. Save the sample policy rules file below as `k8s-pod-containers-limits.guard`:
 
 ```
 #
@@ -270,29 +299,29 @@ Validate command is used when you need to assess the compliance or security post
 #
 
 #
-# These set of rules primarily apply to the version 1 of the API spec (including v1Beta) and 
+# These set of rules primarily apply to the version 1 of the API spec (including v1Beta) and
 # the kind of document is a 'Pod'
 #
-rule version_and_kind_match 
+rule version_and_kind_match
 {
     apiVersion == /v1/
     kind == 'Pod'
 }
 
 #
-# For the 'Pod' document ensure that containers have resource limits set 
+# For the 'Pod' document ensure that containers have resource limits set
 # for memory
 #
-rule ensure_container_has_memory_limits when version_and_kind_match 
+rule ensure_container_has_memory_limits when version_and_kind_match
 {
-    spec.containers[*] 
+    spec.containers[*]
     {
-       resources.limits 
+       resources.limits
        {
             #
             # Ensure that memory attribute is set
             #
-            memory exists 
+            memory exists
             <<
                 Id: K8S_REC_22
                 Description: Memory limit must be set for the container
@@ -303,19 +332,19 @@ rule ensure_container_has_memory_limits when version_and_kind_match
 }
 
 #
-# For the 'Pod' document ensure that containers have resource limits set 
+# For the 'Pod' document ensure that containers have resource limits set
 # for cpu
 #
-rule ensure_container_has_cpu_limits when version_and_kind_match 
+rule ensure_container_has_cpu_limits when version_and_kind_match
 {
-    spec.containers[*] 
+    spec.containers[*]
     {
-       resources.limits 
+       resources.limits
        {
             #
             # Ensure that cpu attribute is set
             #
-            cpu exists 
+            cpu exists
             <<
                 Id: K8S_REC_24
                 Description: Cpu limit must be set for the container
@@ -323,8 +352,8 @@ rule ensure_container_has_cpu_limits when version_and_kind_match
        }
    }
 }
-```   
-    
+```
+
 2. Paste the command below and hit `enter`
 
 ```bash
@@ -332,8 +361,8 @@ cfn-guard validate -r k8s-pod-containers-limits.guard
 ```
 
 3. Cut-n-paste the sample configuration below for k8s pods on STDIN and then hit `CTRL+D`:
-    
-```yaml    
+
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
@@ -361,7 +390,82 @@ spec:
 
 ![Execution of validate](images/guard-validate.png)
 
-The container `app` does not contain CPU limits specified, which fails the overall evaluation as shown in the screenshot. 
+The container `app` does not contain CPU limits specified, which fails the overall evaluation as shown in the screenshot.
+
+#### Using Input Parameters
+
+Guard allows you to use input parameters for dynamic data lookups during validation. This feature is particularly useful when you need to reference external data in your rules. However, when specifying input parameter keys, Guard requires that there are no conflicting paths.
+
+##### How to use
+
+1. Use the `--input-parameters` or `-i` flag to specify files containing input parameters. Multiple input parameter files can be specified and will be combined to form a common context. Input parameter keys can not have conflicting paths.
+2. Use the `--data` or `-d` flag to specify the actual template file to be validated.
+
+##### Example Usage
+
+1. Create an input parameter file (e.g., `network.yaml`):
+
+```yaml
+NETWORK:
+  allowed_security_groups: ["sg-282850", "sg-292040"]
+  allowed_prefix_lists: ["pl-63a5400a", "pl-02cd2c6b"]
+```
+
+2. Reference these parameters in your guard rule file (e.g., `security_groups.guard`):
+
+```
+let groups = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+
+let permitted_sgs = NETWORK.allowed_security_groups
+let permitted_pls = NETWORK.allowed_prefix_lists
+rule check_permitted_security_groups_or_prefix_lists(groups) {
+    %groups {
+        this in %permitted_sgs or
+        this in %permitted_pls
+    }
+}
+
+rule CHECK_PERMITTED_GROUPS when %groups !empty {
+    check_permitted_security_groups_or_prefix_lists(
+       %groups.Properties.GroupName
+    )
+}
+```
+
+3. Create a failing data template (e.g., `security_groups_fail.yaml`):
+
+```yaml
+# ---
+# AWSTemplateFormatVersion: 2010-09-09
+# Description: CloudFormation - EC2 Security Group
+
+Resources:
+  mySecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupName: "wrong"
+```
+
+4. Run the validate command:
+
+```
+cfn-guard validate -r security_groups.guard -i network.yaml -d security_groups_fail.yaml
+```
+
+In this command:
+- `-r` specifies the rule file
+- `-i` specifies the input parameter file
+- `-d` specifies the data file (template) to be validated
+
+##### Multiple Input Parameters
+
+You can specify multiple input parameter files:
+
+```
+cfn-guard validate -r rules.guard -i params1.yaml -i params2.yaml -d template.yaml
+```
+
+All files specified with `-i` will be combined to form a single context for parameter lookup.
 
 #### Test
 
@@ -371,19 +475,19 @@ Test command is used during the development of guard policy rules files. Test pr
 
 ```
 #
-# Select from Resources section of the template all ApiGateway resources 
-# present in the template. 
+# Select from Resources section of the template all ApiGateway resources
+# present in the template.
 #
 let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
 
 #
-# Rule intent 
-# a) All ApiGateway instances deployed must be private 
+# Rule intent
+# a) All ApiGateway instances deployed must be private
 # b) All ApiGateway instances must have atleast one IAM policy condition key to allow access from a VPC
 #
 # Expectations:
 # 1) SKIP when there are not API Gateway instances in the template
-# 2) PASS when ALL ApiGateway instances MUST be "PRIVATE" and 
+# 2) PASS when ALL ApiGateway instances MUST be "PRIVATE" and
 #              ALL ApiGateway instances MUST have one IAM Condition key with aws:sourceVpc or aws:SourceVpc
 # 3) FAIL otherwise
 #
@@ -399,9 +503,9 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
   %api_gws {
     Properties {
       #
-      # ALL ApiGateways must have atleast one IAM statement that has Condition keys with 
+      # ALL ApiGateways must have atleast one IAM statement that has Condition keys with
       #     aws:sourceVpc
-      #           
+      #
       some Policy.Statement[*] {
         Condition.*[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
       }
@@ -426,7 +530,7 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
       check_rest_api_is_private: SKIP
       check_rest_api_has_vpc_access: SKIP
 - input:
-    Resources: 
+    Resources:
       apiGw:
         Type: AWS::ApiGateway::RestApi
   expectations:
@@ -434,7 +538,7 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
       check_rest_api_is_private: FAIL
       check_rest_api_has_vpc_access: SKIP
 - input:
-    Resources: 
+    Resources:
       apiGw:
         Type: AWS::ApiGateway::RestApi
         Properties:
@@ -445,7 +549,7 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
       check_rest_api_is_private: PASS
       check_rest_api_has_vpc_access: FAIL
 - input:
-    Resources: 
+    Resources:
       apiGw:
         Type: AWS::ApiGateway::RestApi
         Properties:
@@ -456,7 +560,7 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
       check_rest_api_is_private: FAIL
       check_rest_api_has_vpc_access: SKIP
 - input:
-    Resources: 
+    Resources:
       apiGw:
         Type: AWS::ApiGateway::RestApi
         Properties:
@@ -475,7 +579,7 @@ rule check_rest_api_has_vpc_access when check_rest_api_is_private {
       check_rest_api_has_vpc_access: PASS
 ```
 
-3. Run the test command 
+3. Run the test command
 
 ```bash
 cfn-guard test -r api_gateway_private_access.guard -t api_gateway_private_access_tests.yaml
@@ -484,6 +588,180 @@ cfn-guard test -r api_gateway_private_access.guard -t api_gateway_private_access
 ![Execution of test](images/guard-test.png)
 
 Read [Guard: Unit Testing](docs/UNIT_TESTING.md) for more information on unit testing. To know about other commands read the [Readme in the guard directory](guard/README.md).
+
+## <a name="references"></a> Rule authoring references
+
+As a starting point for writing Guard rules for yourself or your organisation we recommend following [this official guide](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html)
+
+### Quick links:
+
+[Writing AWS CloudFormation Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html)
+1. [Clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses)
+2. [Using queries in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-queries)
+3. [Using operators in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-operators)
+4. [Using custom messages in clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#clauses-custom-messages)
+5. [Combining clauses](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#combining-clauses)
+6. [Using blocks with Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/writing-rules.html#blocks)
+7. [Defining queries and filtering](https://docs.aws.amazon.com/cfn-guard/latest/ug/query-and-filtering.html)
+8. [Assigning and referencing variables in AWS CloudFormation Guard rules](https://docs.aws.amazon.com/cfn-guard/latest/ug/variables.html)
+9. [Composing named-rule blocks in AWS CloudFormation Guard](https://docs.aws.amazon.com/cfn-guard/latest/ug/named-rule-block-composition.html)
+10. [Writing clauses to perform context-aware evaluations](https://docs.aws.amazon.com/cfn-guard/latest/ug/context-aware-evaluations.html)
+
+## <a name="functions"></a> Built-in functions & stateful rules
+
+Guard 3.0 introduces support for functions, allowing for stateful rules that can run on a value that's evaluated based
+on some properties extracted out of a data template.
+
+### Sample template
+
+Imagine we have a property in our template which consists of a list called as `Collection` and we need to ensure
+it has at least 3 items in it.
+
+```yaml
+Resources:
+  newServer:
+    Type: AWS::New::Service
+    Collection:
+      - a
+      - b
+```
+### Sample rule
+
+We can write a rule to check this condition as follows:
+
+```
+let server = Resources.*[ Type == 'AWS::New::Service' ]
+rule COUNT_CHECK when %server !empty {
+    let collection = %server.Collection.*
+    let count_of_items = count(%collection)
+    %count_of_items >= 3
+    <<
+      Violation: Collection should contain at least 3 items
+    >>
+}
+```
+
+Expected outcome is that rule fails showing us the violation message since our template is non-compliant.
+
+For detailed documentation regarding all supported functions, please [follow this link](./docs/FUNCTIONS.md). For limitations of functions usage, please read [this note](./docs/KNOWN_ISSUES.md#function-limitation).
+
+## <a name="registry"></a> AWS Rule Registry
+
+As a reference for Guard rules and rule-sets that contain (on a best-effort basis) the compliance policies that adhere
+to the industry best practices around usages across AWS resources, we have recently launched
+[AWS Guard Rules Registry](https://github.com/aws-cloudformation/aws-guard-rules-registry).
+
+
+## <a name="docker"></a> Use Guard as a Docker Image
+
+Guard is also published as an ECR image in [ECR public gallery](https://gallery.ecr.aws/aws-cloudformation/cloudformation-guard) and can be used as an image in a docker container.
+
+### Prerequisites
+
+1. Install docker. Follow [this guide](https://docs.docker.com/engine/install/).
+1. Have a directory ready on the host you are downloading the docker image to that contains data templates and Guard rules you are planning to use, we may mount this directory and use the files as input to `cfn-guard`. We'll refer this directory to be called `guard-files` in the rest of this guide
+
+### Usage Guide
+
+To use the binary, we should pull the latest docker image, we may do so using the following command:
+```bash
+docker pull public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
+```
+Now go ahead and run the docker image, using the files from directory we have our templates and rules file in, using:
+```bash
+docker run \
+  --mount src=/path/to/guard-files,target=/container/guard-files,type=bind \
+  -it public.ecr.aws/aws-cloudformation/cloudformation-guard:latest \
+  ./cfn-guard validate -d /container/guard-files/template.yml -r /container/guard-files/rule.guard
+```
+We should see the evaluation result emitted out on the console.
+
+### Tagging convention
+
+* We use the tag `latest` for the most recent docker image that gets published in sync with `main` branch of the `cloudformation-guard` GitHub repository.
+* We use the convention `<branch_name>.<github_shorthand_commit_hash>` for tags of historical docker images
+
+## <a name="ci"></a> Use Guard as a CI tool
+
+Guard is great for CI checks with the Junit output format, making the process of validating or testing your templates seamless and simple. Check out the examples below.
+
+### GitHub Actions
+
+#### Junit
+
+![GitHub Actions](images/github.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/workflows/junit-test-and-validate.yml)
+
+#### SARIF
+
+![GitHub Actions](images/sarif-gh.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.github/workflows/sarif-validate.yml)
+
+### CircleCI
+
+#### Junit
+
+![CircleCI](images/circleci.png)
+
+[Get the template here!](https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-examples/ci/.circleci/config.yml)
+
+## <a name="pre-commit-hook"></a> Use Guard as a pre-commit hook
+
+Guard is available as a pre-commit hook and offers both the `test` and `validate` operations. You can use them by adding a variation of the following configuration to your `.pre-commit-config.yaml` file:
+
+```yaml
+# Since the cfn-guard hook's tagging strategy is incompatible
+# with pre-commit's autoupdate feature, you may want to use
+# the pre-commit-update hook. If you don't require the autoupdate
+# feature, you may skip the pre-commit-update hook.
+repos:
+# pre-commit-update hook
+-   repo: https://gitlab.com/vojko.pribudic.foss/pre-commit-update
+    rev: v0.5.0
+    hooks:
+    -   id: pre-commit-update
+        args: [--tag-prefix, cloudformation-guard, pre-commit-v]
+# cfn-guard pre-commit hook
+-   repo: https://github.com/aws-cloudformation/cloudformation-guard
+    rev: pre-commit-v0.0.2
+    hooks:
+        # Validate
+        -   id: cfn-guard
+            args:
+                - --operation=validate # Specify the validate operation
+                - --rules=path/to/rules/ # Rules directory
+            files: ^path/to/data/.* # Directory to watch for changes and validate against
+        # Test
+        -   id: cfn-guard
+            args:
+                - --operation=test # Specify the test operation
+                - --dir=path/to/resources/ # Directory that contains rules & their tests
+            files: ^path/to/resources.* # Same directory supplied to the --dir arg so that rule and test file changes trigger a run
+```
+
+**NOTE**: The args for the pre-commit hook are not identical to the flags you would pass directly to Guard. In the case of this hook, you cannot pass a `data` flag to `validate` as it depends on the `filenames` from the hook and you can only use the `dir` flag for the `test` hook.
+
+## <a name="devcontainer"></a> Contribute using the DevContainer in VSCode
+
+### Setup
+**NOTE**: The devcontainer supports zsh and bash with theming and aliases. You can choose which shell you like in the terminal options in your VSCode session.
+
+1. Follow the prerequisite instructions [here](https://code.visualstudio.com/learn/develop-cloud/containers).
+1. In VSCode following the install, open the command palette.
+1. Search "Dev Containers: Build Container"
+1. Once done, open the project inside the container.
+
+### Aliases
+
+* `gval`: `cargo run --bin cfn-guard validate`
+* `gtest`: `cargo run --bin cfn-guard test`
+* `gparse`: `cargo run --bin cfn-guard parse-tree`
+* `cb`: `cargo build`
+* `ct`: `cargo nextest run`
+* `cn`: `cargo +nightly`
+
 
 ## License
 

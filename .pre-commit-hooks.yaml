@@ -1,0 +1,8 @@
+-   id: cfn-guard
+    name: CloudFormation Guard
+    description: execute the cfn-guard binary passing in arguments
+    entry: cfn-guard
+    language: python
+    verbose: true
+    always_run: true
+    pass_filenames: true

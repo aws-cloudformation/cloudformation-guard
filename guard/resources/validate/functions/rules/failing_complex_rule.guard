@@ -1,0 +1,10 @@
+rule compare_result_of_regex_replace(replaced, expected) {
+    %expected == %replaced
+}
+
+let template = Resources.*[ Type == 'AWS::New::Service'] 
+
+rule PARAMETERIZED_RULE_WITH_FUNCTION_CALL_IN_PARAMS when %template exists {
+    let arn = %template.Properties.Arn 
+    compare_result_of_regex_replace(regex_replace(%arn, "^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$", "${1}/${4}/${3}/${2}-${5}"), "random_str")
+}

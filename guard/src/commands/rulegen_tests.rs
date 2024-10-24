@@ -1,4 +1,6 @@
 use crate::commands::rulegen;
+use crate::utils::writer::Writer;
+use pretty_assertions::assert_eq;
 
 #[test]
 fn test_rulegen() {
@@ -27,7 +29,8 @@ fn test_rulegen() {
         "#,
     );
 
-    let generated_rules = rulegen::parse_template_and_call_gen(&data);
+    let mut writer = Writer::default();
+    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
 
     assert_eq!(1, generated_rules.len());
     assert!(generated_rules.contains_key("AWS::EC2::Volume"));
@@ -57,7 +60,8 @@ fn test_rulegen_no_properties() {
         "#,
     );
 
-    let generated_rules = rulegen::parse_template_and_call_gen(&data);
+    let mut writer = Writer::default();
+    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
 
     assert_eq!(0, generated_rules.len());
 }

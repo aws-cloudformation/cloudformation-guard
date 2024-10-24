@@ -1,0 +1,220 @@
+- name: s3-public-read-prohibited-template-non-compliant.yaml
+  metadata: {}
+  status: FAIL
+  not_compliant:
+  - Rule:
+      name: advanced_regex_negative_lookbehind_rule.guard/default
+      metadata: {}
+      messages:
+        custom_message: null
+        error_message: null
+      checks:
+      - Clause:
+          Binary:
+            context: ' NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"'
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: ''
+                    value:
+                      Resources:
+                        MyBucket:
+                          Type: AWS::S3::Bucket
+                          Properties:
+                            BucketEncryption:
+                              ServerSideEncryptionConfiguration:
+                              - ServerSideEncryptionByDefault:
+                                  SSEAlgorithm: AES256
+                            VersioningConfiguration:
+                              Status: Enabled
+                  remaining_query: NotAwsAccessKey
+                  reason: Could not find key NotAwsAccessKey inside struct at path [L:4,C:0]
+                comparison:
+                - Eq
+                - true
+      - Clause:
+          Binary:
+            context: ' NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"'
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: ''
+                    value:
+                      Resources:
+                        MyBucket:
+                          Type: AWS::S3::Bucket
+                          Properties:
+                            BucketEncryption:
+                              ServerSideEncryptionConfiguration:
+                              - ServerSideEncryptionByDefault:
+                                  SSEAlgorithm: AES256
+                            VersioningConfiguration:
+                              Status: Enabled
+                  remaining_query: NotSecretAccessKey
+                  reason: Could not find key NotSecretAccessKey inside struct at path [L:4,C:0]
+                comparison:
+                - Eq
+                - true
+  - Rule:
+      name: S3_BUCKET_LOGGING_ENABLED
+      metadata: {}
+      messages:
+        custom_message: null
+        error_message: null
+      checks:
+      - Clause:
+          Unary:
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: LoggingConfiguration
+                  reason: Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Exists
+                - false
+            context: ' %s3_buckets_bucket_logging_enabled[*].Properties.LoggingConfiguration EXISTS  '
+            messages:
+              custom_message: "\n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  "
+              error_message: Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+  - Rule:
+      name: S3_BUCKET_PUBLIC_READ_PROHIBITED
+      metadata: {}
+      messages:
+        custom_message: null
+        error_message: null
+      checks:
+      - Clause:
+          Unary:
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: PublicAccessBlockConfiguration
+                  reason: Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Exists
+                - false
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS  '
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+      - Clause:
+          Binary:
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true'
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: PublicAccessBlockConfiguration.BlockPublicAcls
+                  reason: Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Eq
+                - false
+      - Clause:
+          Binary:
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true'
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: PublicAccessBlockConfiguration.BlockPublicPolicy
+                  reason: Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Eq
+                - false
+      - Clause:
+          Binary:
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true'
+            messages:
+              custom_message: ''
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: PublicAccessBlockConfiguration.IgnorePublicAcls
+                  reason: Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Eq
+                - false
+      - Clause:
+          Binary:
+            context: ' %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true'
+            messages:
+              custom_message: "\n    Violation: S3 Bucket Public Write Access controls need to be restricted.\n    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.\n  "
+              error_message: Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}].
+            check:
+              UnResolved:
+                value:
+                  traversed_to:
+                    path: /Resources/MyBucket/Properties
+                    value:
+                      BucketEncryption:
+                        ServerSideEncryptionConfiguration:
+                        - ServerSideEncryptionByDefault:
+                            SSEAlgorithm: AES256
+                      VersioningConfiguration:
+                        Status: Enabled
+                  remaining_query: PublicAccessBlockConfiguration.RestrictPublicBuckets
+                  reason: Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+                comparison:
+                - Eq
+                - false
+  not_applicable: []
+  compliant:
+  - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED

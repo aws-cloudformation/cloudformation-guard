@@ -1,0 +1,87 @@
+s3-public-read-prohibited-template-non-compliant.yaml Status = FAIL
+FAILED rules
+s3_bucket_public_read_prohibited.guard/S3_BUCKET_PUBLIC_READ_PROHIBITED    FAIL
+---
+Evaluating data s3-public-read-prohibited-template-non-compliant.yaml against rules s3_bucket_public_read_prohibited.guard
+Number of non-compliant resources 1
+Resource = MyBucket {
+  Type      = AWS::S3::Bucket
+  Rule = S3_BUCKET_PUBLIC_READ_PROHIBITED {
+    ALL {
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS   {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.BlockPublicAcls
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.BlockPublicPolicy
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true {
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.IgnorePublicAcls
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+      Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true {
+        Message {
+          Violation: S3 Bucket Public Write Access controls need to be restricted.
+          Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
+        }
+        RequiredPropertyError {
+          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          MissingProperty = PublicAccessBlockConfiguration.RestrictPublicBuckets
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Code:
+               11.      #   BlockPublicPolicy: true
+               12.      #   IgnorePublicAcls: true
+               13.      #   RestrictPublicBuckets: true
+               14.      BucketEncryption:
+               15.        ServerSideEncryptionConfiguration:
+               16.          - ServerSideEncryptionByDefault:
+        }
+      }
+    }
+  }
+}

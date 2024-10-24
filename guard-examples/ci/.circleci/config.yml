@@ -1,0 +1,43 @@
+version: 2.1
+executors:
+  default:
+    docker:
+      - image: public.ecr.aws/aws-cloudformation/cloudformation-guard:latest
+commands:
+  validate:
+    description: "Run cfn-guard validate"
+    steps:
+      - run:
+          # Replace these paths with your own
+          command: |
+            mkdir -p ~/test-results/validate/
+            if ! /usr/src/cloudformation-guard/cfn-guard validate -r ./path/to/rules/directory_or_file/ -d ./path/to/data/directory_or_file/ --output-format junit --show-summary none --structured > ~/test-results/validate/validate.xml; then
+              exit 1
+            fi
+          when: always
+      - store_test_results:
+          path: ~/test-results/validate
+  test:
+    description: "Run cfn-guard test"
+    steps:
+      - run:
+          # Replace these paths with your own
+          command: |
+            mkdir -p ~/test-results/test/
+            if ! /usr/src/cloudformation-guard/cfn-guard test -r ./path/to/test/directory_or_file/ -t ./path/to/data/directory_or_file/ --output-format junit > ~/test-results/test/test.xml; then
+              exit 1
+            fi
+          when: always
+      - store_test_results:
+                path: ~/test-results/test
+jobs:
+  cfn-guard:
+    executor: default
+    steps:
+      - checkout
+      - validate
+      - test
+workflows:
+  pr:
+    jobs:
+      - cfn-guard

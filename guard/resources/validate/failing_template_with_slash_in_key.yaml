@@ -1,0 +1,12 @@
+Resources:
+  A/Resource/Name/With/Slash:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+      VersioningConfiguration:
+        Status: Enabled

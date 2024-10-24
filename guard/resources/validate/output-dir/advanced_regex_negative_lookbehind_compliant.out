@@ -1,0 +1,4 @@
+advanced_regex_negative_lookbehind_compliant.yaml Status = PASS
+PASS rules
+advanced_regex_negative_lookbehind_rule.guard/default    PASS
+---

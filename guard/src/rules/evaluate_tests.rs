@@ -1,12 +1,13 @@
-use super::*;
 use super::super::path_value;
 use super::super::path_value::Path;
-use crate::rules::parser::{rules_file, Span};
+use super::*;
 use crate::commands::files::read_file_content;
-use std::fs::File;
+use crate::rules::parser::{rules_file, Span};
+use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
+use std::fs::File;
 
-const RULES_FILES_EXAMPLE: &str = r###"
+const RULES_FILES_EXAMPLE: &str = r#"
 rule iam_role_exists {
     Resources.*[ Type == "AWS::IAM::Role" ] EXISTS
 }
@@ -19,19 +20,18 @@ rule iam_role_lambda_compliance when iam_role_exists {
     %select_lambda_service EMPTY or
     %select_lambda_service.Action.* == /sts:AssumeRole/
 }
-"###;
-
+"#;
 
 fn parse_rules<'c>(rules: &'c str, name: &'c str) -> Result<RulesFile<'c>> {
     let span = Span::new_extra(rules, name);
-    rules_file(span)
+    Ok(rules_file(span)?.unwrap())
 }
 
 fn read_data(file: File) -> Result<Value> {
     let context = read_file_content(file)?;
     match serde_json::from_str::<serde_json::Value>(&context) {
         Ok(value) => Value::try_from(value),
-        Err(e) => {
+        Err(_) => {
             let value = serde_yaml::from_str::<serde_yaml::Value>(&context)?;
             Value::try_from(value)
         }
@@ -45,7 +45,7 @@ fn guard_access_clause_test_all_up() -> Result<()> {
     Ok(())
 }
 
-struct DummyEval{}
+struct DummyEval {}
 impl EvaluationContext for DummyEval {
     fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
         unimplemented!()
@@ -55,22 +55,30 @@ impl EvaluationContext for DummyEval {
         unimplemented!()
     }
 
-    fn end_evaluation(&self, _eval_type: EvaluationType, _context: &str, _msg: String, _from: Option<PathAwareValue>, _to: Option<PathAwareValue>, _status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+    fn end_evaluation(
+        &self,
+        _eval_type: EvaluationType,
+        _context: &str,
+        _msg: String,
+        _from: Option<PathAwareValue>,
+        _to: Option<PathAwareValue>,
+        _status: Option<Status>,
+        _cmp: Option<(CmpOperator, bool)>,
+    ) {
     }
 
-    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {
-    }
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
 }
 
 #[test]
 fn guard_access_clause_tests() -> Result<()> {
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let root = read_data(File::open("assets/cfn-lambda.yaml")?)?;
     let root = PathAwareValue::try_from(root)?;
     let clause = GuardClause::try_from(
         r#"Resources.*[ Type == "AWS::IAM::Role" ].Properties.AssumeRolePolicyDocument.Statement[
                      Principal.Service EXISTS
-                     Principal.Service == /^lambda/ ].Action == "sts:AssumeRole""#
+                     Principal.Service == /^lambda/ ].Action == "sts:AssumeRole""#,
     )?;
     let status = clause.evaluate(&root, &dummy)?;
     println!("Status = {:?}", status);
@@ -79,18 +87,17 @@ fn guard_access_clause_tests() -> Result<()> {
     let clause = GuardClause::try_from(
         r#"Resources.*[ Type == "AWS::IAM::Role" ].Properties.AssumeRolePolicyDocument.Statement[
                      Principal.Service EXISTS
-                     Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#
+                     Principal.Service == /^notexists/ ].Action == "sts:AssumeRole""#,
     )?;
-    match clause.evaluate(&root, &dummy) {
-        Ok(Status::FAIL) => {},
-        _rest => assert!(false)
-    }
+
+    assert!(matches!(clause.evaluate(&root, &dummy)?, Status::FAIL));
+
     Ok(())
 }
 
 #[test]
 fn rule_clause_tests() -> Result<()> {
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let r = r###"
     rule check_all_resources_have_tags_present {
     let all_resources = Resources.*.Properties
@@ -125,7 +132,7 @@ fn rule_clause_tests() -> Result<()> {
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(Status::PASS, status);
 
-    let r = r###"
+    let r = r"
     rule iam_basic_checks {
   AWS::IAM::Role {
     Properties.AssumeRolePolicyDocument.Version == /(\d{4})-(\d{2})-(\d{2})/
@@ -133,7 +140,7 @@ fn rule_clause_tests() -> Result<()> {
     Properties.Tags[*].Value == /[a-zA-Z0-9]+/
     Properties.Tags[*].Key   == /[a-zA-Z0-9]+/
   }
-}"###;
+}";
     let _rule = Rule::try_from(r)?;
     Ok(())
 }
@@ -148,11 +155,19 @@ impl<'r> EvaluationContext for Reporter<'r> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
         println!("{} {} {:?}", eval_type, context, status);
-        self.0.end_evaluation(
-            eval_type, context, msg, from, to, status, cmp
-        )
+        self.0
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp)
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -162,7 +177,7 @@ impl<'r> EvaluationContext for Reporter<'r> {
 
 #[test]
 fn rules_file_tests() -> Result<()> {
-    let file = r###"
+    let file = r#"
 let iam_resources = Resources.*[ Type == "AWS::IAM::Role" ]
 rule iam_resources_exists {
     %iam_resources !EMPTY
@@ -177,9 +192,9 @@ rule iam_basic_checks when iam_resources_exists {
         %iam_resources.Properties.Tags.Value == /[a-zA-Z0-9]+/
         %iam_resources.Properties.Tags.Key   == /[a-zA-Z0-9]+/
     }
-}"###;
+}"#;
 
-    let value = r###"
+    let value = r#"
     {
         "Resources": {
             "iamrole": {
@@ -199,12 +214,12 @@ rule iam_basic_checks when iam_resources_exists {
             }
         }
     }
-    "###;
+    "#;
 
     let root = Value::try_from(value)?;
     let root = PathAwareValue::try_from(root)?;
     let rules_file = RulesFile::try_from(file)?;
-    let root_context = RootScope::new(&rules_file, &root);
+    let root_context = RootScope::new(&rules_file, &root)?;
     let reporter = Reporter(&root_context);
     let status = rules_file.evaluate(&root, &reporter)?;
     assert_eq!(Status::PASS, status);
@@ -217,13 +232,13 @@ fn rules_not_in_tests() -> Result<()> {
     let parsed = GuardClause::try_from(clause)?;
     let value = "{ Resources: { iam: { Type: 'AWS::IAM::Role' } } }";
     let parsed_value = PathAwareValue::try_from(value)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = parsed.evaluate(&parsed_value, &dummy)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
 }
 
-const SAMPLE: &str = r###"
+const SAMPLE: &str = r#"
     {
         "Statement": [
             {
@@ -246,11 +261,11 @@ const SAMPLE: &str = r###"
             }
         ]
     }
-    "###;
+    "#;
 
 #[test]
 fn test_iam_statement_clauses() -> Result<()> {
-    let sample = r###"
+    let sample = r#"
     {
         "Statement": [
             {
@@ -274,11 +289,11 @@ fn test_iam_statement_clauses() -> Result<()> {
             }
         ]
     }
-    "###;
+    "#;
     let value = Value::try_from(sample)?;
     let value = PathAwareValue::try_from(value)?;
 
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let reporter = Reporter(&dummy);
 
     let clause = "Statement[ Condition EXISTS ].Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY";
@@ -308,7 +323,7 @@ fn test_iam_statement_clauses() -> Result<()> {
 
 #[test]
 fn test_api_gateway() -> Result<()> {
-    let rule = r###"
+    let rule = r#"
 rule check_rest_api_private {
   AWS::ApiGateway::RestApi {
     # Endpoint configuration must only be private
@@ -318,11 +333,11 @@ rule check_rest_api_private {
     Properties.Policy.Statement[ Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] !EMPTY
   }
 }
-    "###;
+    "#;
 
     let rule = Rule::try_from(rule)?;
 
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "apigatewayapi": {
@@ -356,11 +371,11 @@ rule check_rest_api_private {
                 }
             }
         }
-    }"###;
+    }"#;
 
     let value = Value::try_from(resources)?;
     let value = PathAwareValue::try_from(value)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let reporter = Reporter(&dummy);
     let status = rule.evaluate(&value, &reporter)?;
     println!("{}", status);
@@ -369,7 +384,7 @@ rule check_rest_api_private {
 
 #[test]
 fn testing_iam_role_prov_serve() -> Result<()> {
-    let resources = r###"
+    let resources = r#"
     {
         "Resources": {
             "CounterTaskDefExecutionRole5959CB2D": {
@@ -395,9 +410,9 @@ fn testing_iam_role_prov_serve() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 let ecs_tasks = Resources.*[ Type == "AWS::ECS::TaskDefinition" ]
 
@@ -418,13 +433,13 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
     } or
     %task_role == /aws:arn/ # either a direct string or
 }
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
     let value = PathAwareValue::try_from(resources)?;
 
     // let dummy = DummyEval{};
-    let root_context = RootScope::new(&rules_file, &value);
+    let root_context = RootScope::new(&rules_file, &value)?;
     let reporter = Reporter(&root_context);
     let status = rules_file.evaluate(&value, &reporter)?;
     println!("{}", status);
@@ -433,7 +448,7 @@ rule deny_task_role_no_permission_boundary when %ecs_tasks !EMPTY {
 
 #[test]
 fn testing_sg_rules_pro_serve() -> Result<()> {
-    let sgs = r###"
+    let sgs = r#"
     [{
     "Resources": {
     "CounterServiceSecurityGroupF41A3908": {
@@ -518,9 +533,9 @@ fn testing_sg_rules_pro_serve() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
-    let rules = r###"
+    let rules = r#"
 let sgs = Resources.*[ Type == "AWS::EC2::SecurityGroup" ]
 
 rule deny_egress when %sgs NOT EMPTY {
@@ -530,26 +545,26 @@ rule deny_egress when %sgs NOT EMPTY {
                                          CidrIpv6 == "::/0" ] EMPTY
 }
 
-    "###;
+    "#;
 
     let rules_file = RulesFile::try_from(rules)?;
 
     let values = PathAwareValue::try_from(sgs)?;
     let samples = match values {
         PathAwareValue::List((_p, v)) => v,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
 
     for (index, each) in samples.iter().enumerate() {
-        let root_context = RootScope::new(&rules_file, each);
+        let root_context = RootScope::new(&rules_file, each)?;
         let reporter = Reporter(&root_context);
         let status = rules_file.evaluate(each, &reporter)?;
-        println!("{}", format!("Status {} = {}", index, status));
+        println!("Status {} = {}", index, status);
     }
 
     let sample = r#"{ "Resources": {} }"#;
     let value = PathAwareValue::try_from(sample)?;
-    let rule = r###"
+    let rule = r#"
 rule deny_egress {
     # Ensure that none of the security group contain a rule
     # that has Cidr Ip set to any
@@ -557,20 +572,19 @@ rule deny_egress {
         .Properties.SecurityGroupEgress[ CidrIp   == "0.0.0.0/0" or
                                          CidrIpv6 == "::/0" ] EMPTY
 }
-    "###;
+    "#;
 
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let rule_parsed = Rule::try_from(rule)?;
     let status = rule_parsed.evaluate(&value, &dummy)?;
     println!("Status {:?}", status);
 
     Ok(())
-
 }
 
 #[test]
 fn test_s3_bucket_pro_serv() -> Result<()> {
-    let values = r###"
+    let values = r#"
     [
 {
     "Resources": {
@@ -721,14 +735,14 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }]
 
-    "###;
+    "#;
 
     let parsed_values = match PathAwareValue::try_from(values)? {
         PathAwareValue::List((_, v)) => v,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
 
-    let rule = r###"
+    let rule = r#"
     rule deny_s3_public_bucket {
     AWS::S3::Bucket {  # this is just a short form notation for Resources.*[ Type == "AWS::S3::Bucket" ]
         Properties.BlockPublicAcls NOT EXISTS or
@@ -743,10 +757,10 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     }
 }
 
-    "###;
+    "#;
 
     let s3_rule = Rule::try_from(rule)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let reported = Reporter(&dummy);
     for (idx, each) in parsed_values.iter().enumerate() {
         let status = s3_rule.evaluate(each, &reported)?;
@@ -757,7 +771,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
 
 #[test]
 fn ecs_iam_role_relationship_assetions() -> Result<()> {
-    let _template = r###"
+    let _template = r#"
     # deny_task_role_no_permission_boundary is expected to be false so negate it to pass test
 {    "Resources": {
     "CounterTaskDef1468734E": {
@@ -878,18 +892,20 @@ fn ecs_iam_role_relationship_assetions() -> Result<()> {
     }
     }
 }
-    "###;
+    "#;
     Ok(())
 }
 
-struct VariableResolver<'a, 'b>(&'a dyn EvaluationContext, HashMap<String, Vec<&'b PathAwareValue>>);
+struct VariableResolver<'a, 'b>(
+    &'a dyn EvaluationContext,
+    HashMap<String, Vec<&'b PathAwareValue>>,
+);
 
 impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
     fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
         if let Some(value) = self.1.get(variable) {
             Ok(value.clone())
-        }
-        else {
+        } else {
             self.0.resolve_variable(variable)
         }
     }
@@ -898,8 +914,18 @@ impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
         self.0.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
-        self.0.end_evaluation(eval_type, context, msg, from, to, status, cmp);
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
+        self.0
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -909,7 +935,7 @@ impl<'a, 'b> EvaluationContext for VariableResolver<'a, 'b> {
 
 #[test]
 fn test_iam_subselections() -> Result<()> {
-    let template = r###"
+    let template = r#"
     {
         Resources: {
             # NOT SELECTED
@@ -961,7 +987,7 @@ fn test_iam_subselections() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
 
     let value = Value::try_from(template)?;
     let value = PathAwareValue::try_from(value)?;
@@ -970,14 +996,15 @@ fn test_iam_subselections() -> Result<()> {
                     Type == "AWS::IAM::Role"
                     Properties.Tags[ Key == "TestRole" ] !EMPTY
                     Properties.PermissionsBoundary !EXISTS
-                 ]"#
+                 ]"#,
     )?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].self_path(), &Path::try_from("/Resources/two")?);
-    let expected = PathAwareValue::try_from((r#"
+    let expected = PathAwareValue::try_from((
+        r#"
             {
                 Type: "AWS::IAM::Role",
                 Properties: {
@@ -989,7 +1016,9 @@ fn test_iam_subselections() -> Result<()> {
                     ]
                 }
             }
-    "#, Path::try_from("/Resources/two")?))?;
+    "#,
+        Path::try_from("/Resources/two")?,
+    ))?;
     assert_eq!(selected[0], &expected);
 
     let query = AccessQuery::try_from(
@@ -997,13 +1026,13 @@ fn test_iam_subselections() -> Result<()> {
                     Type == "AWS::IAM::Role"
                     Properties.Tags[ Key == "TestRole" or Key == "Prod" ] !EMPTY
                     Properties.PermissionsBoundary !EXISTS
-                 ]"#
+                 ]"#,
     )?;
     let selected = value.select(query.match_all, &query.query, &dummy)?;
     println!("Selected {:?}", selected);
     assert_eq!(selected.len(), 2);
-    let expected2 = PathAwareValue::try_from(
-        (r#"
+    let expected2 = PathAwareValue::try_from((
+        r#"
             {
                 Type: "AWS::IAM::Role",
                 Properties: {
@@ -1015,13 +1044,13 @@ fn test_iam_subselections() -> Result<()> {
                     ]
                 }
             }
-        "#, Path::try_from("/Resources/four")?)
-    )?;
+        "#,
+        Path::try_from("/Resources/four")?,
+    ))?;
     assert_eq!(selected[0], &expected);
     assert_eq!(selected[1], &expected2);
 
-
-    let rules_file = r###"
+    let rules_file = r#"
 let iam_roles = Resources.*[ Type == "AWS::IAM::Role"  ]
 
 rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
@@ -1032,16 +1061,16 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
         Properties.PermissionsBoundary !EXISTS
     ] !EMPTY
 }
-    "###;
+    "#;
 
     let rules = RulesFile::try_from(rules_file)?;
-    let root_scope = RootScope::new(&rules, &value);
+    let root_scope = RootScope::new(&rules, &value)?;
     let reporter = Reporter(&root_scope);
     let status = rules.evaluate(&value, &reporter)?;
     println!("Status = {}", status);
     assert_eq!(status, Status::PASS);
-    let fail_value= PathAwareValue::try_from(
-        (r#"
+    let fail_value = PathAwareValue::try_from((
+        r#"
             { Resources: {
                 one: {
                     Type: "AWS::IAM::Role",
@@ -1056,9 +1085,10 @@ rule deny_permissions_boundary_iam_role when %iam_roles !EMPTY {
                 }
                 }
             }
-        "#, Path::try_from("/Resources/four")?)
-    )?;
-    let root_scope = RootScope::new(&rules, &fail_value);
+        "#,
+        Path::try_from("/Resources/four")?,
+    ))?;
+    let root_scope = RootScope::new(&rules, &fail_value)?;
     let reporter = Reporter(&root_scope);
     let status = rules.evaluate(&fail_value, &reporter)?;
     println!("Status = {}", status);
@@ -1137,7 +1167,7 @@ fn test_rules_with_some_clauses() -> Result<()> {
     "#;
     let value = PathAwareValue::try_from(resources)?;
     let parsed = AccessQuery::try_from(query)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let selected = value.select(parsed.match_all, &parsed.query, &dummy)?;
     println!("{:?}", selected);
     assert_eq!(selected.len(), 1);
@@ -1146,13 +1176,13 @@ fn test_rules_with_some_clauses() -> Result<()> {
 
 #[test]
 fn test_support_for_atleast_one_match_clause() -> Result<()> {
-    let clause_some_str  = r#"some Tags[*].Key == /PROD/"#;
+    let clause_some_str = r#"some Tags[*].Key == /PROD/"#;
     let clause_some = GuardClause::try_from(clause_some_str)?;
 
-    let clause_str  = r#"Tags[*].Key == /PROD/"#;
+    let clause_str = r#"Tags[*].Key == /PROD/"#;
     let clause = GuardClause::try_from(clause_str)?;
 
-    let values_str  = r#"{
+    let values_str = r#"{
         Tags: [
             {
                 Key: "InPROD",
@@ -1166,7 +1196,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     }
     "#;
     let values = PathAwareValue::try_from(values_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
 
     let status = clause_some.evaluate(&values, &dummy)?;
     assert_eq!(status, Status::PASS);
@@ -1186,7 +1216,7 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     assert_eq!(status, Status::FAIL);
 
     let r = clause_some.evaluate(&values, &dummy);
-    assert_eq!(r.is_err(), false);
+    assert!(r.is_ok());
     assert_eq!(r.unwrap(), Status::FAIL);
 
     //
@@ -1249,7 +1279,7 @@ fn double_projection_tests() -> Result<()> {
     }
     "###;
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs: {
@@ -1275,14 +1305,14 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let rule = Rule::try_from(rule_str)?;
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
 
-    let resources_str = r###"
+    let resources_str = r#"
     {
         Resources: {
             ecs2: {
@@ -1293,7 +1323,7 @@ fn double_projection_tests() -> Result<()> {
             }
         }
     }
-    "###;
+    "#;
     let value = PathAwareValue::try_from(resources_str)?;
     let status = rule.evaluate(&value, &dummy)?;
     println!("{}", status);
@@ -1328,7 +1358,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
     some %api_gws.Properties.Policy.Statement[*].Condition[ keys == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !empty
 }"#;
     let rule = RulesFile::try_from(rule_str)?;
-    let root = RootScope::new(&rule, &value);
+    let root = RootScope::new(&rule, &value)?;
     let status = rule.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1349,7 +1379,7 @@ rule check_rest_api_is_private_and_has_access when %api_gws !empty {
     "#;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rule, &value);
+    let root = RootScope::new(&rule, &value)?;
     let status = rule.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
 
@@ -1363,9 +1393,10 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
         PathAwareValue::String((root.clone(), "aws:isSecure".to_string())),
         PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
     ];
-    let rhs = [
-        PathAwareValue::Regex((root.clone(), "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())),
-    ];
+    let rhs = [PathAwareValue::Regex((
+        root,
+        "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string(),
+    ))];
 
     let lhs_values = lhs.iter().collect::<Vec<&PathAwareValue>>();
     let rhs_values = rhs.iter().collect::<Vec<&PathAwareValue>>();
@@ -1374,25 +1405,37 @@ fn test_compare_loop_atleast_one_eq() -> Result<()> {
     // match any one rhs = false, at-least-one = false
     //
     let (result, _results) = compare_loop(
-        &lhs_values, &rhs_values, path_value::compare_eq, false, false
+        &lhs_values,
+        &rhs_values,
+        path_value::compare_eq,
+        false,
+        false,
     )?;
-    assert_eq!(result, false);
+    assert!(!result);
 
     //
     // match any one rhs = false, at-least-one = true
     //
     let (result, _results) = compare_loop(
-        &lhs_values, &rhs_values, path_value::compare_eq, false, true
+        &lhs_values,
+        &rhs_values,
+        path_value::compare_eq,
+        false,
+        true,
     )?;
-    assert_eq!(result, true);
+    assert!(result);
 
     //
     // match any one rhs = true, at-least-one = false
     //
     let (result, _results) = compare_loop(
-        &lhs_values, &rhs_values, path_value::compare_eq, true, false
+        &lhs_values,
+        &rhs_values,
+        path_value::compare_eq,
+        true,
+        false,
     )?;
-    assert_eq!(result, false);
+    assert!(!result);
 
     Ok(())
 }
@@ -1404,9 +1447,10 @@ fn test_compare_loop_all() -> Result<()> {
         PathAwareValue::String((root.clone(), "aws:isSecure".to_string())),
         PathAwareValue::String((root.clone(), "aws:sourceVpc".to_string())),
     ];
-    let rhs = [
-        PathAwareValue::Regex((root.clone(), "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string())),
-    ];
+    let rhs = [PathAwareValue::Regex((
+        root,
+        "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string(),
+    ))];
 
     let lhs_values = lhs.iter().collect::<Vec<&PathAwareValue>>();
     let rhs_values = rhs.iter().collect::<Vec<&PathAwareValue>>();
@@ -1417,12 +1461,12 @@ fn test_compare_loop_all() -> Result<()> {
     //
     assert_eq!(results.1.len(), 2);
     let (outcome, from, to) = &results.1[0];
-    assert_eq!(*outcome, false);
+    assert!(!*outcome);
     assert_eq!(from, &Some(lhs[0].clone()));
     assert_eq!(to, &Some(rhs[0].clone()));
 
     let (outcome, from, to) = &results.1[1];
-    assert_eq!(*outcome, true);
+    assert!(*outcome);
     assert_eq!(from, &None);
     assert_eq!(to, &None);
 
@@ -1436,8 +1480,9 @@ fn test_compare_lists() -> Result<()> {
         root.clone(),
         vec![
             PathAwareValue::Int((root.clone(), 1)),
-            PathAwareValue::Int((root.clone(), 2))
-        ]));
+            PathAwareValue::Int((root, 2)),
+        ],
+    ));
     let lhs = vec![&value];
     let rhs = vec![&value];
 
@@ -1449,7 +1494,7 @@ fn test_compare_lists() -> Result<()> {
         None,
         super::super::path_value::compare_eq,
         false,
-        false
+        false,
     )?;
     assert_eq!(r.0, Status::PASS);
     Ok(())
@@ -1457,12 +1502,12 @@ fn test_compare_lists() -> Result<()> {
 
 #[test]
 fn test_compare_rulegen() -> Result<()> {
-    let rulegen_created = r###"
+    let rulegen_created = r#"
 let aws_ec2_securitygroup_resources = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
 rule aws_ec2_securitygroup when %aws_ec2_securitygroup_resources !empty {
   %aws_ec2_securitygroup_resources.Properties.SecurityGroupEgress == [{"CidrIp":"0.0.0.0/0","IpProtocol":-1},{"CidrIpv6":"::/0","IpProtocol":-1}]
-}"###;
-    let template = r###"
+}"#;
+    let template = r#"
 Resources:
 
   # SecurityGroups
@@ -1479,10 +1524,10 @@ Resources:
         - CidrIpv6: "::/0"
           IpProtocol: -1
       VpcId: vpc-123abc
-    "###;
+    "#;
     let rules = RulesFile::try_from(rulegen_created)?;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
-    let root = RootScope::new(&rules, &value);
+    let root = RootScope::new(&rules, &value)?;
     let status = rules.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
     Ok(())
@@ -1494,9 +1539,8 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     Statement:
       - Principal: ['*', 's3:*']
     "###;
-    let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
-    let dummy = DummyEval{};
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
+    let dummy = DummyEval {};
 
     //
     // Evaluation differences with 1.0 for Statement.*.Principal == '*'
@@ -1539,7 +1583,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
 
     let clause_str = r#"SOME Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
 
@@ -1548,14 +1592,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
       - Principal: aws
       - Principal: ['*', 's3:*']
     "###;
-    let value = PathAwareValue::try_from(
-        serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
     //
-    // Evaluate the SOME clause again, it must pass with ths value as well
+    // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
-
 
     Ok(())
 }
@@ -1590,7 +1632,7 @@ fn block_evaluation() -> Result<()> {
     }
     "#;
     let clause = GuardClause::try_from(clause_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
     Ok(())
@@ -1634,7 +1676,7 @@ fn block_evaluation_fail() -> Result<()> {
     }
     "#;
     let clause = GuardClause::try_from(clause_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -1693,7 +1735,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
 
 }"###;
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1715,16 +1757,16 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
           RouteTableId: { Ref: rt }
       gw:
         Type: 'AWS::EC2::InternetGateway'
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1746,16 +1788,16 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
           RouteTableId: { Ref: rt }
       gw:
         Type: 'AWS::EC2::TransitGateway'
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::PASS);
 
-    let value_str = r###"
+    let value_str = r#"
     Resources:
       rcsg:
         Type: 'AWS::Redshift::ClusterSubnetGroup'
@@ -1775,12 +1817,12 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
         Properties:
           GatewayId: { Ref: gw }
           RouteTableId: { Ref: rt }
-    "###;
+    "#;
 
     let rules_files = RulesFile::try_from(rule)?;
     let value = serde_yaml::from_str::<serde_yaml::Value>(value_str)?;
     let value = PathAwareValue::try_from(value)?;
-    let root = RootScope::new(&rules_files, &value);
+    let root = RootScope::new(&rules_files, &value)?;
     let status = rules_files.evaluate(&value, &root)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -1788,7 +1830,7 @@ rule redshift_is_not_internet_accessible when %local_subnet_refs !empty {
 
 struct Tracker<'a> {
     root: &'a dyn EvaluationContext,
-    expected: HashMap<String, Status>
+    expected: HashMap<String, Status>,
 }
 
 impl<'a> EvaluationContext for Tracker<'a> {
@@ -1800,14 +1842,24 @@ impl<'a> EvaluationContext for Tracker<'a> {
         self.root.rule_status(rule_name)
     }
 
-    fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
-        self.root.end_evaluation(eval_type, context, msg, from, to, status.clone(), cmp);
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        msg: String,
+        from: Option<PathAwareValue>,
+        to: Option<PathAwareValue>,
+        status: Option<Status>,
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
+        self.root
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp);
         if eval_type == EvaluationType::Rule {
             match self.expected.get(context) {
                 Some(e) => {
                     assert_eq!(*e, status.unwrap());
-                },
-                _ => unreachable!()
+                }
+                _ => unreachable!(),
             }
         }
     }
@@ -1853,13 +1905,16 @@ fn rule_clause_when_check() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let root = RootScope::new(&rules, &resources);
+    let root = RootScope::new(&rules, &resources)?;
     let mut expectations = HashMap::with_capacity(3);
     expectations.insert("skipped".to_string(), Status::SKIP);
     expectations.insert("dependent_on_skipped".to_string(), Status::SKIP);
     expectations.insert("dependent_on_dependent".to_string(), Status::SKIP);
     expectations.insert("dependent_on_not_skipped".to_string(), Status::PASS);
-    let tracker = Tracker{ root: &root, expected: expectations };
+    let tracker = Tracker {
+        root: &root,
+        expected: expectations,
+    };
 
     let status = rules.evaluate(&resources, &tracker)?;
     assert_eq!(status, Status::PASS);
@@ -1879,13 +1934,16 @@ fn rule_clause_when_check() -> Result<()> {
 
     let resources = PathAwareValue::try_from(input)?;
     let rules = RulesFile::try_from(rules_skipped)?;
-    let root = RootScope::new(&rules, &resources);
+    let root = RootScope::new(&rules, &resources)?;
     let mut expectations = HashMap::with_capacity(3);
     expectations.insert("skipped".to_string(), Status::PASS);
     expectations.insert("dependent_on_skipped".to_string(), Status::PASS);
     expectations.insert("dependent_on_dependent".to_string(), Status::PASS);
     expectations.insert("dependent_on_not_skipped".to_string(), Status::SKIP);
-    let tracker = Tracker{ root: &root, expected: expectations };
+    let tracker = Tracker {
+        root: &root,
+        expected: expectations,
+    };
 
     let status = rules.evaluate(&resources, &tracker)?;
     assert_eq!(status, Status::PASS);
@@ -1908,7 +1966,7 @@ fn test_field_type_array_or_single() -> Result<()> {
     "#;
     let path_value = PathAwareValue::try_from(statements)?;
     let clause = GuardClause::try_from(r#"Statement[*].Action != '*'"#)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = clause.evaluate(&path_value, &dummy)?;
     assert_eq!(status, Status::FAIL);
 
@@ -1937,7 +1995,7 @@ fn test_field_type_array_or_single() -> Result<()> {
 
 #[test]
 fn test_for_not_in() -> Result<()> {
-    let statments = r#"
+    let statements = r#"
     {
       "mainSteps": [
           {
@@ -1949,9 +2007,11 @@ fn test_for_not_in() -> Result<()> {
         ]
     }"#;
 
-    let clause = GuardClause::try_from(r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#)?;
-    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statments)?)?;
-    let dummy = DummyEval{};
+    let clause = GuardClause::try_from(
+        r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
+    )?;
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(statements)?)?;
+    let dummy = DummyEval {};
     let status = clause.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -1975,7 +2035,7 @@ fn test_rule_with_range_test() -> Result<()> {
             - 101
     "#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
     let status = rule.evaluate(&value, &dummy)?;
     assert_eq!(status, Status::PASS);
 
@@ -1995,7 +2055,7 @@ fn test_inner_when_skipped() -> Result<()> {
     "#;
 
     let rule = Rule::try_from(rule_str)?;
-    let dummy = DummyEval{};
+    let dummy = DummyEval {};
 
     let value_str = r#"
     Resources:
@@ -2085,43 +2145,51 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     "###;
 
     #[derive(Debug, Clone)]
-    struct Reporter {};
+    struct Reporter {}
     impl EvaluationContext for Reporter {
-        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        fn resolve_variable(&self, _: &str) -> Result<Vec<&PathAwareValue>> {
             todo!()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _: &str) -> Result<Status> {
             todo!()
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+        fn end_evaluation(
+            &self,
+            eval_type: EvaluationType,
+            _: &str,
+            msg: String,
+            from: Option<PathAwareValue>,
+            to: Option<PathAwareValue>,
+            status: Option<Status>,
+            _cmp: Option<(CmpOperator, bool)>,
+        ) {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
-                        assert_eq!(from.is_some(), true);
-                        assert_eq!(to.is_some(), true);
+                        assert!(from.is_some());
+                        assert!(to.is_some());
                         let path_val = from.unwrap();
                         let path = path_val.self_path();
-                        assert_eq!(path.0.contains("/second") || path.0.contains("/failed"), true);
-                    },
+                        assert!(path.0.contains("/second") || path.0.contains("/failed"));
+                    }
                     Some(Status::PASS) => {
                         assert_eq!(from, None);
                         assert_eq!(to, None);
-                        assert_eq!(msg.contains("DEFAULT"), true);
+                        assert!(msg.contains("DEFAULT"));
                     }
                     _ => {}
                 }
             }
         }
 
-        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
-        }
+        fn start_evaluation(&self, _: EvaluationType, _: &str) {}
     }
 
     let rules = Rule::try_from(rule)?;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
-    let reporter = Reporter{};
+    let reporter = Reporter {};
     let status = rules.evaluate(&values, &reporter)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -2150,7 +2218,10 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
           Name: FAILEDMatch
     "###;
 
-    struct Reporter<'a> { root: &'a dyn EvaluationContext };
+    struct Reporter<'a> {
+        root: &'a dyn EvaluationContext,
+    }
+
     impl<'a> EvaluationContext for Reporter<'a> {
         fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
             self.root.resolve_variable(variable)
@@ -2160,25 +2231,35 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
             self.root.rule_status(rule_name)
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, cmp: Option<(CmpOperator, bool)>) {
+        fn end_evaluation(
+            &self,
+            eval_type: EvaluationType,
+            context: &str,
+            msg: String,
+            from: Option<PathAwareValue>,
+            to: Option<PathAwareValue>,
+            status: Option<Status>,
+            cmp: Option<(CmpOperator, bool)>,
+        ) {
             if eval_type == EvaluationType::Clause {
                 match &status {
                     Some(Status::FAIL) => {
-                        assert_eq!(from.is_some(), true);
-                        assert_eq!(to.is_some(), true);
+                        assert!(from.is_some());
+                        assert!(to.is_some());
                         let path_val = from.as_ref().unwrap();
                         let path = path_val.self_path();
-                        assert_eq!(path.0.contains("/second") || path.0.contains("/failed"), true);
-                    },
+                        assert!(path.0.contains("/second") || path.0.contains("/failed"));
+                    }
                     Some(Status::PASS) => {
                         assert_eq!(from, None);
                         assert_eq!(to, None);
-                        assert_eq!(msg.contains("DEFAULT"), true);
+                        assert!(msg.contains("DEFAULT"));
                     }
                     _ => {}
                 }
             }
-            self.root.end_evaluation(eval_type, context, msg, from, to, status, cmp)
+            self.root
+                .end_evaluation(eval_type, context, msg, from, to, status, cmp)
         }
 
         fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -2188,8 +2269,8 @@ fn test_multiple_valued_clause_reporting_var_access() -> Result<()> {
 
     let rules = RulesFile::try_from(rule)?;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value)?)?;
-    let root = RootScope::new(&rules, &values);
-    let reporter = Reporter{ root: &root };
+    let root = RootScope::new(&rules, &values)?;
+    let reporter = Reporter { root: &root };
     let status = rules.evaluate(&values, &reporter)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
@@ -2241,7 +2322,7 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
                 - !GetAtt Infra1.PrivateIp
     "###;
 
-    let rules = r###"
+    let rules = r#"
     let aws_route53_recordset_resources = Resources.*[ Type == 'AWS::Route53::RecordSet' ]
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
@@ -2252,11 +2333,11 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
       %aws_route53_recordset_resources.Properties.TTL == "900"
       %aws_route53_recordset_resources.Properties.HostedZoneName == "HostedZoneName"
     }
-    "###;
+    "#;
 
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
     let rule_eval = RulesFile::try_from(rules)?;
-    let context = RootScope::new(&rule_eval, &value);
+    let context = RootScope::new(&rule_eval, &value)?;
     let status = rule_eval.evaluate(&value, &context)?;
     assert_eq!(status, Status::PASS);
 

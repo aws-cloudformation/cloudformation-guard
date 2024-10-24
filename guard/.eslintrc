@@ -1,0 +1,24 @@
+{
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 12,
+    "sourceType": "module"
+  },
+  "plugins": ["@typescript-eslint", "typescript-sort-keys"],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended", "plugin:typescript-sort-keys/recommended"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": "error",
+    "@typescript-eslint/consistent-type-definitions": ["error", "type"],
+    "typescript-sort-keys/interface": "error",
+    "typescript-sort-keys/string-enum": "error",
+    "@typescript-eslint/quotes": [
+      "error",
+      "single",
+      {
+        "avoidEscape": true,
+        "allowTemplateLiterals": true
+      }
+    ]
+  },
+  "root": true
+}

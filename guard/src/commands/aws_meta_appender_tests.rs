@@ -1,5 +1,4 @@
 use super::*;
-use super::super::common_test_helpers::DummyEval;
 
 #[test]
 fn append_cdk_metadata_test() -> Result<()> {
@@ -35,35 +34,53 @@ fn append_cdk_metadata_test() -> Result<()> {
     }"#;
     let root = PathAwareValue::try_from(resources)?;
     let query = AccessQuery::try_from(
-        "Resources['table1F1EAFA30'].Properties.ProvisionedThroughput.ReadCapacityUnits"
+        "Resources['table1F1EAFA30'].Properties.ProvisionedThroughput.ReadCapacityUnits",
     )?;
-    struct Capture {};
+    struct Capture {}
     impl EvaluationContext for Capture {
-        fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>> {
+        fn resolve_variable(&self, _: &str) -> Result<Vec<&PathAwareValue>> {
             unimplemented!()
         }
 
-        fn rule_status(&self, rule_name: &str) -> Result<Status> {
+        fn rule_status(&self, _: &str) -> Result<Status> {
             unimplemented!()
         }
 
-        fn end_evaluation(&self, eval_type: EvaluationType, context: &str, msg: String, from: Option<PathAwareValue>, to: Option<PathAwareValue>, status: Option<Status>, _cmp: Option<(CmpOperator, bool)>) {
+        fn end_evaluation(
+            &self,
+            _: EvaluationType,
+            _: &str,
+            msg: String,
+            _: Option<PathAwareValue>,
+            _: Option<PathAwareValue>,
+            _: Option<Status>,
+            _cmp: Option<(CmpOperator, bool)>,
+        ) {
             assert_ne!(msg.as_str(), "");
-            assert_eq!(msg.starts_with("FIRST PART"), true);
-            assert_eq!(msg.len() > "FIRST PART".len(), true);
+            assert!(msg.starts_with("FIRST PART"));
+            assert!(msg.len() > "FIRST PART".len());
             println!("{}", msg);
         }
 
-        fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
+        fn start_evaluation(&self, _: EvaluationType, _: &str) {
             unimplemented!()
         }
     }
-    let capture = Capture{};
-    let appender = MetadataAppender{root_context: &root, delegate: &capture};
+    let capture = Capture {};
+    let appender = MetadataAppender {
+        root_context: &root,
+        delegate: &capture,
+    };
     let value = root.select(true, &query.query, &appender)?[0];
     println!("{:?}", value);
-    appender.end_evaluation(EvaluationType::Clause, "Clause",
-                            "FIRST PART".to_string(),
-                            Some(value.clone()), None, Some(Status::FAIL), None);
+    appender.end_evaluation(
+        EvaluationType::Clause,
+        "Clause",
+        "FIRST PART".to_string(),
+        Some(value.clone()),
+        None,
+        Some(Status::FAIL),
+        None,
+    );
     Ok(())
 }

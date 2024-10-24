@@ -249,7 +249,7 @@ configuration:
 The following rule when tested against the template above results in an error, as it makes use of an incorrect assumption of leveraging the implicit `this`:
 
 ```
-rule check_ip_procotol_and_port_range_validity
+rule check_ip_protocol_and_port_range_validity
 {
     # 
     # select all ipPermission instances that can be reached by ANY IP address
@@ -293,7 +293,7 @@ Clause #3     FAIL(Block[Location[file:any_ip_ingress_check.guard, line:17, colu
 The engine indicates that its attempt to retrieve a property `InputParameters.TcpBlockedPorts[*]` on the value `/configuration/ipPermissions/0`, `/configuration/ipPermissions/1` failed. To understand this better, let us rewrite the rule above using this explicitly referenced.
 
 ```
-rule check_ip_procotol_and_port_range_validity
+rule check_ip_protocol_and_port_range_validity
 {
     # 
     # select all ipPermission instances that can be reached by ANY IP address
@@ -322,7 +322,7 @@ rule check_ip_procotol_and_port_range_validity
 }
 ```
 
-`this` next to `InputParameters` references to each value contained inside variable `any_ip_permissions`. The query assigned to the variable selects `configuration.ipPermissions` values that match. The error indicates that we are attempting to retrieve `InputParamaters` in this context but `InputParameters` was on the root context.
+`this` next to `InputParameters` references to each value contained inside variable `any_ip_permissions`. The query assigned to the variable selects `configuration.ipPermissions` values that match. The error indicates that we are attempting to retrieve `InputParameters` in this context but `InputParameters` was on the root context.
 
 The same is true for the inner block:
 
@@ -347,7 +347,7 @@ The same is true for the inner block:
 Using variables to explicitly assign and reference them. First `InputParameter.TcpBlockedPorts`, is part of input/root context. We should therefore move this out of the inner block and assign it explicitly: 
 
 ```
-rule check_ip_procotol_and_port_range_validity
+rule check_ip_protocol_and_port_range_validity
 {
      let ports = InputParameters.TcpBlockedPorts[*]
     # ... cut off for illustrating change
@@ -357,7 +357,7 @@ rule check_ip_procotol_and_port_range_validity
 You can then refer to this variable explicitly:
 
 ```
-rule check_ip_procotol_and_port_range_validity
+rule check_ip_protocol_and_port_range_validity
 {
     #
     # Important: it would be an ERROR to just assign InputParameters.TcpBlockedPorts
@@ -400,7 +400,7 @@ Let’s do the same for inner `this` references within `%ports`:
 This still does not completely fix all errors, the loop inside ports still has an incorrect reference. We need to fix that was well.
 
 ```
-rule check_ip_procotol_and_port_range_validity
+rule check_ip_protocol_and_port_range_validity
 {
     #
     # Important: it would be an ERROR to just assign InputParameters.TcpBlockedPorts
@@ -461,7 +461,7 @@ Let us try another run with this file against the payload `cfn-guard validate -r
 ```bash
 Summary Report Overall File Status = PASS
 PASS/SKIP rules
-check_ip_procotol_and_port_range_validity    PASS
+check_ip_protocol_and_port_range_validity    PASS
 ```
 
 Does it work for `FAIL`ure case? Let us give it a try with the following payload change 

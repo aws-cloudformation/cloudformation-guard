@@ -1,15 +1,6 @@
-use std::{
-    ptr::NonNull,
-    borrow::Cow,
-    slice,
-    fmt,
-    fmt::Debug,
-};
-use crate::rules::libyaml::{
-    tag::Tag,
-    cstr::CStr,
-    cstr,
-};
+use crate::rules::libyaml::{cstr, cstr::CStr, tag::Tag};
+use std::{borrow::Cow, fmt, fmt::Debug, ptr::NonNull, slice};
+#[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
 
 #[derive(Debug)]
@@ -18,10 +9,12 @@ pub(crate) enum Event<'input> {
     StreamEnd,
     DocumentStart,
     DocumentEnd,
+    #[allow(dead_code)]
     Alias(Anchor),
     Scalar(Scalar<'input>),
     SequenceStart(SequenceStart),
     SequenceEnd,
+    #[allow(dead_code)]
     MappingStart(MappingStart),
     MappingEnd,
 }
@@ -71,6 +64,7 @@ pub(crate) unsafe fn convert_event<'input>(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct Scalar<'input> {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
@@ -80,12 +74,14 @@ pub(crate) struct Scalar<'input> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct SequenceStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct MappingStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,

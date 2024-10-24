@@ -1,0 +1,24 @@
+[
+  {
+    "name": "DATA_STDIN[1]",
+    "metadata": {},
+    "status": "PASS",
+    "not_compliant": [],
+    "not_applicable": [],
+    "compliant": [
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
+    ]
+  },
+  {
+    "name": "DATA_STDIN[2]",
+    "metadata": {},
+    "status": "PASS",
+    "not_compliant": [],
+    "not_applicable": [],
+    "compliant": [
+      "RULES_STDIN[1]/default",
+      "RULES_STDIN[2]/default"
+    ]
+  }
+]

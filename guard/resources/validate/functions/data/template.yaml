@@ -1,0 +1,61 @@
+Resources:
+  newServer:
+    Type: AWS::New::Service
+    Properties:
+      Policy: |
+        {
+           "Principal": "*",
+           "Actions": ["s3*", "ec2*"]
+        }
+      Arn: arn:aws:newservice:us-west-2:123456789012:Table/extracted
+      Encoded: This%20string%20will%20be%20URL%20encoded
+      UpdatedAt: "2024-08-15T00:00:00Z"
+      CreatedAt: "2023-01-01T12:00:00Z"
+    Collection:
+      - a
+      - b
+      - c
+    BucketPolicy:
+      PolicyText: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyReducedReliabilityStorage","Effect":"Deny","Principal":"*","Action":"s3:*","Resource":"arn:aws:s3:::s3-test-123/*","Condition":{"StringEquals":{"s3:x-amz-storage-class-123":["ONEZONE_IA","REDUCED_REDUNDANCY"]}}}]}'
+
+  s3:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: "Version"
+          Value: "2023-07-15T00:00:00Z"
+        - Key: "Description"
+          Value: "A bucket created for testing date-time handling"
+
+  bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: "CreatedAt"
+          Value: "2024-08-15T10:00:00Z"
+  bucket2:
+    Type: AWS::S3::Bucket
+  bucket3:
+    Type: AWS::S3::Bucket
+  bucket4:
+    Type: AWS::S3::Bucket
+  asg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MaxSize: "5.0"
+      MinSize: "1"
+      NewInstancesProtectedFromScaleIn: true
+      DefaultInstanceWarmup: 1.5
+      HealthCheckGracePeriod: 1
+      HealthCheckType: "true"
+      UpdatedAt: "4024-08-10T00:00:00Z"

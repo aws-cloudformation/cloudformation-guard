@@ -1,0 +1,11 @@
+let auto_scaling_group = Resources.*[ Type == 'AWS::AutoScaling::AutoScalingGroup' ]
+let updated_at_time = parse_epoch(%auto_scaling_group.Properties.UpdatedAt)
+let thousand_years_from_now = parse_epoch("3023-05-24T15:22:56.123Z")
+
+rule CHECK_UPDATED_AT when %auto_scaling_group !empty {
+  %thousand_years_from_now < %updated_at_time
+  <<
+     VIOLATION: AutoScalingGroup is old
+     FIX: Update AutoScalingGroup
+  >>
+}

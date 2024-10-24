@@ -1,0 +1,62 @@
+# This rule will return 
+# 1) FAIL if any IAM policy has a wildcard action
+# 2) PASS if there are no IAM policies or IAM policies have no wildcard actions
+#
+rule assert_no_wildcard_actions {
+  Roles[*] empty or
+  Roles[*] {
+      # if there are no policies - PASS
+      Policies[*] empty or
+      Policies[*].Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+
+  # if there are no users - PASS
+  Users[*] empty or
+  Users[*] {
+      # if there are no policies - PASS
+      Policies[*] empty or
+      Policies[*].Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+
+  # if there are no groups - PASS
+  Groups[*] empty or
+  Groups[*] {
+      # if there are no policies - PASS
+      Policies[*] empty or
+      Policies[*].Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+
+  # if there are no resources - PASS
+  Resources[*] empty or
+  Resources[*] {
+      # resources only have a single policy
+      Policy.Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+
+  # if there are no permission sets - PASS
+  PermissionSets[*] empty or
+  PermissionSets[*] {
+      # if there are no policies - PASS
+      Policies[*] empty or
+      Policies[*].Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+
+  # if there are no orphaned policies - PASS
+  OrphanedPolicies[*] empty or
+  OrphanedPolicies[*] {
+      # orphaned policies have direct policy elements, no need to traverse to Policies[*]
+      Policy.Statement[*] {
+          Action[*] != '*'
+      }
+  }
+}

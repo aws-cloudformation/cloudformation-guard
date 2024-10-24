@@ -1,12 +1,12 @@
-use crate::rules::{EvaluationContext, Status, EvaluationType, Result};
-use crate::rules::path_value::{PathAwareValue, QueryResolver};
 use crate::rules::exprs::AccessQuery;
-use std::convert::TryFrom;
+use crate::rules::path_value::{PathAwareValue, QueryResolver};
 use crate::rules::values::CmpOperator;
+use crate::rules::{EvaluationContext, EvaluationType, Result, Status};
+use std::convert::TryFrom;
 
 pub(super) struct MetadataAppender<'d> {
     pub(super) delegate: &'d dyn EvaluationContext,
-    pub(super) root_context: &'d PathAwareValue
+    pub(super) root_context: &'d PathAwareValue,
 }
 
 impl<'d> EvaluationContext for MetadataAppender<'d> {
@@ -18,6 +18,7 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
         self.delegate.rule_status(rule_name)
     }
 
+    #[allow(clippy::never_loop)]
     fn end_evaluation(
         &self,
         eval_type: EvaluationType,
@@ -26,36 +27,43 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
         from: Option<PathAwareValue>,
         to: Option<PathAwareValue>,
         status: Option<Status>,
-        cmp: Option<(CmpOperator, bool)>)
-    {
+        cmp: Option<(CmpOperator, bool)>,
+    ) {
         let msg = if eval_type == EvaluationType::Clause {
             match status {
-                Some(status) => {
-                    loop {
-                        if status == Status::FAIL {
-                            if let Some(value) = &from {
-                                let path = value.self_path();
-                                if path.0.starts_with("/Resources") {
-                                    let parts = path.0.splitn(4, '/').collect::<Vec<&str>>();
-                                    if parts.len() == 4 {
-                                        let query = format!("Resources['{}'].Metadata[ keys == /^aws/ ]", parts[2]);
-                                        let AccessQuery { query: query, match_all: all } =
-                                            AccessQuery::try_from(query.as_str()).unwrap();
-                                        if let Ok(selected) = self.root_context.select(all, &query, self) {
-                                            break format!("{}\nMetadata: {:?}", msg, selected)
-                                        }
+                Some(status) => loop {
+                    if status == Status::FAIL {
+                        if let Some(value) = &from {
+                            let path = value.self_path();
+                            if path.0.starts_with("/Resources") {
+                                let parts = path.0.splitn(4, '/').collect::<Vec<&str>>();
+                                if parts.len() == 4 {
+                                    let query = format!(
+                                        "Resources['{}'].Metadata[ keys == /^aws/ ]",
+                                        parts[2]
+                                    );
+                                    let AccessQuery {
+                                        query,
+                                        match_all: all,
+                                    } = AccessQuery::try_from(query.as_str()).unwrap();
+                                    if let Ok(selected) =
+                                        self.root_context.select(all, &query, self)
+                                    {
+                                        break format!("{}\nMetadata: {:?}", msg, selected);
                                     }
                                 }
                             }
                         }
-                        break msg
                     }
+                    break msg;
                 },
                 None => msg,
             }
-        }
-        else { msg };
-        self.delegate.end_evaluation(eval_type, context, msg, from, to, status, cmp)
+        } else {
+            msg
+        };
+        self.delegate
+            .end_evaluation(eval_type, context, msg, from, to, status, cmp)
     }
 
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str) {
@@ -66,4 +74,3 @@ impl<'d> EvaluationContext for MetadataAppender<'d> {
 #[cfg(test)]
 #[path = "aws_meta_appender_tests.rs"]
 mod aws_meta_appender_tests;
-

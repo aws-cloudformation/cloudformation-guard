@@ -1,0 +1,48 @@
+template.yaml Status = FAIL
+FAILED rules
+join_with_message.guard/TEST_COLLECTION    FAIL
+---
+Evaluating data template.yaml against rules join_with_message.guard
+Number of non-compliant resources 1
+Resource = newServer {
+  Type      = AWS::New::Service
+  Rule = TEST_COLLECTION {
+    ALL {
+      Check =  %res EQUALS  "a,b" {
+        ComparisonError {
+          Error            = Check was not compliant as property value [Path=/Resources/newServer/Collection/0[L:14,C:8] Value="a,b,c"] not equal to value [Path=[L:0,C:0] Value="a,b"].
+          PropertyPath    = /Resources/newServer/Collection/0[L:14,C:8]
+          Operator        = EQUAL
+          Value           = "a,b,c"
+          ComparedWith    = "a,b"
+          Code:
+               12.      UpdatedAt: "2024-08-15T00:00:00Z"
+               13.      CreatedAt: "2023-01-01T12:00:00Z"
+               14.    Collection:
+               15.      - a
+               16.      - b
+               17.      - c
+
+        }
+      }
+      Check =  a,b EQUALS  join(%collection, ",") {
+        ComparisonError {
+          Message          = Violation: The joined value does not match the expected result
+          Error            = Check was not compliant as property [/Resources/newServer/Collection/0[L:14,C:8]] was not present in [(resolved, Path=/Resources/newServer/Collection/0[L:14,C:8] Value="a,b,c")]
+        }
+          PropertyPath    = /Resources/newServer/Collection/0[L:14,C:8]
+          Operator        = EQUAL
+          Value           = "a,b,c"
+          ComparedWith    = ["a,b,c"]
+          Code:
+               12.      UpdatedAt: "2024-08-15T00:00:00Z"
+               13.      CreatedAt: "2023-01-01T12:00:00Z"
+               14.    Collection:
+               15.      - a
+               16.      - b
+               17.      - c
+
+      }
+    }
+  }
+}

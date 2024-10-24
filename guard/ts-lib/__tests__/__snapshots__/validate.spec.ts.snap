@@ -1,0 +1,890 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`validate should handle a directory in data, a single rule file, and match the snapshot 1`] = `
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "artifacts": [
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+      ],
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Public Write Access controls need to be restricted.
+    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
+  ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "fullName": "cfn-guard x.x.x",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "name": "cfn-guard",
+          "organization": "Amazon Web Services",
+          "semanticVersion": "x.x.x",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+          },
+        },
+      },
+    },
+  ],
+  "version": "x.x.x",
+}
+`;
+
+exports[`validate should handle a directory in rules, a single data file, and match the snapshot 1`] = `
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "artifacts": [
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+      ],
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotAwsAccessKey[L:0,C:17] Value="AKIAIOSFODNN7EXAMPLE"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "fullName": "cfn-guard x.x.x",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "name": "cfn-guard",
+          "organization": "Amazon Web Services",
+          "semanticVersion": "x.x.x",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+          },
+        },
+      },
+    },
+  ],
+  "version": "x.x.x",
+}
+`;
+
+exports[`validate should handle a single data file, a single rule file, and match the snapshot 1`] = `
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "artifacts": [
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+      ],
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Public Write Access controls need to be restricted.
+    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
+  ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "fullName": "cfn-guard x.x.x",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "name": "cfn-guard",
+          "organization": "Amazon Web Services",
+          "semanticVersion": "x.x.x",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+          },
+        },
+      },
+    },
+  ],
+  "version": "x.x.x",
+}
+`;
+
+exports[`validate should handle directories in both rules, data, and match the snapshot 1`] = `
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "artifacts": [
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+      ],
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotAwsAccessKey[L:0,C:17] Value="AKIAIOSFODNN7EXAMPLE"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 8,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:8,C:6] Value={"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Logging needs to be configured to enable logging.
+    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
+  ",
+          },
+          "ruleId": "S3_BUCKET_LOGGING_ENABLED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Logging needs to be configured to enable logging.
+    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
+  ",
+          },
+          "ruleId": "S3_BUCKET_LOGGING_ENABLED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Public Write Access controls need to be restricted.
+    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
+  ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. ",
+          },
+          "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 8,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:8,C:6] Value={"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Logging needs to be configured to enable logging.
+    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
+  ",
+          },
+          "ruleId": "S3_BUCKET_LOGGING_ENABLED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 6,
+                  "startLine": 8,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:8,C:6] Value={"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":"","VersioningConfiguration":{"Status":"Enabled"}}]. 
+    Violation: S3 Bucket Logging needs to be configured to enable logging.
+    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
+  ",
+          },
+          "ruleId": "S3_BUCKET_LOGGING_ENABLED",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":"","VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true},"BucketEncryption":"","VersioningConfiguration":{"Status":"Enabled"}}}}}]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 23,
+                  "startLine": 13,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property [ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties/BucketEncryption[L:13,C:23] Value=""]. 
+    Violation: S3 Bucket must enable server-side encryption.
+    Fix: Set the S3 Bucket property BucketEncryption.ServerSideEncryptionConfiguration.ServerSideEncryptionByDefault.SSEAlgorithm to either "aws:kms" or "AES256"
+  ",
+          },
+          "ruleId": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED",
+        },
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "fullName": "cfn-guard x.x.x",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "name": "cfn-guard",
+          "organization": "Amazon Web Services",
+          "semanticVersion": "x.x.x",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+          },
+        },
+      },
+    },
+  ],
+  "version": "x.x.x",
+}
+`;
+
+exports[`validate should handle nested directories in both and match the snapshot 1`] = `
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "artifacts": [
+        {
+          "location": {
+            "uri": "somePath",
+          },
+        },
+      ],
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotAwsAccessKey[L:0,C:17] Value="AKIAIOSFODNN7EXAMPLE"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "somePath",
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1,
+                },
+              },
+            },
+          ],
+          "message": {
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+          },
+          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+        },
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "fullName": "cfn-guard x.x.x",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "name": "cfn-guard",
+          "organization": "Amazon Web Services",
+          "semanticVersion": "x.x.x",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
+          },
+        },
+      },
+    },
+  ],
+  "version": "x.x.x",
+}
+`;

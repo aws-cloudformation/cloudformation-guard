@@ -2,7 +2,6 @@
 **/*.rs.bk
 *.iml
 .project
-.vscode
 cloudformation-guard.tar.gz
 .DS_Store
 *#
@@ -12,3 +11,9 @@ cmake-build-debug
 *gcno
 *gcda
 **/._*
+node_modules
+*.tgz
+lib
+bin
+__pycache__
+pyvenv.cfg
