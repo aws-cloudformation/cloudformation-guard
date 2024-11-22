@@ -1,0 +1,30 @@
+#
+# This will retrieve all the resources of type 'aws_s3_bucket' from the Terraform plan 
+# input json. In this case we are using the values from the planned values section 
+# of the generated Terraform plan JSON file.
+#
+let s3_bucket = planned_values.root_module.resources[
+    type == 'aws_s3_bucket'
+]
+
+#
+# Here is a sample Terraform template with S3 resource with tags
+# this would PASS the rule assert_all_s3_resources_have_non_empty_tags
+# 
+# resource "aws_s3_bucket" "test_my_bucket" {
+#   bucket = "my-tf-test-bucket"
+#   tags = {
+#    Name        = "My bucket"
+#    Environment = "Dev"
+#   }
+# }
+
+
+# This rule will return 
+# 1) SKIP if there are no resources that were selected, protected by the guard clause !empty 
+# 2) FAIL if any one resource did have empty tags or did not have tags specified at all
+# 3) PASS when ALL resource do have non-empty tags
+#
+rule assert_all_s3_resources_have_non_empty_tags when %s3_bucket !empty {
+    %s3_bucket.values.tags.* != 'null'
+}
