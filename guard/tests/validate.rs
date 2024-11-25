@@ -599,7 +599,7 @@ mod validate_tests {
     #[case("yaml")]
     #[case("json")]
     #[case("junit")]
-    #[case("sarif")]
+    #[case::sarif("sarif")]
     fn test_structured_output(#[case] output: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");

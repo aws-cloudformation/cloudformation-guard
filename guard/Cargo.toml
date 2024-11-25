@@ -1,6 +1,6 @@
 [package]
 name = "cfn-guard"
-version = "3.1.1"
+version = "3.1.2"
 edition = "2018"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
     "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Tyler Southwick", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
@@ -33,7 +33,7 @@ itertools = "0.4.7"
 string-builder = "0.2.0"
 enumflags2 = "0.7.7"
 enumflags2_derive = "0.7.7"
-Inflector = "0.11.4"
+cruet = "0.14.0"
 urlencoding = "2.1.0"
 grep-searcher = "0.1.8"
 grep-matcher = "0.1.5"
