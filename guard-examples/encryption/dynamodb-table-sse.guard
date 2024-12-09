@@ -1,18 +1,21 @@
 #
-# Common rule, all resources must have Tags present on them
-#
-rule assert_all_resources_have_non_empty_tags {
-    Resources.*.Properties.Tags !empty
-}
-
-#
 # Select all DDB resources from the incoming template (payload)
 #
 let ddb = Resources.*[ Type == 'AWS::DynamoDB::Table'  ]
 
 #
+# Common rule, DDB table resources must have Tags present on them
+#
+rule assert_ddb_resources_have_non_empty_tags
+{
+    #
+    # Ensure ALL DynamoDB Tables have tags
+    #
+    %ddb.Properties.Tags !empty
+}
+#
 # Run this DDB rule when there are DDB table present and 
-# we PASSED the check that all resources did have tags in them 
+# we PASSED the check that DDB table resources did have tags in them 
 # 
 # Rule Intent: ALL DDB Table must have encryption at rest turned 
 # on.
@@ -23,7 +26,7 @@ let ddb = Resources.*[ Type == 'AWS::DynamoDB::Table'  ]
 # c) FAIL if wasn't set for them
 #
 rule dynamo_db_sse_on when %ddb !empty 
-                           assert_all_resources_have_non_empty_tags
+                           assert_ddb_resources_have_non_empty_tags
 {
     #
     # Ensure ALL DynamoDB Tables have encryption at rest turned on
