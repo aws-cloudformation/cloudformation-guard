@@ -484,7 +484,7 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
 ///  rule_clause                = rule_name / not_keyword rule_name / clause
 ///  rule_disjunction_clauses   = rule_clause 1*(or_term 1*(LWSP/comment) rule_clause)
-///  rule_conjunction_clauses   = rule_clause 1*( (LSWP/comment) rule_clause )
+///  rule_conjunction_clauses   = rule_clause 1*( (LWSP/comment) rule_clause )
 ///
 ///  type_clause                = type_name 1*SP clause
 ///  type_block                 = type_name *SP [when] "{" *(LWSP/comment) 1*clause "}"
