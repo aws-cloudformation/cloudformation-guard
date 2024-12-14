@@ -511,11 +511,11 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  when_type                  = when 1*( (LWSP/comment) clause (LWSP/comment) )
 ///  when_rule                  = when 1*( (LWSP/comment) rule_clause (LWSP/comment) )
 ///  named_rule                 = "rule" 1*SP var_name "{"
-///                                   assignment 1*(LWPS/comment)   /
-///                                   (type_expr 1*(LWPS/comment))  /
+///                                   assignment 1*(LWSP/comment)   /
+///                                   (type_expr 1*(LWSP/comment))  /
 ///                                   (disjunctions_type_expr) *(LWSP/comment) "}"
 ///
-///  expressions                = 1*( (assignment / named_rule / type_expr / disjunctions_type_expr / comment) (LWPS/comment) )
+///  expressions                = 1*( (assignment / named_rule / type_expr / disjunctions_type_expr / comment) (LWSP/comment) )
 ///  ```
 ///
 ///
