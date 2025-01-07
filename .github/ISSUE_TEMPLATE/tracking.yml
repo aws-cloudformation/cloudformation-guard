@@ -1,0 +1,46 @@
+name: Tracking Issue
+description: Add a tracking issue (internal use only)
+title: "Tracking: [service]"
+labels: [management/tracking]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Add your +1 👍  to help us prioritize features for CloudFormation Guard
+
+  - type: textarea
+    id: overview
+    attributes:
+      label: Overview
+      description: |
+        Summary of the feature and a link to the relevant rfcs if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation
+      description: |
+        Checklist of use cases, features that will ship in this chnage.
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue-list
+    attributes:
+      label: Issue list
+      description: |
+        Checklist of links to feature requests, bugs, and PRs that are in scope for GA release of this feature (not required until the issues is added to the public roadmap).
+      value: |
+          - [ ]
+          - [ ]
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        This is a 📊 Tracking Issue
