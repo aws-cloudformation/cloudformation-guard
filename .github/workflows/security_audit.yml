@@ -1,11 +1,18 @@
 name: Security audit
 on:
   schedule:
-    - cron: '0 17 * * *'
+    - cron: "0 17 * * *"
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.81
+          matcher: false
+          rustflags: ""
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v1.4.1
         with:
