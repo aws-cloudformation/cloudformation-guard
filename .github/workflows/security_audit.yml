@@ -5,6 +5,7 @@ on:
 
 jobs:
   audit:
+    if: github.repository == 'aws-cloudformation/cloudformation-guard'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
