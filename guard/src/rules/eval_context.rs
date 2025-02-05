@@ -314,7 +314,6 @@ fn check_and_delegate<'value, 'loc: 'value>(
 
 type Converters = &'static [(fn(&str) -> bool, fn(&str) -> String)];
 lazy_static! {
-    #[allow(clippy::type_complexity)]
     static ref CONVERTERS: Converters = &[
         (camel::is_camel_case, camel::to_camel_case),
         (class::is_class_case, class::to_class_case),
