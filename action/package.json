@@ -29,7 +29,7 @@
     "coverage": "npx make-coverage-badge --output-path ./badges/coverage.svg",
     "format:write": "npx prettier --write .",
     "format:check": "npx prettier --check .",
-    "lint": "eslint . -c .eslintrc.yml",
+    "lint": "eslint . -c eslint.config.mjs",
     "lint:fix": "npm run lint -- --fix && npm run format:write",
     "package": "npx ncc build src/index.ts -o dist --source-map --license licenses.txt",
     "package:watch": "npm run package -- --watch",
@@ -80,6 +80,8 @@
     "cfn-guard": "https://gitpkg.now.sh/aws-cloudformation/cloudformation-guard/guard/ts-lib?33d9931"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@eslint/js": "^9.20.0",
     "@jest/globals": "^29.7.0",
     "@stylistic/eslint-plugin": "^3.1.0",
     "@types/jest": "^29.5.14",
@@ -92,6 +94,7 @@
     "eslint-plugin-jest": "^28.11.0",
     "eslint-plugin-jsonc": "^2.19.1",
     "eslint-plugin-prettier": "^5.2.3",
+    "globals": "^15.15.0",
     "jest": "^29.7.0",
     "make-coverage-badge": "^1.2.0",
     "prettier": "^3.5.1",
