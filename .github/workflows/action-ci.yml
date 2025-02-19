@@ -25,9 +25,8 @@ jobs:
       - run: npm run test
       - run: npm run package
 
-      # This step will only run if the user is not dannyvassallo
       - name: Compare Directories
-        if: github.actor != 'dannyvassallo'
+        if: github.actor != 'dependabot'
         id: diff
         run: |
           if [ ! -d dist/ ]; then
@@ -41,8 +40,7 @@ jobs:
             exit 1
           fi
 
-      # This step will only run if the previous step failed and the user is not dannyvassallo
-      - if: ${{ failure() && steps.diff.outcome == 'failure' && github.actor != 'dannyvassallo' }}
+      - if: ${{ failure() && steps.diff.outcome == 'failure' && github.actor != 'dependabot' }}
         name: Upload Artifact
         id: upload
         uses: actions/upload-artifact@v4
