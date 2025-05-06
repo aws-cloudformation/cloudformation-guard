@@ -28,6 +28,48 @@ fn yaml_loader() -> Result<()> {
     Ok(())
 }
 
+#[rstest::rstest]
+#[case::standard_lowercase_true("true", true)]
+#[case::standard_capitalized_true("True", true)]
+#[case::standard_uppercase_true("TRUE", true)]
+#[case::yaml_yes_lowercase("yes", true)]
+#[case::yaml_yes_capitalized("Yes", true)]
+#[case::yaml_yes_uppercase("YES", true)]
+#[case::yaml_on_lowercase("on", true)]
+#[case::yaml_on_capitalized("On", true)]
+#[case::yaml_on_uppercase("ON", true)]
+#[case::yaml_y_lowercase("y", true)]
+#[case::yaml_y_uppercase("Y", true)]
+#[case::standard_lowercase_false("false", false)]
+#[case::standard_capitalized_false("False", false)]
+#[case::standard_uppercase_false("FALSE", false)]
+#[case::yaml_no_lowercase("no", false)]
+#[case::yaml_no_capitalized("No", false)]
+#[case::yaml_no_uppercase("NO", false)]
+#[case::yaml_off_lowercase("off", false)]
+#[case::yaml_off_capitalized("Off", false)]
+#[case::yaml_off_uppercase("OFF", false)]
+#[case::yaml_n_lowercase("n", false)]
+#[case::yaml_n_uppercase("N", false)]
+fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Result<()> {
+    let docs = format!("check: {arg}");
+
+    let mut loader = Loader::new();
+    match loader.load(String::from(docs))? {
+        MarkedValue::Map(map, ..) => {
+            assert!(map.len() == 1);
+            let (.., result) = map.first().unwrap();
+
+            if let MarkedValue::Bool(result, ..) = *result {
+                assert_eq!(result, expected);
+            }
+        }
+        _ => unreachable!("this isn't possible"),
+    }
+
+    Ok(())
+}
+
 #[test]
 fn yaml_loader2() -> Result<()> {
     let docs = r###"
