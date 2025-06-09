@@ -14,7 +14,7 @@ use nom::combinator::{map, value};
 use nom::combinator::{map_res, opt};
 use nom::error::context;
 use nom::error::ErrorKind;
-use nom::multi::{fold_many1, separated_list, separated_nonempty_list};
+use nom::multi::{fold_many1, separated_list0, separated_list1};
 use nom::multi::{many0, many1};
 use nom::number::complete::double;
 use nom::sequence::{delimited, preceded};
@@ -45,6 +45,22 @@ pub(crate) struct ParserError<'a> {
 
 pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
 
+impl<'a> nom::error::ContextError<Span<'a>> for ParserError<'a> {
+    fn add_context(input: Span<'a>, ctx: &'static str, other: Self) -> Self {
+        let context = if other.context.is_empty() {
+            ctx.to_string()
+        } else {
+            format!("{}/{}", ctx, other.context)
+        };
+
+        ParserError {
+            context,
+            span: input,
+            kind: other.kind,
+        }
+    }
+}
+
 impl<'a> nom::error::ParseError<Span<'a>> for ParserError<'a> {
     fn from_error_kind(input: Span<'a>, kind: ErrorKind) -> Self {
         ParserError {
@@ -57,18 +73,14 @@ impl<'a> nom::error::ParseError<Span<'a>> for ParserError<'a> {
     fn append(_input: Span<'a>, _kind: ErrorKind, other: Self) -> Self {
         other
     }
+}
 
-    fn add_context(input: Span<'a>, ctx: &'static str, other: Self) -> Self {
-        let context = if other.context.is_empty() {
-            ctx.to_string()
-        } else {
-            format!("{}/{}", ctx, other.context)
-        };
-
+impl<'a> nom::error::FromExternalError<Span<'a>, std::num::ParseIntError> for ParserError<'a> {
+    fn from_external_error(span: Span<'a>, kind: ErrorKind, _e: std::num::ParseIntError) -> Self {
         ParserError {
-            context,
-            span: input,
-            kind: other.kind,
+            context: "".to_string(),
+            span,
+            kind,
         }
     }
 }
@@ -352,7 +364,7 @@ fn parse_list(input: Span) -> IResult<Span, Value> {
     map(
         delimited(
             preceded_by('['),
-            separated_list(separated_by(','), parse_value),
+            separated_list0(separated_by(','), parse_value),
             followed_by(']'),
         ),
         Value::List,
@@ -386,7 +398,7 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
 fn parse_map(input: Span) -> IResult<Span, Value> {
     let result = delimited(
         char('{'),
-        separated_list(separated_by(','), key_value),
+        separated_list0(separated_by(','), key_value),
         followed_by('}'),
     )(input)?;
     Ok((
@@ -856,7 +868,7 @@ fn predicate_or_index(input: Span) -> IResult<Span, QueryPart> {
 fn dotted_access(input: Span) -> IResult<Span, Vec<QueryPart>> {
     fold_many1(
         alt((dotted_property, predicate_or_index)),
-        Vec::new(),
+        Vec::new,
         |mut acc: Vec<QueryPart>, part| {
             acc.push(part);
             acc
@@ -941,12 +953,12 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
 #[allow(clippy::redundant_closure)]
 fn clause_with_map<'loc, A, M, T: 'loc>(
     input: Span<'loc>,
-    access: A,
-    mapper: M,
+    mut access: A,
+    mut mapper: M,
 ) -> IResult<Span<'loc>, T>
 where
-    A: Fn(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
-    M: Fn(GuardAccessClause<'loc>) -> T + 'loc,
+    A: FnMut(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
+    M: FnMut(GuardAccessClause<'loc>) -> T + 'loc,
 {
     let location = FileLocation {
         file_name: input.extra,
@@ -1115,7 +1127,7 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
         var_name,
         delimited(
             char('('),
-            separated_list(char(','), delimited(multispace0, let_value, multispace0)),
+            separated_list0(char(','), delimited(multispace0, let_value, multispace0)),
             char(')'),
         ),
     ))(input)
@@ -1271,13 +1283,13 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
 #[allow(clippy::redundant_closure)]
 fn cnf_clauses<'loc, T, E, F, M>(
     input: Span<'loc>,
-    f: F,
+    mut f: F,
     _m: M,
     _non_empty: bool,
 ) -> IResult<Span<'loc>, Conjunctions<E>>
 where
-    F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
-    M: Fn(Vec<E>) -> T,
+    F: FnMut(Span<'loc>) -> IResult<Span<'loc>, E>,
+    M: FnMut(Vec<E>) -> T,
     E: Clone + 'loc,
     T: 'loc,
 {
@@ -1314,22 +1326,22 @@ where
 #[allow(clippy::redundant_closure)]
 fn disjunction_clauses<'loc, E, F>(
     input: Span<'loc>,
-    parser: F,
+    mut parser: F,
     non_empty: bool,
 ) -> IResult<Span<'loc>, Disjunctions<E>>
 where
-    F: Fn(Span<'loc>) -> IResult<Span<'loc>, E>,
+    F: FnMut(Span<'loc>) -> IResult<Span<'loc>, E>,
     E: Clone + 'loc,
 {
     if non_empty {
-        separated_nonempty_list(
+        separated_list1(
             or_join,
-            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)),
+            preceded(zero_or_more_ws_or_comment, |i: Span<'loc>| parser(i)),
         )(input)
     } else {
-        separated_list(
+        separated_list0(
             or_join,
-            preceded(zero_or_more_ws_or_comment, |i: Span| parser(i)),
+            preceded(zero_or_more_ws_or_comment, |i: Span<'loc>| parser(i)),
         )(input)
     }
 }
@@ -1470,10 +1482,10 @@ fn when(input: Span) -> IResult<Span, ()> {
 
 #[allow(clippy::redundant_closure)]
 fn when_conditions<'loc, P>(
-    condition_parser: P,
-) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>
+    mut condition_parser: P,
+) -> impl FnMut(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>
 where
-    P: Fn(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>,
+    P: FnMut(Span<'loc>) -> IResult<Span<'loc>, Conjunctions<WhenGuardClause<'loc>>>,
 {
     move |input: Span| {
         //
@@ -1497,10 +1509,10 @@ where
 
 #[allow(clippy::redundant_closure)]
 fn block<'loc, T, P>(
-    clause_parser: P,
-) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, (Vec<LetExpr<'loc>>, Conjunctions<T>)>
+    mut clause_parser: P,
+) -> impl FnMut(Span<'loc>) -> IResult<Span<'loc>, (Vec<LetExpr<'loc>>, Conjunctions<T>)>
 where
-    P: Fn(Span<'loc>) -> IResult<Span<'loc>, T>,
+    P: FnMut(Span<'loc>) -> IResult<Span<'loc>, T>,
     T: Clone + 'loc,
 {
     move |input: Span| {
@@ -1513,11 +1525,11 @@ where
                     (Some(s), None)
                 }),
                 map(
-                    |i: Span| disjunction_clauses(i, |i: Span| clause_parser(i), true),
+                    |i: Span<'loc>| disjunction_clauses(i, |i| clause_parser(i), true),
                     |c: Disjunctions<T>| (None, Some(c)),
                 ),
             )),
-            Vec::new(),
+            Vec::new,
             |mut acc, pair| {
                 acc.push(pair);
                 acc
@@ -1647,16 +1659,16 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
 
 #[allow(clippy::redundant_closure)]
 fn when_block<'loc, C, B, M, T, R>(
-    conditions: C,
-    block_fn: B,
-    mapper: M,
-) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
+    mut conditions: C,
+    mut block_fn: B,
+    mut mapper: M,
+) -> impl FnMut(Span<'loc>) -> IResult<Span<'loc>, R>
 where
-    C: Fn(Span<'loc>) -> IResult<Span, Conjunctions<WhenGuardClause<'loc>>>,
-    B: Fn(Span<'loc>) -> IResult<Span<'loc>, T>,
+    C: FnMut(Span<'loc>) -> IResult<Span, Conjunctions<WhenGuardClause<'loc>>>,
+    B: FnMut(Span<'loc>) -> IResult<Span<'loc>, T>,
     T: Clone + 'loc,
     R: 'loc,
-    M: Fn(Conjunctions<WhenGuardClause<'loc>>, (Vec<LetExpr<'loc>>, Conjunctions<T>)) -> R,
+    M: FnMut(Conjunctions<WhenGuardClause<'loc>>, (Vec<LetExpr<'loc>>, Conjunctions<T>)) -> R,
 {
     move |input: Span| {
         map(
@@ -1734,7 +1746,7 @@ fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
     delimited(
         char('('),
         map(
-            separated_nonempty_list(
+            separated_list1(
                 char(','),
                 cut(delimited(multispace0, var_name, multispace0)),
             ),
@@ -1789,10 +1801,10 @@ fn type_block_clauses(input: Span) -> IResult<Span, Disjunctions<TypeBlock>> {
 
 #[allow(clippy::redundant_closure)]
 fn remove_whitespace_comments<'loc, P, R>(
-    parser: P,
-) -> impl Fn(Span<'loc>) -> IResult<Span<'loc>, R>
+    mut parser: P,
+) -> impl FnMut(Span<'loc>) -> IResult<Span<'loc>, R>
 where
-    P: Fn(Span<'loc>) -> IResult<Span<'loc>, R>,
+    P: FnMut(Span<'loc>) -> IResult<Span<'loc>, R>,
 {
     move |input: Span| {
         delimited(
@@ -1854,7 +1866,7 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
             }),
             map(default_clauses, Exprs::DefaultClause),
         ))),
-        Vec::new(),
+        Vec::new,
         |mut acc, expr| {
             acc.push(expr);
             acc

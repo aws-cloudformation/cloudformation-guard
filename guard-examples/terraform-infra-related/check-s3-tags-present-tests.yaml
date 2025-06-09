@@ -1,0 +1,142 @@
+---
+- name: Terraform plan JSON for S3 with non-empty tags - PASS
+  input:
+    {
+      "format_version": "1.1",
+      "terraform_version": "1.2.9",
+      "planned_values": {
+        "root_module": {
+          "resources": [{
+            "address": "aws_s3_bucket.test_my_bucket",
+            "mode": "managed",
+            "type": "aws_s3_bucket",
+            "name": "test_my_bucket",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "schema_version": 0,
+            "values": {
+              "bucket": "my-tf-test-bucket",
+              "bucket_prefix": null,
+              "force_destroy": false,
+              "tags": {
+                "Environment": "Dev",
+                "Name": "My bucket"
+              },
+              "tags_all": {
+                "Environment": "Dev",
+                "Name": "My bucket"
+              },
+              "timeouts": null
+            },
+            "sensitive_values": {
+              "cors_rule": [],
+              "grant": [],
+              "lifecycle_rule": [],
+              "logging": [],
+              "object_lock_configuration": [],
+              "replication_configuration": [],
+              "server_side_encryption_configuration": [],
+              "tags": {},
+              "tags_all": {},
+              "versioning": [],
+              "website": []
+            }
+          }]
+        }
+      }
+    }
+  expectations:
+    rules:
+      assert_all_s3_resources_have_non_empty_tags: PASS
+
+- name: Terraform plan JSON for S3 with empty tags - FAIL
+  input:
+    {
+      "format_version": "1.1",
+      "terraform_version": "1.2.9",
+      "planned_values": {
+        "root_module": {
+          "resources": [{
+            "address": "aws_s3_bucket.test_my_bucket",
+            "mode": "managed",
+            "type": "aws_s3_bucket",
+            "name": "test_my_bucket",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "schema_version": 0,
+            "values": {
+              "bucket": "my-tf-test-bucket",
+              "bucket_prefix": null,
+              "force_destroy": false,
+              "tags": {},
+              "tags_all": {
+                "Environment": "Dev",
+                "Name": "My bucket"
+              },
+              "timeouts": null
+            },
+            "sensitive_values": {
+              "cors_rule": [],
+              "grant": [],
+              "lifecycle_rule": [],
+              "logging": [],
+              "object_lock_configuration": [],
+              "replication_configuration": [],
+              "server_side_encryption_configuration": [],
+              "tags": {},
+              "tags_all": {},
+              "versioning": [],
+              "website": []
+            }
+          }]
+        }
+      }
+    }
+  expectations:
+    rules:
+      assert_all_s3_resources_have_non_empty_tags: FAIL
+
+
+- name: Terraform plan JSON for S3 with null tags - FAIL
+  input:
+    {
+      "format_version": "1.1",
+      "terraform_version": "1.2.9",
+      "planned_values": {
+        "root_module": {
+          "resources": [{
+            "address": "aws_s3_bucket.test_my_bucket",
+            "mode": "managed",
+            "type": "aws_s3_bucket",
+            "name": "test_my_bucket",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "schema_version": 0,
+            "values": {
+              "bucket": "my-tf-test-bucket",
+              "bucket_prefix": null,
+              "force_destroy": false,
+              "tags": null,
+              "tags_all": {
+                "Environment": "Dev",
+                "Name": "My bucket"
+              },
+              "timeouts": null
+            },
+            "sensitive_values": {
+              "cors_rule": [],
+              "grant": [],
+              "lifecycle_rule": [],
+              "logging": [],
+              "object_lock_configuration": [],
+              "replication_configuration": [],
+              "server_side_encryption_configuration": [],
+              "tags": {},
+              "tags_all": {},
+              "versioning": [],
+              "website": []
+            }
+          }]
+        }
+      }
+    }
+  expectations:
+    rules:
+      assert_all_s3_resources_have_non_empty_tags: FAIL

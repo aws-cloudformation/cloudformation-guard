@@ -87,9 +87,9 @@ impl Loader {
                 Ok(i) => MarkedValue::Int(i, location),
                 Err(_) => match val.parse::<f64>() {
                     Ok(f) => MarkedValue::Float(f, location),
-                    Err(_) => match val.parse::<bool>() {
-                        Ok(b) => MarkedValue::Bool(b, location),
-                        Err(_) => match val.to_lowercase().as_str() {
+                    Err(_) => match self.parse_bool(&val) {
+                        Some(b) => MarkedValue::Bool(b, location),
+                        None => match val.to_lowercase().as_str() {
                             "~" | "null" => MarkedValue::Null(location),
                             _ => MarkedValue::String(val, location),
                         },
@@ -99,6 +99,23 @@ impl Loader {
         };
 
         self.stack.push(path_value);
+    }
+    fn is_bool_true(&self, s: &str) -> bool {
+        matches!(s, "true" | "yes" | "on" | "y")
+    }
+
+    fn is_bool_false(&self, s: &str) -> bool {
+        matches!(s, "false" | "no" | "off" | "n")
+    }
+
+    fn parse_bool(&self, val: &str) -> Option<bool> {
+        if self.is_bool_true(val) {
+            Some(true)
+        } else if self.is_bool_false(val) {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     fn handle_sequence_end(&mut self) {

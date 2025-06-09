@@ -19,7 +19,7 @@ use crate::rules::{
     QueryResult, RecordTracer, RecordType, Status, TypeBlockCheck, UnResolved, UnaryValueCheck,
     ValueCheck,
 };
-use inflector::cases::*;
+use cruet::case::{camel, class, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -314,15 +314,14 @@ fn check_and_delegate<'value, 'loc: 'value>(
 
 type Converters = &'static [(fn(&str) -> bool, fn(&str) -> String)];
 lazy_static! {
-    #[allow(clippy::type_complexity)]
     static ref CONVERTERS: Converters = &[
-        (camelcase::is_camel_case, camelcase::to_camel_case),
-        (classcase::is_class_case, classcase::to_class_case),
-        (kebabcase::is_kebab_case, kebabcase::to_kebab_case),
-        (pascalcase::is_pascal_case, pascalcase::to_pascal_case),
-        (snakecase::is_snake_case, snakecase::to_snake_case),
-        (titlecase::is_title_case, titlecase::to_title_case),
-        (traincase::is_train_case, traincase::to_train_case),
+        (camel::is_camel_case, camel::to_camel_case),
+        (class::is_class_case, class::to_class_case),
+        (kebab::is_kebab_case, kebab::to_kebab_case),
+        (pascal::is_pascal_case, pascal::to_pascal_case),
+        (snake::is_snake_case, snake::to_snake_case),
+        (title::is_title_case, title::to_title_case),
+        (train::is_train_case, train::to_train_case),
     ];
 }
 
