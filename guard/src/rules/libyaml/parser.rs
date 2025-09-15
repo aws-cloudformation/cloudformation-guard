@@ -45,7 +45,7 @@ impl<'input> Parser<'input> {
         let mut event = MaybeUninit::<sys::yaml_event_t>::uninit();
         unsafe {
             let parser = addr_of_mut!((*self.pin.ptr).sys);
-            if (*parser).error != sys::YAML_NO_ERROR {
+            if (&(*parser)).error != sys::YAML_NO_ERROR {
                 return Err(Error::ParseError("error parsing file".to_string()));
             }
             let event = event.as_mut_ptr();
