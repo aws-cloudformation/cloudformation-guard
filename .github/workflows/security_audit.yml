@@ -3,6 +3,9 @@ on:
   schedule:
     - cron: "0 17 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   audit:
     if: github.repository == 'aws-cloudformation/cloudformation-guard'

@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - 'guard/ts-lib/**'
+permissions:
+  contents: read
+
 jobs:
   run-unit-tests-windows:
     runs-on: windows-latest
