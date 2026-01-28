@@ -63,6 +63,22 @@ jobs:
             cp ./target/aarch64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-aarch64-${{ matrix.os }}/
             cp README.md ./cfn-guard-v3-aarch64-${{ matrix.os }}/
             tar czvf ./cfn-guard-v3-aarch64-${{ matrix.os }}.tar.gz ./cfn-guard-v3-aarch64-${{ matrix.os }}
+
+            # Create linux-named packages for compatibility with tools expecting standard OS naming
+            mkdir cfn-guard-v3-x86_64-linux-latest
+            cp ./target/x86_64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-x86_64-linux-latest/
+            cp README.md ./cfn-guard-v3-x86_64-linux-latest/
+            tar czvf ./cfn-guard-v3-x86_64-linux-latest.tar.gz ./cfn-guard-v3-x86_64-linux-latest
+
+            mkdir cfn-guard-v3-aarch64-linux-latest
+            cp ./target/aarch64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-aarch64-linux-latest/
+            cp README.md ./cfn-guard-v3-aarch64-linux-latest/
+            tar czvf ./cfn-guard-v3-aarch64-linux-latest.tar.gz ./cfn-guard-v3-aarch64-linux-latest
+
+            mkdir cfn-guard-v3-linux-latest
+            cp ./target/x86_64-unknown-linux-musl/release/cfn-guard ./cfn-guard-v3-linux-latest/
+            cp README.md ./cfn-guard-v3-linux-latest/
+            tar czvf ./cfn-guard-v3-linux-latest.tar.gz ./cfn-guard-v3-linux-latest
           windows: |
             rustup target add x86_64-pc-windows-msvc
             cargo build --release --target x86_64-pc-windows-msvc
@@ -128,4 +144,38 @@ jobs:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: ./cfn-guard-v3-${{ matrix.os }}.tar.gz
           asset_name: cfn-guard-v3-${{ matrix.os }}.tar.gz
+          asset_content_type: application/octet-stream
+      # Upload linux-named assets for compatibility with tools expecting standard OS naming
+      - name: Upload x86 Linux Release Asset
+        id: upload-x86_64-linux-release-asset
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./cfn-guard-v3-x86_64-linux-latest.tar.gz
+          asset_name: cfn-guard-v3-x86_64-linux-latest.tar.gz
+          asset_content_type: application/octet-stream
+      - name: Upload arm64 Linux Release Asset
+        id: upload-aarch64-linux-release-asset
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./cfn-guard-v3-aarch64-linux-latest.tar.gz
+          asset_name: cfn-guard-v3-aarch64-linux-latest.tar.gz
+          asset_content_type: application/octet-stream
+      - name: Upload Linux Release Asset (Legacy)
+        id: upload-linux-release-asset
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./cfn-guard-v3-linux-latest.tar.gz
+          asset_name: cfn-guard-v3-linux-latest.tar.gz
           asset_content_type: application/octet-stream
