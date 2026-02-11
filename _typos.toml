@@ -7,6 +7,8 @@ ure = "ure"
 dne = "dne"
 # Don't flag kms as mispelling
 kms = "kms"
+# Don't flag ource in regex patterns like /aws:[sS]ource.../
+ource = "ource"
 [default.extend-identifiers]
 # Ignore ID in evaluate_tests.rs
 fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"
