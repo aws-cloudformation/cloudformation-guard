@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use cfn_guard::{run_checks, ValidateInput};
-use lambda_runtime::{handler_fn, Context, Error};
-use log::{self, info, LevelFilter};
+use lambda_runtime::{service_fn, tracing, Error, LambdaEvent};
 use serde_derive::{Deserialize, Serialize};
-use simple_logger::SimpleLogger;
 
 fn default_as_true() -> bool {
     true
@@ -29,18 +27,17 @@ pub struct CustomOutput {
 #[tokio::main]
 #[allow(dead_code)]
 async fn main() -> Result<(), Error> {
-    SimpleLogger::new()
-        .with_level(LevelFilter::Info)
-        .init()
-        .unwrap();
-    let func = handler_fn(call_cfn_guard);
-    lambda_runtime::run(func).await?;
-    Ok(())
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .without_time()
+        .init();
+    lambda_runtime::run(service_fn(call_cfn_guard)).await
 }
 
-pub async fn call_cfn_guard(e: CustomEvent, _c: Context) -> Result<CustomOutput, Error> {
-    info!("Template is: [{}]", &e.data);
-    info!("Rules are: [{:?}]", &e.rules);
+pub async fn call_cfn_guard(event: LambdaEvent<CustomEvent>) -> Result<CustomOutput, Error> {
+    let (e, _context) = event.into_parts();
+    tracing::info!("Template is: [{}]", &e.data);
+    tracing::info!("Rules are: [{:?}]", &e.rules);
     let mut results_vec = Vec::new();
     for rule in e.rules.iter() {
         let result = match run_checks(
