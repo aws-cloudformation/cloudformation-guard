@@ -1,0 +1,63 @@
+name: General Issue
+description: Create a new issue
+title: "(module name): short issue description"
+labels: [needs-triage, guidance]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If your issue does not fall in any of the other categories create an issue with this template.
+
+  - type: input
+    id: issue
+    attributes:
+      label: General Issue
+      description: |
+        Important Information - Please look at the following sections before creating an issue to see if your question was already answered:
+        * [Open issues](https://github.com/aws-cloudformation/cloudformation-guard/issues)
+        * All our [PRs](https://github.com/aws-cloudformation/cloudformation-guard/pulls?q=is%3Apr), both open and close
+        * Our [documentation](https://github.com/aws-cloudformation/cloudformation-guard#aws-cloudformation-guard)
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The Question
+      description: |
+        Ask your question here. Include any details relevant.
+    validations:
+      required: true
+
+  - type: input
+    id: guard-version
+    attributes:
+      label: CloudFormation Guard Version
+      description: Output of `cfn-guard -V`
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: OS
+      description: E.g. MacOS | Windows | Ubuntu
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version
+      description: E.g. Catalina | 10 | 18.04
+    validations:
+      required: false
+
+  - type: textarea
+    id: other
+    attributes:
+      label: Other information
+      description: |
+        e.g. detailed explanation, scrennshots, stacktraces, related issues, suggestions how to fix, links for us to have context, eg. associated pull-request, stackoverflow, slack, etc
+    validations:
+      required: false

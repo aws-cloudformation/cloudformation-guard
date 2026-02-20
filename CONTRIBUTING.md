@@ -34,8 +34,12 @@ To send us a pull request, please:
 3. Ensure local tests pass.
 4. Commit to your fork using clear commit messages.
 5. Send us a pull request, answering any default questions in the pull request interface.
-6. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
-7. If your pull request includes rules for the Examples, please review the [Examples README](guard-examples/README.md) for the acceptance criteria.
+6. Pull request title and message (and PR title and description) must adhere to [conventionalcommits](https://www.conventionalcommits.org/en/v1.0.0/).
+    - The title must begin with feat(module): title, fix(module): title, refactor(module): title or chore(module): title.
+    - Title should be lowercase.
+    - No period at the end of the title.
+7. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
+8. If your pull request includes rules for the Examples, please review the [Examples README](guard-examples/README.md) for the acceptance criteria.
 
 GitHub provides additional document on [forking a repository](https://help.github.com/articles/fork-a-repo/) and
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
