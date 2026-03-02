@@ -7,7 +7,7 @@ description = "AWS CloudFormation Guard is an open-source general-purpose policy
 license = "Apache-2.0"
 repository = "https://github.com/aws-cloudformation/cloudformation-guard"
 documentation = "https://github.com/aws-cloudformation/cloudformation-guard/blob/main/README.md"
-readme = "README.md"
+readme = "../README.md"
 keywords = ["policy-as-code", "guard", "cfn-guard", "security", "compliance"]
 
 [lib]
