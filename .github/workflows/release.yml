@@ -109,13 +109,13 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore: bump version to $VERSION"
           fi
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists, skipping"
+          if git ls-remote --tags origin "$VERSION" | grep -q "$VERSION"; then
+            echo "Tag $VERSION already exists on remote, skipping"
           else
             git tag "$VERSION"
             git push origin "$VERSION"
           fi
-          git push origin "$BRANCH"
+          git push origin "$BRANCH" --force-with-lease
 
       - name: Create PR to merge version bump back to main
         if: ${{ !inputs.dry_run }}
