@@ -115,6 +115,7 @@ jobs:
             git tag "$VERSION"
             git push origin "$VERSION"
           fi
+          git fetch origin "$BRANCH" 2>/dev/null || true
           git push origin "$BRANCH" --force-with-lease
 
       - name: Create PR to merge version bump back to main
