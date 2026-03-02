@@ -1194,6 +1194,7 @@ pub(crate) enum FunctionName {
     ToLower,
     ToUpper,
     UrlDecode,
+    Key, // <-- add this line
 }
 
 impl FunctionName {
@@ -1213,6 +1214,7 @@ impl FunctionName {
             | FunctionName::ParseEpoch
             | FunctionName::ParseChar => 1,
             FunctionName::Now => 0,
+            FunctionName::Key => 1, // key expects 1 argument
         }
     }
 }
@@ -1235,6 +1237,7 @@ impl std::fmt::Display for FunctionName {
             FunctionName::ToLower => "to_lower",
             FunctionName::ToUpper => "to_upper",
             FunctionName::UrlDecode => "url_decode",
+            FunctionName::Key => "key",
         };
         write!(f, "{}", name)
     }
@@ -1260,6 +1263,7 @@ impl TryFrom<&str> for FunctionName {
             "to_lower" => Ok(FunctionName::ToLower),
             "to_upper" => Ok(FunctionName::ToUpper),
             "url_decode" => Ok(FunctionName::UrlDecode),
+            "key" => Ok(FunctionName::Key),
             _ => Err(Error::ParseError(format!(
                 "No function with the name '{name}' exists.",
             ))),
@@ -1282,6 +1286,7 @@ struct ParseBooleanFunction;
 struct ParseCharFunction;
 struct ParseEpochFunction;
 struct NowFunction;
+struct KeyFunction;
 
 trait Callable {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>>;
@@ -1305,6 +1310,7 @@ impl Callable for FunctionName {
             FunctionName::ParseChar => ParseCharFunction.call(args),
             FunctionName::ParseEpoch => ParseEpochFunction.call(args),
             FunctionName::Now => NowFunction.call(args),
+            FunctionName::Key => KeyFunction.call(args),
         }
     }
 }
@@ -2469,6 +2475,13 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
         .map(Rc::new)
         .map(QueryResult::Resolved)
         .collect::<Vec<_>>())
+}
+
+impl Callable for KeyFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        use crate::rules::functions::key::key;
+        Ok(vec![Some(key(&args[0]))])
+    }
 }
 
 #[cfg(test)]
