@@ -264,7 +264,13 @@ jobs:
       - name: Publish cfn-guard
         run: |
           cd guard
-          cargo publish --no-verify || echo "::warning::cfn-guard publish failed (may already be published)"
+          cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
+            if grep -q "already uploaded" /tmp/publish.log; then
+              echo "::warning::cfn-guard already published, skipping"
+            else
+              exit 1
+            fi
+          }
 
       - name: Wait for crates.io index
         run: sleep 30
@@ -272,12 +278,24 @@ jobs:
       - name: Publish cfn-guard-lambda
         run: |
           cd guard-lambda
-          cargo publish --no-verify || echo "::warning::cfn-guard-lambda publish failed (may already be published)"
+          cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
+            if grep -q "already uploaded" /tmp/publish.log; then
+              echo "::warning::cfn-guard-lambda already published, skipping"
+            else
+              exit 1
+            fi
+          }
 
       - name: Publish cfn-guard-ffi
         run: |
           cd guard-ffi
-          cargo publish --no-verify || echo "::warning::cfn-guard-ffi publish failed (may already be published)"
+          cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
+            if grep -q "already uploaded" /tmp/publish.log; then
+              echo "::warning::cfn-guard-ffi already published, skipping"
+            else
+              exit 1
+            fi
+          }
 
   # ---------------------------------------------------------------------------
   # 6. Publish Docker to ECR Public
