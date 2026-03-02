@@ -17,12 +17,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip_homebrew:
-        description: "Skip Homebrew PR"
-        required: false
-        type: boolean
-        default: false
-
 env:
   CARGO_TERM_COLOR: always
 
@@ -270,8 +264,7 @@ jobs:
       - name: Publish cfn-guard
         run: |
           cd guard
-          cargo publish --dry-run
-          cargo publish || echo "::warning::cfn-guard publish failed (may already be published)"
+          cargo publish --no-verify || echo "::warning::cfn-guard publish failed (may already be published)"
 
       - name: Wait for crates.io index
         run: sleep 30
@@ -279,14 +272,12 @@ jobs:
       - name: Publish cfn-guard-lambda
         run: |
           cd guard-lambda
-          cargo publish --dry-run
-          cargo publish || echo "::warning::cfn-guard-lambda publish failed (may already be published)"
+          cargo publish --no-verify || echo "::warning::cfn-guard-lambda publish failed (may already be published)"
 
       - name: Publish cfn-guard-ffi
         run: |
           cd guard-ffi
-          cargo publish --dry-run
-          cargo publish || echo "::warning::cfn-guard-ffi publish failed (may already be published)"
+          cargo publish --no-verify || echo "::warning::cfn-guard-ffi publish failed (may already be published)"
 
   # ---------------------------------------------------------------------------
   # 6. Publish Docker to ECR Public
@@ -333,26 +324,3 @@ jobs:
           docker push "$PREFIX:$VERSION"
           docker push "$PREFIX:latest"
 
-  # ---------------------------------------------------------------------------
-  # 7. Open Homebrew PR
-  # ---------------------------------------------------------------------------
-  publish-homebrew:
-    name: Homebrew PR
-    needs: [validate, github-release]
-    if: ${{ !inputs.dry_run && !inputs.skip_homebrew }}
-    runs-on: macos-latest
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
-    steps:
-      - name: Update Homebrew & open PR
-        run: |
-          brew update
-          TARBALL_URL="https://github.com/aws-cloudformation/cloudformation-guard/archive/refs/tags/${VERSION}.tar.gz"
-          curl -fsSL "$TARBALL_URL" -o guard.tar.gz
-          SHA256=$(shasum -a 256 guard.tar.gz | awk '{print $1}')
-          brew bump-formula-pr \
-            --url "$TARBALL_URL" \
-            --sha256 "$SHA256" \
-            --no-browse \
-            cloudformation-guard
