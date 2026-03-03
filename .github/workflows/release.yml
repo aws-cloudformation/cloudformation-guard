@@ -234,13 +234,24 @@ jobs:
       - name: List assets
         run: ls -lhR artifacts/
 
+      - name: Check if release exists
+        id: check
+        run: |
+          if gh release view "$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create release
         if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
           name: v${{ env.VERSION }}
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.check.outputs.exists == 'false' }}
           files: artifacts/*.tar.gz
 
   # ---------------------------------------------------------------------------
