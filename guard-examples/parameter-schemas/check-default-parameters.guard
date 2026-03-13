@@ -1,0 +1,44 @@
+# This ruleset checks if Parameters are configured correctly.
+# It is useful if you must have the same parameters in multiple templates (e.g. for tagging or name schema)
+
+# Exception that proves the rule. ;D Maybe you have templates which does not need those parameters. In this scenario we have the cloudformation templates from https://github.com/aws-solutions/aws-waf-security-automations in our template dir. The exclude list is based of the template description. You can use Metadata or other ways as well. 
+let exclude = [
+  /(SO0006-FA) - Security Automations for AWS WAF - FA:/,
+  /(SO0006-WebACL) - Security Automations for AWS WAF:/,
+  /(SO0006) - Security Automations for AWS WAF:/
+  ]
+
+
+# Now we check if our default parameters exists in templates which we have not excluded
+rule assert_default_parameters_exists when Description not in %exclude {
+    Parameters.Parameter1 exists
+    Parameters.Parameter2 exists
+    Parameters.Stage exists
+}
+
+# our default parameters must have always the same configuration
+rule assert_default_parameter_configuration when assert_default_parameters_exists {
+    Parameters.Parameter1 {
+      Description == 'Parameter1'
+      Type == 'String'
+      AllowedPattern == '[a-z0-9]+'
+      ConstraintDescription == "Invalid input. Allowed Pattern = '[a-z0-9]+'. Parameter must not be empty."
+    }
+    Parameters.Parameter2 {
+      Description == 'Parameter2'
+      Type == 'String'
+      AllowedPattern == '[a-z0-9]+'
+      ConstraintDescription == "Invalid input. Allowed Pattern = '[a-z0-9]+'. Parameter must not be empty."
+    }
+    Parameters.Stage {
+      Type == 'String'
+      Description == 'Stage setting'
+      AllowedValues == ['stage1', 'stage2', 'stage3']
+    }
+}
+
+# All parameters with an AllowedPattern must have a ConstraintDescription
+let parameters  = some Parameters.*[AllowedPattern exists]
+rule assert_ConstraintDescription when %parameters exists {
+    %parameters.ConstraintDescription exists
+}
