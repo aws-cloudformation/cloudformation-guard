@@ -1882,6 +1882,7 @@ class Context {
         this.action = process.env.GITHUB_ACTION;
         this.actor = process.env.GITHUB_ACTOR;
         this.job = process.env.GITHUB_JOB;
+        this.runAttempt = parseInt(process.env.GITHUB_RUN_ATTEMPT, 10);
         this.runNumber = parseInt(process.env.GITHUB_RUN_NUMBER, 10);
         this.runId = parseInt(process.env.GITHUB_RUN_ID, 10);
         this.apiUrl = (_a = process.env.GITHUB_API_URL) !== null && _a !== void 0 ? _a : `https://api.github.com`;
@@ -7320,522 +7321,6 @@ function removeHook(state, name, method) {
 
   state.registry[name].splice(index, 1);
 }
-
-
-/***/ }),
-
-/***/ 5060:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-let imports = {};
-imports['__wbindgen_placeholder__'] = module.exports;
-let wasm;
-const { existsSync } = __nccwpck_require__(9896);
-const { resolve } = __nccwpck_require__(6928);
-const { TextDecoder, TextEncoder } = __nccwpck_require__(9023);
-
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-
-cachedTextDecoder.decode();
-
-let cachedUint8Memory0 = null;
-
-function getUint8Memory0() {
-    if (cachedUint8Memory0 === null || cachedUint8Memory0.byteLength === 0) {
-        cachedUint8Memory0 = new Uint8Array(wasm.memory.buffer);
-    }
-    return cachedUint8Memory0;
-}
-
-function getStringFromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return cachedTextDecoder.decode(getUint8Memory0().subarray(ptr, ptr + len));
-}
-
-const heap = new Array(128).fill(undefined);
-
-heap.push(undefined, null, true, false);
-
-let heap_next = heap.length;
-
-function addHeapObject(obj) {
-    if (heap_next === heap.length) heap.push(heap.length + 1);
-    const idx = heap_next;
-    heap_next = heap[idx];
-
-    heap[idx] = obj;
-    return idx;
-}
-
-function getObject(idx) { return heap[idx]; }
-
-function isLikeNone(x) {
-    return x === undefined || x === null;
-}
-
-let cachedFloat64Memory0 = null;
-
-function getFloat64Memory0() {
-    if (cachedFloat64Memory0 === null || cachedFloat64Memory0.byteLength === 0) {
-        cachedFloat64Memory0 = new Float64Array(wasm.memory.buffer);
-    }
-    return cachedFloat64Memory0;
-}
-
-let cachedInt32Memory0 = null;
-
-function getInt32Memory0() {
-    if (cachedInt32Memory0 === null || cachedInt32Memory0.byteLength === 0) {
-        cachedInt32Memory0 = new Int32Array(wasm.memory.buffer);
-    }
-    return cachedInt32Memory0;
-}
-
-function dropObject(idx) {
-    if (idx < 132) return;
-    heap[idx] = heap_next;
-    heap_next = idx;
-}
-
-function takeObject(idx) {
-    const ret = getObject(idx);
-    dropObject(idx);
-    return ret;
-}
-
-let WASM_VECTOR_LEN = 0;
-
-let cachedTextEncoder = new TextEncoder('utf-8');
-
-const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
-    ? function (arg, view) {
-    return cachedTextEncoder.encodeInto(arg, view);
-}
-    : function (arg, view) {
-    const buf = cachedTextEncoder.encode(arg);
-    view.set(buf);
-    return {
-        read: arg.length,
-        written: buf.length
-    };
-});
-
-function passStringToWasm0(arg, malloc, realloc) {
-
-    if (realloc === undefined) {
-        const buf = cachedTextEncoder.encode(arg);
-        const ptr = malloc(buf.length, 1) >>> 0;
-        getUint8Memory0().subarray(ptr, ptr + buf.length).set(buf);
-        WASM_VECTOR_LEN = buf.length;
-        return ptr;
-    }
-
-    let len = arg.length;
-    let ptr = malloc(len, 1) >>> 0;
-
-    const mem = getUint8Memory0();
-
-    let offset = 0;
-
-    for (; offset < len; offset++) {
-        const code = arg.charCodeAt(offset);
-        if (code > 0x7F) break;
-        mem[ptr + offset] = code;
-    }
-
-    if (offset !== len) {
-        if (offset !== 0) {
-            arg = arg.slice(offset);
-        }
-        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
-        const view = getUint8Memory0().subarray(ptr + offset, ptr + len);
-        const ret = encodeString(arg, view);
-
-        offset += ret.written;
-        ptr = realloc(ptr, len, offset, 1) >>> 0;
-    }
-
-    WASM_VECTOR_LEN = offset;
-    return ptr;
-}
-
-let cachedUint32Memory0 = null;
-
-function getUint32Memory0() {
-    if (cachedUint32Memory0 === null || cachedUint32Memory0.byteLength === 0) {
-        cachedUint32Memory0 = new Uint32Array(wasm.memory.buffer);
-    }
-    return cachedUint32Memory0;
-}
-
-function passArrayJsValueToWasm0(array, malloc) {
-    const ptr = malloc(array.length * 4, 4) >>> 0;
-    const mem = getUint32Memory0();
-    for (let i = 0; i < array.length; i++) {
-        mem[ptr / 4 + i] = addHeapObject(array[i]);
-    }
-    WASM_VECTOR_LEN = array.length;
-    return ptr;
-}
-
-function handleError(f, args) {
-    try {
-        return f.apply(this, args);
-    } catch (e) {
-        wasm.__wbindgen_exn_store(addHeapObject(e));
-    }
-}
-/**
-*/
-module.exports.OutputFormatType = Object.freeze({ SingleLineSummary:0,"0":"SingleLineSummary",JSON:1,"1":"JSON",YAML:2,"2":"YAML",Junit:3,"3":"Junit",Sarif:4,"4":"Sarif", });
-/**
-*/
-module.exports.ShowSummaryType = Object.freeze({ All:0,"0":"All",Pass:1,"1":"Pass",Fail:2,"2":"Fail",Skip:3,"3":"Skip",None:4,"4":"None", });
-
-const ValidateBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
-    ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_validatebuilder_free(ptr >>> 0));
-/**
-* .
-* A builder to help construct the `Validate` command
-*/
-class ValidateBuilder {
-
-    static __wrap(ptr) {
-        ptr = ptr >>> 0;
-        const obj = Object.create(ValidateBuilder.prototype);
-        obj.__wbg_ptr = ptr;
-        ValidateBuilderFinalization.register(obj, obj.__wbg_ptr, obj);
-        return obj;
-    }
-
-    __destroy_into_raw() {
-        const ptr = this.__wbg_ptr;
-        this.__wbg_ptr = 0;
-        ValidateBuilderFinalization.unregister(this);
-        return ptr;
-    }
-
-    free() {
-        const ptr = this.__destroy_into_raw();
-        wasm.__wbg_validatebuilder_free(ptr);
-    }
-    /**
-    * a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
-    * conflicts with payload
-    * @param {(string)[]} rules
-    * @returns {ValidateBuilder}
-    */
-    rules(rules) {
-        const ptr = this.__destroy_into_raw();
-        const ptr0 = passArrayJsValueToWasm0(rules, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.validatebuilder_rules(ptr, ptr0, len0);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * a list of paths that point to data files, or a directory containing data files  for the rules to be evaluated against. Only JSON, or YAML files will be used
-    * conflicts with payload
-    * @param {(string)[]} data
-    * @returns {ValidateBuilder}
-    */
-    data(data) {
-        const ptr = this.__destroy_into_raw();
-        const ptr0 = passArrayJsValueToWasm0(data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.validatebuilder_data(ptr, ptr0, len0);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
-    * default is failed
-    * must be set to none if used together with the structured flag
-    * @param {any[]} args
-    * @returns {ValidateBuilder}
-    */
-    showSummary(args) {
-        const ptr = this.__destroy_into_raw();
-        const ptr0 = passArrayJsValueToWasm0(args, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.validatebuilder_showSummary(ptr, ptr0, len0);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
-    * @param {(string)[]} input_params
-    * @returns {ValidateBuilder}
-    */
-    input_params(input_params) {
-        const ptr = this.__destroy_into_raw();
-        const ptr0 = passArrayJsValueToWasm0(input_params, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.validatebuilder_input_params(ptr, ptr0, len0);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Specify the format in which the output should be displayed
-    * default is single-line-summary
-    * if junit is used, `structured` attributed must be set to true
-    * @param {OutputFormatType} output
-    * @returns {ValidateBuilder}
-    */
-    outputFormat(output) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_outputFormat(ptr, output);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Tells the command that rules, and data will be passed via a reader, as a json payload.
-    * Conflicts with both rules, and data
-    * default is false
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    payload(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_payload(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    alphabetical(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_alphabetical(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Validate files in a directory ordered by last modified times, conflicts with `alphabetical` field
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    last_modified(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_last_modified(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Output verbose logging, conflicts with `structured` field
-    * default is false
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    verbose(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_verbose(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
-    * conflicts with the `structured` attribute
-    * default is false
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    print_json(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_print_json(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    * Prints the output which must be specified to JSON/YAML/JUnit in a structured format
-    * Conflicts with the following attributes `verbose`, `print-json`, `output-format` when set
-    * to "single-line-summary", show-summary when set to anything other than "none"
-    * default is false
-    * @param {boolean} arg
-    * @returns {ValidateBuilder}
-    */
-    structured(arg) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.validatebuilder_structured(ptr, arg);
-        return ValidateBuilder.__wrap(ret);
-    }
-    /**
-    */
-    constructor() {
-        const ret = wasm.validatebuilder_new();
-        this.__wbg_ptr = ret >>> 0;
-        return this;
-    }
-    /**
-    * @param {string} payload
-    * @returns {any}
-    */
-    tryBuildAndExecute(payload) {
-        try {
-            const ptr = this.__destroy_into_raw();
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-            const len0 = WASM_VECTOR_LEN;
-            wasm.validatebuilder_tryBuildAndExecute(retptr, ptr, ptr0, len0);
-            var r0 = getInt32Memory0()[retptr / 4 + 0];
-            var r1 = getInt32Memory0()[retptr / 4 + 1];
-            var r2 = getInt32Memory0()[retptr / 4 + 2];
-            if (r2) {
-                throw takeObject(r1);
-            }
-            return takeObject(r0);
-        } finally {
-            wasm.__wbindgen_add_to_stack_pointer(16);
-        }
-    }
-}
-module.exports.ValidateBuilder = ValidateBuilder;
-
-module.exports.__wbindgen_string_new = function(arg0, arg1) {
-    const ret = getStringFromWasm0(arg0, arg1);
-    return addHeapObject(ret);
-};
-
-module.exports.__wbindgen_try_into_number = function(arg0) {
-    let result;
-try { result = +getObject(arg0) } catch (e) { result = e }
-const ret = result;
-return addHeapObject(ret);
-};
-
-module.exports.__wbindgen_number_get = function(arg0, arg1) {
-    const obj = getObject(arg1);
-    const ret = typeof(obj) === 'number' ? obj : undefined;
-    getFloat64Memory0()[arg0 / 8 + 1] = isLikeNone(ret) ? 0 : ret;
-    getInt32Memory0()[arg0 / 4 + 0] = !isLikeNone(ret);
-};
-
-module.exports.__wbindgen_object_drop_ref = function(arg0) {
-    takeObject(arg0);
-};
-
-module.exports.__wbg_existsSync_2b54de1ac768abd3 = function() { return handleError(function (arg0, arg1) {
-    const ret = existsSync(getStringFromWasm0(arg0, arg1));
-    return ret;
-}, arguments) };
-
-module.exports.__wbg_resolve_88cfd218e55df477 = function() { return handleError(function (arg0, arg1, arg2) {
-    const ret = resolve(getStringFromWasm0(arg1, arg2));
-    const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    getInt32Memory0()[arg0 / 4 + 1] = len1;
-    getInt32Memory0()[arg0 / 4 + 0] = ptr1;
-}, arguments) };
-
-module.exports.__wbindgen_string_get = function(arg0, arg1) {
-    const obj = getObject(arg1);
-    const ret = typeof(obj) === 'string' ? obj : undefined;
-    var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    var len1 = WASM_VECTOR_LEN;
-    getInt32Memory0()[arg0 / 4 + 1] = len1;
-    getInt32Memory0()[arg0 / 4 + 0] = ptr1;
-};
-
-module.exports.__wbindgen_throw = function(arg0, arg1) {
-    throw new Error(getStringFromWasm0(arg0, arg1));
-};
-
-const path = __nccwpck_require__.ab + "guard_bg.wasm";
-const bytes = (__nccwpck_require__(9896).readFileSync)(__nccwpck_require__.ab + "guard_bg.wasm");
-
-const wasmModule = new WebAssembly.Module(bytes);
-const wasmInstance = new WebAssembly.Instance(wasmModule, imports);
-wasm = wasmInstance.exports;
-module.exports.__wasm = wasm;
-
-
-
-/***/ }),
-
-/***/ 437:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.validate = void 0;
-const guard_1 = __nccwpck_require__(5060);
-const path = __nccwpck_require__(6760);
-const fs = __nccwpck_require__(9896);
-const DATA_FILE_SUPPORTED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsn', '.template'];
-const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
-const formatOutput = ({ result, rulesNames, dataNames }) => {
-    const dataPattern = /DATA_STDIN\[(\d+)\]/g;
-    const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
-    const isWindows = process.platform === 'win32';
-    const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
-        const fileIndex = parseInt(index, 10) - 1;
-        const fileName = dataNames[fileIndex];
-        return fileName ? (isWindows ? fileName.split('\\').join('/') : fileName) : match;
-    }).replace(rulesPattern, (match, index) => {
-        const ruleIndex = parseInt(index, 10) - 1;
-        const ruleName = rulesNames[ruleIndex];
-        if (ruleName) {
-            const fileNameWithoutExtension = path.basename(ruleName, path.extname(ruleName));
-            return fileNameWithoutExtension.toUpperCase();
-        }
-        return match;
-    }));
-    return JSON.parse(output);
-};
-async function readFiles(dirOrFile, supportedExtensions) {
-    const fileNames = [];
-    const fileContents = [];
-    const stat = await fs.promises.stat(dirOrFile);
-    if (stat.isDirectory()) {
-        const files = await getAllFiles(dirOrFile, supportedExtensions);
-        const readPromises = files.map(async (file) => {
-            const content = await fs.promises.readFile(file, 'utf8');
-            fileNames.push(file);
-            fileContents.push(content);
-        });
-        await Promise.all(readPromises);
-    }
-    else if (stat.isFile() && supportedExtensions.includes(path.extname(dirOrFile))) {
-        const content = await fs.promises.readFile(dirOrFile, 'utf8');
-        fileNames.push(dirOrFile);
-        fileContents.push(content);
-    }
-    return {
-        fileContents,
-        fileNames,
-    };
-}
-async function getAllFiles(dirPath, supportedExtensions) {
-    const files = [];
-    const dirEntries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    const traversalPromises = dirEntries.map(async (entry) => {
-        const entryPath = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-            const subFiles = await getAllFiles(entryPath, supportedExtensions);
-            files.push(...subFiles);
-        }
-        else if (supportedExtensions.includes(path.extname(entryPath))) {
-            files.push(entryPath);
-        }
-    });
-    await Promise.all(traversalPromises);
-    return files;
-}
-const validate = async ({ rulesPath, dataPath }) => {
-    const rulesResult = await readFiles(rulesPath, RULE_FILE_SUPPORTED_EXTENSIONS);
-    const dataResult = await readFiles(dataPath, DATA_FILE_SUPPORTED_EXTENSIONS);
-    const payload = {
-        rules: rulesResult.fileContents,
-        data: dataResult.fileContents,
-    };
-    const validateBuilder = new guard_1.ValidateBuilder();
-    const result = validateBuilder
-        .payload(true)
-        .structured(true)
-        .showSummary([guard_1.ShowSummaryType.None])
-        .outputFormat(guard_1.OutputFormatType.Sarif)
-        .tryBuildAndExecute(JSON.stringify(payload));
-    return formatOutput({
-        result,
-        rulesNames: rulesResult.fileNames,
-        dataNames: dataResult.fileNames,
-    });
-};
-exports.validate = validate;
 
 
 /***/ }),
@@ -13525,7 +13010,7 @@ module.exports = {
 
 
 const { parseSetCookie } = __nccwpck_require__(8915)
-const { stringify, getHeadersList } = __nccwpck_require__(3834)
+const { stringify } = __nccwpck_require__(3834)
 const { webidl } = __nccwpck_require__(4222)
 const { Headers } = __nccwpck_require__(6349)
 
@@ -13601,14 +13086,13 @@ function getSetCookies (headers) {
 
   webidl.brandCheck(headers, Headers, { strict: false })
 
-  const cookies = getHeadersList(headers).cookies
+  const cookies = headers.getSetCookie()
 
   if (!cookies) {
     return []
   }
 
-  // In older versions of undici, cookies is a list of name:value.
-  return cookies.map((pair) => parseSetCookie(Array.isArray(pair) ? pair[1] : pair))
+  return cookies.map((pair) => parseSetCookie(pair))
 }
 
 /**
@@ -14036,14 +13520,15 @@ module.exports = {
 /***/ }),
 
 /***/ 3834:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ ((module) => {
 
 "use strict";
 
 
-const assert = __nccwpck_require__(2613)
-const { kHeadersList } = __nccwpck_require__(6443)
-
+/**
+ * @param {string} value
+ * @returns {boolean}
+ */
 function isCTLExcludingHtab (value) {
   if (value.length === 0) {
     return false
@@ -14304,31 +13789,13 @@ function stringify (cookie) {
   return out.join('; ')
 }
 
-let kHeadersListNode
-
-function getHeadersList (headers) {
-  if (headers[kHeadersList]) {
-    return headers[kHeadersList]
-  }
-
-  if (!kHeadersListNode) {
-    kHeadersListNode = Object.getOwnPropertySymbols(headers).find(
-      (symbol) => symbol.description === 'headers list'
-    )
-
-    assert(kHeadersListNode, 'Headers cannot be parsed')
-  }
-
-  const headersList = headers[kHeadersListNode]
-  assert(headersList)
-
-  return headersList
-}
-
 module.exports = {
   isCTLExcludingHtab,
-  stringify,
-  getHeadersList
+  validateCookieName,
+  validateCookiePath,
+  validateCookieValue,
+  toIMFDate,
+  stringify
 }
 
 
@@ -18332,6 +17799,7 @@ const {
   isValidHeaderName,
   isValidHeaderValue
 } = __nccwpck_require__(5523)
+const util = __nccwpck_require__(9023)
 const { webidl } = __nccwpck_require__(4222)
 const assert = __nccwpck_require__(2613)
 
@@ -18885,6 +18353,9 @@ Object.defineProperties(Headers.prototype, {
   [Symbol.toStringTag]: {
     value: 'Headers',
     configurable: true
+  },
+  [util.inspect.custom]: {
+    enumerable: false
   }
 })
 
@@ -28061,6 +27532,20 @@ class Pool extends PoolBase {
       ? { ...options.interceptors }
       : undefined
     this[kFactory] = factory
+
+    this.on('connectionError', (origin, targets, error) => {
+      // If a connection error occurs, we remove the client from the pool,
+      // and emit a connectionError event. They will not be re-used.
+      // Fixes https://github.com/nodejs/undici/issues/3895
+      for (const target of targets) {
+        // Do not use kRemoveClient here, as it will close the client,
+        // but the client cannot be closed in this state.
+        const idx = this[kClients].indexOf(target)
+        if (idx !== -1) {
+          this[kClients].splice(idx, 1)
+        }
+      }
+    })
   }
 
   [kGetDispatcher] () {
@@ -30431,6 +29916,522 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 4411:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+let imports = {};
+imports['__wbindgen_placeholder__'] = module.exports;
+let wasm;
+const { existsSync } = __nccwpck_require__(9896);
+const { resolve } = __nccwpck_require__(6928);
+const { TextDecoder, TextEncoder } = __nccwpck_require__(9023);
+
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+
+cachedTextDecoder.decode();
+
+let cachedUint8Memory0 = null;
+
+function getUint8Memory0() {
+    if (cachedUint8Memory0 === null || cachedUint8Memory0.byteLength === 0) {
+        cachedUint8Memory0 = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachedUint8Memory0;
+}
+
+function getStringFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return cachedTextDecoder.decode(getUint8Memory0().subarray(ptr, ptr + len));
+}
+
+const heap = new Array(128).fill(undefined);
+
+heap.push(undefined, null, true, false);
+
+let heap_next = heap.length;
+
+function addHeapObject(obj) {
+    if (heap_next === heap.length) heap.push(heap.length + 1);
+    const idx = heap_next;
+    heap_next = heap[idx];
+
+    heap[idx] = obj;
+    return idx;
+}
+
+function getObject(idx) { return heap[idx]; }
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
+
+let cachedFloat64Memory0 = null;
+
+function getFloat64Memory0() {
+    if (cachedFloat64Memory0 === null || cachedFloat64Memory0.byteLength === 0) {
+        cachedFloat64Memory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64Memory0;
+}
+
+let cachedInt32Memory0 = null;
+
+function getInt32Memory0() {
+    if (cachedInt32Memory0 === null || cachedInt32Memory0.byteLength === 0) {
+        cachedInt32Memory0 = new Int32Array(wasm.memory.buffer);
+    }
+    return cachedInt32Memory0;
+}
+
+function dropObject(idx) {
+    if (idx < 132) return;
+    heap[idx] = heap_next;
+    heap_next = idx;
+}
+
+function takeObject(idx) {
+    const ret = getObject(idx);
+    dropObject(idx);
+    return ret;
+}
+
+let WASM_VECTOR_LEN = 0;
+
+let cachedTextEncoder = new TextEncoder('utf-8');
+
+const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
+    ? function (arg, view) {
+    return cachedTextEncoder.encodeInto(arg, view);
+}
+    : function (arg, view) {
+    const buf = cachedTextEncoder.encode(arg);
+    view.set(buf);
+    return {
+        read: arg.length,
+        written: buf.length
+    };
+});
+
+function passStringToWasm0(arg, malloc, realloc) {
+
+    if (realloc === undefined) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr = malloc(buf.length, 1) >>> 0;
+        getUint8Memory0().subarray(ptr, ptr + buf.length).set(buf);
+        WASM_VECTOR_LEN = buf.length;
+        return ptr;
+    }
+
+    let len = arg.length;
+    let ptr = malloc(len, 1) >>> 0;
+
+    const mem = getUint8Memory0();
+
+    let offset = 0;
+
+    for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 0x7F) break;
+        mem[ptr + offset] = code;
+    }
+
+    if (offset !== len) {
+        if (offset !== 0) {
+            arg = arg.slice(offset);
+        }
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
+        const view = getUint8Memory0().subarray(ptr + offset, ptr + len);
+        const ret = encodeString(arg, view);
+
+        offset += ret.written;
+        ptr = realloc(ptr, len, offset, 1) >>> 0;
+    }
+
+    WASM_VECTOR_LEN = offset;
+    return ptr;
+}
+
+let cachedUint32Memory0 = null;
+
+function getUint32Memory0() {
+    if (cachedUint32Memory0 === null || cachedUint32Memory0.byteLength === 0) {
+        cachedUint32Memory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32Memory0;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    const mem = getUint32Memory0();
+    for (let i = 0; i < array.length; i++) {
+        mem[ptr / 4 + i] = addHeapObject(array[i]);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
+}
+
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        wasm.__wbindgen_exn_store(addHeapObject(e));
+    }
+}
+/**
+*/
+module.exports.OutputFormatType = Object.freeze({ SingleLineSummary:0,"0":"SingleLineSummary",JSON:1,"1":"JSON",YAML:2,"2":"YAML",Junit:3,"3":"Junit",Sarif:4,"4":"Sarif", });
+/**
+*/
+module.exports.ShowSummaryType = Object.freeze({ All:0,"0":"All",Pass:1,"1":"Pass",Fail:2,"2":"Fail",Skip:3,"3":"Skip",None:4,"4":"None", });
+
+const ValidateBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_validatebuilder_free(ptr >>> 0));
+/**
+* .
+* A builder to help construct the `Validate` command
+*/
+class ValidateBuilder {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ValidateBuilder.prototype);
+        obj.__wbg_ptr = ptr;
+        ValidateBuilderFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ValidateBuilderFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_validatebuilder_free(ptr);
+    }
+    /**
+    * a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
+    * conflicts with payload
+    * @param {(string)[]} rules
+    * @returns {ValidateBuilder}
+    */
+    rules(rules) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArrayJsValueToWasm0(rules, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.validatebuilder_rules(ptr, ptr0, len0);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * a list of paths that point to data files, or a directory containing data files  for the rules to be evaluated against. Only JSON, or YAML files will be used
+    * conflicts with payload
+    * @param {(string)[]} data
+    * @returns {ValidateBuilder}
+    */
+    data(data) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArrayJsValueToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.validatebuilder_data(ptr, ptr0, len0);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
+    * default is failed
+    * must be set to none if used together with the structured flag
+    * @param {any[]} args
+    * @returns {ValidateBuilder}
+    */
+    showSummary(args) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArrayJsValueToWasm0(args, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.validatebuilder_showSummary(ptr, ptr0, len0);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * a list of paths that point to data files, or a directory containing data files to be merged with the data argument and then the  rules will be evaluated against them. Only JSON, or YAML files will be used
+    * @param {(string)[]} input_params
+    * @returns {ValidateBuilder}
+    */
+    input_params(input_params) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArrayJsValueToWasm0(input_params, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.validatebuilder_input_params(ptr, ptr0, len0);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Specify the format in which the output should be displayed
+    * default is single-line-summary
+    * if junit is used, `structured` attributed must be set to true
+    * @param {OutputFormatType} output
+    * @returns {ValidateBuilder}
+    */
+    outputFormat(output) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_outputFormat(ptr, output);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Tells the command that rules, and data will be passed via a reader, as a json payload.
+    * Conflicts with both rules, and data
+    * default is false
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    payload(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_payload(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    alphabetical(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_alphabetical(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Validate files in a directory ordered by last modified times, conflicts with `alphabetical` field
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    last_modified(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_last_modified(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Output verbose logging, conflicts with `structured` field
+    * default is false
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    verbose(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_verbose(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
+    * conflicts with the `structured` attribute
+    * default is false
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    print_json(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_print_json(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    * Prints the output which must be specified to JSON/YAML/JUnit in a structured format
+    * Conflicts with the following attributes `verbose`, `print-json`, `output-format` when set
+    * to "single-line-summary", show-summary when set to anything other than "none"
+    * default is false
+    * @param {boolean} arg
+    * @returns {ValidateBuilder}
+    */
+    structured(arg) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.validatebuilder_structured(ptr, arg);
+        return ValidateBuilder.__wrap(ret);
+    }
+    /**
+    */
+    constructor() {
+        const ret = wasm.validatebuilder_new();
+        this.__wbg_ptr = ret >>> 0;
+        return this;
+    }
+    /**
+    * @param {string} payload
+    * @returns {any}
+    */
+    tryBuildAndExecute(payload) {
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.validatebuilder_tryBuildAndExecute(retptr, ptr, ptr0, len0);
+            var r0 = getInt32Memory0()[retptr / 4 + 0];
+            var r1 = getInt32Memory0()[retptr / 4 + 1];
+            var r2 = getInt32Memory0()[retptr / 4 + 2];
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+module.exports.ValidateBuilder = ValidateBuilder;
+
+module.exports.__wbindgen_string_new = function(arg0, arg1) {
+    const ret = getStringFromWasm0(arg0, arg1);
+    return addHeapObject(ret);
+};
+
+module.exports.__wbindgen_try_into_number = function(arg0) {
+    let result;
+try { result = +getObject(arg0) } catch (e) { result = e }
+const ret = result;
+return addHeapObject(ret);
+};
+
+module.exports.__wbindgen_number_get = function(arg0, arg1) {
+    const obj = getObject(arg1);
+    const ret = typeof(obj) === 'number' ? obj : undefined;
+    getFloat64Memory0()[arg0 / 8 + 1] = isLikeNone(ret) ? 0 : ret;
+    getInt32Memory0()[arg0 / 4 + 0] = !isLikeNone(ret);
+};
+
+module.exports.__wbindgen_object_drop_ref = function(arg0) {
+    takeObject(arg0);
+};
+
+module.exports.__wbg_existsSync_2b54de1ac768abd3 = function() { return handleError(function (arg0, arg1) {
+    const ret = existsSync(getStringFromWasm0(arg0, arg1));
+    return ret;
+}, arguments) };
+
+module.exports.__wbg_resolve_88cfd218e55df477 = function() { return handleError(function (arg0, arg1, arg2) {
+    const ret = resolve(getStringFromWasm0(arg1, arg2));
+    const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    getInt32Memory0()[arg0 / 4 + 1] = len1;
+    getInt32Memory0()[arg0 / 4 + 0] = ptr1;
+}, arguments) };
+
+module.exports.__wbindgen_string_get = function(arg0, arg1) {
+    const obj = getObject(arg1);
+    const ret = typeof(obj) === 'string' ? obj : undefined;
+    var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    getInt32Memory0()[arg0 / 4 + 1] = len1;
+    getInt32Memory0()[arg0 / 4 + 0] = ptr1;
+};
+
+module.exports.__wbindgen_throw = function(arg0, arg1) {
+    throw new Error(getStringFromWasm0(arg0, arg1));
+};
+
+const path = (__nccwpck_require__(6928).join)(__dirname, 'guard_bg.wasm');
+const bytes = (__nccwpck_require__(9896).readFileSync)(path);
+
+const wasmModule = new WebAssembly.Module(bytes);
+const wasmInstance = new WebAssembly.Instance(wasmModule, imports);
+wasm = wasmInstance.exports;
+module.exports.__wasm = wasm;
+
+
+
+/***/ }),
+
+/***/ 5230:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.validate = void 0;
+const guard_1 = __nccwpck_require__(4411);
+const path = __nccwpck_require__(6760);
+const fs = __nccwpck_require__(9896);
+const DATA_FILE_SUPPORTED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsn', '.template'];
+const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
+const formatOutput = ({ result, rulesNames, dataNames }) => {
+    const dataPattern = /DATA_STDIN\[(\d+)\]/g;
+    const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+    const isWindows = process.platform === 'win32';
+    const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
+        const fileIndex = parseInt(index, 10) - 1;
+        const fileName = dataNames[fileIndex];
+        return fileName ? (isWindows ? fileName.split('\\').join('/') : fileName) : match;
+    }).replace(rulesPattern, (match, index) => {
+        const ruleIndex = parseInt(index, 10) - 1;
+        const ruleName = rulesNames[ruleIndex];
+        if (ruleName) {
+            const fileNameWithoutExtension = path.basename(ruleName, path.extname(ruleName));
+            return fileNameWithoutExtension.toUpperCase();
+        }
+        return match;
+    }));
+    return JSON.parse(output);
+};
+async function readFiles(dirOrFile, supportedExtensions) {
+    const fileNames = [];
+    const fileContents = [];
+    const stat = await fs.promises.stat(dirOrFile);
+    if (stat.isDirectory()) {
+        const files = await getAllFiles(dirOrFile, supportedExtensions);
+        const readPromises = files.map(async (file) => {
+            const content = await fs.promises.readFile(file, 'utf8');
+            fileNames.push(file);
+            fileContents.push(content);
+        });
+        await Promise.all(readPromises);
+    }
+    else if (stat.isFile() && supportedExtensions.includes(path.extname(dirOrFile))) {
+        const content = await fs.promises.readFile(dirOrFile, 'utf8');
+        fileNames.push(dirOrFile);
+        fileContents.push(content);
+    }
+    return {
+        fileContents,
+        fileNames,
+    };
+}
+async function getAllFiles(dirPath, supportedExtensions) {
+    const files = [];
+    const dirEntries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const traversalPromises = dirEntries.map(async (entry) => {
+        const entryPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            const subFiles = await getAllFiles(entryPath, supportedExtensions);
+            files.push(...subFiles);
+        }
+        else if (supportedExtensions.includes(path.extname(entryPath))) {
+            files.push(entryPath);
+        }
+    });
+    await Promise.all(traversalPromises);
+    return files;
+}
+const validate = async ({ rulesPath, dataPath }) => {
+    const rulesResult = await readFiles(rulesPath, RULE_FILE_SUPPORTED_EXTENSIONS);
+    const dataResult = await readFiles(dataPath, DATA_FILE_SUPPORTED_EXTENSIONS);
+    const payload = {
+        rules: rulesResult.fileContents,
+        data: dataResult.fileContents,
+    };
+    const validateBuilder = new guard_1.ValidateBuilder();
+    const result = validateBuilder
+        .payload(true)
+        .structured(true)
+        .showSummary([guard_1.ShowSummaryType.None])
+        .outputFormat(guard_1.OutputFormatType.Sarif)
+        .tryBuildAndExecute(JSON.stringify(payload));
+    return formatOutput({
+        result,
+        rulesNames: rulesResult.fileNames,
+        dataNames: dataResult.fileNames,
+    });
+};
+exports.validate = validate;
+
+
+/***/ }),
+
 /***/ 2854:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30989,7 +30990,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleValidate = handleValidate;
 const core = __importStar(__nccwpck_require__(7484));
-const cfn_guard_1 = __nccwpck_require__(437);
+const cfn_guard_1 = __nccwpck_require__(5230);
 const utils_1 = __nccwpck_require__(1798);
 const debugLog_1 = __importDefault(__nccwpck_require__(7544));
 const getConfig_1 = __importDefault(__nccwpck_require__(3001));
