@@ -19,7 +19,8 @@ on:
         default: false
 env:
   CARGO_TERM_COLOR: always
-
+permissions:
+  contents: read
 jobs:
   # ---------------------------------------------------------------------------
   # 1. Validate input & run tests
