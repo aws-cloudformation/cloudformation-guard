@@ -71,13 +71,22 @@
     ]
   },
   "overrides": {
-    "cross-spawn": "7.0.6"
+    "cross-spawn": "7.0.6",
+    "flatted": "3.4.2",
+    "ajv": "6.14.0",
+    "micromatch": "4.0.8",
+    "js-yaml": ">=3.14.2",
+    "brace-expansion": ">=1.1.13",
+    "picomatch": ">=2.3.2",
+    "minimatch": ">=3.1.5",
+    "@babel/helpers": ">=7.26.10",
+    "@eslint/plugin-kit": ">=0.3.4"
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/exec": "^1.1.1",
     "@actions/github": "^6.0.0",
-    "cfn-guard": "https://gitpkg.now.sh/aws-cloudformation/cloudformation-guard/guard/ts-lib?33d9931"
+    "cfn-guard": "file:../guard/ts-lib"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
