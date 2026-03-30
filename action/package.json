@@ -58,8 +58,12 @@
       "/dist/"
     ],
     "transform": {
-      "^.+\\.ts$": "ts-jest"
+      "^.+\\.ts$": "ts-jest",
+      "^.+\\.js$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@octokit|@actions|undici|before-after-hook|universal-user-agent)/)"
+    ],
     "coverageReporters": [
       "json-summary",
       "text",
@@ -83,9 +87,9 @@
     "@eslint/plugin-kit": ">=0.3.4"
   },
   "dependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/exec": "^1.1.1",
-    "@actions/github": "^6.0.0",
+    "@actions/core": "2.0.3",
+    "@actions/exec": "2.0.0",
+    "@actions/github": "8.0.1",
     "cfn-guard": "file:../guard/ts-lib"
   },
   "devDependencies": {

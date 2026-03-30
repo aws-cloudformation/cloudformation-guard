@@ -177,7 +177,9 @@ export async function handlePullRequestRun({
     pull_number: pull_request.number
   });
 
-  const filesChanged = listFiles.data.map(({ filename }) => filename);
+  const filesChanged: string[] = listFiles.data.map(
+    (file: { filename: string }) => file.filename
+  );
 
   debugLog(`Files changed: ${JSON.stringify(filesChanged, null, 2)}`);
 
