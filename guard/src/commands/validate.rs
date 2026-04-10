@@ -663,27 +663,8 @@ pub fn parse_rules<'r>(
     crate::rules::parser::rules_file(span)
 }
 
-//
-// https://vallentin.dev/2019/05/14/pretty-print-tree
-//
-#[allow(clippy::uninlined_format_args)]
-fn pprint_tree(current: &EventRecord<'_>, prefix: String, last: bool, writer: &mut Writer) {
-    let prefix_current = if last { "`- " } else { "|- " };
-    writeln!(writer, "{}{}{}", prefix, prefix_current, current)
-        .expect("Unable to write to the output");
-
-    let prefix_child = if last { "   " } else { "|  " };
-    let prefix = prefix + prefix_child;
-    if !current.children.is_empty() {
-        let last_child = current.children.len() - 1;
-        for (i, child) in current.children.iter().enumerate() {
-            pprint_tree(child, prefix.clone(), i == last_child, writer);
-        }
-    }
-}
-
 pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut Writer) {
-    pprint_tree(root, "".to_string(), true, writer);
+    crate::rules::eval_context::print_verbose_tree(root, writer);
 }
 
 #[allow(clippy::too_many_arguments)]

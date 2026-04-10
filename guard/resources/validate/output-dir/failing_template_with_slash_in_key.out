@@ -36,7 +36,7 @@ Resource = A/Resource/Name/With/Slash {
       |     |- Filter/ConjunctionsBlock(Status=PASS)[Context=Filter/Map#2]
       |     |  |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Type EQUALS  "AWS::S3::Bucket"]
       |     |  |  `- GuardClauseValueCheck(Status=PASS)[Context= Type EQUALS  "AWS::S3::Bucket"]
-      |     |  `- Disjunction(Status = PASS)[Context=cfn_guard::rules::exprs::GuardClause#disjunction]
+      |     |  `- Disjunction(Status = PASS)[Context=GuardClause#disjunction]
       |     |     `- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block Metadata.guard.SuppressedRules not EXISTS  ]
       |     |        `- GuardClauseValueCheck(Status=PASS)[Context= Metadata.guard.SuppressedRules not EXISTS  ]
       |     `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption not EMPTY  ]

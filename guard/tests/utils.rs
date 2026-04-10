@@ -129,8 +129,11 @@ pub fn sanitize_path(string_to_sanitize: String) -> String {
     // replace the home directory to avoid regex issues with path matches beyond the
     // leading forward slash for example '[/Users/...' or 'name="/User...'
     let replaced_home_directory = replace_home_directory_with_tilde(string_to_sanitize);
+    // also replace CARGO_MANIFEST_DIR so paths outside $HOME are handled
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let replaced_manifest = replaced_home_directory.replace(manifest_dir, "~");
     // return the blob of text with full path replaced with just the filename
-    replace_path_with_filenames(replaced_home_directory)
+    replace_path_with_filenames(replaced_manifest)
 }
 
 pub fn compare_write_buffer_with_file(
