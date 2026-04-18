@@ -1,0 +1,22 @@
+let all_parameters = this[*]
+let arn_parameters = this[ParameterValue == /^arn:aws/]
+
+rule has_correct_keys when %all_parameters !empty {
+    %all_parameters[*] {
+        ParameterKey exists
+        ParameterValue exists
+        << Required keys exist >>
+        UsePreviousValue not exists
+        ResolvedValue not exists
+    }
+}
+
+# Check that parameters that contain an ARN value conform to
+# defined ARN format:
+# arn:partition:service:region:namespace:relative-id
+rule has_likely_valid_arn when %arn_parameters !empty {
+    %arn_parameters.ParameterValue {
+        this == /^arn:\w+:\w+:[^:]*:[^:]*:\S+$/
+        << ARN parameter appears valid >>
+    }
+}
