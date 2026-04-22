@@ -8,6 +8,8 @@ on:
     paths:
       - "action/**"
       - "action.yml"
+permissions:
+  contents: read
 jobs:
   run-unit-tests:
     runs-on: ubuntu-latest

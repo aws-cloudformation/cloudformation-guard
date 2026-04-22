@@ -13,7 +13,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   FUZZ_TIME: 420
-
+permissions:
+  contents: read
 jobs:
   build:
     name: Build all crates & run unit tests
