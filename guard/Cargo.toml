@@ -17,6 +17,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+guard-lang = { path = "../guard-lang" }
 nom = "7.0.0"
 nom_locate = "4.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }

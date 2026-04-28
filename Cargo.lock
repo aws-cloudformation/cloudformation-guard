@@ -232,6 +232,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "guard-lang",
  "heck 0.3.3",
  "indexmap 1.9.3",
  "indoc",
@@ -583,6 +584,35 @@ dependencies = [
  "log",
  "memchr",
  "memmap2",
+]
+
+[[package]]
+name = "guard-lang"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "colored",
+ "cruet",
+ "fancy-regex",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "indexmap 1.9.3",
+ "indoc",
+ "itertools",
+ "lazy_static",
+ "nom",
+ "nom_locate",
+ "pretty_assertions",
+ "quick-xml",
+ "rstest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+ "unsafe-libyaml",
+ "urlencoding",
+ "wasm-bindgen",
 ]
 
 [[package]]

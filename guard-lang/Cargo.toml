@@ -1,0 +1,34 @@
+[package]
+name = "guard-lang"
+version = "1.0.0"
+edition = "2018"
+description = "Parser, AST, and evaluation types for the AWS CloudFormation Guard DSL"
+license = "Apache-2.0"
+repository = "https://github.com/aws-cloudformation/cloudformation-guard"
+
+[dependencies]
+nom = "7.0.0"
+nom_locate = "4.0.0"
+indexmap = { version = "1.6.0", features = ["serde-1"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0.85", features = ["preserve_order"] }
+serde_yaml = "0.9.10"
+fancy-regex = "0.13.0"
+thiserror = "1.0.38"
+lazy_static = "1.4.0"
+colored = "2.2.0"
+unsafe-libyaml = "0.2.10"
+itertools = "0.4.7"
+chrono = "0.4.38"
+cruet = "0.14.0"
+urlencoding = "2.1.0"
+wasm-bindgen = "0.2.92"
+quick-xml = "0.30.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+rstest = "0.24.0"
+indoc = "1.0.8"
+grep-searcher = "0.1.8"
+grep-matcher = "0.1.5"
+grep-regex = "0.1.9"

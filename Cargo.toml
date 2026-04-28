@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "guard",
+    "guard-lang",
     "guard-lambda",
     "guard-ffi",
     "guard-examples/library"
