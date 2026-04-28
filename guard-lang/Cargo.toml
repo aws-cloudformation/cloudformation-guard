@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2018"
 description = "Parser, AST, and evaluation types for the AWS CloudFormation Guard DSL"
 license = "Apache-2.0"
+repository = "https://github.com/aws-cloudformation/cloudformation-guard"
 
 [dependencies]
 nom = "7.0.0"
