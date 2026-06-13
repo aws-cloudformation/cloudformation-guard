@@ -2,6 +2,7 @@ use std::convert::Infallible;
 use std::fmt::{Debug, Formatter};
 use std::string::FromUtf8Error;
 use thiserror::Error;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
 use crate::parser::{ParserError, Span};
@@ -114,6 +115,7 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 impl From<JsValue> for Error {
     fn from(err: JsValue) -> Self {
         err.into()

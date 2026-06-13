@@ -22,8 +22,10 @@ itertools = "0.4.7"
 chrono = "0.4.38"
 cruet = "0.14.0"
 urlencoding = "2.1.0"
-wasm-bindgen = "0.2.92"
 quick-xml = "0.30.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.92"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

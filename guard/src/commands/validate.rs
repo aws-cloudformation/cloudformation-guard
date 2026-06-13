@@ -32,6 +32,7 @@ use crate::rules::path_value::PathAwareValue;
 use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
@@ -56,7 +57,7 @@ impl From<&str> for Type {
     }
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
 pub enum OutputFormatType {
@@ -68,7 +69,7 @@ pub enum OutputFormatType {
     Sarif,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Copy, Eq, Clone, Debug, PartialEq, ValueEnum, Serialize, Default, Deserialize)]
 pub enum ShowSummaryType {
     All,
@@ -617,11 +618,13 @@ pub(crate) fn validate_path(base: &str) -> Result<()> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     type Buffer;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "fs")]
 extern "C" {
     #[wasm_bindgen(js_name = existsSync, catch)]
@@ -630,6 +633,7 @@ extern "C" {
     fn read_dir(path: &str) -> Result<String>;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "path")]
 extern "C" {
     #[wasm_bindgen(js_name = resolve, catch)]

@@ -45,8 +45,10 @@ fancy-regex = "0.13.0"
 indoc = "1.0.8"
 thiserror = "1.0.38"
 quick-xml = "0.30.0"
-wasm-bindgen = "0.2.92"
 chrono = "0.4.38"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.92"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
