@@ -48,6 +48,7 @@ pub enum Error {
     Errors(#[from] Errors),
     #[error("{0}")]
     IllegalArguments(String),
+    #[cfg(feature = "junit")]
     #[error("Error occurred while attempting to write junit report")]
     XMLError(#[from] quick_xml::Error),
     #[error("{0}")]
