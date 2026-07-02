@@ -599,7 +599,6 @@ dependencies = [
  "grep-searcher",
  "indexmap 1.9.3",
  "indoc",
- "itertools",
  "lazy_static",
  "nom",
  "nom_locate",
