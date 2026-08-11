@@ -282,7 +282,8 @@ fn check_and_delegate<'value, 'loc: 'value>(
         match super::eval::eval_conjunction_clauses(
             conjunctions,
             eval_context,
-            super::eval::eval_guard_clause,
+            // Filter predicate: a selection test, not an assertion.
+            |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
         ) {
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
@@ -764,7 +765,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     let result = match super::eval::eval_conjunction_clauses(
                         conjunctions,
                         &mut val_resolver,
-                        super::eval::eval_guard_clause,
+                        // A filter predicate selects values; it is a test, not an
+                        // assertion, so an unevaluatable clause makes the filter
+                        // select nothing rather than fail.
+                        |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
                     ) {
                         Ok(status) => {
                             resolver.end_record(&context, RecordType::Filter(status))?;
@@ -799,7 +803,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     match super::eval::eval_conjunction_clauses(
                         conjunctions,
                         &mut val_resolver,
-                        super::eval::eval_guard_clause,
+                        // A filter predicate selects values; it is a test, not an
+                        // assertion, so an unevaluatable clause makes the filter
+                        // select nothing rather than fail.
+                        |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
                     ) {
                         Ok(status) => match status {
                             Status::PASS => query_retrieval_with_converter(
@@ -1102,7 +1109,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
         let status = 'done: loop {
             for each_rule in rule {
-                let status = super::eval::eval_rule(each_rule, self)?;
+                // Resolving a named rule's status for a reference elsewhere. The
+                // rule's own clauses are assertions; the reference site decides
+                // how to interpret the resulting status.
+                let status =
+                    super::eval::eval_rule(each_rule, self, super::eval::ClauseRole::Assertion)?;
                 if status != SKIP {
                     break 'done status;
                 }

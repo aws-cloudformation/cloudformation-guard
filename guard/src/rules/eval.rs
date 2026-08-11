@@ -170,6 +170,40 @@ pub(super) enum EvaluationResult {
     QueryValueResult(Vec<(QueryResult, Status)>),
 }
 
+/// Why a clause is being evaluated, which decides what an unevaluatable clause
+/// should report.
+///
+/// The distinction is load-bearing, not cosmetic. `eval_rule` and
+/// `eval_when_condition_block` treat any non-PASS *condition* as "this rule does not
+/// apply" and skip the guarded body entirely. So a clause that fails as an assertion
+/// must only SKIP as a gate -- failing a gate silently disarms every check inside it
+/// and the file still exits 0.
+///
+/// Carried as an enum rather than a `bool` deliberately. A boolean parameter reads as
+/// `f(x, resolver, true)` at the call site, which says nothing about intent and is
+/// easy to omit: an earlier version of this threading passed booleans and left
+/// `WhenGuardClause::ParameterizedNamedRule` unthreaded, so a parameterized rule
+/// invoked from a `when` condition evaluated its body with assertion strictness and
+/// produced exactly the wrong-PASS described above. With an explicit parameter type
+/// every construction site has to name which case it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum ClauseRole {
+    /// The clause is an assertion in a rule body. An unevaluatable clause is a
+    /// failure: the rule claimed something it could not establish.
+    Assertion,
+    /// The clause is a `when` condition gating a block. An unevaluatable clause is
+    /// not applicable, never a failure, so the block it guards is still decided by
+    /// the remaining conditions.
+    Gate,
+}
+
+impl ClauseRole {
+    /// True when an unevaluatable clause in this role should FAIL rather than SKIP.
+    fn is_strict(self) -> bool {
+        matches!(self, ClauseRole::Assertion)
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     lhs_query: &'l [QueryPart<'loc>],
@@ -762,11 +796,9 @@ where
     }
 }
 
-/// `strict_empty_rhs` is true when this clause is an assertion in a rule body, and
-/// false when it is a `when` condition. A positive comparison against a reference
-/// that resolved to nothing is unsatisfiable and fails in a body, but must stay a
-/// SKIP in a condition: a failing condition makes the gate not-PASS, and eval_rule
-/// then skips the entire guarded block, which would disarm every check inside it.
+/// `role` decides what a positive comparison against an empty reference reports: it
+/// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
+/// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
@@ -774,7 +806,7 @@ fn binary_operation<'value, 'loc: 'value>(
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
-    strict_empty_rhs: bool,
+    role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
@@ -797,7 +829,7 @@ fn binary_operation<'value, 'loc: 'value>(
         // every check in the guarded block and exit 0, which is worse than the bug
         // being fixed.
         operators::EvalResult::EmptyRhsUnsatisfiable => Ok(EvaluationResult::EmptyQueryResult(
-            if strict_empty_rhs {
+            if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
@@ -834,7 +866,7 @@ fn binary_operation<'value, 'loc: 'value>(
         // closed rather than panicking, so a future refactor that routes around the
         // wrapper cannot turn this into a silent pass.
         operators::EvalResult::EmptyRhs => Ok(EvaluationResult::EmptyQueryResult(
-            if strict_empty_rhs {
+            if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
@@ -1142,12 +1174,12 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 }
 
 #[allow(clippy::never_loop)]
-/// `strict_empty_rhs` is false when this clause is a `when` condition; see
-/// `binary_operation`.
+/// `role` is [`ClauseRole::Gate`] when this clause is a `when` condition; see
+/// [`binary_operation`].
 pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
-    strict_empty_rhs: bool,
+    role: ClauseRole,
 ) -> Result<Status> {
     let all = gac.access_clause.query.match_all;
     let blk_context = format!("GuardAccessClause#block{}", gac);
@@ -1238,7 +1270,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver,
-            strict_empty_rhs,
+            role,
         )
     };
 
@@ -1311,17 +1343,17 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 /// Evaluates a reference to another rule by name.
 ///
-/// `strict_skip` distinguishes the two contexts this is reached from:
+/// `role` distinguishes the two contexts this is reached from:
 ///
-/// - `true` — the reference is an assertion in a rule body, so a SKIPped
+/// - [`ClauseRole::Assertion`] — the reference is in a rule body, so a SKIPped
 ///   dependent rule must not satisfy it in either polarity. Failing closed here is
 ///   what stops `not <rule>` from reporting compliance for a check that never ran.
-/// - `false` — the reference is a `when` condition, where gating on a rule that did
-///   not apply is deliberate and covered by existing tests.
+/// - [`ClauseRole::Gate`] — the reference is a `when` condition, where gating on a
+///   rule that did not apply is deliberate and covered by existing tests.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
-    strict_skip: bool,
+    role: ClauseRole,
 ) -> Result<Status> {
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
@@ -1350,7 +1382,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // when that other rule did not apply" (see
                 // cross_rule_clause_when_checks). Gating on a SKIP there is not a
                 // compliance claim, so it keeps the existing behavior.
-                Status::SKIP if strict_skip => Status::FAIL,
+                Status::SKIP if role.is_strict() => Status::FAIL,
 
                 _ => {
                     if gnc.negation {
@@ -1411,9 +1443,12 @@ where
     eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn)
 }
 
+/// `role` is inherited from the enclosing clause; a block clause is not itself a
+/// gate or an assertion, it just groups the clauses inside it.
 pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     block_clause: &'value BlockGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     let context = format!("BlockGuardClause#{}", block_clause.location);
     let match_all = block_clause.query.match_all;
@@ -1479,7 +1514,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                 match eval_general_block_clause(
                     &block_clause.block,
                     &mut val_resolver,
-                    eval_guard_clause,
+                    |gc, r| eval_guard_clause(gc, r, role),
                 ) {
                     Ok(status) => match status {
                         Status::PASS => {
@@ -1581,7 +1616,11 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
     };
 
     Ok(
-        match eval_general_block_clause(block, resolver, eval_guard_clause) {
+        // The guarded block holds the rule's actual assertions, regardless of how
+        // the conditions were evaluated.
+        match eval_general_block_clause(block, resolver, |gc, r| {
+            eval_guard_clause(gc, r, ClauseRole::Assertion)
+        }) {
             Ok(status) => {
                 resolver.end_record(
                     &context,
@@ -1682,9 +1721,14 @@ impl<'eval, 'value, 'loc: 'value> RecordTracer<'value>
     }
 }
 
+/// `role` is the role of the *call site*, not of the clauses inside the invoked rule.
+/// A parameterized rule invoked from a `when` condition is a gate, so its body must
+/// evaluate with gate semantics: an unevaluatable clause inside it makes the gate
+/// inapplicable rather than failed, which leaves the guarded block enforced.
 pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     call_rule: &'value ParameterizedNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     let param_rule = resolver.find_parameterized_rule(&call_rule.named_rule.dependent_rule)?;
 
@@ -1725,26 +1769,33 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
         resolved_parameters,
         call_rule,
     };
-    eval_rule(&param_rule.rule, &mut eval)
+    // Propagate the call site's role: a parameterized rule used as a `when` gate
+    // must evaluate its body with gate semantics, or an unevaluatable clause inside
+    // it fails the gate and silently disarms the block it guards.
+    eval_rule(&param_rule.rule, &mut eval, role)
 }
 
+/// `role` propagates the assertion-vs-gate distinction to the leaf clauses. Callers
+/// evaluating a rule body pass [`ClauseRole::Assertion`]; callers evaluating the
+/// conditions of a `when` block or a parameterized gate pass [`ClauseRole::Gate`].
 pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
     gc: &'value GuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     match gc {
-        // Rule body: an unsatisfiable clause fails, and a named-rule reference is an
-        // assertion, so a SKIPped dependent rule fails closed.
-        GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, true),
-        GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, true),
-        GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver),
+        GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, role),
+        GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, role),
+        GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver, role),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
             "GuardConditionClause".to_string(),
             conditions,
             block,
             resolver,
         ),
-        GuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
+        GuardClause::ParameterizedNamedRule(prc) => {
+            eval_parameterized_rule_call(prc, resolver, role)
+        }
     }
 }
 
@@ -1753,19 +1804,32 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Status> {
     match when_clause {
-        // `when` condition: both stay non-strict. A clause whose reference did not
-        // resolve, or a reference to a rule that did not apply, must not disarm the
-        // block being guarded -- a FAIL here makes the gate not-PASS and eval_rule
-        // skips the whole body.
-        WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, false),
-        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver, false),
-        WhenGuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
+        // Every arm is a gate. A clause whose reference did not resolve, or a
+        // reference to a rule that did not apply, must not disarm the block being
+        // guarded: a FAIL here makes the gate not-PASS and eval_rule skips the whole
+        // body.
+        //
+        // The parameterized arm needs the role threaded through the rule it invokes.
+        // It previously called eval_parameterized_rule_call with no role, and
+        // everything downstream defaulted to assertion strictness, so a parameterized
+        // rule used as a gate failed instead of skipping and silently disarmed the
+        // block it guarded.
+        WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, ClauseRole::Gate),
+        WhenGuardClause::NamedRule(gnr) => {
+            eval_guard_named_clause(gnr, resolver, ClauseRole::Gate)
+        }
+        WhenGuardClause::ParameterizedNamedRule(prc) => {
+            eval_parameterized_rule_call(prc, resolver, ClauseRole::Gate)
+        }
     }
 }
 
+/// `role` is inherited by the clauses in the type block's body. Its own `when`
+/// conditions are always evaluated as [`ClauseRole::Gate`].
 pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     type_block: &'value TypeBlock<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     let context = format!("TypeBlock#{}", type_block.type_name);
     resolver.start_record(&context)?;
@@ -1861,7 +1925,9 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     parent: resolver,
                 };
 
-                match eval_general_block_clause(block, &mut val_resolver, eval_guard_clause) {
+                match eval_general_block_clause(block, &mut val_resolver, |gc, r| {
+                    eval_guard_clause(gc, r, role)
+                }) {
                     Ok(status) => {
                         match status {
                             Status::PASS => {
@@ -1938,22 +2004,36 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     Ok(status)
 }
 
+/// `role` is inherited by the clauses of this rule clause.
 pub(in crate::rules) fn eval_rule_clause<'value, 'loc: 'value>(
     rule_clause: &'value RuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     match rule_clause {
-        RuleClause::Clause(gc) => eval_guard_clause(gc, resolver),
-        RuleClause::TypeBlock(tb) => eval_type_block_clause(tb, resolver),
+        RuleClause::Clause(gc) => eval_guard_clause(gc, resolver, role),
+        RuleClause::TypeBlock(tb) => eval_type_block_clause(tb, resolver, role),
         RuleClause::WhenBlock(conditions, block) => {
             eval_when_condition_block("RuleClause".to_string(), conditions, block, resolver)
         }
     }
 }
 
+/// `role` is the role of the context that *invoked* this rule, not the role of the
+/// clauses it contains.
+///
+/// A rule evaluated as a top-level entry in a rules file, or referenced from another
+/// rule's body, is an [`ClauseRole::Assertion`]: its clauses are claims and an
+/// unevaluatable one is a failure.
+///
+/// A rule invoked as a gate -- `rule x when some_gate("p") { ... }` -- is a
+/// [`ClauseRole::Gate`]. Its clauses must then SKIP rather than FAIL when they cannot
+/// be evaluated, because a failing gate makes the guarded block inapplicable and
+/// silently drops every check inside it.
 pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     let context = rule.rule_name.to_string();
     resolver.start_record(&context)?;
@@ -1995,7 +2075,9 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
         &rule.block
     };
 
-    match eval_general_block_clause(block, resolver, eval_rule_clause) {
+    match eval_general_block_clause(block, resolver, |rc, r| {
+        eval_rule_clause(rc, r, role)
+    }) {
         Ok(status) => {
             resolver.end_record(
                 &context,
@@ -2039,7 +2121,8 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     let mut fails = 0;
     let mut passes = 0;
     for each_rule in &rule.guard_rules {
-        match eval_rule(each_rule, resolver) {
+        // Top-level rule in a rules file: its clauses are assertions.
+        match eval_rule(each_rule, resolver, ClauseRole::Assertion) {
             Ok(status) => match status {
                 Status::PASS => {
                     passes += 1;

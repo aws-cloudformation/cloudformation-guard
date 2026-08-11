@@ -959,7 +959,7 @@ fn block_guard_pass() -> Result<()> {
         root: Rc::new(path_value),
         recorder: Some(&mut tracker),
     };
-    let status = eval_guard_clause(&block_clauses, &mut eval)?;
+    let status = eval_guard_clause(&block_clauses, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
     let top = tracker.extract();
     match top.container.as_ref() {
@@ -1088,12 +1088,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
 
     let clause_str = r#"Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_str = r#"SOME Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let value_str = r###"
@@ -1109,7 +1109,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     //
     // Evaluate the SOME clause again, it must pass with the value as well
     //
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1149,7 +1149,7 @@ fn block_evaluation() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
     Ok(())
 }
@@ -1196,7 +1196,7 @@ fn block_evaluation_fail() -> Result<()> {
     }
     "#;
     let clause = GuardClause::try_from(clause_str)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
     Ok(())
 }
@@ -1564,7 +1564,7 @@ fn test_field_type_array_or_single() -> Result<()> {
         root: Rc::new(path_value),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let statements = r#"{
@@ -1580,24 +1580,24 @@ fn test_field_type_array_or_single() -> Result<()> {
         root: Rc::new(path_value),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"Statement[*].Action[*] != '*'"#)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     // Test old format
     let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action == '*'"#)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action != '*'"#)?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1626,19 +1626,19 @@ fn test_for_in_and_not_in() -> Result<()> {
     let clause = GuardClause::try_from(
         r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"some mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -1666,7 +1666,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let value_str = r#"
@@ -1682,7 +1682,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1733,7 +1733,7 @@ fn test_inner_when_skipped() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let value_str = r#"
@@ -1755,7 +1755,7 @@ fn test_inner_when_skipped() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::SKIP);
 
     let value_str = r#"
@@ -1766,7 +1766,7 @@ fn test_inner_when_skipped() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::SKIP);
 
     let value_str = r#"{}"#;
@@ -1775,7 +1775,7 @@ fn test_inner_when_skipped() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -1867,7 +1867,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: Some(&mut asserter),
     };
-    let status = eval_rule(&rules, &mut root)?;
+    let status = eval_rule(&rules, &mut root, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let rule = r###"
@@ -2222,10 +2222,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         recorder: None,
     };
 
-    let status = eval_guard_clause(&clause_some, &mut eval)?;
+    let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let values_str = r#"{ Tags: [] }"#;
@@ -2234,10 +2234,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause_some, &mut eval)?;
+    let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let values_str = r#"{ }"#;
@@ -2246,10 +2246,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause_some, &mut eval)?;
+    let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
-    let status = eval_guard_clause(&clause, &mut eval)?;
+    let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     //
@@ -2355,7 +2355,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*].Key == /Name/"#)?;
@@ -2363,7 +2363,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] { Key == /Name/ }"#)?;
@@ -2371,7 +2371,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*] { Key == /Name/ }"#)?;
@@ -2379,7 +2379,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags !empty"#)?;
@@ -2387,7 +2387,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags empty"#)?;
@@ -2395,7 +2395,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] !empty"#)?;
@@ -2403,7 +2403,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values.clone()),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] empty"#)?;
@@ -2411,7 +2411,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_guard_clause(&claused_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -2427,15 +2427,15 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     };
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.*.Properties exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.* { Properties exists }"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     //
@@ -2443,7 +2443,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     //
     let clause_failure_spec =
         GuardClause::try_from(r#"Resources[ Type == /Bucket/ ].Properties exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2461,7 +2461,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::SKIP);
 
     //
@@ -2474,7 +2474,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
-    let status = eval_guard_clause(&clause_failure_spec, &mut eval)?;
+    let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -3180,20 +3180,20 @@ fn test_iam_statement_clauses() -> Result<()> {
             this is_struct ][ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#;
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
     let parsed = GuardClause::try_from(clause)?;
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(Status::PASS, status);
 
     let clause = r#"Statement[ Condition EXISTS
                                      Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
     "#;
     let parsed = GuardClause::try_from(clause)?;
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(Status::PASS, status);
 
     let parsed = GuardClause::try_from(
         r#"SOME Statement[*].Condition.*[ THIS IS_STRUCT ][ KEYS ==  /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#,
     )?;
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(Status::PASS, status);
 
     let sample = r#"
@@ -3211,7 +3211,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let sample = r#"
@@ -3232,7 +3232,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     let sample = r#"
@@ -3254,7 +3254,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let value = PathAwareValue::try_from(SAMPLE)?;
@@ -3263,7 +3263,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         root: Rc::new(value),
         recorder: None,
     };
-    let status = eval_guard_clause(&parsed, &mut eval)?;
+    let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(Status::FAIL, status);
 
     Ok(())
@@ -3326,7 +3326,7 @@ rule check_rest_api_private {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     Ok(())
@@ -3391,7 +3391,7 @@ rule check_rest_api_private {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let resources = r#"
@@ -3435,7 +3435,7 @@ rule check_rest_api_private {
         root: Rc::new(values),
         recorder: None,
     };
-    let status = eval_rule(&rule, &mut eval)?;
+    let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -3830,7 +3830,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         root: Rc::new(path_value),
         recorder: None,
     };
-    let status = eval_guard_clause(&guard_clause, &mut eval)?;
+    let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
     let clause = r#"algorithms == ["KMS", "SSE"]"#;
@@ -3841,7 +3841,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         root: Rc::new(path_value),
         recorder: None,
     };
-    let status = eval_guard_clause(&guard_clause, &mut eval)?;
+    let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::FAIL);
 
     Ok(())
@@ -4106,6 +4106,55 @@ fn negated_comparison_against_empty_reference_does_not_fail() -> Result<()> {
     }
     "###;
     assert_ne!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
+    // Regression test for a wrong PASS found by review.
+    //
+    // A parameterized rule invoked from a `when` condition is a gate, so its body
+    // must evaluate with gate semantics. eval_when_clause threaded the role into its
+    // Clause and NamedRule arms but not ParameterizedNamedRule, and everything
+    // downstream defaulted to assertion strictness. The gate therefore FAILed instead
+    // of SKIPping, eval_rule read a non-PASS condition as "rule does not apply", and
+    // the guarded body -- the real check -- was never evaluated. Exit 0 on a
+    // violating template, where base correctly exited 19.
+    //
+    // `inner` SKIPs (its query selects a resource type not present). `gate` is
+    // parameterized and negates it. `must_be_encrypted` is gated on `gate`.
+    let rules = r###"
+    rule inner {
+        Resources.*[ Type == 'AWS::Nonexistent::Thing' ] {
+            Properties.Foo == 'bar'
+        }
+    }
+
+    rule gate(unused) {
+        not inner
+    }
+
+    rule must_be_encrypted when gate("x") {
+        Resources.Bucket.Properties.Encrypted == true
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            Bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { BucketName: "mybucket", Encrypted: false }
+            }
+        }
+    }
+    "#;
+
+    // The gate must open, so the body runs and its violated check fails the rule.
+    // With the role not threaded to the parameterized gate, the gate FAILed, the rule
+    // was treated as inapplicable, and this returned SKIP.
+    assert_eq!(status_of(rules, input)?, Status::FAIL);
+
     Ok(())
 }
 
