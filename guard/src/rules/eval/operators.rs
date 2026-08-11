@@ -519,6 +519,22 @@ impl Comparator for EqOperation {
                         for eachr in rhs {
                             match &*eachr {
                                 PathAwareValue::List((_, rhsl)) => {
+                                    // The mirror image of the empty-collection case
+                                    // handled in the `(None, Some(_))` arm below: here it
+                                    // is the *right* side that is an empty list, so this
+                                    // loop pushes nothing and the comparison vanishes.
+                                    //
+                                    // `'Owner' == Properties.Tags` with `Tags: []` has to
+                                    // fail for the same reason `Properties.Tags ==
+                                    // 'Owner'` does. Fixing only one of the two leaves the
+                                    // defect reachable by writing the clause backwards,
+                                    // which is legal Guard and which a rule author has no
+                                    // reason to think differs.
+                                    if rhsl.is_empty() {
+                                        results.push(ValueEvalResult::EmptyLhsCollection(
+                                            Rc::clone(&eachr),
+                                        ));
+                                    }
                                     for each_rhs in rhsl {
                                         results.push(match_value(
                                             Rc::new(single_value.clone()),

@@ -5529,6 +5529,78 @@ fn an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block() -
     Ok(())
 }
 
+/// The same defect written backwards, which the first version of this fix left open.
+///
+/// `'Owner' == Properties.Tags` is legal Guard and means what `Properties.Tags == 'Owner'`
+/// means, but it takes a different comparator arm: the literal is the left side, so the
+/// empty list arrives as the *right* operand and a separate loop pushes nothing. Fixing
+/// only the first spelling left the wrong PASS reachable by anyone who happened to write
+/// the operands in the other order -- measured 0 with the first fix in place, 19 now.
+///
+/// Found by asking which arms of `EqOperation` the fix did not touch, rather than by a
+/// failing test. The asymmetry is invisible from the rule author's side.
+#[test]
+fn an_empty_collection_fails_when_it_is_the_right_hand_operand() -> Result<()> {
+    let rules = r###"
+    let expected = 'Owner'
+    rule tags_must_be_owner {
+        %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The gate counterpart of the mirrored form. Same requirement as the un-mirrored gate
+/// test: the guarded body must still run, so the violation is still reported.
+#[test]
+fn a_mirrored_empty_collection_in_a_when_condition_does_not_disarm_the_block() -> Result<()> {
+    let rules = r###"
+    let expected = 'Owner'
+    rule name_must_be_safe when %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name != 'publicbucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
 /// A negated comparison over an empty collection is vacuously true, so it must not fail.
 ///
 /// The empty-LHS record is emitted before the per-value inversion, so a FAIL raised there
