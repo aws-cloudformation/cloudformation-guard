@@ -415,28 +415,230 @@ fn negate_is_an_involution() {
     }
 }
 
-/// De Morgan, over every pair. If this fails, `and`/`or`/`negate` are mutually
-/// inconsistent even if each looks right alone.
+/// De Morgan, over the whole domain — all 16 pairs, both directions.
+///
+/// An earlier version of this test restricted itself to the evidence-bearing variants,
+/// on the stated grounds that negation is not an inversion for `NotApplicable` and
+/// `Unevaluatable` so the law could not apply to them. That reasoning was wrong: the law
+/// holds for all 16 pairs, verified by enumeration. Restricting it left twelve pairs
+/// unasserted, so an edit to `negate` could have broken the law on the non-evidence
+/// variants without any test noticing.
 #[test]
-fn de_morgan_holds_where_negation_is_meaningful() {
+fn de_morgan_holds_over_the_whole_domain() {
     for a in ALL {
         for b in ALL {
-            // Restricted to the evidence-bearing variants: negation is deliberately
-            // not an inversion for NotApplicable/Unevaluatable, so De Morgan does not
-            // apply to them and asserting it would encode the wrong intent.
-            if matches!(a, Outcome::Satisfied | Outcome::Violated)
-                && matches!(b, Outcome::Satisfied | Outcome::Violated)
-            {
+            assert_eq!(
+                a.and(b).negate(),
+                a.negate().or(b.negate()),
+                "de morgan failed: negate({a:?} and {b:?}) != negate({a:?}) or negate({b:?})"
+            );
+            assert_eq!(
+                a.or(b).negate(),
+                a.negate().and(b.negate()),
+                "de morgan failed: negate({a:?} or {b:?}) != negate({a:?}) and negate({b:?})"
+            );
+        }
+    }
+}
+
+/// The partial order under which both operations are monotone.
+///
+/// `Violated` is the bottom and `Satisfied` the top; the two non-evidence variants sit
+/// incomparably between them. This is the coarsest order on the four variants making
+/// both `and` and `or` monotone, so it is the order the evaluator may reason with.
+fn at_most_as_much_evidence_as(a: Outcome, b: Outcome) -> bool {
+    use Outcome::*;
+    matches!(
+        (a, b),
+        (Violated, _)
+            | (_, Satisfied)
+            | (NotApplicable, NotApplicable)
+            | (Unevaluatable, Unevaluatable)
+    )
+}
+
+/// Monotonicity in the evidence order: strengthening an operand can never weaken the
+/// result.
+///
+/// This is the property to rely on in place of distributivity, which genuinely fails.
+/// `Satisfied.and(Violated.or(NotApplicable))` is `Violated` while the distributed form
+/// is `Satisfied`, so asserting distributivity would assert a violation being laundered
+/// into a pass. Monotonicity is the guarantee that actually protects against that: no
+/// combination may report more evidence than its strongest operand.
+#[test]
+fn both_operations_are_monotone_in_the_evidence_order() {
+    for a in ALL {
+        for b in ALL {
+            if !at_most_as_much_evidence_as(a, b) {
+                continue;
+            }
+            for c in ALL {
+                assert!(
+                    at_most_as_much_evidence_as(a.and(c), b.and(c)),
+                    "and not monotone: {a:?} <= {b:?} but {:?} is not <= {:?} (with {c:?})",
+                    a.and(c),
+                    b.and(c)
+                );
+                assert!(
+                    at_most_as_much_evidence_as(a.or(c), b.or(c)),
+                    "or not monotone: {a:?} <= {b:?} but {:?} is not <= {:?} (with {c:?})",
+                    a.or(c),
+                    b.or(c)
+                );
+            }
+        }
+    }
+}
+
+/// Absorption fails, and it must. Pinning the exact failure set stops anyone "fixing" it
+/// by making the shared identity absorbing, which would let an inapplicable rule satisfy
+/// a disjunction — the defect this module exists to prevent.
+///
+/// The law holds except when `a` is `NotApplicable` and `b` is anything else, because
+/// `NotApplicable` is the identity of both operations rather than a bound of either.
+/// That is also why the module is not a bounded lattice.
+#[test]
+fn absorption_fails_exactly_at_the_shared_identity() {
+    for a in ALL {
+        for b in ALL {
+            let absorbs = a.and(a.or(b)) == a && a.or(a.and(b)) == a;
+            let expected = a != Outcome::NotApplicable || b == Outcome::NotApplicable;
+            assert_eq!(
+                absorbs, expected,
+                "absorption for a={a:?} b={b:?} did not match what the shared identity implies"
+            );
+        }
+    }
+}
+
+/// The three evidence-bearing variants form a chain, with `and` as min and `or` as max.
+/// This is the structure the module doc describes, pinned so the doc cannot drift from
+/// the code.
+#[test]
+fn the_evidence_variants_form_a_chain_under_both_operations() {
+    const CHAIN: [Outcome; 3] = [
+        Outcome::Violated,
+        Outcome::Unevaluatable,
+        Outcome::Satisfied,
+    ];
+    for (i, a) in CHAIN.iter().copied().enumerate() {
+        for (j, b) in CHAIN.iter().copied().enumerate() {
+            assert_eq!(
+                a.and(b),
+                CHAIN[i.min(j)],
+                "{a:?} and {b:?} was not the weaker of the two"
+            );
+            assert_eq!(
+                a.or(b),
+                CHAIN[i.max(j)],
+                "{a:?} or {b:?} was not the stronger of the two"
+            );
+        }
+    }
+}
+
+/// `negate` distributes over both folds, for every triple. This is what a `not` wrapped
+/// around a block relies on.
+#[test]
+fn negate_distributes_over_both_folds() {
+    for a in ALL {
+        for b in ALL {
+            for c in ALL {
+                let seq = [a, b, c];
+                let negated = seq.map(Outcome::negate);
                 assert_eq!(
-                    a.and(b).negate(),
-                    a.negate().or(b.negate()),
-                    "de morgan (and) failed for ({a:?}, {b:?})"
+                    Outcome::all(seq).negate(),
+                    Outcome::any(negated),
+                    "negate(all({a:?}, {b:?}, {c:?})) disagreed with any of the negations"
                 );
                 assert_eq!(
-                    a.or(b).negate(),
-                    a.negate().and(b.negate()),
-                    "de morgan (or) failed for ({a:?}, {b:?})"
+                    Outcome::any(seq).negate(),
+                    Outcome::all(negated),
+                    "negate(any({a:?}, {b:?}, {c:?})) disagreed with all of the negations"
                 );
+            }
+        }
+    }
+}
+
+/// Gate safety at the FOLD level, not just per value.
+///
+/// A failing gate makes `eval_rule` treat its rule as inapplicable and drop every check
+/// in the guarded body, so a gate must only fail on an actual violation. The
+/// single-value version of this is asserted above; this extends it to folds, which is
+/// the shape a rewired gate condition would actually produce.
+///
+/// Worth being precise about what this does and does not catch. The reverted attempt to
+/// fix the empty-collection wrong PASS closed gates by having a *clause* report non-PASS
+/// on an empty collection, which is upstream of any fold — so this test would not have
+/// caught it. It constrains the fold layer only.
+#[test]
+fn a_folded_gate_only_fails_on_an_actual_violation() {
+    const NON_VIOLATIONS: [Outcome; 3] = [
+        Outcome::Satisfied,
+        Outcome::NotApplicable,
+        Outcome::Unevaluatable,
+    ];
+    for a in NON_VIOLATIONS {
+        for b in NON_VIOLATIONS {
+            for c in NON_VIOLATIONS {
+                for seq in [vec![], vec![a], vec![a, b], vec![a, b, c]] {
+                    assert!(
+                        !Outcome::all(seq.iter().copied()).blocks(ClauseRole::Gate),
+                        "an and-fold of {seq:?} blocked a gate with no violation in it"
+                    );
+                    assert!(
+                        !Outcome::any(seq.iter().copied()).blocks(ClauseRole::Gate),
+                        "an or-fold of {seq:?} blocked a gate with no violation in it"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The one wholly uncovered interaction dimension: folding and then converting to a
+/// status, over every sequence up to length three and both roles.
+#[test]
+fn folding_then_converting_is_covered_for_every_sequence_and_role() {
+    for role in ROLES {
+        // Length 0.
+        assert_eq!(Outcome::all([]).to_status(role), Status::SKIP);
+        assert_eq!(Outcome::any([]).to_status(role), Status::SKIP);
+
+        for a in ALL {
+            for b in ALL {
+                for c in ALL {
+                    for seq in [vec![a], vec![a, b], vec![a, b, c]] {
+                        // The composed result must equal converting the folded outcome,
+                        // and must never claim PASS unless something was satisfied.
+                        let folded_all = Outcome::all(seq.iter().copied());
+                        let folded_any = Outcome::any(seq.iter().copied());
+
+                        // A PASS from either fold requires at least one genuinely
+                        // satisfied element, and no element that is not either
+                        // satisfied or the identity. `NotApplicable` is the identity of
+                        // both operations, so `[Satisfied, NotApplicable]` folding to
+                        // Satisfied is correct -- "every element satisfied" would be
+                        // too strong an assertion.
+                        if folded_all.to_status(role) == Status::PASS {
+                            assert!(
+                                seq.contains(&Outcome::Satisfied)
+                                    && seq.iter().all(|o| matches!(
+                                        o,
+                                        Outcome::Satisfied | Outcome::NotApplicable
+                                    )),
+                                "and-fold of {seq:?} reported PASS as {role:?} with an element that was neither satisfied nor inapplicable"
+                            );
+                        }
+                        if folded_any.to_status(role) == Status::PASS {
+                            assert!(
+                                seq.contains(&Outcome::Satisfied),
+                                "or-fold of {seq:?} reported PASS as {role:?} with nothing satisfied"
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -592,8 +794,27 @@ fn imperative_conjunction_agrees_with_and_fold() {
         Status::SKIP
     );
 
+    // Lengths 1 through 3, for symmetry with the disjunction test above. An earlier
+    // version enumerated only lengths 0 and 3, leaving twelve sequences unchecked with
+    // no stated reason.
     for a in STATUSES {
+        let seq = [a];
+        assert_eq!(
+            imperative(&seq),
+            Outcome::all(seq.iter().copied().map(Outcome::from_status))
+                .to_status(ClauseRole::Assertion),
+            "disagreement on {seq:?}"
+        );
+
         for b in STATUSES {
+            let seq = [a, b];
+            assert_eq!(
+                imperative(&seq),
+                Outcome::all(seq.iter().copied().map(Outcome::from_status))
+                    .to_status(ClauseRole::Assertion),
+                "disagreement on {seq:?}"
+            );
+
             for c in STATUSES {
                 let seq = [a, b, c];
                 assert_eq!(

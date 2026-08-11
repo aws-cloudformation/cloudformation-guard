@@ -34,13 +34,29 @@
 //!
 //! # The algebra
 //!
-//! [`Outcome`] forms a bounded lattice under [`Outcome::and`] and [`Outcome::or`]:
+//! [`Outcome::and`] and [`Outcome::or`] are each commutative, associative and
+//! idempotent, and share [`Outcome::NotApplicable`] as their identity:
 //!
 //! - `and` — identity [`Outcome::NotApplicable`], absorbing [`Outcome::Violated`]
 //! - `or`  — identity [`Outcome::NotApplicable`], absorbing [`Outcome::Satisfied`]
 //!
-//! Both are commutative and associative, which `outcome_tests` asserts exhaustively
-//! over every pair and triple rather than by sampling.
+//! This is **not** a bounded lattice, and the distinction matters. Absorption
+//! (`a.and(a.or(b)) == a`) fails at exactly `a == NotApplicable`, because the shared
+//! identity is not a bound of either operation. Restricted to the three
+//! evidence-bearing variants it *is* a lattice: `Violated < Unevaluatable < Satisfied`
+//! is a chain with `and` as min and `or` as max. `NotApplicable` sits outside that
+//! chain as the identity of both.
+//!
+//! Distributivity also fails, and must. `Satisfied.and(Violated.or(NotApplicable))` is
+//! `Violated`, while the distributed form is `Satisfied` — so a test asserting
+//! distributivity would assert a violation being laundered into a pass. The property to
+//! rely on instead is monotonicity in the evidence order, which does hold: no
+//! combination reports more evidence than its strongest operand.
+//!
+//! `outcome_tests` asserts all of this exhaustively over every pair and triple rather
+//! than by sampling, and pins the exact set of absorption failures so that nobody
+//! "fixes" it by making the identity absorbing — that would let an inapplicable rule
+//! satisfy a disjunction, which is the defect this module exists to prevent.
 //!
 //! The rule that closes the empty-input defects: **a fold over zero elements returns
 //! the identity, never `Satisfied`.** A property whose value is `[]` previously
