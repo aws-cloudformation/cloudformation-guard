@@ -5740,6 +5740,90 @@ fn a_vacuous_negated_gate_still_opens_and_runs_its_body() -> Result<()> {
     Ok(())
 }
 
+/// The SKIP return is guarded on `statues.is_empty()`, and this is why.
+///
+/// `vacuously_satisfied` is function-scoped: any iteration can set it, and it is read once
+/// at the end. When one query result is a vacuous negation and another produces a real
+/// comparison, the flag must be ignored -- otherwise one resource with `Tags: []` would
+/// suppress a genuine collision on its sibling and take the whole clause to SKIP.
+///
+/// Here `BucketEmpty` contributes the vacuous case and `BucketOwner` genuinely collides
+/// with `!= 'Owner'`. Verified from the JSON that both the real collision on
+/// `/Resources/BucketOwner/Properties/Tags/0` *and* the sibling disjunct on
+/// `/Resources/BucketEmpty/Properties/Name` were evaluated, so the vacuous result neither
+/// suppressed the failure nor absorbed the disjunction.
+#[test]
+fn a_vacuous_negation_does_not_suppress_a_real_result_from_a_sibling() -> Result<()> {
+    let rules = r###"
+    rule mixed_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+        or
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'safebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmpty: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            },
+            bucketOwner: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "alsopublic", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A vacuous negation nested inside a `when` block must not leak the SKIP outward.
+///
+/// The outer gate is unrelated to the empty collection, and the inner gate is the vacuous
+/// negation. If the vacuous SKIP closed the inner gate, `privatebucket` would go unchecked
+/// and the file would exit 0 -- the same silent-drop shape the top-level gate test pins,
+/// one level down, where a `when` inside a `when` composes two gating decisions.
+#[test]
+fn a_vacuous_negation_nested_in_a_when_block_still_runs_the_inner_body() -> Result<()> {
+    let rules = r###"
+    rule nested_ne when Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner' {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+        }
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
 
 /// A non-negated parameterized gate that SKIPs must not poison the rest of the `when`.
 ///
