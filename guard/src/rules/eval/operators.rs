@@ -69,6 +69,14 @@ pub(crate) enum ComparisonResult {
 #[derive(Clone, Debug)]
 pub(crate) enum ValueEvalResult {
     LhsUnresolved(UnResolved),
+    /// One left-hand query result was an empty collection, so it contributed no
+    /// elements to compare and would otherwise leave no record at all.
+    ///
+    /// Carries the offending value so the reporter can name the path. Resolved by role
+    /// at the `eval.rs` boundary, not here: whether "nothing to compare" is a failure
+    /// depends on whether the clause is an assertion or a gate, and a comparator cannot
+    /// see which.
+    EmptyLhsCollection(Rc<PathAwareValue>),
     ComparisonResult(ComparisonResult),
 }
 
@@ -557,6 +565,27 @@ impl Comparator for EqOperation {
                     single_value => {
                         for each in lhs_flattened {
                             if let PathAwareValue::List((_, lhs_list)) = &*each {
+                                // An empty list contributes no elements, so this loop
+                                // would push nothing and the clause would vanish: the
+                                // enclosing fold reads zero results as "nothing to
+                                // check" and reports PASS. `Tags == 'Owner'` against
+                                // `Tags: []` then claims to have verified a property
+                                // that was never compared, while the same rule against
+                                // a *missing* Tags correctly fails.
+                                //
+                                // Recorded per element rather than by testing the whole
+                                // flattened LHS. This arm uses `selected`, not
+                                // `flattened`, so `each` is still one query result --
+                                // one resource's value. A whole-LHS emptiness test would
+                                // be defeated by any sibling resource with a non-empty
+                                // list, which is the common shape in real templates and
+                                // exactly how an earlier attempt at this fix silently
+                                // did nothing.
+                                if lhs_list.is_empty() {
+                                    results.push(ValueEvalResult::EmptyLhsCollection(
+                                        Rc::clone(&each),
+                                    ));
+                                }
                                 for each_lhs in lhs_list {
                                     results.push(match_value(
                                         Rc::new(each_lhs.clone()),

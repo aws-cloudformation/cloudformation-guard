@@ -5405,6 +5405,171 @@ fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()
     Ok(())
 }
 
+//
+// Empty collection on the left-hand side of a comparison.
+//
+// `flattened`/`selected` expand a list into its elements, so an empty list contributes
+// none. The comparison loop then pushed zero results and the enclosing fold read an empty
+// result vector as "nothing to check" and reported PASS -- so `Tags == 'Owner'` against
+// `Tags: []` was reported as *compliant*, not as not-applicable. It claimed to have
+// verified a property it never compared, while the same rule against a missing `Tags`
+// correctly failed. The weaker input was treated more leniently.
+//
+
+#[test]
+fn an_empty_collection_fails_a_positive_comparison_as_an_assertion() -> Result<()> {
+    let rules = r###"
+    rule tags_must_be_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL, not SKIP. SKIP would also exit 0, which is operationally identical to the
+    // PASS being fixed: the clause would still go unenforced at the gate.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The cardinality that a previous attempt at this fix silently failed to handle.
+///
+/// That attempt tested `lhs_flattened.is_empty()` -- the flattening of *all* query
+/// results together -- so a single sibling with a non-empty list made it non-empty and the
+/// guard never ran. It fired on single-resource templates and did nothing on the mixed
+/// templates that are the common real-world shape, while passing every test written for
+/// it, all of which had one resource.
+///
+/// This asserts the per-result behaviour directly: `BucketFull` genuinely satisfies the
+/// rule, so the file-level FAIL can only come from `BucketEmpty` being caught.
+#[test]
+fn an_empty_collection_is_caught_even_when_a_sibling_resource_satisfies_the_rule() -> Result<()> {
+    let rules = r###"
+    rule tags_must_be_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmpty: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            },
+            bucketFull: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "privatebucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The counterpart, and the reason the fix is resolved by role rather than in the
+/// comparator.
+///
+/// `eval_rule` treats any non-PASS condition as "this rule does not apply" and drops the
+/// guarded body (eval.rs:2082). A fix that failed the empty comparison unconditionally
+/// would therefore turn this blocked template into a passing one -- trading one unenforced
+/// clause for an entire disarmed block. That is exactly how an earlier attempt regressed,
+/// and it exits 0, so nothing downstream notices.
+#[test]
+fn an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block() -> Result<()> {
+    let rules = r###"
+    rule name_must_be_safe when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner' {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name != 'publicbucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the body ran and `publicbucket` violated it. A SKIP here would mean
+    // the gate closed and the violation went unreported.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A negated comparison over an empty collection is vacuously true, so it must not fail.
+///
+/// The empty-LHS record is emitted before the per-value inversion, so a FAIL raised there
+/// is one the `not` can never reach. Without the `!cmp.1` guard this reports FAIL, which
+/// is a wrong FAIL: `not (Tags == 'Owner')` is satisfied when there are no tags at all.
+#[test]
+fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
+    let rules = r###"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            not Properties.Tags == 'Owner'
+        }
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "n", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // PASS specifically, measured rather than assumed. `assert_ne!(FAIL)` would also
+    // admit SKIP, and SKIP would mean the clause had been made inert instead of being
+    // correctly satisfied -- a distinction that matters if this clause is ever a `when`
+    // condition, where SKIP closes the gate and PASS opens it.
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+
 /// A non-negated parameterized gate that SKIPs must not poison the rest of the `when`.
 ///
 /// `eval_parameterized_rule_call` returned the invoked rule's status through a `_` arm that

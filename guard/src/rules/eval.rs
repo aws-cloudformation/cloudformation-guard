@@ -1062,6 +1062,7 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
+///
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
@@ -1212,6 +1213,77 @@ fn binary_operation<'value, 'loc: 'value>(
                             )),
                         )?;
                         statues.push((QueryResult::UnResolved(ur), Status::FAIL));
+                    }
+
+                    // One left-hand value was an empty collection, so there was nothing
+                    // to compare it against. Reported here rather than in the
+                    // comparator because the correct status depends on the role, which
+                    // a comparator cannot see.
+                    //
+                    // As an assertion this fails: the rule claimed a property of every
+                    // element and cannot establish it over none, and treating it as
+                    // satisfied is the wrong PASS being fixed -- `Tags == 'Owner'`
+                    // against `Tags: []` reported "compliant", not "not applicable".
+                    //
+                    // As a gate it must stay SKIP, for the same reason as
+                    // EmptyRhsUnsatisfiable above: eval_rule treats a non-PASS
+                    // condition as "rule does not apply" and drops the guarded body, so
+                    // failing here would disarm every check inside it and still exit 0.
+                    // Note that SKIP does not open the gate either -- it closes it
+                    // quietly. That is a known and unfixed hazard, recorded in
+                    // outcome.rs; it is pre-existing for every non-PASS condition and
+                    // is not made worse here.
+                    operators::ValueEvalResult::EmptyLhsCollection(value) => {
+                        // Only an assertion produces an entry here. `statues` is a
+                        // per-value PASS/FAIL vector -- its consumers treat SKIP as
+                        // `unreachable!()` (eval.rs:1353), because "nothing to report"
+                        // is carried by EvaluationResult::EmptyQueryResult instead. So a
+                        // gate must contribute no entry at all rather than a SKIP entry,
+                        // which leaves the gate decided by its other conditions exactly
+                        // as before this fix.
+                        //
+                        // Failing as an assertion is the fix: the rule claimed a
+                        // property of every element and cannot establish it over none.
+                        // `Tags == 'Owner'` against `Tags: []` reported "compliant" --
+                        // not "not applicable" -- so it actively asserted a check it
+                        // never performed.
+                        //
+                        // A negated clause must NOT fail here. `cmp.1` is the operator's
+                        // own not-flag already composed with the clause-level `not`
+                        // (eval.rs:1325), and `not (Tags == 'Owner')` over nothing is
+                        // vacuously true. This arm runs before the per-value inversion,
+                        // so a FAIL emitted here is one the `not` can never reach; it has
+                        // to opt out instead.
+                        //
+                        // `some` needs no handling here, which is worth saying because it
+                        // is not obvious. Block-level `some` is decided in
+                        // `eval_guard_block_clause`, where `passes > 0` outranks any
+                        // number of fails (eval.rs:1636), so a FAIL contributed here
+                        // cannot sink a block that has a real witness elsewhere. An
+                        // earlier version of this fix threaded `match_all` down to guard
+                        // that case; removing it changed no measured behaviour on any
+                        // fixture, so it was dropped rather than kept as a
+                        // plausible-looking safeguard.
+                        if role.is_strict() && !cmp.1 {
+                            eval_context.start_record(&context)?;
+                            eval_context.end_record(
+                                &context,
+                                RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                                    ComparisonClauseCheck {
+                                        status: Status::FAIL,
+                                        message: Some(format!(
+                                            "Comparison had nothing to compare: the value at {} is an empty collection",
+                                            value.self_path()
+                                        )),
+                                        custom_message: custom_message.clone(),
+                                        comparison: cmp,
+                                        from: QueryResult::Resolved(Rc::clone(&value)),
+                                        to: None,
+                                    },
+                                )),
+                            )?;
+                            statues.push((QueryResult::Resolved(value), Status::FAIL));
+                        }
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
