@@ -690,26 +690,36 @@ impl Comparator for crate::rules::CmpOperator {
         // being checked (docs/QUERY_AND_FILTERING.md describes this for filters) --
         // and it stays a SKIP. Checked first so it keeps precedence when both sides
         // are empty.
-        // Known gap: this rule is stated *positionally*, but zero selection is a property
-        // of the query rather than of the side it sits on. Written the other way round --
+        // Known gap, and it is a documented-behaviour question rather than a comparator
+        // bug, so it is recorded here rather than patched.
+        //
+        // The rule above is stated *positionally*, but zero selection is a property of the
+        // query, not of the side it sits on. Written the other way round --
         // `%expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags` -- the
         // literal is the non-empty left side, so a template containing no S3 bucket at all
         // reaches the empty-RHS path below and FAILs, while the forward spelling of the
         // same clause skips. Measured on a template holding only an SQS queue: mirrored 19,
         // forward 0.
         //
-        // docs/QUERY_AND_FILTERING.md:222 says the skip is the intended behaviour ("A
-        // template contains resources but none match ... the block level clauses will be
-        // skipped"), so the mirrored spelling looks wrong.
+        // docs/QUERY_AND_FILTERING.md:222: "A template contains resources but none match,
+        // for example, a `AWS::EC2::Volume` resource type, then the query will return empty
+        // results and the block level clauses will be skipped." Both spellings are that
+        // case, so the mirrored one contradicts the documentation.
         //
-        // Not fixed here because the obvious fix -- skipping when the left side is a
-        // literal -- also changes `%lit IN %empt`, which
-        // `literal_lhs_against_empty_reference_fails_without_panicking` asserts must FAIL.
-        // Both shapes are a literal left side against an empty query, so nothing available
-        // at this level tells them apart: distinguishing "the resource type is absent"
-        // from "the reference resolved to nothing" needs query provenance that neither
-        // operand carries. Deciding it would change documented empty-reference semantics
-        // rather than fix a comparator, so it is recorded instead of guessed.
+        // What makes this not simply fixable: `%lit IN %empt` where `%empt` filters on an
+        // absent resource type is *the same documented case*, and
+        // `literal_lhs_against_empty_reference_fails_without_panicking` asserts it FAILs.
+        // Measured across three baselines -- v3.2.0 exits 0 for both spellings, and both
+        // became 19 in the EmptyRhs work. So that test pins a behaviour change rather than
+        // ratifying the documented one, and "fixing" the mirrored spelling in isolation
+        // would make two shapes with identical documented semantics disagree in the other
+        // direction.
+        //
+        // Whether empty-reference comparisons should fail closed at all is a real design
+        // question -- failing closed is defensible for a policy gate, and the doc predates
+        // that reasoning -- but it is upstream's to answer, and answering it in a comparator
+        // that cannot see whether the emptiness came from a filter matching nothing or from
+        // a reference resolving to nothing would be guessing.
         if lhs.is_empty() {
             return Ok(EvalResult::Skip);
         }
