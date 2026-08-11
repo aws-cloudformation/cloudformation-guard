@@ -1195,6 +1195,10 @@ fn binary_operation<'value, 'loc: 'value>(
 
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+            // Set when a negated comparison was vacuously satisfied by an empty collection.
+            // See the EmptyLhsCollection arm below: such a clause has no per-value result to
+            // report, and reporting *nothing* makes the fold read it as PASS.
+            let mut vacuously_satisfied = false;
             for each in results {
                 match each {
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
@@ -1255,6 +1259,27 @@ fn binary_operation<'value, 'loc: 'value>(
                         // so a FAIL emitted here is one the `not` can never reach; it has
                         // to opt out instead.
                         //
+                        // Opting out must not mean "push nothing and let the fold decide".
+                        // An empty `statues` reaches the fold at eval.rs:1384 with
+                        // `fails == 0`, which breaks `Status::PASS` -- and PASS
+                        // short-circuits `eval_conjunction_clauses`, satisfying an entire
+                        // `or` block and abandoning its siblings unevaluated. So
+                        //
+                        //     Tags != 'Owner'  or  Name == 'safebucket'
+                        //
+                        // reported a violating template as *compliant*, because the first
+                        // disjunct was vacuously true over an empty list and the real check
+                        // never ran. `vacuously_satisfied` records that this happened so the
+                        // caller can return SKIP rather than an empty result vector; SKIP is
+                        // absorbing rather than short-circuiting in that fold, which leaves
+                        // the decision to the siblings.
+                        //
+                        // This is the same defect, and the same resolution, as
+                        // EmptyRhsVacuouslyTrue at eval.rs:867. That arm returns SKIP for
+                        // exactly this reason and names this disjunction shape in its
+                        // comment; the empty-*collection* path reached the same hazard by a
+                        // different route and did not get the same protection.
+                        //
                         // `some` needs no handling here, which is worth saying because it
                         // is not obvious. Block-level `some` is decided in
                         // `eval_guard_block_clause`, where `passes > 0` outranks any
@@ -1283,7 +1308,28 @@ fn binary_operation<'value, 'loc: 'value>(
                                 )),
                             )?;
                             statues.push((QueryResult::Resolved(value), Status::FAIL));
+                        } else if cmp.1 && role.is_strict() {
+                            // Negated comparison in a rule *body*: vacuously satisfied, and
+                            // recorded so the caller reports SKIP rather than an empty
+                            // result vector that folds to PASS.
+                            vacuously_satisfied = true;
                         }
+                        // The two remaining combinations deliberately contribute nothing.
+                        //
+                        // Positive comparison as a gate: unchanged from before this fix --
+                        // the gate is left to its other conditions.
+                        //
+                        // Negated comparison as a gate: this is the case that must NOT be
+                        // turned into SKIP, and getting it wrong is worse than the wrong
+                        // PASS being fixed. `when Tags != 'Owner'` over an empty list opens
+                        // its gate *because* the clause folds to PASS, and eval_rule treats
+                        // any non-PASS condition as "rule does not apply" (eval.rs:2082).
+                        // Reporting SKIP here closes the gate and silently drops every check
+                        // in the guarded body -- measured: exit 19 -> 0, with the rule moving
+                        // to `not_applicable` and the violating resource never examined.
+                        //
+                        // So the vacuous PASS is load-bearing for gates and a defect in
+                        // bodies. That asymmetry is exactly what ClauseRole exists to carry.
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
@@ -1457,6 +1503,19 @@ fn binary_operation<'value, 'loc: 'value>(
                         }
                     },
                 }
+            }
+            // A vacuously-satisfied negated clause with nothing else to report is SKIP,
+            // not an empty result vector. The distinction is load-bearing:
+            // `QueryValueResult(vec![])` folds to PASS (eval.rs:1384 -- `fails == 0` with
+            // `all` set), and PASS short-circuits `eval_conjunction_clauses`, satisfying a
+            // whole disjunction and abandoning its siblings. `EmptyQueryResult(SKIP)` is
+            // absorbing in that fold instead, leaving the decision to them.
+            //
+            // Guarded on `statues.is_empty()` so a clause that produced real per-value
+            // results still reports them: a template where one resource has `Tags: []` and
+            // another has tags that genuinely collide must still fail on the second.
+            if vacuously_satisfied && statues.is_empty() {
+                return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP));
             }
             Ok(EvaluationResult::QueryValueResult(statues))
         }

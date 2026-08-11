@@ -5632,11 +5632,110 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // PASS specifically, measured rather than assumed. `assert_ne!(FAIL)` would also
-    // admit SKIP, and SKIP would mean the clause had been made inert instead of being
-    // correctly satisfied -- a distinction that matters if this clause is ever a `when`
-    // condition, where SKIP closes the gate and PASS opens it.
-    assert_eq!(status, Status::PASS);
+    // SKIP, not PASS and not FAIL.
+    //
+    // Not FAIL: `not (Tags == 'Owner')` over an empty collection is vacuously true, and
+    // the clause must not be blamed for having nothing to compare.
+    //
+    // Not PASS either, which is the subtler half and was this test's original assertion.
+    // PASS short-circuits `eval_conjunction_clauses`, so a vacuously-true clause reported
+    // as PASS satisfies an entire `or` block and abandons its siblings unevaluated --
+    // `Tags != 'Owner' or Name == 'safebucket'` reported a violating template as
+    // *compliant*. SKIP is absorbing in that fold instead, leaving the decision to the
+    // siblings, which is what `a_vacuous_negated_clause_does_not_absorb_a_disjunction`
+    // below pins.
+    //
+    // This assertion changing from PASS to SKIP is the visible edge of that fix, and it
+    // is why the assertion is exact: `assert_ne!(FAIL)` would have admitted both and
+    // reported nothing when the semantics moved.
+    assert_eq!(status, Status::SKIP);
+
+    Ok(())
+}
+
+/// The wrong PASS that reporting a vacuous clause as PASS produced.
+///
+/// `eval_conjunction_clauses` short-circuits on PASS (`continue 'conjunction'`) but absorbs
+/// SKIP (`=> {}`), so a vacuously-satisfied first disjunct reported as PASS satisfies the
+/// whole `or` and its siblings never run. Here the sibling is a real failing check, so the
+/// file exited 0 while `Name` was `publicbucket` -- and reported `"compliant"`, not
+/// `"not_applicable"`.
+///
+/// This is the same hazard `EmptyRhsVacuouslyTrue` (`eval.rs:867`) returns SKIP to avoid,
+/// and its comment names this exact shape. The empty-*collection* path reached it by a
+/// different route and initially did not get the same protection: the negated case pushed
+/// no per-value result, and an empty result vector folds to PASS at `eval.rs:1384`.
+#[test]
+fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
+    let rules = r###"
+    rule vacuous_ne_absorbs_or {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+        or
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'safebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL, from the sibling disjunct that actually got evaluated.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The counterpart that makes the fix above a role split rather than a status change.
+///
+/// A negated comparison over an empty collection opens its `when` gate *because* it folds
+/// to PASS. Reporting SKIP for it unconditionally -- which an earlier version of this fix
+/// did -- closes the gate, and `eval_rule` then drops every check in the guarded body
+/// (`eval.rs:2082`). Measured at that point: exit 19 -> 0, the rule moved to
+/// `not_applicable`, and the violating `publicbucket` was never examined. A worse defect
+/// than the wrong PASS being fixed, and it exits 0 so nothing downstream notices.
+///
+/// So the vacuous PASS is load-bearing in a gate and a defect in a body. `ClauseRole`
+/// carries exactly that asymmetry, and `vacuously_satisfied` is only set when
+/// `role.is_strict()`.
+#[test]
+fn a_vacuous_negated_gate_still_opens_and_runs_its_body() -> Result<()> {
+    let rules = r###"
+    rule gated_by_vacuous_ne when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner' {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the gate opened and the body ran. SKIP here would mean the gate closed
+    // and the violation went unreported.
+    assert_eq!(status, Status::FAIL);
 
     Ok(())
 }

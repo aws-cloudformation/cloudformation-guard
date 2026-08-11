@@ -558,14 +558,23 @@ impl Comparator for EqOperation {
             }
 
             (None, Some(r)) => {
-                let lhs_flattened = selected(
+                // `selected`, not `flattened`: each query result stays one element, which
+                // is what lets the empty-collection guard below attribute an empty list to
+                // the specific resource that had it. Named to match, because the
+                // distinction is the correctness argument for that guard.
+                let lhs_selected = selected(
                     lhs,
                     |ur| results.push(ValueEvalResult::LhsUnresolved(ur.clone())),
                     Vec::push,
                 );
                 match &*r {
                     PathAwareValue::List((_, rhsl)) => {
-                        for each in lhs_flattened {
+                        // No empty-collection guard needed here, and it is worth saying
+                        // why rather than leaving a reader to re-open the question: this
+                        // loop pushes unconditionally for every element of
+                        // `lhs_selected`, and iterates that rather than a nested list, so
+                        // it has no path that pushes zero results.
+                        for each in lhs_selected {
                             if each.is_scalar() && rhsl.len() == 1 {
                                 results.push(match_value(
                                     each,
@@ -579,7 +588,7 @@ impl Comparator for EqOperation {
                     }
 
                     single_value => {
-                        for each in lhs_flattened {
+                        for each in lhs_selected {
                             if let PathAwareValue::List((_, lhs_list)) = &*each {
                                 // An empty list contributes no elements, so this loop
                                 // would push nothing and the clause would vanish: the
