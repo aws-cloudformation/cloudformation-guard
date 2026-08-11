@@ -4046,6 +4046,143 @@ fn status_combinator() {
 }
 
 //
+// Comparisons whose right-hand side (the reference/allow/deny list) resolves to no
+// values. These used to SKIP, which exits 0, so an allowlist that resolved empty
+// reported compliance for a violating template.
+//
+// The answer depends on polarity, and on whether the clause is a body assertion or a
+// `when` condition. All four combinations are pinned here because getting any one of
+// them wrong reintroduces a wrong PASS or starts failing compliant templates.
+//
+fn status_of(rules: &str, input: &str) -> Result<Status> {
+    let value = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    eval_rules_file(&rules_file, &mut root, None)
+}
+
+const ONE_BUCKET: &str = r#"
+{
+    Resources: {
+        bucket: {
+            Type: 'AWS::S3::Bucket',
+            Properties: { BucketName: "PUBLIC-INSECURE" }
+        }
+    }
+}
+"#;
+
+#[test]
+fn positive_comparison_against_empty_reference_fails() -> Result<()> {
+    // "the name must be one of the approved names", where the approved list is
+    // derived from a resource type absent from this template. Nothing qualifies, so
+    // the clause cannot be satisfied. Before the fix this SKIPped and exited 0.
+    let rules = r###"
+    let approved = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule name_must_be_approved {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName IN %approved
+    }
+    "###;
+    assert_eq!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn negated_comparison_against_empty_reference_does_not_fail() -> Result<()> {
+    // "the name must NOT be one of the denied names", where the denylist is empty.
+    // Nothing to collide with, so the clause is vacuously satisfied and must not
+    // fail: a denylist is legitimately empty whenever the template contains none of
+    // the denied values.
+    //
+    // Asserted as "not FAIL" rather than "is PASS" deliberately. The status is SKIP,
+    // because a vacuous PASS short-circuits a disjunction -- see
+    // vacuous_negated_comparison_does_not_satisfy_a_disjunction below. Both SKIP and
+    // PASS exit 0 for a standalone clause, so what matters here is only that the
+    // clause is non-failing.
+    let rules = r###"
+    let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule name_must_not_be_denied {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+    }
+    "###;
+    assert_ne!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn vacuous_negated_comparison_does_not_satisfy_a_disjunction() -> Result<()> {
+    // Regression test for a wrong PASS found by review.
+    //
+    // eval_conjunction_clauses treats PASS as short-circuiting (`continue
+    // 'conjunction`) but SKIP as absorbing (`=> {}`). Reporting the vacuous
+    // empty-denylist case as PASS therefore satisfied the whole `or` block and
+    // abandoned the sibling disjunct unevaluated, so an unencrypted resource passed
+    // the gate. Base 57bbdbf failed this ruleset correctly; an intermediate version
+    // of this change passed it.
+    //
+    // Disjunct 1 is vacuously satisfied (empty denylist). Disjunct 2 is the real
+    // check and genuinely fails. The rule must fail.
+    let rules = r###"
+    let denied = Resources[ Type == 'AWS::S3::Bucket' ].Properties.BucketName
+    rule gate {
+        Resources.V.Properties.Encrypted != %denied
+        or
+        Resources.V.Properties.Encrypted == true
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            V: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Encrypted: false }
+            }
+        }
+    }
+    "#;
+
+    assert_eq!(status_of(rules, input)?, Status::FAIL);
+    Ok(())
+}
+
+#[test]
+fn empty_reference_in_a_when_condition_does_not_disarm_the_block() -> Result<()> {
+    // The critical case. If the empty-RHS condition FAILs, the gate is not-PASS and
+    // eval_rule treats that as "rule does not apply", skipping the entire body --
+    // so the real check silently stops running and the file exits 0. The condition
+    // must stay a SKIP so the remaining conditions decide the gate.
+    let rules = r###"
+    let empt = Resources.*[ Type == 'AWS::EC2::Instance' ].Properties.Foo
+    rule gated when Resources.*.Type IN %empt
+                    Resources.*.Type == /S3/ {
+        Resources.*.Properties.BucketName == /^secure-/
+    }
+    "###;
+    // The bucket name violates the body check, so this must not pass.
+    assert_ne!(status_of(rules, ONE_BUCKET)?, Status::PASS);
+    Ok(())
+}
+
+#[test]
+fn literal_lhs_against_empty_reference_does_not_panic() -> Result<()> {
+    // A `let` literal on the left resolves to QueryResult::Literal, which three
+    // reporters treat as unreachable inside a comparison record. Emitting a status
+    // rather than a per-value comparison keeps this off that path.
+    let rules = r###"
+    let lit = "foo"
+    let empt = Resources.*[ Type == 'AWS::EC2::Instance' ].Properties.Missing
+    rule literal_lhs {
+        %lit IN %empt
+    }
+    "###;
+    // Must produce a verdict rather than panicking.
+    let status = status_of(rules, ONE_BUCKET)?;
+    assert_eq!(status, Status::FAIL);
+    Ok(())
+}
+
+//
 // Clause-level negation on a BINARY comparison.
 //
 // `not <query> == <value>` parses (parser.rs:969 accepts a leading not before the
@@ -4094,48 +4231,6 @@ fn negated_binary_clause_is_honored() -> Result<()> {
     // Encrypted: true satisfies the intent -> PASS.
     // Before the fix this returned FAIL.
     assert_eq!(eval_single_rule(negated, encrypted_true)?, Status::PASS);
-// `not <rule>` where the dependent rule SKIPped.
-//
-// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
-// must not report compliance. It previously returned PASS -- and because the
-// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
-// the check had never run.
-//
-// In a `when` CONDITION the same shape is intentional ("apply this rule when that
-// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
-// that behavior is deliberately preserved here.
-//
-#[test]
-fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
-    // `inner` SKIPs: its query filters on a resource type absent from the input.
-    let rules = r###"
-    rule inner {
-        Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId exists
-    }
-
-    rule deny when Resources.*.Type exists {
-        not inner
-    }
-    "###;
-
-    let input = r#"
-    {
-        Resources: {
-            bucket: {
-                Type: 'AWS::S3::Bucket',
-                Properties: { BucketName: "b" }
-            }
-        }
-    }
-    "#;
-
-    let resources = PathAwareValue::try_from(input)?;
-    let rules_file = RulesFile::try_from(rules)?;
-    let mut root = root_scope(&rules_file, Rc::new(resources));
-    let status = eval_rules_file(&rules_file, &mut root, None)?;
-
-    // Before the fix this was PASS, manufactured from a check that never ran.
-    assert_ne!(status, Status::PASS);
 
     Ok(())
 }
@@ -4198,6 +4293,58 @@ fn negation_composes_with_operator_not_flag() -> Result<()> {
     }
     "###;
     assert_eq!(eval_single_rule(op_only, encrypted_false)?, Status::FAIL);
+
+    Ok(())
+}
+
+//
+// `not <rule>` where the dependent rule SKIPped.
+//
+// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
+// must not report compliance. It previously returned PASS -- and because the
+// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
+// the check had never run.
+//
+// In a `when` CONDITION the same shape is intentional ("apply this rule when that
+// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
+// that behavior is deliberately preserved here.
+//
+#[test]
+fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
+    // `inner` SKIPs: its query filters on a resource type absent from the input.
+    let rules = r###"
+    rule inner {
+        Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId exists
+    }
+
+    rule deny when Resources.*.Type exists {
+        not inner
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { BucketName: "b" }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // Before the fix this was PASS, manufactured from a check that never ran.
+    assert_ne!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
 fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()> {
     // Same shape, but the negated reference is a `when` condition rather than a body
     // assertion. Gating here is intentional: the guarded block should still run.
@@ -4232,3 +4379,13 @@ fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()
 
     Ok(())
 }
+
+//
+// EMPTY / !EMPTY on a boolean.
+//
+// The Bool arm of element_empty_operation used to compute
+// `(*boolean).to_string().is_empty()`, which is never true, so a boolean was never
+// EMPTY and `!empty` on one always passed regardless of its value -- a clause that
+// reads like a check but asserts nothing. It now reports the same incompatible-type
+// error as every other unsupported type.
+//

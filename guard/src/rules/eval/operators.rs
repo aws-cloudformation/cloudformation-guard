@@ -88,6 +88,17 @@ impl ValueEvalResult {
 #[derive(Clone, Debug)]
 pub(crate) enum EvalResult {
     Skip,
+    /// The left-hand side resolved to values but the right-hand side resolved to
+    /// nothing, so there was no reference to compare against. Only produced by the
+    /// bare `CmpOperator` comparator; the `(CmpOperator, bool)` wrapper resolves it
+    /// using the operator's polarity and never passes it further up.
+    EmptyRhs,
+    /// Empty RHS on a positive comparison (`==`, `IN`): no value can be one of zero
+    /// references, so every left-hand value fails.
+    EmptyRhsUnsatisfiable,
+    /// Empty RHS on a negated comparison (`!=`, `NOT IN`): there is nothing to
+    /// collide with, so the clause holds.
+    EmptyRhsVacuouslyTrue,
     Result(Vec<ValueEvalResult>),
 }
 
@@ -603,8 +614,24 @@ impl Comparator for crate::rules::CmpOperator {
         lhs: &[QueryResult],
         rhs: &[QueryResult],
     ) -> crate::rules::Result<EvalResult> {
-        if lhs.is_empty() || rhs.is_empty() {
+        // An empty LHS means the query selected nothing, so the clause has nothing to
+        // say about this input. That is genuinely inapplicable -- it is what lets one
+        // ruleset run against templates that do not all contain the resource type
+        // being checked (docs/QUERY_AND_FILTERING.md describes this for filters) --
+        // and it stays a SKIP. Checked first so it keeps precedence when both sides
+        // are empty.
+        if lhs.is_empty() {
             return Ok(EvalResult::Skip);
+        }
+
+        // An empty RHS is a different situation that used to share this outcome:
+        // there ARE values on the left to check, but the reference they would be
+        // compared against resolved to nothing. Whether that is a pass or a failure
+        // depends on the polarity of the comparison, so it cannot be answered here
+        // without the not-flag. Report it and let the (CmpOperator, bool) wrapper
+        // below decide.
+        if rhs.is_empty() {
+            return Ok(EvalResult::EmptyRhs);
         }
 
         match self {
@@ -654,6 +681,36 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
         let results = self.0.compare(lhs, rhs)?;
         Ok(match results {
             EvalResult::Skip => EvalResult::Skip,
+
+            // The right-hand side resolved to no values. Polarity decides the answer,
+            // which is why this is resolved here rather than in the bare comparator:
+            //
+            //   positive (`==`, `IN`)      -- "this value must be one of the
+            //     references". With no references, nothing qualifies, so no value can
+            //     satisfy the clause: FAIL. Previously this was a SKIP, which exits 0
+            //     and is why an allowlist that resolved empty reported compliance.
+            //
+            //   negated (`!=`, `NOT IN`)   -- "this value must not be one of the
+            //     references". With no references there is nothing to collide with, so
+            //     the clause is vacuously satisfied: PASS. Failing here would reject
+            //     compliant templates, because a denylist is legitimately empty
+            //     whenever the template contains none of the denied values.
+            //
+            // Both answers are definite, so neither leaves the clause unenforced.
+            EvalResult::EmptyRhs => {
+                if self.1 {
+                    EvalResult::EmptyRhsVacuouslyTrue
+                } else {
+                    EvalResult::EmptyRhsUnsatisfiable
+                }
+            }
+
+            // Already resolved by this wrapper. The bare CmpOperator comparator only
+            // ever yields EmptyRhs, so these cannot arrive here; pass them through
+            // unchanged rather than double-inverting.
+            resolved @ (EvalResult::EmptyRhsUnsatisfiable
+            | EvalResult::EmptyRhsVacuouslyTrue) => resolved,
+
             EvalResult::Result(r) => {
                 if self.1 {
                     EvalResult::Result(

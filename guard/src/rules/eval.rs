@@ -762,6 +762,11 @@ where
     }
 }
 
+/// `strict_empty_rhs` is true when this clause is an assertion in a rule body, and
+/// false when it is a `when` condition. A positive comparison against a reference
+/// that resolved to nothing is unsatisfiable and fails in a body, but must stay a
+/// SKIP in a condition: a failing condition makes the gate not-PASS, and eval_rule
+/// then skips the entire guarded block, which would disarm every check inside it.
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
@@ -769,11 +774,73 @@ fn binary_operation<'value, 'loc: 'value>(
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
+    strict_empty_rhs: bool,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
     match results {
         operators::EvalResult::Skip => Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
+
+        // Positive comparison against a reference that resolved to nothing. No value
+        // can be one of zero references, so the clause is unsatisfiable and every
+        // left-hand value fails. Returning a definite status keeps the clause
+        // enforced instead of exiting 0 unevaluated.
+        //
+        // A status is emitted rather than a per-value comparison record because there
+        // is no right-hand value to report against, and `from:` must not be built
+        // from a raw lhs entry -- an lhs can be QueryResult::Literal (a `let`
+        // literal), which every reporter treats as unreachable in a comparison.
+        //
+        // In a `when` condition this must stay a SKIP. A FAIL there makes the gate
+        // not-PASS, and eval_rule treats a non-PASS condition as "rule does not
+        // apply" and skips the whole body -- so failing here would silently disarm
+        // every check in the guarded block and exit 0, which is worse than the bug
+        // being fixed.
+        operators::EvalResult::EmptyRhsUnsatisfiable => Ok(EvaluationResult::EmptyQueryResult(
+            if strict_empty_rhs {
+                Status::FAIL
+            } else {
+                Status::SKIP
+            },
+        )),
+
+        // Negated comparison against a reference that resolved to nothing. There is
+        // nothing to collide with, so the clause is vacuously satisfied and must not
+        // fail: an empty denylist is the normal state whenever a template contains
+        // none of the denied values.
+        //
+        // Reported as SKIP rather than PASS, which matters inside a disjunction.
+        // eval_conjunction_clauses treats PASS as short-circuiting (eval.rs, the
+        // `Status::PASS` arm does `continue 'conjunction`) but SKIP as absorbing
+        // (`Status::SKIP => {}`). A vacuous PASS therefore satisfies an entire `or`
+        // block and abandons the sibling disjuncts unevaluated -- so
+        //
+        //     Encrypted != %empty_denylist  or  Encrypted == true
+        //
+        // would pass an unencrypted resource, because the first disjunct is
+        // vacuously true and the real check never runs. SKIP keeps the clause
+        // non-failing while leaving the decision to its siblings, which is the
+        // behavior base 57bbdbf had here and the reason that ruleset failed
+        // correctly before.
+        //
+        // Both outcomes exit 0 for a clause evaluated on its own, so the weaker
+        // status costs nothing in the standalone case.
+        operators::EvalResult::EmptyRhsVacuouslyTrue => {
+            Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
+        }
+
+        // Unreached in practice: `cmp` here is a (CmpOperator, bool) pair, and that
+        // wrapper always resolves EmptyRhs into one of the two variants above. Fail
+        // closed rather than panicking, so a future refactor that routes around the
+        // wrapper cannot turn this into a silent pass.
+        operators::EvalResult::EmptyRhs => Ok(EvaluationResult::EmptyQueryResult(
+            if strict_empty_rhs {
+                Status::FAIL
+            } else {
+                Status::SKIP
+            },
+        )),
+
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
             for each in results {
@@ -1075,9 +1142,12 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 }
 
 #[allow(clippy::never_loop)]
+/// `strict_empty_rhs` is false when this clause is a `when` condition; see
+/// `binary_operation`.
 pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    strict_empty_rhs: bool,
 ) -> Result<Status> {
     let all = gac.access_clause.query.match_all;
     let blk_context = format!("GuardAccessClause#block{}", gac);
@@ -1168,6 +1238,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver,
+            strict_empty_rhs,
         )
     };
 
@@ -1662,9 +1733,9 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Status> {
     match gc {
-        GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
-        // Rule body: a named-rule reference here is an assertion, so a SKIPped
-        // dependent rule fails closed.
+        // Rule body: an unsatisfiable clause fails, and a named-rule reference is an
+        // assertion, so a SKIPped dependent rule fails closed.
+        GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, true),
         GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, true),
         GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
@@ -1682,9 +1753,11 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Status> {
     match when_clause {
-        WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
-        // `when` condition: gating on a rule that did not apply is intentional, so
-        // keep the pre-existing SKIP handling.
+        // `when` condition: both stay non-strict. A clause whose reference did not
+        // resolve, or a reference to a rule that did not apply, must not disarm the
+        // block being guarded -- a FAIL here makes the gate not-PASS and eval_rule
+        // skips the whole body.
+        WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, false),
         WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver, false),
         WhenGuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
     }
