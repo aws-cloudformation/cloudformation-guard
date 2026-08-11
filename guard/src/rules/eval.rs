@@ -1238,9 +1238,19 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     }
 }
 
+/// Evaluates a reference to another rule by name.
+///
+/// `strict_skip` distinguishes the two contexts this is reached from:
+///
+/// - `true` — the reference is an assertion in a rule body, so a SKIPped
+///   dependent rule must not satisfy it in either polarity. Failing closed here is
+///   what stops `not <rule>` from reporting compliance for a check that never ran.
+/// - `false` — the reference is a `when` condition, where gating on a rule that did
+///   not apply is deliberate and covered by existing tests.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    strict_skip: bool,
 ) -> Result<Status> {
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
@@ -1255,6 +1265,22 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                         Status::PASS
                     }
                 }
+
+                // A dependent rule that SKIPped never ran, so it is not evidence in
+                // either direction. Where this reference is an assertion in a rule
+                // body, a negated reference to it must not report compliance on the
+                // strength of a check that was never performed: `not <rule>` used to
+                // fall into the `_` arm below and yield PASS, and because the
+                // enclosing rule then reported PASS rather than SKIP, nothing in the
+                // output hinted at the omission.
+                //
+                // In a `when` condition the same shape is deliberate and tested --
+                // `rule r when !other { ... }` is how a ruleset says "apply this
+                // when that other rule did not apply" (see
+                // cross_rule_clause_when_checks). Gating on a SKIP there is not a
+                // compliance claim, so it keeps the existing behavior.
+                Status::SKIP if strict_skip => Status::FAIL,
+
                 _ => {
                     if gnc.negation {
                         Status::PASS
@@ -1637,7 +1663,9 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
 ) -> Result<Status> {
     match gc {
         GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
-        GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver),
+        // Rule body: a named-rule reference here is an assertion, so a SKIPped
+        // dependent rule fails closed.
+        GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, true),
         GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
             "GuardConditionClause".to_string(),
@@ -1655,7 +1683,9 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
 ) -> Result<Status> {
     match when_clause {
         WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver),
-        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver),
+        // `when` condition: gating on a rule that did not apply is intentional, so
+        // keep the pre-existing SKIP handling.
+        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver, false),
         WhenGuardClause::ParameterizedNamedRule(prc) => eval_parameterized_rule_call(prc, resolver),
     }
 }

@@ -4094,6 +4094,48 @@ fn negated_binary_clause_is_honored() -> Result<()> {
     // Encrypted: true satisfies the intent -> PASS.
     // Before the fix this returned FAIL.
     assert_eq!(eval_single_rule(negated, encrypted_true)?, Status::PASS);
+// `not <rule>` where the dependent rule SKIPped.
+//
+// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
+// must not report compliance. It previously returned PASS -- and because the
+// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
+// the check had never run.
+//
+// In a `when` CONDITION the same shape is intentional ("apply this rule when that
+// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
+// that behavior is deliberately preserved here.
+//
+#[test]
+fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
+    // `inner` SKIPs: its query filters on a resource type absent from the input.
+    let rules = r###"
+    rule inner {
+        Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId exists
+    }
+
+    rule deny when Resources.*.Type exists {
+        not inner
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { BucketName: "b" }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // Before the fix this was PASS, manufactured from a check that never ran.
+    assert_ne!(status, Status::PASS);
 
     Ok(())
 }
@@ -4156,6 +4198,37 @@ fn negation_composes_with_operator_not_flag() -> Result<()> {
     }
     "###;
     assert_eq!(eval_single_rule(op_only, encrypted_false)?, Status::FAIL);
+fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()> {
+    // Same shape, but the negated reference is a `when` condition rather than a body
+    // assertion. Gating here is intentional: the guarded block should still run.
+    let rules = r###"
+    rule inner {
+        Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId exists
+    }
+
+    rule gated when not inner {
+        Resources.*.Type exists
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { BucketName: "b" }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // The gate opens and the body (`Type exists`) holds, so this passes.
+    assert_eq!(status, Status::PASS);
 
     Ok(())
 }
