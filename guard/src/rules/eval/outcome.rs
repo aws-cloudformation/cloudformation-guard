@@ -71,6 +71,19 @@ use super::ClauseRole;
 ///
 /// Prefer this over [`Status`] inside the evaluator; convert with
 /// [`Outcome::to_status`] at the reporting boundary.
+///
+/// Currently unreferenced by the evaluator, and deliberately so. The type and its
+/// algebra are the tested specification that a fold conversion will be checked against,
+/// but converting the folds requires first deciding what a `when` condition means when
+/// its comparison has nothing to compare: the vacuous PASS that a naive conversion
+/// removes is load-bearing for gates, and removing it makes `eval_rule` treat the rule as
+/// inapplicable and drop every check in the guarded body. An attempt that did not account
+/// for this turned a blocked violating template into a passing one and was reverted.
+///
+/// `dead_code` is allowed rather than the items being deleted, because the algebra is
+/// what the follow-up needs and the exhaustive tests in `outcome_tests` are what make it
+/// safe to rely on.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Outcome {
     /// The check ran and the input satisfied it.
@@ -101,6 +114,7 @@ pub(crate) enum Outcome {
     Unevaluatable,
 }
 
+#[allow(dead_code)]
 impl Outcome {
     /// Conjunction: every element must be satisfied.
     ///
