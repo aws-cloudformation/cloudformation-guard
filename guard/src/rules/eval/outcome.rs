@@ -186,12 +186,34 @@ impl Outcome {
         iter.into_iter().fold(Outcome::identity(), Outcome::or)
     }
 
-    /// True when this outcome should block a deployment gate.
+    /// True when this outcome produces a `FAIL` verdict, and so blocks a deployment.
     ///
     /// Only [`Outcome::Violated`] does unconditionally; [`Outcome::Unevaluatable`]
     /// does so only as an assertion.
+    ///
+    /// This is **not** the question to ask about a gate. A gate that does not fail can
+    /// still close, silently dropping every check it guards — see
+    /// [`Outcome::closes_gate`]. Conflating the two is what makes a "the gate never
+    /// failed" test look like a safety property when it is a tautology.
     pub(crate) fn blocks(self, role: ClauseRole) -> bool {
         matches!(self.to_status(role), Status::FAIL)
+    }
+
+    /// True when this outcome, used as a `when` condition, stops the guarded block from
+    /// being evaluated.
+    ///
+    /// `eval_rule` returns `SKIP` for the whole rule when its condition is anything
+    /// other than `PASS`, so a condition that merely *did not apply* drops the body
+    /// exactly as thoroughly as one that failed. Only [`Outcome::Satisfied`] opens a
+    /// gate.
+    ///
+    /// Deliberately takes no [`ClauseRole`]: the gate *is* the role, and closure does
+    /// not depend on how the condition would have been reported. It is also why
+    /// [`Outcome::blocks`] is the wrong predicate for gate safety —
+    /// [`Outcome::NotApplicable`] and [`Outcome::Unevaluatable`] both close a gate
+    /// while blocking nothing, and that gap is the silent-drop hazard.
+    pub(crate) fn closes_gate(self) -> bool {
+        !matches!(self, Outcome::Satisfied)
     }
 
     /// Collapse to the reported [`Status`].

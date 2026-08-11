@@ -561,35 +561,106 @@ fn negate_distributes_over_both_folds() {
     }
 }
 
-/// Gate safety at the FOLD level, not just per value.
+/// `blocks(Gate)` is the WRONG predicate for gate safety, and this pins why.
 ///
-/// A failing gate makes `eval_rule` treat its rule as inapplicable and drop every check
-/// in the guarded body, so a gate must only fail on an actual violation. The
-/// single-value version of this is asserted above; this extends it to folds, which is
-/// the shape a rewired gate condition would actually produce.
+/// An earlier version of this file asserted `!blocks(Gate)` over every non-violating
+/// sequence and called that "gate safety at the fold level". That assertion cannot fail:
+/// for `Gate`, `to_status` maps both non-evidence variants to `SKIP`, so nothing except
+/// `Violated` can ever make `blocks` true — and `Violated` was excluded from the input
+/// set by construction. The test passed for a reason unrelated to its name.
 ///
-/// Worth being precise about what this does and does not catch. The reverted attempt to
-/// fix the empty-collection wrong PASS closed gates by having a *clause* report non-PASS
-/// on an empty collection, which is upstream of any fold — so this test would not have
-/// caught it. It constrains the fold layer only.
+/// The real hazard is that a gate does not need to FAIL to be unsafe. `eval_rule` returns
+/// `SKIP` for the entire rule when its condition is anything other than `PASS`
+/// (`eval.rs:2082`), so a condition that merely did not apply drops every check in the
+/// guarded body just as thoroughly as one that failed — while reporting nothing. That is
+/// the wrong-PASS shape: exit 0 with the check silently unenforced.
+///
+/// So the honest statement is that these two predicates disagree, and the disagreement is
+/// exactly the silent-drop set.
 #[test]
-fn a_folded_gate_only_fails_on_an_actual_violation() {
-    const NON_VIOLATIONS: [Outcome; 3] = [
-        Outcome::Satisfied,
+fn blocking_a_deployment_and_closing_a_gate_are_different_questions() {
+    // The tautology, kept as a pin: for a gate, only a violation ever reports FAIL.
+    for o in ALL {
+        assert_eq!(
+            o.blocks(ClauseRole::Gate),
+            o == Outcome::Violated,
+            "{o:?} as a gate reported FAIL when only Violated should"
+        );
+    }
+
+    // The property that actually matters, and which `blocks` does not express.
+    assert!(!Outcome::Satisfied.closes_gate(), "a satisfied gate must open");
+    for o in [
+        Outcome::Violated,
         Outcome::NotApplicable,
         Outcome::Unevaluatable,
-    ];
-    for a in NON_VIOLATIONS {
-        for b in NON_VIOLATIONS {
-            for c in NON_VIOLATIONS {
-                for seq in [vec![], vec![a], vec![a, b], vec![a, b, c]] {
-                    assert!(
-                        !Outcome::all(seq.iter().copied()).blocks(ClauseRole::Gate),
-                        "an and-fold of {seq:?} blocked a gate with no violation in it"
+    ] {
+        assert!(o.closes_gate(), "{o:?} must close a gate");
+    }
+
+    // The silent-drop set: closes the gate, reports nothing. Non-empty, which is the
+    // whole finding — if this were ever empty, `blocks` would be a sufficient check.
+    let silent: Vec<Outcome> = ALL
+        .iter()
+        .copied()
+        .filter(|o| o.closes_gate() && !o.blocks(ClauseRole::Gate))
+        .collect();
+    assert_eq!(
+        silent,
+        vec![Outcome::NotApplicable, Outcome::Unevaluatable],
+        "the set of outcomes that drop a guarded body without reporting a failure changed"
+    );
+}
+
+/// Gate closure at the FOLD level.
+///
+/// This is the assertion the deleted test was reaching for. A rewired gate condition is a
+/// fold over clause outcomes, and the question is whether the fold can close the gate,
+/// not whether it can fail.
+///
+/// The load-bearing case is the empty fold: `identity()` is `NotApplicable`, which closes
+/// the gate. A gate with nothing to evaluate therefore drops its body — which is precisely
+/// the mechanism behind the reverted empty-collection fix. Asserting it here means the
+/// behaviour is documented as a known consequence rather than rediscovered by a
+/// differential test.
+///
+/// What this still does not catch: the reverted fix acted in a *clause*, upstream of any
+/// fold, so no fold-level test would have caught it. Gate correctness needs `eval_rule`
+/// itself to distinguish "condition false" from "condition unevaluatable".
+#[test]
+fn a_gate_opens_only_when_the_fold_is_actually_satisfied() {
+    assert!(
+        Outcome::all([]).closes_gate(),
+        "an empty and-fold must close a gate: nothing was established"
+    );
+    assert!(
+        Outcome::any([]).closes_gate(),
+        "an empty or-fold must close a gate: nothing was satisfied"
+    );
+
+    for a in ALL {
+        for b in ALL {
+            for c in ALL {
+                for seq in [vec![a], vec![a, b], vec![a, b, c]] {
+                    let and_opens = !Outcome::all(seq.iter().copied()).closes_gate();
+                    // An and-fold opens the gate only if every element is satisfied, or
+                    // if the satisfied elements are padded solely by the identity.
+                    let and_expected = seq.iter().any(|o| *o == Outcome::Satisfied)
+                        && seq
+                            .iter()
+                            .all(|o| matches!(o, Outcome::Satisfied | Outcome::NotApplicable));
+                    assert_eq!(
+                        and_opens, and_expected,
+                        "an and-fold of {seq:?} opened a gate it should not have"
                     );
-                    assert!(
-                        !Outcome::any(seq.iter().copied()).blocks(ClauseRole::Gate),
-                        "an or-fold of {seq:?} blocked a gate with no violation in it"
+
+                    let or_opens = !Outcome::any(seq.iter().copied()).closes_gate();
+                    // An or-fold opens the gate exactly when something is satisfied.
+                    // Nothing else may stand in — that is the absorption property.
+                    assert_eq!(
+                        or_opens,
+                        seq.iter().any(|o| *o == Outcome::Satisfied),
+                        "an or-fold of {seq:?} disagreed with its satisfied elements"
                     );
                 }
             }
