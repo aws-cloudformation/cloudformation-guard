@@ -1195,10 +1195,6 @@ fn binary_operation<'value, 'loc: 'value>(
 
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
-            // Set when a negated comparison was vacuously satisfied by an empty collection.
-            // See the EmptyLhsCollection arm below: such a clause has no per-value result to
-            // report, and reporting *nothing* makes the fold read it as PASS.
-            let mut vacuously_satisfied = false;
             for each in results {
                 match each {
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
@@ -1308,28 +1304,49 @@ fn binary_operation<'value, 'loc: 'value>(
                                 )),
                             )?;
                             statues.push((QueryResult::Resolved(value), Status::FAIL));
-                        } else if cmp.1 && role.is_strict() {
-                            // Negated comparison in a rule *body*: vacuously satisfied, and
-                            // recorded so the caller reports SKIP rather than an empty
-                            // result vector that folds to PASS.
-                            vacuously_satisfied = true;
                         }
-                        // The two remaining combinations deliberately contribute nothing.
+                        // A negated comparison contributes nothing, and that is a known
+                        // defect rather than a decision. Read on before "fixing" it.
                         //
-                        // Positive comparison as a gate: unchanged from before this fix --
-                        // the gate is left to its other conditions.
+                        // Contributing nothing leaves `statues` empty, which the fold at
+                        // eval.rs reads as `fails == 0` and reports PASS. PASS
+                        // short-circuits `eval_conjunction_clauses`, so
                         //
-                        // Negated comparison as a gate: this is the case that must NOT be
-                        // turned into SKIP, and getting it wrong is worse than the wrong
-                        // PASS being fixed. `when Tags != 'Owner'` over an empty list opens
-                        // its gate *because* the clause folds to PASS, and eval_rule treats
-                        // any non-PASS condition as "rule does not apply" (eval.rs:2082).
-                        // Reporting SKIP here closes the gate and silently drops every check
-                        // in the guarded body -- measured: exit 19 -> 0, with the rule moving
-                        // to `not_applicable` and the violating resource never examined.
+                        //     Tags != 'Owner'  or  Name == 'safebucket'
                         //
-                        // So the vacuous PASS is load-bearing for gates and a defect in
-                        // bodies. That asymmetry is exactly what ClauseRole exists to carry.
+                        // reports a violating template as *compliant* -- the vacuous first
+                        // disjunct satisfies the whole `or` and the real check never runs.
+                        // This is the hazard EmptyRhsVacuouslyTrue returns SKIP to avoid,
+                        // and it is pre-existing here: v3.2.0 exits 0 for that ruleset too.
+                        //
+                        // Returning SKIP instead was implemented and reverted, twice. The
+                        // second attempt narrowed it to `role.is_strict()`, which fixes the
+                        // direct gate spelling and still regresses this:
+                        //
+                        //     rule vac_ne { ...Tags != 'Owner' }
+                        //     rule body when vac_ne { ...Name == 'privatebucket' }
+                        //
+                        // measured 19 -> 0 against a template with `Tags: []` and a
+                        // violating Name. A named rule's body is always evaluated with
+                        // ClauseRole::Assertion (eval_context.rs:1116) whatever the
+                        // reference site is, so `role` here says "assertion" even when the
+                        // rule is being used as a gate; the SKIP then makes eval_rule treat
+                        // the guarded rule as inapplicable and drop its body. The status is
+                        // also cached per rule name (eval_context.rs:1095), so one
+                        // gate-poisoned SKIP is reused by every later reference.
+                        //
+                        // ClauseRole carries the assertion/gate asymmetry at every
+                        // *syntactic* site and cannot carry it across a named-rule
+                        // boundary, because that boundary erases the reference context by
+                        // construction. Fixing this needs the reference-site role threaded
+                        // into rule evaluation and the status cache keyed on (rule, role)
+                        // rather than rule alone -- a change to the rule-evaluation
+                        // contract, not to a comparator.
+                        //
+                        // Net effect of leaving it: a pre-existing wrong PASS survives in
+                        // disjunctions. Net effect of the revert: a working gate keeps
+                        // working. The second is worth more, because the gate case drops an
+                        // entire guarded block rather than one clause.
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
@@ -1503,19 +1520,6 @@ fn binary_operation<'value, 'loc: 'value>(
                         }
                     },
                 }
-            }
-            // A vacuously-satisfied negated clause with nothing else to report is SKIP,
-            // not an empty result vector. The distinction is load-bearing:
-            // `QueryValueResult(vec![])` folds to PASS (eval.rs:1384 -- `fails == 0` with
-            // `all` set), and PASS short-circuits `eval_conjunction_clauses`, satisfying a
-            // whole disjunction and abandoning its siblings. `EmptyQueryResult(SKIP)` is
-            // absorbing in that fold instead, leaving the decision to them.
-            //
-            // Guarded on `statues.is_empty()` so a clause that produced real per-value
-            // results still reports them: a template where one resource has `Tags: []` and
-            // another has tags that genuinely collide must still fail on the second.
-            if vacuously_satisfied && statues.is_empty() {
-                return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP));
             }
             Ok(EvaluationResult::QueryValueResult(statues))
         }

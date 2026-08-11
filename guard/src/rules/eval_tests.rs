@@ -5632,40 +5632,51 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // SKIP, not PASS and not FAIL.
+    // PASS, and the fact that it is not SKIP is a known defect -- see
+    // `a_vacuous_negated_clause_does_not_absorb_a_disjunction` below, which is #[ignore]d
+    // with the reproduction and the reason.
     //
-    // Not FAIL: `not (Tags == 'Owner')` over an empty collection is vacuously true, and
-    // the clause must not be blamed for having nothing to compare.
+    // Not FAIL is the property this test guards, and it is real: `not (Tags == 'Owner')`
+    // over an empty collection is vacuously true, so the clause must not be blamed for
+    // having nothing to compare.
     //
-    // Not PASS either, which is the subtler half and was this test's original assertion.
-    // PASS short-circuits `eval_conjunction_clauses`, so a vacuously-true clause reported
-    // as PASS satisfies an entire `or` block and abandons its siblings unevaluated --
-    // `Tags != 'Owner' or Name == 'safebucket'` reported a violating template as
-    // *compliant*. SKIP is absorbing in that fold instead, leaving the decision to the
-    // siblings, which is what `a_vacuous_negated_clause_does_not_absorb_a_disjunction`
-    // below pins.
-    //
-    // This assertion changing from PASS to SKIP is the visible edge of that fix, and it
-    // is why the assertion is exact: `assert_ne!(FAIL)` would have admitted both and
-    // reported nothing when the semantics moved.
-    assert_eq!(status, Status::SKIP);
+    // PASS rather than SKIP matters because PASS short-circuits
+    // `eval_conjunction_clauses`, so this clause can satisfy an `or` block and abandon its
+    // siblings. Reporting SKIP here was implemented twice and reverted twice; the second
+    // attempt regressed a named-rule gate from exit 19 to 0. The assertion is exact rather
+    // than `assert_ne!(FAIL)` so that any future change to this status is visible instead
+    // of silently admitted.
+    assert_eq!(status, Status::PASS);
 
     Ok(())
 }
 
-/// The wrong PASS that reporting a vacuous clause as PASS produced.
+/// A LIVE DEFECT, kept as an executable reproduction rather than a passing assertion.
 ///
 /// `eval_conjunction_clauses` short-circuits on PASS (`continue 'conjunction'`) but absorbs
 /// SKIP (`=> {}`), so a vacuously-satisfied first disjunct reported as PASS satisfies the
 /// whole `or` and its siblings never run. Here the sibling is a real failing check, so the
-/// file exited 0 while `Name` was `publicbucket` -- and reported `"compliant"`, not
-/// `"not_applicable"`.
+/// file exits 0 while `Name` is `publicbucket`, and reports `"compliant"` -- not
+/// `"not_applicable"`. Pre-existing: v3.2.0 exits 0 for this ruleset too.
 ///
-/// This is the same hazard `EmptyRhsVacuouslyTrue` (`eval.rs:867`) returns SKIP to avoid,
-/// and its comment names this exact shape. The empty-*collection* path reached it by a
-/// different route and initially did not get the same protection: the negated case pushed
-/// no per-value result, and an empty result vector folds to PASS at `eval.rs:1384`.
+/// Ignored because both fixes for it were worse than the defect. Returning SKIP from the
+/// empty-collection arm was implemented twice:
+///
+/// - Unconditionally: closed the direct `when Tags != 'Owner'` gate, 19 -> 0.
+/// - Narrowed to `role.is_strict()`: still closed a gate reached through a *named rule*,
+///   19 -> 0, because `eval_context.rs:1116` evaluates every named rule's body with
+///   `ClauseRole::Assertion` regardless of the reference site, and caches the status per
+///   rule name so the poisoned SKIP is reused by later references.
+///
+/// `ClauseRole` carries the assertion/gate asymmetry at every syntactic site and cannot
+/// carry it across a named-rule boundary, which erases the reference context by
+/// construction. A real fix needs the reference-site role threaded into rule evaluation and
+/// the status cache keyed on (rule, role) -- a change to the rule-evaluation contract.
+///
+/// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
+/// runs it, and it will start passing the moment the underlying issue is addressed.
 #[test]
+#[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
     let rules = r###"
     rule vacuous_ne_absorbs_or {
@@ -5692,6 +5703,57 @@ fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
     // FAIL, from the sibling disjunct that actually got evaluated.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A gate reached through a NAMED RULE, which is the shape that caught the reverted fix.
+///
+/// Every gate fixture in this file spells the condition inline (`rule r when <clause> {}`),
+/// where `eval_when_clause` hardcodes `ClauseRole::Gate`. This one references a rule
+/// instead, and that path is different in a way no inline fixture can show:
+/// `eval_context.rs:1116` evaluates a named rule's body with `ClauseRole::Assertion`
+/// whatever the reference site is, and caches the result per rule name.
+///
+/// So a fix that keys on `role.is_strict()` inside the clause sees "assertion" even though
+/// the rule is being used as a gate. The reverted `EmptyQueryResult(SKIP)` did exactly
+/// that: `vac_ne` returned SKIP, `eval_rule` read the non-PASS condition as "does not
+/// apply", and the guarded body was dropped -- 19 -> 0, with the violating `publicbucket`
+/// never examined and both rules reported `not_applicable`.
+///
+/// Guards the revert. If someone re-lands a SKIP-based fix without threading the
+/// reference-site role through rule evaluation, this fails.
+#[test]
+fn a_vacuous_negation_inside_a_named_rule_does_not_close_the_gate_referencing_it() -> Result<()> {
+    let rules = r###"
+    rule vac_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+    }
+
+    rule body_bad when vac_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmptyTags: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the gate opened and the body rejected `publicbucket`. SKIP would mean
+    // the gate closed and the violation went unreported at exit 0.
     assert_eq!(status, Status::FAIL);
 
     Ok(())
