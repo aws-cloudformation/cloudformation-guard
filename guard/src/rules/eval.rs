@@ -6,6 +6,13 @@ use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
 
 mod operators;
+mod outcome;
+
+#[cfg(test)]
+mod outcome_tests;
+
+#[allow(unused_imports)]
+pub(super) use outcome::Outcome;
 
 fn exists_operation(value: &QueryResult) -> Result<bool> {
     Ok(match value {
