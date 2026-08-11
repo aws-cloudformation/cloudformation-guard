@@ -1772,7 +1772,37 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // Propagate the call site's role: a parameterized rule used as a `when` gate
     // must evaluate its body with gate semantics, or an unevaluatable clause inside
     // it fails the gate and silently disarms the block it guards.
-    eval_rule(&param_rule.rule, &mut eval, role)
+    let status = eval_rule(&param_rule.rule, &mut eval, role)?;
+
+    // Apply the clause-level negation of the *call*. The parser accepts and stores a
+    // leading `not` on a parameterized invocation (`not is_relevant("x")`) exactly as
+    // it does for a plain named-rule reference, but this arm used to return the
+    // invoked rule's status unchanged, so the `not` was silently discarded and
+    // `not r(...)` behaved identically to `r(...)`.
+    //
+    // Mirrors eval_guard_named_clause so both spellings agree: PASS inverts to FAIL
+    // under negation, a SKIPped rule fails closed where the reference is an assertion
+    // (a rule that never ran is not evidence for a negated claim), and otherwise the
+    // negation flips the outcome.
+    Ok(match status {
+        Status::PASS => {
+            if call_rule.named_rule.negation {
+                Status::FAIL
+            } else {
+                Status::PASS
+            }
+        }
+
+        Status::SKIP if role.is_strict() => Status::FAIL,
+
+        _ => {
+            if call_rule.named_rule.negation {
+                Status::PASS
+            } else {
+                Status::FAIL
+            }
+        }
+    })
 }
 
 /// `role` propagates the assertion-vs-gate distinction to the leaf clauses. Callers

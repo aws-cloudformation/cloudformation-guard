@@ -4094,18 +4094,63 @@ fn negated_comparison_against_empty_reference_does_not_fail() -> Result<()> {
     // fail: a denylist is legitimately empty whenever the template contains none of
     // the denied values.
     //
-    // Asserted as "not FAIL" rather than "is PASS" deliberately. The status is SKIP,
-    // because a vacuous PASS short-circuits a disjunction -- see
-    // vacuous_negated_comparison_does_not_satisfy_a_disjunction below. Both SKIP and
-    // PASS exit 0 for a standalone clause, so what matters here is only that the
-    // clause is non-failing.
+    // SKIP specifically, not merely "not FAIL". The distinction is load-bearing: a
+    // PASS here would short-circuit a disjunction and abandon its sibling disjuncts
+    // (see vacuous_negated_comparison_does_not_satisfy_a_disjunction), while a FAIL
+    // would reject compliant templates whose denylist is legitimately empty. Only
+    // SKIP is both non-failing and non-satisfying, so assert it exactly.
     let rules = r###"
     let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
     rule name_must_not_be_denied {
         Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
     }
     "###;
-    assert_ne!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
+    assert_eq!(status_of(rules, ONE_BUCKET)?, Status::SKIP);
+    Ok(())
+}
+
+#[test]
+fn negation_on_a_parameterized_rule_call_is_honored() -> Result<()> {
+    // `not r(...)` used to behave identically to `r(...)`: the parser stores the
+    // leading `not` on the call, but eval_parameterized_rule_call returned the
+    // invoked rule's status unchanged, discarding it. Same defect class as the
+    // dropped clause-level negation on binary comparisons.
+    //
+    // `inner` PASSes here, so `not inner("x")` must FAIL and `inner("x")` must PASS.
+    // Before the fix both PASSed.
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { BucketName: "b" }
+            }
+        }
+    }
+    "#;
+
+    let negated = r###"
+    rule inner(t) {
+        %t == 'AWS::S3::Bucket'
+    }
+    rule outer {
+        not inner(Resources.bucket.Type)
+    }
+    "###;
+
+    let plain = r###"
+    rule inner(t) {
+        %t == 'AWS::S3::Bucket'
+    }
+    rule outer {
+        inner(Resources.bucket.Type)
+    }
+    "###;
+
+    // The two forms must disagree; that they agreed is what proved the bug.
+    assert_eq!(status_of(negated, input)?, Status::FAIL);
+    assert_eq!(status_of(plain, input)?, Status::PASS);
+
     Ok(())
 }
 
@@ -4208,13 +4253,17 @@ fn empty_reference_in_a_when_condition_does_not_disarm_the_block() -> Result<()>
         Resources.*.Properties.BucketName == /^secure-/
     }
     "###;
-    // The bucket name violates the body check, so this must not pass.
-    assert_ne!(status_of(rules, ONE_BUCKET)?, Status::PASS);
+    // FAIL specifically. "Not PASS" would also admit SKIP, which is the exact
+    // failure mode this test exists to catch: a SKIP here means the gate closed and
+    // the body never ran, which is indistinguishable from a pass at the gate because
+    // both exit 0. Asserting FAIL proves the body actually executed and rejected the
+    // bucket name.
+    assert_eq!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
     Ok(())
 }
 
 #[test]
-fn literal_lhs_against_empty_reference_does_not_panic() -> Result<()> {
+fn literal_lhs_against_empty_reference_fails_without_panicking() -> Result<()> {
     // A `let` literal on the left resolves to QueryResult::Literal, which three
     // reporters treat as unreachable inside a comparison record. Emitting a status
     // rather than a per-value comparison keeps this off that path.
@@ -4387,8 +4436,11 @@ fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> 
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // Before the fix this was PASS, manufactured from a check that never ran.
-    assert_ne!(status, Status::PASS);
+    // FAIL specifically. Before the fix this was PASS, manufactured from a dependent
+    // rule that never ran. "Not PASS" would also admit SKIP, and a SKIP would mean
+    // the negated reference had been made merely inert rather than fail-closed --
+    // still exit 0, so still a gate bypass. FAIL is the property that matters.
+    assert_eq!(status, Status::FAIL);
 
     Ok(())
 }
