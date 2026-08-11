@@ -40,6 +40,21 @@ lazy_static! {
         .unwrap();
 }
 
+/// First line of the source snippet shown above a reported violation.
+///
+/// Starts two lines above the violation so there is context, but never below line
+/// 1 because line numbers are 1-based.
+///
+/// This was previously written inline as `max(1, line - 2)`, which evaluated the
+/// subtraction *before* the clamp. On an unsigned line number of 0 or 1 that
+/// underflows: a panic in a debug build, and a silent wrap to ~`usize::MAX` in a
+/// release build, where the subsequent seek runs past EOF and the snippet is
+/// dropped from the report without any diagnostic. `saturating_sub` clamps the
+/// input rather than the result.
+fn context_start_line(line: usize) -> usize {
+    line.saturating_sub(2).max(1)
+}
+
 #[derive(Debug)]
 pub(crate) struct CfnAware<'reporter> {
     next: Option<&'reporter dyn Reporter>,
@@ -397,7 +412,9 @@ fn single_line(
                     ) -> rules::Result<()> {
                         writeln!(writer, "{prefix}Code:", prefix = prefix)?;
                         let new_prefix = format!("{}  ", prefix);
-                        if let Some((num, line)) = self.code_segment.seek_line(max(1, line - 2)) {
+                        if let Some((num, line)) =
+                            self.code_segment.seek_line(context_start_line(line))
+                        {
                             let line =
                                 format!("{num:>5}.{line}", num = num, line = line).bright_green();
                             writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
@@ -500,4 +517,37 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     }
 
     Some(())
+}
+
+#[cfg(test)]
+mod context_start_line_tests {
+    use super::context_start_line;
+
+    /// These three inputs are the regression. With the original
+    /// `max(1, line - 2)` they panic in a debug build (which is what a test
+    /// binary is) and wrap to ~usize::MAX in release.
+    #[test]
+    fn does_not_underflow_at_or_below_line_two() {
+        assert_eq!(1, context_start_line(0));
+        assert_eq!(1, context_start_line(1));
+        assert_eq!(1, context_start_line(2));
+    }
+
+    #[test]
+    fn keeps_two_lines_of_context_above_the_violation() {
+        assert_eq!(1, context_start_line(3));
+        assert_eq!(3, context_start_line(5));
+        assert_eq!(98, context_start_line(100));
+    }
+
+    /// Line numbers are 1-based, so 0 is never a valid answer.
+    #[test]
+    fn never_returns_zero() {
+        for line in 0..16usize {
+            assert!(
+                context_start_line(line) >= 1,
+                "context_start_line({line}) returned 0, which is not a valid 1-based line"
+            );
+        }
+    }
 }
