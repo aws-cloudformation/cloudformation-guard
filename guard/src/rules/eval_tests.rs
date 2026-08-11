@@ -4044,3 +4044,118 @@ fn status_combinator() {
     assert_eq!(pass.and(fail), Status::FAIL);
     assert_eq!(fail.and(pass), Status::FAIL);
 }
+
+//
+// Clause-level negation on a BINARY comparison.
+//
+// `not <query> == <value>` parses (parser.rs:969 accepts a leading not before the
+// query) and is stored as GuardAccessClause::negation, but the binary evaluation
+// path used to drop it, so the clause evaluated as its un-negated self -- the exact
+// inverse of the author's intent -- while the report still displayed the `not`.
+//
+// The unary path was never affected; these tests cover the binary path and assert
+// that an un-negated clause is unchanged.
+//
+fn eval_single_rule(rules: &str, resources: &str) -> Result<Status> {
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut eval = root_scope(&rules_file, Rc::new(value));
+    eval_rules_file(&rules_file, &mut eval, None)
+}
+
+#[test]
+fn negated_binary_clause_is_honored() -> Result<()> {
+    let encrypted_false = r#"
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: false
+    "#;
+    let encrypted_true = r#"
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: true
+    "#;
+
+    // "It must NOT be the case that Encrypted == false."
+    let negated = r###"
+    rule encrypted_must_not_be_false {
+        not Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted == false
+    }
+    "###;
+
+    // Encrypted: false violates the intent -> FAIL.
+    // Before the fix this returned PASS.
+    assert_eq!(eval_single_rule(negated, encrypted_false)?, Status::FAIL);
+
+    // Encrypted: true satisfies the intent -> PASS.
+    // Before the fix this returned FAIL.
+    assert_eq!(eval_single_rule(negated, encrypted_true)?, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
+fn unnegated_binary_clause_is_unchanged() -> Result<()> {
+    let encrypted_false = r#"
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: false
+    "#;
+    let encrypted_true = r#"
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: true
+    "#;
+
+    let plain = r###"
+    rule encrypted_equals_false {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted == false
+    }
+    "###;
+
+    // The negated and un-negated forms must now disagree on every input; before the
+    // fix they agreed, which is what proved the `not` was being dropped.
+    assert_eq!(eval_single_rule(plain, encrypted_false)?, Status::PASS);
+    assert_eq!(eval_single_rule(plain, encrypted_true)?, Status::FAIL);
+
+    Ok(())
+}
+
+#[test]
+fn negation_composes_with_operator_not_flag() -> Result<()> {
+    let encrypted_false = r#"
+    Resources:
+      bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: false
+    "#;
+
+    // Double negation: clause-level `not` plus the operator's own `!=`.
+    // `not X != false` is equivalent to `X == false`, which holds here -> PASS.
+    let double = r###"
+    rule double_negation {
+        not Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted != false
+    }
+    "###;
+    assert_eq!(eval_single_rule(double, encrypted_false)?, Status::PASS);
+
+    // Single negation via the operator alone is unaffected: `X != false` is false
+    // here -> FAIL.
+    let op_only = r###"
+    rule op_not_only {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted != false
+    }
+    "###;
+    assert_eq!(eval_single_rule(op_only, encrypted_false)?, Status::FAIL);
+
+    Ok(())
+}
