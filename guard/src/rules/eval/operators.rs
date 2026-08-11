@@ -690,10 +690,33 @@ impl Comparator for crate::rules::CmpOperator {
         // being checked (docs/QUERY_AND_FILTERING.md describes this for filters) --
         // and it stays a SKIP. Checked first so it keeps precedence when both sides
         // are empty.
+        // Known gap: this rule is stated *positionally*, but zero selection is a property
+        // of the query rather than of the side it sits on. Written the other way round --
+        // `%expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags` -- the
+        // literal is the non-empty left side, so a template containing no S3 bucket at all
+        // reaches the empty-RHS path below and FAILs, while the forward spelling of the
+        // same clause skips. Measured on a template holding only an SQS queue: mirrored 19,
+        // forward 0.
+        //
+        // docs/QUERY_AND_FILTERING.md:222 says the skip is the intended behaviour ("A
+        // template contains resources but none match ... the block level clauses will be
+        // skipped"), so the mirrored spelling looks wrong.
+        //
+        // Not fixed here because the obvious fix -- skipping when the left side is a
+        // literal -- also changes `%lit IN %empt`, which
+        // `literal_lhs_against_empty_reference_fails_without_panicking` asserts must FAIL.
+        // Both shapes are a literal left side against an empty query, so nothing available
+        // at this level tells them apart: distinguishing "the resource type is absent"
+        // from "the reference resolved to nothing" needs query provenance that neither
+        // operand carries. Deciding it would change documented empty-reference semantics
+        // rather than fix a comparator, so it is recorded instead of guessed.
         if lhs.is_empty() {
             return Ok(EvalResult::Skip);
         }
 
+        // KNOWN GAP, deliberately not fixed here -- see the note below on the mirrored
+        // zero-selection asymmetry.
+        //
         // An empty RHS is a different situation that used to share this outcome:
         // there ARE values on the left to check, but the reference they would be
         // compared against resolved to nothing. Whether that is a pass or a failure
