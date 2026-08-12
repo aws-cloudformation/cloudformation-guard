@@ -195,11 +195,6 @@ impl Outcome {
     /// still close, silently dropping every check it guards — see
     /// [`Outcome::closes_gate`]. Conflating the two is what makes a "the gate never
     /// failed" test look like a safety property when it is a tautology.
-    /// Not yet called. Retained because the fold conversion is partial: statuses still
-    /// enter the fold as [`Status`] and are lifted, so nothing yet asks an `Outcome`
-    /// directly whether it blocks. The exhaustive tests in `outcome_tests` are what will
-    /// make it safe to rely on when the comparators start producing `Outcome`.
-    #[allow(dead_code)]
     pub(crate) fn blocks(self, role: ClauseRole) -> bool {
         matches!(self.to_status(role), Status::FAIL)
     }
@@ -217,11 +212,6 @@ impl Outcome {
     /// [`Outcome::blocks`] is the wrong predicate for gate safety —
     /// [`Outcome::NotApplicable`] and [`Outcome::Unevaluatable`] both close a gate
     /// while blocking nothing, and that gap is the silent-drop hazard.
-    /// Not yet called. Gate closure is still decided by `eval_rule` comparing a [`Status`]
-    /// against `PASS`; routing that through here is the next step and is what would let the
-    /// "SKIP closes a gate quietly" hazard documented below be addressed rather than only
-    /// recorded.
-    #[allow(dead_code)]
     pub(crate) fn closes_gate(self) -> bool {
         !matches!(self, Outcome::Satisfied)
     }

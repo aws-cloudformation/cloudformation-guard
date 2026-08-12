@@ -7265,7 +7265,12 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 17;
+    //
+    // Eighteen rather than seventeen on this branch: the NotComparable arm records
+    // `Some(nc.reason)` on a ClauseValueCheck, a variant that already had a rendering
+    // path. Checked rather than assumed -- `Properties.Size > 'not-a-number'` against
+    // an integer Size prints `Error = [... not comparable int, String]` in the console.
+    const SITES_EXPECTED: usize = 18;
 
     assert_eq!(
         sites, SITES_EXPECTED,
