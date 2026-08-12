@@ -1380,35 +1380,40 @@ fn binary_operation<'value, 'loc: 'value>(
                         // and it is pre-existing here: v3.2.0 exits 0 for that ruleset too.
                         //
                         // Returning SKIP instead was implemented and reverted, twice. The
-                        // second attempt narrowed it to `role.is_strict()`, which fixes the
-                        // direct gate spelling and still regresses this:
+                        // second attempt narrowed it to `role.is_strict()`, which fixed the
+                        // direct gate spelling and still regressed this:
                         //
                         //     rule vac_ne { ...Tags != 'Owner' }
                         //     rule body when vac_ne { ...Name == 'privatebucket' }
                         //
                         // measured 19 -> 0 against a template with `Tags: []` and a
-                        // violating Name. A named rule's body is always evaluated with
-                        // ClauseRole::Assertion -- see the `eval_rule(each_rule, self,
-                        // ClauseRole::Assertion)` call in `rule_status` -- whatever the
-                        // reference site is, so `role` here says "assertion" even when the
-                        // rule is being used as a gate; the SKIP then makes eval_rule treat
-                        // the guarded rule as inapplicable and drop its body. The status is
-                        // also cached per rule name by that same function's
-                        // `rules_status` lookup, so one gate-poisoned SKIP is reused by
-                        // every later reference.
+                        // violating Name. The cause was the named-rule boundary: `rule_status`
+                        // evaluated a referenced rule's body with ClauseRole::Assertion
+                        // whatever the reference site was, so `role` here said "assertion"
+                        // even when the rule was being used as a gate, and the SKIP then made
+                        // eval_rule treat the guarded rule as inapplicable and drop its body.
+                        // The status was also cached per rule name, so one gate-poisoned SKIP
+                        // was reused by every later reference.
                         //
-                        // ClauseRole carries the assertion/gate asymmetry at every
-                        // *syntactic* site and cannot carry it across a named-rule
-                        // boundary, because that boundary erases the reference context by
-                        // construction. Fixing this needs the reference-site role threaded
-                        // into rule evaluation and the status cache keyed on (rule, role)
-                        // rather than rule alone -- a change to the rule-evaluation
-                        // contract, not to a comparator.
+                        // THAT BLOCKER IS GONE. `rule_status` now carries the reference site's
+                        // role into `eval_rule` and keys `rules_status` on `(rule, role)`, so
+                        // ClauseRole reaches across the named-rule boundary and `role` here is
+                        // the role of the actual reference. `a_named_rule_gate_does_not_drop_a
+                        // _satisfiable_body` and `the_same_named_rule_answers_both_roles
+                        // _independently` pin it.
                         //
-                        // Net effect of leaving it: a pre-existing wrong PASS survives in
-                        // disjunctions. Net effect of the revert: a working gate keeps
-                        // working. The second is worth more, because the gate case drops an
-                        // entire guarded block rather than one clause.
+                        // So the reverted SKIP is worth attempting again, and the two
+                        // reproductions above are the oracle for whether it regresses gates
+                        // this time. It is not attempted here because it is not a local edit:
+                        // `statues` is a per-value PASS/FAIL vector and the fold in
+                        // `eval_guard_access_clause` treats a SKIP entry as `unreachable!()`,
+                        // so a third attempt has to change the fold's vocabulary rather than
+                        // this arm -- which is the `Outcome` conversion in `eval/outcome.rs`,
+                        // still unwired.
+                        //
+                        // Net effect of leaving it for now: a pre-existing wrong PASS survives
+                        // in disjunctions, reproduced by the still-ignored
+                        // `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
                         //
                         // MEASURED CORRECTION, and it is about the FAIL path above rather
                         // than the reverted SKIP.
@@ -1424,33 +1429,29 @@ fn binary_operation<'value, 'loc: 'value>(
                         // are unfixed; the reason is only that they never emit
                         // EmptyLhsCollection and so never reach this arm.
                         //
-                        // Across a NAMED-RULE boundary the FAIL pushed below does drop the
-                        // body, and that is a regression this branch introduced:
+                        // Across a NAMED-RULE boundary the FAIL pushed below used to drop the
+                        // body, a regression this branch introduced and has since fixed:
                         //
                         //     rule vac_eq { ...Tags == 'Owner' }
                         //     rule body when vac_eq { ...Name == 'publicbucket' }
                         //
                         // with `Tags: []` and `Name: publicbucket`, so the body is
-                        // *satisfiable*. v3.2.0 exits 0 with both rules compliant. This
-                        // branch exits 19 with `not_compliant: [vac_eq]` and
-                        // `not_applicable: [body]` -- the body's verdict destroyed. Present
-                        // from 2224cb1 onward and identical at every later commit.
+                        // *satisfiable*. v3.2.0 exits 0 with both rules compliant. Between
+                        // 2224cb1 and the (rule, role) keying this exited 19 with
+                        // `not_compliant: [vac_eq]` and `not_applicable: [body]` -- the body's
+                        // verdict destroyed. `role.is_strict()` was true even when the rule was
+                        // used as a gate, this arm fired, `vac_eq` became FAIL, and eval_rule
+                        // read the non-PASS condition as "does not apply".
                         //
-                        // Cause is the same boundary described above: `rule_status`
-                        // evaluates a named rule's body with ClauseRole::Assertion whatever
-                        // the reference site is, so `role.is_strict()` is true even when the
-                        // rule is being used as a gate, this arm fires, `vac_eq` becomes
-                        // FAIL, and eval_rule reads the non-PASS condition as "does not
-                        // apply". `role` cannot fix it -- the boundary erases the reference
-                        // context before `role` is chosen.
+                        // Now that `rule_status` propagates the reference site's role, a gate
+                        // reference evaluates the body with ClauseRole::Gate, `role.is_strict()`
+                        // is false, this arm contributes nothing, and the gate is left to its
+                        // other conditions -- the same behaviour a syntactic `when` already
+                        // had. Pinned by `a_named_rule_gate_does_not_drop_a_satisfiable_body`.
                         //
-                        // Scope: only rulesets that gate on a named rule whose body compares
-                        // an empty collection. The same shape with populated data is 0 on
-                        // every pin. Left in place rather than reverted because reverting
-                        // restores the original wrong PASS (`Tags == 'Owner'` certifying
-                        // `Tags: []`), which is the worse of the two -- but it is a real
-                        // wrong FAIL and it is why the (rule, role) cache keying is a
-                        // prerequisite rather than a nicety.
+                        // Reverting this arm was rejected rather than untried: it restores the
+                        // original wrong PASS (`Tags == 'Owner'` certifying `Tags: []`), and a
+                        // wrong PASS on a policy gate is worse than a wrong FAIL.
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
