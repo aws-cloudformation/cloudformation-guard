@@ -5158,17 +5158,8 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
 #[test]
 #[ignore = "known regression from this branch: empty-collection FAIL drops a named-rule gate's body"]
 fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
-    let rules = r###"
-    rule vac_eq {
-        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
-    }
-    rule body when vac_eq {
-        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
-    }
-    "###;
-
     // `Name` matches what `body` requires, so `body` is satisfiable. Only `Tags: []` is
-    // unusual, and it is what makes `vac_eq` fail.
+    // unusual, and it is what makes the gate condition fail.
     let input = r#"
     {
         Resources: {
@@ -5180,12 +5171,73 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     }
     "#;
 
-    let resources = PathAwareValue::try_from(input)?;
-    let rules_file = RulesFile::try_from(rules)?;
-    let mut root = root_scope(&rules_file, Rc::new(resources));
+    // The named-rule spelling is the subject, so it has to stay. Every named rule in Guard is
+    // also a top-level rule, so `vac_eq` cannot be hidden from the file-level fold.
+    let named_gate = r###"
+    rule vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule body when vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
 
-    // What v3.2.0 does. Currently FAIL, with `body` reported not-applicable.
-    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
+    // Asserted on `body`'s own applicability, NOT on the file's status. Both halves of that
+    // choice are load-bearing.
+    //
+    // The file status cannot express this regression. `eval_rules_file` evaluates every
+    // top-level rule with `ClauseRole::Assertion` unconditionally (eval.rs:2354) and folds
+    // `fails > 0 -> FAIL` (eval.rs:2379), so a `vac_eq` that fails strictly forces the file to
+    // FAIL however the gate behaves. Keying the rule-status cache on `(rule, role)` fixes the
+    // gate and cannot touch that fold.
+    //
+    // And the file status that *would* make this file PASS is itself the defect: on v3.2.0
+    // `Tags == 'Owner'` reports `compliant` against `Tags: []`, which is the empty-collection
+    // wrong PASS this branch removes. An earlier version of this test asserted exactly that
+    // PASS as its target — so it would have gone green precisely when the defect was
+    // reintroduced, with a green suite certifying the opposite.
+    //
+    // What is both reachable and wrong-PASS-free is narrower: `body` is satisfiable, so it
+    // must not be reported not-applicable. `vac_eq` failing is correct and stays correct.
+    let report_for = |data: &str| -> Result<Vec<String>> {
+        let resources = PathAwareValue::try_from(data)?;
+        let rules_file = RulesFile::try_from(named_gate)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let _ = eval_rules_file(&rules_file, &mut root, None)?;
+        let top = root.reset_recorder().extract();
+        Ok(simplified_json_from_root(&top)?.not_applicable.into_iter().collect())
+    };
+
+    // Liveness first, for the reason recorded on the ordering reproduction: an absence claim
+    // is satisfied when nothing runs at all, so a query that stopped selecting would let the
+    // claim below pass while blind. With populated tags the gate opens on real evidence.
+    let populated = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+    let live = report_for(populated)?;
+    assert!(
+        live.is_empty(),
+        "liveness: with `Tags: ['Owner']` both rules apply and nothing should be \
+         not-applicable, got {:?}. Anything else means the query stopped selecting and the \
+         claim below is meaningless.",
+        live
+    );
+
+    // The claim.
+    let dropped = report_for(input)?;
+    assert!(
+        !dropped.iter().any(|name| name == "body"),
+        "`body` was reported not-applicable even though its own check passes: the failing \
+         gate condition swallowed it. not_applicable = {:?}",
+        dropped
+    );
 
     Ok(())
 }
