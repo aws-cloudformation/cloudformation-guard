@@ -5127,6 +5127,149 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     Ok(())
 }
 
+/// A denylist written with a parameter did not block the value it named.
+///
+/// `LetValue::Value` -- a literal argument at the call site -- was bound as
+/// `QueryResult::Resolved`, while `resolve_variable` returns `let` literals as
+/// `QueryResult::Literal`. `is_literal` recognises only the latter, so the two spellings
+/// of the same literal took different comparator arms: `let` reached the element-wise
+/// `(None, Some(_))` arm, and a parameter reached `(None, None)`, which compares whole
+/// query results through `diff`. A list-valued left side was therefore compared against
+/// the scalar *as a list*, never matched, and the negation inverted that into a pass.
+///
+/// The blast radius is not empty collections. `Tags: ["PublicRead"]` -- a populated list
+/// holding exactly the banned value -- passed, while the byte-identical policy with the
+/// value inlined or bound with `let` correctly failed.
+#[test]
+fn a_denylist_passed_through_a_parameter_still_blocks_the_banned_value() -> Result<()> {
+    let rules = r###"
+    rule no_banned_tag(banned) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned
+    }
+
+    rule main { no_banned_tag("PublicRead") }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            exposedBucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "customerdata", Tags: ['PublicRead'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// The positive half of the same defect: `==` through a parameter was inverted.
+///
+/// It failed the template that *did* match and passed the one that did not, for the same
+/// reason -- a whole-list-versus-scalar comparison whose result happened to be wrong in
+/// both directions. Asserted together with the negated form because a fix that corrects
+/// only one of them would leave the arm half-wrong in a way a single-polarity test cannot
+/// see.
+#[test]
+fn a_positive_comparison_through_a_parameter_matches_the_right_template() -> Result<()> {
+    let rules = r###"
+    rule tag_must_match(wanted) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == %wanted
+    }
+
+    rule main { tag_must_match("Keeper") }
+    "###;
+
+    let matching = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Keeper'] } }
+        }
+    }
+    "#;
+
+    let non_matching = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Other'] } }
+        }
+    }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let resources = PathAwareValue::try_from(matching)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::PASS,
+        "the template carrying the wanted tag must pass"
+    );
+
+    let resources = PathAwareValue::try_from(non_matching)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::FAIL,
+        "the template without the wanted tag must fail"
+    );
+
+    Ok(())
+}
+
+/// A literal argument must behave identically however it is spelled.
+///
+/// This is the property the fix restores, and the one whose absence made the defect
+/// invisible: every spelling other than the parameter form was already correct, so any
+/// fixture that inlined the value or used `let` passed.
+#[test]
+fn a_literal_argument_agrees_across_parameter_let_and_inline_spellings() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['PublicRead'] } }
+        }
+    }
+    "#;
+
+    let parameterized = r###"
+    rule deny(banned) { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned }
+    rule main { deny("PublicRead") }
+    "###;
+
+    let let_bound = r###"
+    let banned = 'PublicRead'
+    rule main { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned }
+    "###;
+
+    let inlined = r###"
+    rule main { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'PublicRead' }
+    "###;
+
+    let mut statuses = Vec::new();
+    for rules in [parameterized, let_bound, inlined] {
+        let resources = PathAwareValue::try_from(input)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        statuses.push(eval_rules_file(&rules_file, &mut root, None)?);
+    }
+
+    assert_eq!(
+        statuses,
+        vec![Status::FAIL, Status::FAIL, Status::FAIL],
+        "parameter, let and inline spellings of the same literal disagreed"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn vacuous_negated_comparison_does_not_satisfy_a_disjunction() -> Result<()> {
     // Regression test for a wrong PASS found by review.

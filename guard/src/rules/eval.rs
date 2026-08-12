@@ -2333,9 +2333,26 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     for (idx, each) in call_rule.parameters.iter().enumerate() {
         match each {
             LetValue::Value(val) => {
+                // `Literal`, not `Resolved`: this is a literal argument written at the
+                // call site, exactly like a `let` binding, and `resolve_variable`
+                // (eval_context.rs:1130) returns those as `QueryResult::Literal`.
+                //
+                // Binding it as `Resolved` made two spellings of the same literal take
+                // different comparator arms, because `is_literal` only recognises
+                // `Literal`. A parameter therefore reached the `(None, None)` arm, which
+                // compares whole query results via `diff` rather than element-wise, so a
+                // list-valued left side was compared against the scalar as a list and
+                // never matched:
+                //
+                //     rule no_banned_tag(banned) { ...Properties.Tags != %banned }
+                //     rule main { no_banned_tag("PublicRead") }
+                //
+                // passed a bucket tagged exactly `["PublicRead"]`, while the same policy
+                // with the value inlined, or bound with `let`, correctly failed. `==` was
+                // inverted the same way: it failed the template that did match.
                 resolved_parameters.insert(
                     (param_rule.parameter_names[idx]).as_str(),
-                    vec![QueryResult::Resolved(Rc::new(val.clone()))],
+                    vec![QueryResult::Literal(Rc::new(val.clone()))],
                 );
             }
             LetValue::AccessClause(query) => {
