@@ -5226,7 +5226,10 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
         let mut root = root_scope(&rules_file, Rc::new(resources));
         let _ = eval_rules_file(&rules_file, &mut root, None)?;
         let top = root.reset_recorder().extract();
-        Ok(simplified_json_from_root(&top)?.not_applicable.into_iter().collect())
+        Ok(simplified_json_from_root(&top)?
+            .not_applicable
+            .into_iter()
+            .collect())
     };
 
     // Liveness first, for the reason recorded on the ordering reproduction: an absence claim
@@ -5482,9 +5485,21 @@ fn ordering_operators_still_decide_populated_collections_correctly() -> Result<(
     let rules_file = RulesFile::try_from(rules)?;
 
     for (data, want, why) in [
-        (low, Status::PASS, "80 <= 100 numerically; false lexicographically"),
-        (single_digit, Status::PASS, "9 <= 100 numerically; false lexicographically"),
-        (high, Status::FAIL, "8080 <= 100 is false under either reading"),
+        (
+            low,
+            Status::PASS,
+            "80 <= 100 numerically; false lexicographically",
+        ),
+        (
+            single_digit,
+            Status::PASS,
+            "9 <= 100 numerically; false lexicographically",
+        ),
+        (
+            high,
+            Status::FAIL,
+            "8080 <= 100 is false under either reading",
+        ),
     ] {
         let resources = PathAwareValue::try_from(data)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
