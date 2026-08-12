@@ -5763,11 +5763,18 @@ fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
         "liveness: `not in` must still pass a non-colliding tag"
     );
 
+    // SKIP, not PASS. The old behaviour was FAIL, which rejected a compliant template; this
+    // asserted PASS when the comparator guard landed, and became SKIP when the fold moved
+    // onto `Outcome`.
+    //
+    // Either way the clause is not blamed, and the exit code is 0 for both. SKIP is the
+    // stronger answer because PASS would let this disjunct absorb an `or` and abandon its
+    // siblings -- see `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
     assert_eq!(
         status_of(rules, empty)?,
-        Status::PASS,
-        "`not in` over an empty collection is vacuously satisfied; the old FAIL rejected a \
-         compliant template"
+        Status::SKIP,
+        "`not in` over an empty collection is vacuously satisfied and must not be blamed, but \
+         must not report PASS either -- PASS absorbs a disjunction"
     );
 
     Ok(())
@@ -6628,49 +6635,60 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // PASS, and the fact that it is not SKIP is a known defect -- see
-    // `a_vacuous_negated_clause_does_not_absorb_a_disjunction` below, which is #[ignore]d
-    // with the reproduction and the reason.
+    // SKIP. Not FAIL is the property this test guards, and it is real: `not (Tags ==
+    // 'Owner')` over an empty collection is vacuously true, so the clause must not be blamed
+    // for having nothing to compare.
     //
-    // Not FAIL is the property this test guards, and it is real: `not (Tags == 'Owner')`
-    // over an empty collection is vacuously true, so the clause must not be blamed for
-    // having nothing to compare.
+    // This asserted PASS until the fold moved onto `Outcome`, and the comment here recorded
+    // that PASS as "a known defect" pointing at
+    // `a_vacuous_negated_clause_does_not_absorb_a_disjunction`. That is why: PASS
+    // short-circuits `eval_conjunction_clauses`, so a vacuously-satisfied disjunct satisfied
+    // an entire `or` and abandoned its siblings. SKIP is absorbed by the disjunction fold
+    // instead, so the siblings still run, and that reproduction now passes.
     //
-    // PASS rather than SKIP matters because PASS short-circuits
-    // `eval_conjunction_clauses`, so this clause can satisfy an `or` block and abandon its
-    // siblings. Reporting SKIP here was implemented twice and reverted twice; the second
-    // attempt regressed a named-rule gate from exit 19 to 0. The assertion is exact rather
-    // than `assert_ne!(FAIL)` so that any future change to this status is visible instead
-    // of silently admitted.
-    assert_eq!(status, Status::PASS);
+    // Reporting SKIP was implemented and reverted twice before, both times because it closed
+    // a `when` gate -- the second time through a named rule. It holds now because the arm is
+    // split by role: an assertion contributes SKIP, a gate still contributes the PASS that
+    // keeps it open, and `(rule, role)` keying means the role survives the named-rule
+    // boundary.
+    //
+    // The user-visible effect is a reporting change, not an exit-code one: this rule moves
+    // from `compliant` to `not_applicable`, and both exit 0. Arguably the honest answer --
+    // nothing was verified.
+    //
+    // Exact rather than `assert_ne!(FAIL)` so any future change to this status is visible
+    // instead of silently admitted.
+    assert_eq!(status, Status::SKIP);
 
     Ok(())
 }
 
-/// A LIVE DEFECT, kept as an executable reproduction rather than a passing assertion.
+/// A vacuously-satisfied disjunct must not absorb an `or`. Pre-existing in v3.2.0.
 ///
 /// `eval_conjunction_clauses` short-circuits on PASS (`continue 'conjunction'`) but absorbs
-/// SKIP (`=> {}`), so a vacuously-satisfied first disjunct reported as PASS satisfies the
-/// whole `or` and its siblings never run. Here the sibling is a real failing check, so the
-/// file exits 0 while `Name` is `publicbucket`, and reports `"compliant"` -- not
-/// `"not_applicable"`. Pre-existing: v3.2.0 exits 0 for this ruleset too.
+/// SKIP (`=> {}`), so a vacuously-satisfied first disjunct reported as PASS satisfied the
+/// whole `or` and its siblings never ran. Here the sibling is a real failing check, so the
+/// file exited 0 while `Name` was `publicbucket`, reporting `"compliant"` rather than
+/// `"not_applicable"`.
 ///
-/// Ignored because both fixes for it were worse than the defect. Returning SKIP from the
-/// empty-collection arm was implemented twice:
+/// Three fixes for it were worse than the defect before this one stuck. Returning SKIP from
+/// the empty-collection arm:
 ///
 /// - Unconditionally: closed the direct `when Tags != 'Owner'` gate, 19 -> 0.
 /// - Narrowed to `role.is_strict()`: still closed a gate reached through a *named rule*,
-///   19 -> 0, because `rule_status` evaluates every named rule's body with
-///   `ClauseRole::Assertion` regardless of the reference site, and caches the status per
-///   rule name so the poisoned SKIP is reused by later references.
+///   19 -> 0, because `rule_status` evaluated every named rule's body with
+///   `ClauseRole::Assertion` regardless of the reference site and cached the status per rule
+///   name, so the poisoned SKIP was reused by later references.
+/// - Applied to both polarities while converting the fold: closed five gates at once.
 ///
-/// `ClauseRole` carries the assertion/gate asymmetry at every syntactic site and cannot
-/// carry it across a named-rule boundary, which erases the reference context by
-/// construction. A real fix needs the reference-site role threaded into rule evaluation and
-/// the status cache keyed on (rule, role) -- a change to the rule-evaluation contract.
+/// What made it hold: `rule_status` now carries the reference site's role and keys its cache
+/// on `(rule, role)`, so the role survives the named-rule boundary; and the empty-collection
+/// arm is split by that role -- an assertion contributes SKIP so it cannot absorb a
+/// disjunction, a gate still contributes the PASS that keeps it open. The fold itself runs
+/// through `Outcome::all`/`Outcome::any`, whose identity is `NotApplicable`, so a fold over
+/// zero elements no longer reports "satisfied".
 ///
-/// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
-/// runs it, and it will start passing the moment the underlying issue is addressed.
+/// Known weakness of this fixture, unchanged: see the note below on `assert_eq!(FAIL)`.
 ///
 /// Known weakness, recorded rather than fixed. `assert_eq!(FAIL)` is satisfied by *any* part
 /// of the rule failing, so a one-line template edit reaches green without a fix: change
@@ -6681,31 +6699,18 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 /// as `ordering_operators_do_not_certify_an_empty_collection`, and the fixture here has only
 /// one meaningful data shape to vary — the empty list is the whole point of it.
 ///
-/// Note for anyone running `--ignored`: five tests are ignored in this crate and they are
-/// not the same kind of thing.
+/// Note for anyone running `--ignored`: exactly one test is ignored in this crate now, and it
+/// is not ours. `test_string_in_comparison` is an upstream failure parked in 2023 (commit
+/// `1aca9003`, verified by `git blame`), failing identically on the pre-branch tree.
 ///
-/// Introduced by this branch, so ours to answer for:
-/// - This one, the vacuous-negation disjunction absorption.
-/// - `a_named_rule_gate_does_not_drop_a_satisfiable_body` — a wrong FAIL: the
-///   empty-collection FAIL drops the body of a rule that gates on it via a named reference.
-///   Both of these need the rule-status cache keyed on `(rule, role)`, which is the single
-///   prerequisite for finishing this work.
-///
-/// Pre-existing in v3.2.0, recorded not caused:
-/// - `in_does_not_certify_an_empty_collection` and
-///   `ordering_operators_do_not_certify_an_empty_collection` — the same class in two
-///   different comparator impls, so fixing one will not resolve the other. Each has a
-///   companion, non-ignored control pinning that populated collections still decide
-///   correctly.
-///
-/// Not ours at all:
-/// - `test_string_in_comparison`, an upstream failure parked in 2023 (commit `1aca9003`,
-///   verified by `git blame`), failing identically on the pre-branch tree.
-///
-/// So four of the five should start passing when their defect is addressed; the fifth is not
-/// ours and is not expected to.
+/// The other four that were ignored here all now pass and are asserted normally: this one,
+/// `a_named_rule_gate_does_not_drop_a_satisfiable_body`,
+/// `in_does_not_certify_an_empty_collection` and
+/// `ordering_operators_do_not_certify_an_empty_collection`. The last two keep companion
+/// controls pinning that populated collections still decide correctly, because a fix that
+/// stopped certifying empty collections by stopping evaluation altogether would satisfy them
+/// otherwise.
 #[test]
-#[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
     let rules = r###"
     rule vacuous_ne_absorbs_or {

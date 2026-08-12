@@ -23,42 +23,6 @@ const ALL: [Outcome; 4] = [
 
 const ROLES: [ClauseRole; 2] = [ClauseRole::Assertion, ClauseRole::Gate];
 
-/// Asserts that the evaluator does not yet use [`Outcome`], and fails when that changes.
-///
-/// `outcome.rs` carries `#[allow(dead_code)]` because CI runs `cargo clippy -- -D
-/// warnings` (`.github/workflows/pr.yml:94`), so an unwired module cannot simply be left
-/// to warn — the build would fail. That suppression costs the one signal that would
-/// otherwise say "this algebra is not connected to anything", and a partial rewiring that
-/// left half the operations orphaned would then be invisible.
-///
-/// This test restores the signal in a form that cannot be suppressed by a lint attribute:
-/// it greps the evaluator for constructor uses of the type. While the module is dormant
-/// there are none, and that is asserted rather than assumed. The first real rewiring makes
-/// this test fail, which is the intended prompt to delete it along with the `allow`.
-///
-/// Deliberately a string search and not a type-level check: the property is about whether
-/// *other* modules reference this one, which the type system cannot express from inside.
-#[test]
-fn the_evaluator_does_not_yet_use_this_algebra() {
-    let eval_rs = include_str!("../eval.rs");
-
-    let uses: Vec<&str> = eval_rs
-        .lines()
-        .filter(|line| {
-            let code = line.split("//").next().unwrap_or("");
-            code.contains("Outcome::") || code.contains("Outcome>") || code.contains("-> Outcome")
-        })
-        .collect();
-
-    assert!(
-        uses.is_empty(),
-        "eval.rs now references Outcome, so the algebra is being wired in. Remove the \
-         `#[allow(dead_code)]` from outcome.rs, delete this test, and make sure the \
-         gating-semantics question in that module's docs is settled first. Found:\n{}",
-        uses.join("\n")
-    );
-}
-
 /// Guards the `ALL` array against a variant being added to `Outcome` without being
 /// added here, which would silently reduce every other test's coverage.
 ///
