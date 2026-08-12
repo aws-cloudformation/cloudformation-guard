@@ -4481,12 +4481,132 @@ fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()
     Ok(())
 }
 
-//
-// EMPTY / !EMPTY on a boolean.
-//
-// The Bool arm of element_empty_operation used to compute
-// `(*boolean).to_string().is_empty()`, which is never true, so a boolean was never
-// EMPTY and `!empty` on one always passed regardless of its value -- a clause that
-// reads like a check but asserts nothing. It now reports the same incompatible-type
-// error as every other unsupported type.
-//
+/// A non-negated parameterized gate that SKIPs must not poison the rest of the `when`.
+///
+/// `eval_parameterized_rule_call` returned the invoked rule's status through a `_` arm that
+/// converted any non-PASS, non-strict-SKIP result into FAIL for a non-negated call. With a
+/// single condition that is invisible: FAIL and SKIP both make `eval_rule` treat the rule as
+/// inapplicable and drop the guarded body.
+///
+/// It becomes visible with two conditions, which is why this test has two.
+/// `eval_conjunction_clauses` absorbs SKIP (`Status::SKIP => {}`) but counts a FAIL, so the
+/// inapplicable gate returning FAIL dropped a body that the passing sibling condition should
+/// have kept enforced. `ClauseRole::Gate` is documented as "the block it guards is still
+/// decided by the remaining conditions", so FAIL here defeated the role propagation.
+///
+/// The fixture: `no_such_type` invokes a parameterized rule whose query selects nothing, so it
+/// SKIPs; `bucket_exists` PASSes; and the guarded body requires a Name the template violates.
+/// The body must therefore run and the file must FAIL. Before the fix it exited 0 with the
+/// body dropped, which is the wrong-PASS shape this whole branch is about.
+#[test]
+fn a_skipping_parameterized_gate_does_not_drop_a_body_its_sibling_enforces() -> Result<()> {
+    // `relevant` must SKIP, not FAIL, or this fixture tests the wrong arm. A binary
+    // comparison whose left-hand query selects nothing yields `EvalResult::Skip`
+    // (`CmpOperator::compare`'s `lhs.is_empty()` guard), so the rule SKIPs. `!empty` would
+    // FAIL instead -- an unresolved query is EMPTY, so `!empty` is false -- which reaches the
+    // `_` arm by a different route and would not exercise the SKIP path at all.
+    let rules = r###"
+    rule relevant(ty) {
+        Resources.*[ Type == %ty ].Properties.Name == 'anything'
+    }
+    rule guarded when relevant('AWS::Nonexistent::Type') Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'safebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket" }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL: the parameterized gate does not apply, the sibling condition passes, so the body
+    // runs and catches `publicbucket`. SKIP here would mean the inapplicable gate closed the
+    // whole `when` and the violation went unreported while the process exited 0.
+    assert_eq!(
+        status,
+        Status::FAIL,
+        "a parameterized gate that did not apply suppressed a body its sibling condition \
+         should have kept enforced"
+    );
+
+    Ok(())
+}
+
+/// `EMPTY` and `!EMPTY` on a boolean are an incompatible-type error, not a silent pass.
+///
+/// The Bool arm of `element_empty_operation` computed `(*boolean).to_string().is_empty()`.
+/// Neither "true" nor "false" is ever the empty string, so EMPTY on a boolean was
+/// unconditionally false and `!EMPTY` unconditionally true: a clause that reads like a check
+/// and cannot fail for any input. A rule author writing `Properties.Enabled !EMPTY` got a
+/// green check that verified nothing.
+///
+/// Removing the arm lets a boolean reach the same `IncompatibleError` every other unsupported
+/// type already reached, which surfaces the mistake with the offending path instead of
+/// certifying it.
+///
+/// All four combinations are covered because the two axes fail differently. The old code made
+/// `!EMPTY` a silent *pass* and `EMPTY` a silent *fail*, so a test on one polarity alone would
+/// have left the other spelling unguarded, and `true` versus `false` is exactly the axis the
+/// old implementation was insensitive to -- asserting only one value would not have
+/// distinguished "handled" from "ignored".
+#[test]
+fn boolean_empty_is_an_incompatible_type() -> Result<()> {
+    for value in ["true", "false"] {
+        for comparator in ["EMPTY", "!EMPTY"] {
+            let rules = format!(
+                r###"
+                rule flag_check {{
+                    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Enabled {comparator}
+                }}
+                "###
+            );
+            let input = format!(
+                r#"
+                {{
+                    Resources: {{
+                        b: {{
+                            Type: 'AWS::S3::Bucket',
+                            Properties: {{ Enabled: {value} }}
+                        }}
+                    }}
+                }}
+                "#
+            );
+
+            let resources = PathAwareValue::try_from(input.as_str())?;
+            let rules_file = RulesFile::try_from(rules.as_str())?;
+            let mut root = root_scope(&rules_file, Rc::new(resources));
+            let result = eval_rules_file(&rules_file, &mut root, None);
+
+            let err = match result {
+                Err(e) => e,
+                Ok(status) => panic!(
+                    "`Enabled {comparator}` on the boolean {value} returned {status:?} instead \
+                     of an incompatible-type error. Before this fix `!EMPTY` passed for every \
+                     boolean and `EMPTY` failed for every boolean, in both cases without \
+                     comparing anything."
+                ),
+            };
+
+            let message = format!("{err}");
+            assert!(
+                message.contains("EMPTY"),
+                "expected the incompatible-type error to name the EMPTY operation so the \
+                 author can find the clause, got: {message}"
+            );
+        }
+    }
+
+    Ok(())
+}

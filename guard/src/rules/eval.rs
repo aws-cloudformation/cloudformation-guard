@@ -20,7 +20,15 @@ fn element_empty_operation(value: &QueryResult) -> Result<bool> {
             PathAwareValue::List((_, list)) => list.is_empty(),
             PathAwareValue::Map((_, map)) => map.is_empty(),
             PathAwareValue::String((_, string)) => string.is_empty(),
-            PathAwareValue::Bool((_, boolean)) => (*boolean).to_string().is_empty(),
+            // No Bool arm. It computed `(*boolean).to_string().is_empty()`, and neither
+            // "true" nor "false" is ever the empty string, so EMPTY on a boolean was
+            // unconditionally false and `!EMPTY` unconditionally true -- a clause that reads
+            // like a check and cannot fail for any input.
+            //
+            // Falling through to the incompatible-type error below is the same treatment
+            // every other unsupported type gets, and it turns a silent always-pass into a
+            // diagnostic naming the path. `boolean_empty_is_an_incompatible_type` covers all
+            // four combinations of value and polarity.
             _ => {
                 return Err(Error::IncompatibleError(format!(
                     "Attempting EMPTY operation on type {} that does not support it at {}",
@@ -828,13 +836,13 @@ fn binary_operation<'value, 'loc: 'value>(
         // apply" and skips the whole body -- so failing here would silently disarm
         // every check in the guarded block and exit 0, which is worse than the bug
         // being fixed.
-        operators::EvalResult::EmptyRhsUnsatisfiable => Ok(EvaluationResult::EmptyQueryResult(
-            if role.is_strict() {
+        operators::EvalResult::EmptyRhsUnsatisfiable => {
+            Ok(EvaluationResult::EmptyQueryResult(if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
-            },
-        )),
+            }))
+        }
 
         // Negated comparison against a reference that resolved to nothing. There is
         // nothing to collide with, so the clause is vacuously satisfied and must not
@@ -865,13 +873,13 @@ fn binary_operation<'value, 'loc: 'value>(
         // wrapper always resolves EmptyRhs into one of the two variants above. Fail
         // closed rather than panicking, so a future refactor that routes around the
         // wrapper cannot turn this into a silent pass.
-        operators::EvalResult::EmptyRhs => Ok(EvaluationResult::EmptyQueryResult(
-            if role.is_strict() {
+        operators::EvalResult::EmptyRhs => {
+            Ok(EvaluationResult::EmptyQueryResult(if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
-            },
-        )),
+            }))
+        }
 
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
@@ -1511,11 +1519,9 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                     root: rv,
                     parent: resolver,
                 };
-                match eval_general_block_clause(
-                    &block_clause.block,
-                    &mut val_resolver,
-                    |gc, r| eval_guard_clause(gc, r, role),
-                ) {
+                match eval_general_block_clause(&block_clause.block, &mut val_resolver, |gc, r| {
+                    eval_guard_clause(gc, r, role)
+                }) {
                     Ok(status) => match status {
                         Status::PASS => {
                             passes += 1;
@@ -1795,6 +1801,24 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
 
         Status::SKIP if role.is_strict() => Status::FAIL,
 
+        // A gate whose invoked rule did not apply stays SKIP rather than falling into the
+        // `_` arm below, which would turn a non-negated call into FAIL.
+        //
+        // Both are non-PASS, so with a single condition the two are indistinguishable --
+        // `eval_rule` drops the guarded body either way. The difference shows up with more
+        // than one condition: `eval_conjunction_clauses` absorbs SKIP (`Status::SKIP => {}`)
+        // but counts a FAIL, so one inapplicable gate condition returning FAIL poisons the
+        // whole `when` and drops a body that the remaining conditions would have enforced.
+        //
+        // That is exactly what `ClauseRole::Gate` is documented to prevent -- "the block it
+        // guards is still decided by the remaining conditions" -- so returning FAIL here
+        // defeated the role propagation this branch added for parameterized calls.
+        //
+        // Negated calls deliberately keep falling through: `not r(...)` where `r` did not
+        // apply must not report PASS on the strength of a check that never ran, which is the
+        // same fail-closed reasoning `eval_guard_named_clause` uses for its assertion case.
+        Status::SKIP if !call_rule.named_rule.negation => Status::SKIP,
+
         _ => {
             if call_rule.named_rule.negation {
                 Status::PASS
@@ -1845,9 +1869,7 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
         // rule used as a gate failed instead of skipping and silently disarmed the
         // block it guarded.
         WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, ClauseRole::Gate),
-        WhenGuardClause::NamedRule(gnr) => {
-            eval_guard_named_clause(gnr, resolver, ClauseRole::Gate)
-        }
+        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver, ClauseRole::Gate),
         WhenGuardClause::ParameterizedNamedRule(prc) => {
             eval_parameterized_rule_call(prc, resolver, ClauseRole::Gate)
         }
@@ -2105,9 +2127,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
         &rule.block
     };
 
-    match eval_general_block_clause(block, resolver, |rc, r| {
-        eval_rule_clause(rc, r, role)
-    }) {
+    match eval_general_block_clause(block, resolver, |rc, r| eval_rule_clause(rc, r, role)) {
         Ok(status) => {
             resolver.end_record(
                 &context,
