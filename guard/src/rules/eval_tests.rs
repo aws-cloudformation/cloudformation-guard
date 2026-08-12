@@ -6157,7 +6157,8 @@ fn an_empty_collection_is_caught_even_when_a_sibling_resource_satisfies_the_rule
 /// comparator.
 ///
 /// `eval_rule` treats any non-PASS condition as "this rule does not apply" and drops the
-/// guarded body (eval.rs:2082). A fix that failed the empty comparison unconditionally
+/// guarded body (the `if status != Status::PASS` branch in `eval_rule`). A fix that failed
+/// the empty comparison unconditionally
 /// would therefore turn this blocked template into a passing one -- trading one unenforced
 /// clause for an entire disarmed block. That is exactly how an earlier attempt regressed,
 /// and it exits 0, so nothing downstream notices.
@@ -6460,7 +6461,8 @@ fn a_vacuous_negation_inside_a_named_rule_does_not_close_the_gate_referencing_it
 /// A negated comparison over an empty collection opens its `when` gate *because* it folds
 /// to PASS. Reporting SKIP for it unconditionally -- which an earlier version of this fix
 /// did -- closes the gate, and `eval_rule` then drops every check in the guarded body
-/// (`eval.rs:2082`). Measured at that point: exit 19 -> 0, the rule moved to
+/// (the `if status != Status::PASS` branch in `eval_rule`). Measured at that point: exit
+/// 19 -> 0, the rule moved to
 /// `not_applicable`, and the violating `publicbucket` was never examined. A worse defect
 /// than the wrong PASS being fixed, and it exits 0 so nothing downstream notices.
 ///

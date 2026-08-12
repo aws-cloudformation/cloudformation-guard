@@ -1294,9 +1294,10 @@ fn binary_operation<'value, 'loc: 'value>(
                     // is not made worse here.
                     operators::ValueEvalResult::EmptyLhsCollection(value) => {
                         // Only an assertion produces an entry here. `statues` is a
-                        // per-value PASS/FAIL vector -- its consumers treat SKIP as
-                        // `unreachable!()` (eval.rs:1353), because "nothing to report"
-                        // is carried by EvaluationResult::EmptyQueryResult instead. So a
+                        // per-value PASS/FAIL vector -- the fold in
+                        // `eval_guard_access_clause` treats SKIP as `unreachable!()`,
+                        // because "nothing to report" is carried by
+                        // EvaluationResult::EmptyQueryResult instead. So a
                         // gate must contribute no entry at all rather than a SKIP entry,
                         // which leaves the gate decided by its other conditions exactly
                         // as before this fix.
@@ -1308,8 +1309,9 @@ fn binary_operation<'value, 'loc: 'value>(
                         // never performed.
                         //
                         // A negated clause must NOT fail here. `cmp.1` is the operator's
-                        // own not-flag already composed with the clause-level `not`
-                        // (eval.rs:1325), and `not (Tags == 'Owner')` over nothing is
+                        // own not-flag already composed with the clause-level `not` --
+                        // see the `let comparator = (...)` XOR in
+                        // `eval_guard_access_clause` -- and `not (Tags == 'Owner')` over nothing is
                         // vacuously true. This arm runs before the per-value inversion,
                         // so a FAIL emitted here is one the `not` can never reach; it has
                         // to opt out instead.
@@ -1324,8 +1326,9 @@ fn binary_operation<'value, 'loc: 'value>(
                         // disjunct satisfies the whole `or` and the real check never runs.
                         // Pre-existing: v3.2.0 exits 0 for that ruleset too.
                         //
-                        // Returning SKIP instead is the resolution EmptyRhsVacuouslyTrue
-                        // uses at eval.rs:867 for the identical hazard. It was implemented
+                        // Returning SKIP instead is the resolution the
+                        // `EmptyRhsVacuouslyTrue` arm of `binary_operation` uses for the
+                        // identical hazard. It was implemented
                         // here twice and reverted twice (see fb64016); the reproduction is
                         // parked as `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
                         // A `vacuously_satisfied` flag carried that state in the reverted
@@ -1336,7 +1339,7 @@ fn binary_operation<'value, 'loc: 'value>(
                         // `some` needs no handling here, which is worth saying because it
                         // is not obvious. Block-level `some` is decided in
                         // `eval_guard_block_clause`, where `passes > 0` outranks any
-                        // number of fails (eval.rs:1636), so a FAIL contributed here
+                        // number of fails, so a FAIL contributed here
                         // cannot sink a block that has a real witness elsewhere. An
                         // earlier version of this fix threaded `match_all` down to guard
                         // that case; removing it changed no measured behaviour on any

@@ -622,7 +622,8 @@ fn negate_distributes_over_both_folds() {
 ///
 /// The real hazard is that a gate does not need to FAIL to be unsafe. `eval_rule` returns
 /// `SKIP` for the entire rule when its condition is anything other than `PASS`
-/// (`eval.rs:2082`), so a condition that merely did not apply drops every check in the
+/// (the `if status != Status::PASS` branch in `eval_rule`), so a condition that merely did
+/// not apply drops every check in the
 /// guarded body just as thoroughly as one that failed — while reporting nothing. That is
 /// the wrong-PASS shape: exit 0 with the check silently unenforced.
 ///
