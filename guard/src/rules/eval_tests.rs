@@ -6029,7 +6029,6 @@ fn a_vacuous_negation_nested_in_a_when_block_still_runs_the_inner_body() -> Resu
     Ok(())
 }
 
-
 /// A non-negated parameterized gate that SKIPs must not poison the rest of the `when`.
 ///
 /// `eval_parameterized_rule_call` returned the invoked rule's status through a `_` arm that

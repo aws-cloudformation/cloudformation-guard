@@ -89,6 +89,16 @@ impl Path {
             None => &self.0,
         }
     }
+
+    /// True when this path locates nothing in the input.
+    ///
+    /// [`Path::root`] is the empty string, which is what a literal written in the rule text
+    /// carries -- it came from the ruleset, not from a position in the template. Reporters
+    /// render it as `[L:0,C:0]` and centre their context window on it, so a finding located
+    /// on an unlocated path shows the top of the file rather than the offending resource.
+    pub(crate) fn is_unlocated(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl TryFrom<&str> for Path {

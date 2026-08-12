@@ -931,13 +931,44 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
         eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
         (lhs_value, Status::PASS)
     } else {
+        // Locate the finding on whichever side actually points into the input.
+        //
+        // Reporters read `from` for `PropertyPath`, for `Value`, and to centre the context
+        // window they print around the offending line. A literal written in the rule text
+        // carries `Path::root()`, so when it lands in `from` the path renders as `[L:0,C:0]`
+        // and the context window centres on line 0 -- the finding shows the top of the
+        // template instead of the resource that failed.
+        //
+        // That is reachable through an ordinary rule, not a contrived one:
+        //
+        //     rule r(replaced, expected) { %expected == %replaced }
+        //     rule main { r(regex_replace(%arn, ..), "random_str") }
+        //
+        // puts the literal on the left. Before `5e83239` bound literal arguments as
+        // `Literal`, this clause took the query-vs-query arm and reported against the
+        // resource by accident; recognising the literal fixed the verdict and moved the
+        // report onto the literal, which located nothing.
+        //
+        // Only swapped when the left side is unlocated *and* the right side is not, so a
+        // comparison between two real values keeps reporting against its left side, which is
+        // the subject the clause is written about. `to` keeps the literal, so `ComparedWith`
+        // still names what the value was checked against; nothing is dropped, the two are
+        // ordered by which one an operator can act on.
+        let swap_for_reporting =
+            !locates_input(&lhs_value) && rhs_value.as_ref().is_some_and(locates_input);
+        let (from, to) = if swap_for_reporting {
+            (rhs_value.unwrap(), Some(lhs_value.clone()))
+        } else {
+            (lhs_value.clone(), rhs_value)
+        };
+
         eval_context.start_record(&context)?;
         eval_context.end_record(
             &context,
             RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
-                from: lhs_value.clone(),
+                from,
                 comparison: cmp,
-                to: rhs_value,
+                to,
                 custom_message,
                 message: reason,
                 status: Status::FAIL,
@@ -945,6 +976,34 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
         )?;
         (lhs_value, Status::FAIL)
     })
+}
+
+/// True when this result points at a position in the input rather than at rule text.
+///
+/// Used to decide which side of a failed comparison a finding should be reported against;
+/// see the note in [`report_value`].
+fn locates_input(result: &QueryResult) -> bool {
+    match result {
+        QueryResult::Literal(value) | QueryResult::Resolved(value) => {
+            !value.self_path().is_unlocated()
+        }
+        QueryResult::UnResolved(unresolved) => !unresolved.traversed_to.self_path().is_unlocated(),
+    }
+}
+
+/// Order a failed comparison's two values so the finding is reported against whichever one
+/// locates a position in the input.
+///
+/// Same reasoning as the note in [`report_value`], applied to the comparator results that
+/// reach `binary_operation` directly: reporters take `PropertyPath`, `Value` and the printed
+/// context window from the first of the pair, so putting a rule-text literal there costs the
+/// operator the line that actually failed.
+fn locate_report(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> (QueryResult, QueryResult) {
+    if lhs.self_path().is_unlocated() && !rhs.self_path().is_unlocated() {
+        (QueryResult::Resolved(rhs), QueryResult::Resolved(lhs))
+    } else {
+        (QueryResult::Resolved(lhs), QueryResult::Resolved(rhs))
+    }
 }
 
 fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
@@ -1435,6 +1494,12 @@ fn binary_operation<'value, 'loc: 'value>(
                         operators::ComparisonResult::Fail(cmpr),
                     ) => match cmpr {
                         operators::Compare::Value(pair) => {
+                            // Reported against whichever side locates something in the
+                            // input; see `locate_report`. The per-value entry below keeps
+                            // the left side regardless, since the fold reads only the
+                            // outcome and the map-key filter matches on it.
+                            let (from, to) =
+                                locate_report(Rc::clone(&pair.lhs), Rc::clone(&pair.rhs));
                             eval_context.start_record(&context)?;
                             eval_context.end_record(
                                 &context,
@@ -1444,8 +1509,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                         message: None,
                                         custom_message: custom_message.clone(),
                                         comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
-                                        to: Some(QueryResult::Resolved(pair.rhs)),
+                                        from,
+                                        to: Some(to),
                                     },
                                 )),
                             )?;
@@ -2350,6 +2415,25 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
                 // passed a bucket tagged exactly `["PublicRead"]`, while the same policy
                 // with the value inlined, or bound with `let`, correctly failed. `==` was
                 // inverted the same way: it failed the template that did match.
+                //
+                // Binding it as `Literal` also moves where a failed comparison is reported.
+                // That interaction is not obvious, so it is recorded here beside its cause.
+                //
+                // For `rule r(replaced, expected) { %expected == %replaced }` called with a
+                // literal, recognising the literal moves the clause off the `(None, None)`
+                // diff arm onto the equality arm. The verdict becomes right, but the literal
+                // carries `Path::root()`, so the record's `from` renders as `[L:0,C:0]`, and
+                // reporters centre their context window on the reported path -- a finding that
+                // should point at the offending `Arn:` line pointed at the top of the template
+                // instead. It went unnoticed because the test path sanitisation was broken at
+                // the time, which kept `test_validate_with_failing_complex_rule` from showing
+                // the difference.
+                //
+                // `locate_report` resolves it by ordering a failed comparison's two values so
+                // the finding lands on whichever one points into the input. The fixture accepts
+                // the corrected comparison semantics -- an equality message, and `ComparedWith`
+                // naming the literal rather than the value compared against itself -- with the
+                // original path and context window intact.
                 resolved_parameters.insert(
                     (param_rule.parameter_names[idx]).as_str(),
                     vec![QueryResult::Literal(Rc::new(val.clone()))],

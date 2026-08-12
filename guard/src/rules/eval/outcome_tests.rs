@@ -74,7 +74,11 @@ fn all_covers_every_variant() {
             | Outcome::Unevaluatable => {}
         }
     }
-    assert_eq!(ALL.len(), 4, "ALL must list every Outcome variant exactly once");
+    assert_eq!(
+        ALL.len(),
+        4,
+        "ALL must list every Outcome variant exactly once"
+    );
 
     // No duplicates, so the count above is a real coverage guarantee.
     for (i, a) in ALL.iter().enumerate() {
@@ -113,7 +117,11 @@ fn and_truth_table_is_exhaustive() {
         (Unevaluatable, NotApplicable, Unevaluatable),
         (Unevaluatable, Unevaluatable, Unevaluatable),
     ];
-    assert_eq!(cases.len(), ALL.len() * ALL.len(), "table must cover all pairs");
+    assert_eq!(
+        cases.len(),
+        ALL.len() * ALL.len(),
+        "table must cover all pairs"
+    );
 
     for (a, b, want) in cases {
         assert_eq!(a.and(b), want, "and({a:?}, {b:?})");
@@ -193,7 +201,11 @@ fn or_truth_table_is_exhaustive() {
         (Unevaluatable, NotApplicable, Unevaluatable),
         (Unevaluatable, Unevaluatable, Unevaluatable),
     ];
-    assert_eq!(cases.len(), ALL.len() * ALL.len(), "table must cover all pairs");
+    assert_eq!(
+        cases.len(),
+        ALL.len() * ALL.len(),
+        "table must cover all pairs"
+    );
 
     for (a, b, want) in cases {
         assert_eq!(a.or(b), want, "or({a:?}, {b:?})");
@@ -353,7 +365,10 @@ fn only_unevaluatable_depends_on_role() {
         let as_assertion = o.to_status(ClauseRole::Assertion);
         let as_gate = o.to_status(ClauseRole::Gate);
         if o == Outcome::Unevaluatable {
-            assert_ne!(as_assertion, as_gate, "Unevaluatable must be role-dependent");
+            assert_ne!(
+                as_assertion, as_gate,
+                "Unevaluatable must be role-dependent"
+            );
         } else {
             assert_eq!(as_assertion, as_gate, "{o:?} must not depend on role");
         }
@@ -625,7 +640,10 @@ fn blocking_a_deployment_and_closing_a_gate_are_different_questions() {
     }
 
     // The property that actually matters, and which `blocks` does not express.
-    assert!(!Outcome::Satisfied.closes_gate(), "a satisfied gate must open");
+    assert!(
+        !Outcome::Satisfied.closes_gate(),
+        "a satisfied gate must open"
+    );
     for o in [
         Outcome::Violated,
         Outcome::NotApplicable,
@@ -781,9 +799,7 @@ fn conjunction_never_launders_a_violation() {
 fn disjunction_only_excuses_a_violation_with_real_evidence() {
     for a in ALL {
         for b in ALL {
-            if (a == Outcome::Violated || b == Outcome::Violated)
-                && a.or(b) == Outcome::Satisfied
-            {
+            if (a == Outcome::Violated || b == Outcome::Violated) && a.or(b) == Outcome::Satisfied {
                 assert!(
                     a == Outcome::Satisfied || b == Outcome::Satisfied,
                     "or({a:?}, {b:?}) excused a violation without a satisfied branch"

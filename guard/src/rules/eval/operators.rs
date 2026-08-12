@@ -607,9 +607,9 @@ impl Comparator for EqOperation {
                                 // exactly how an earlier attempt at this fix silently
                                 // did nothing.
                                 if lhs_list.is_empty() {
-                                    results.push(ValueEvalResult::EmptyLhsCollection(
-                                        Rc::clone(&each),
-                                    ));
+                                    results.push(ValueEvalResult::EmptyLhsCollection(Rc::clone(
+                                        &each,
+                                    )));
                                 }
                                 for each_lhs in lhs_list {
                                     results.push(match_value(
