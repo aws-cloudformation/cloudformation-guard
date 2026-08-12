@@ -5150,7 +5150,7 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
 /// removes. Asserting that status would make this test green exactly when the defect is
 /// reintroduced.
 ///
-/// Cause is the named-rule boundary: `eval_context.rs:1116` evaluates a named rule's body
+/// Cause is the named-rule boundary: `rule_status` evaluates a named rule's body
 /// with `ClauseRole::Assertion` whatever the reference site is, so the `role.is_strict()`
 /// guard on the empty-collection arm cannot see that the rule is being used as a gate. At a
 /// *syntactic* `when` the guard works and the gate opens — verified separately — so this is
@@ -6330,7 +6330,7 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 ///
 /// - Unconditionally: closed the direct `when Tags != 'Owner'` gate, 19 -> 0.
 /// - Narrowed to `role.is_strict()`: still closed a gate reached through a *named rule*,
-///   19 -> 0, because `eval_context.rs:1116` evaluates every named rule's body with
+///   19 -> 0, because `rule_status` evaluates every named rule's body with
 ///   `ClauseRole::Assertion` regardless of the reference site, and caches the status per
 ///   rule name so the poisoned SKIP is reused by later references.
 ///
@@ -6412,7 +6412,7 @@ fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
 /// Every gate fixture in this file spells the condition inline (`rule r when <clause> {}`),
 /// where `eval_when_clause` hardcodes `ClauseRole::Gate`. This one references a rule
 /// instead, and that path is different in a way no inline fixture can show:
-/// `eval_context.rs:1116` evaluates a named rule's body with `ClauseRole::Assertion`
+/// `rule_status` evaluates a named rule's body with `ClauseRole::Assertion`
 /// whatever the reference site is, and caches the result per rule name.
 ///
 /// So a fix that keys on `role.is_strict()` inside the clause sees "assertion" even though

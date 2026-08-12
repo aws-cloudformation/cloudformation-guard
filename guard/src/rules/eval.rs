@@ -1388,12 +1388,14 @@ fn binary_operation<'value, 'loc: 'value>(
                         //
                         // measured 19 -> 0 against a template with `Tags: []` and a
                         // violating Name. A named rule's body is always evaluated with
-                        // ClauseRole::Assertion (eval_context.rs:1116) whatever the
+                        // ClauseRole::Assertion -- see the `eval_rule(each_rule, self,
+                        // ClauseRole::Assertion)` call in `rule_status` -- whatever the
                         // reference site is, so `role` here says "assertion" even when the
                         // rule is being used as a gate; the SKIP then makes eval_rule treat
                         // the guarded rule as inapplicable and drop its body. The status is
-                        // also cached per rule name (eval_context.rs:1095), so one
-                        // gate-poisoned SKIP is reused by every later reference.
+                        // also cached per rule name by that same function's
+                        // `rules_status` lookup, so one gate-poisoned SKIP is reused by
+                        // every later reference.
                         //
                         // ClauseRole carries the assertion/gate asymmetry at every
                         // *syntactic* site and cannot carry it across a named-rule
@@ -1434,7 +1436,7 @@ fn binary_operation<'value, 'loc: 'value>(
                         // `not_applicable: [body]` -- the body's verdict destroyed. Present
                         // from 2224cb1 onward and identical at every later commit.
                         //
-                        // Cause is the same boundary described above: eval_context.rs:1116
+                        // Cause is the same boundary described above: `rule_status`
                         // evaluates a named rule's body with ClauseRole::Assertion whatever
                         // the reference site is, so `role.is_strict()` is true even when the
                         // rule is being used as a gate, this arm fires, `vac_eq` becomes
@@ -2442,8 +2444,8 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
         match each {
             LetValue::Value(val) => {
                 // `Literal`, not `Resolved`: this is a literal argument written at the
-                // call site, exactly like a `let` binding, and `resolve_variable`
-                // (eval_context.rs:1130) returns those as `QueryResult::Literal`.
+                // call site, exactly like a `let` binding, and `resolve_variable`'s
+                // `scope.literals` branch returns those as `QueryResult::Literal`.
                 //
                 // Binding it as `Resolved` made two spellings of the same literal take
                 // different comparator arms, because `is_literal` only recognises
