@@ -4375,8 +4375,37 @@ fn using_resource_names_for_assessment() -> Result<()> {
     Ok(())
 }
 
+/// An upstream failure parked in 2023 (commit `1aca9003`), diagnosed here but not fixed.
+///
+/// `IN` applies substring semantics only when its right-hand side is a literal string. When
+/// the right-hand side comes from a query it falls back to equality, so the same spelling
+/// means a different operator depending on where the value came from. Measured on this
+/// fixture:
+///
+///     <query>    in '<literal string>'   PASS   -- substring, via string_in
+///     'literal'  in <query>              FAIL   -- equality, via contained_in -> compare_eq
+///
+/// The mechanism is in `InOperation::compare`. A literal left side against a queried right
+/// side takes the `(Some(l), None)` arm, which for two scalars calls `contained_in`, and
+/// `contained_in`'s scalar/scalar case ends in `match_value(.., compare_eq)`. `string_in`,
+/// which is the function that does `rhs.contains(lhs)`, is only reached from the
+/// literal/literal arm and from the `(None, Some(r))` arm where the right side is a literal
+/// `PathAwareValue::String`.
+///
+/// This test writes `some %bucket_names[*] in ...'Fn::Sub'` -- a query on both sides -- so it
+/// gets equality and fails. Not the capture syntax and not the intrinsic: probing each
+/// separately shows `%s3_buckets`, `%bucket_names` and the
+/// `Properties.PolicyDocument.Statement.Resource.'Fn::Sub'` query all resolve, and the failure
+/// reproduces with a plain literal `'s3'` in place of the captured variable.
+///
+/// Left ignored because the fix is a semantics decision for upstream, not a local repair.
+/// Making scalar-against-query use `string_in` would turn every `IN` between a scalar and a
+/// queried value into a substring test -- `Properties.Name in Resources.*.Tags` would start
+/// matching on fragments -- and that is a visible behaviour change for every existing ruleset.
+/// docs/CLAUSES.md documents only scalar left-hand sides for `IN`, so it does not settle which
+/// reading is intended. Same family of question as the mirrored zero-selection asymmetry.
 #[test]
-#[ignore]
+#[ignore = "upstream, 2023: IN uses equality against a queried RHS but substring against a literal one"]
 fn test_string_in_comparison() -> Result<()> {
     let resources = r#"
     Resources:
