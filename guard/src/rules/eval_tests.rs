@@ -5150,20 +5150,22 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
 /// removes. Asserting that status would make this test green exactly when the defect is
 /// reintroduced.
 ///
-/// Cause is the named-rule boundary: `rule_status` evaluates a named rule's body
-/// with `ClauseRole::Assertion` whatever the reference site is, so the `role.is_strict()`
-/// guard on the empty-collection arm cannot see that the rule is being used as a gate. At a
-/// *syntactic* `when` the guard works and the gate opens — verified separately — so this is
-/// specific to the named-rule spelling.
+/// Cause was the named-rule boundary: `rule_status` evaluated a named rule's body with
+/// `ClauseRole::Assertion` whatever the reference site was, so the `role.is_strict()` guard
+/// on the empty-collection arm could not see that the rule was being used as a gate. At a
+/// *syntactic* `when` the guard already worked and the gate opened — verified separately —
+/// so the defect was specific to the named-rule spelling.
 ///
-/// Not reverted, deliberately: reverting restores the original wrong PASS, where
+/// Fixed by carrying the reference site's role through `rule_status` into `eval_rule`, and
+/// keying the `rules_status` cache on `(rule, role)` so a body reference and a gate
+/// reference to the same rule do not share a cache slot. Without the key change the fix
+/// would be order-dependent: whichever reference ran first would decide the cached answer
+/// for the other.
+///
+/// Reverting was rejected rather than untried: it restores the original wrong PASS, where
 /// `Tags == 'Owner'` certifies `Tags: []` as compliant, and a wrong PASS on a policy gate is
-/// worse than a wrong FAIL. But it is a real regression, and it is why keying the rule-status
-/// cache on `(rule, role)` is a prerequisite for finishing this work rather than a
-/// refinement. Scope is bounded: the same shape with populated data is unaffected on every
-/// pin.
+/// worse than a wrong FAIL.
 #[test]
-#[ignore = "known regression from this branch: empty-collection FAIL drops a named-rule gate's body"]
 fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // `Name` matches what `body` requires, so `body` is satisfiable. Only `Tags: []` is
     // unusual, and it is what makes the gate condition fail.
@@ -5274,6 +5276,175 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
         dropped.is_empty(),
         "a rule was reported not-applicable even though its own check passes: the failing \
          gate condition swallowed it. not_applicable = {:?}",
+        dropped
+    );
+
+    Ok(())
+}
+
+/// Carrying the gate role into a named rule's body must not soften a real violation.
+///
+/// This is the adversarial case for the `(rule, role)` change. That change makes
+/// `rule_status` evaluate a referenced rule's body with the *reference site's* role, so a
+/// `when` condition now evaluates the body with `ClauseRole::Gate`. The obvious risk is that
+/// Gate strictness laundered every failure inside a gate into SKIP, which would open gates
+/// that ought to close and run bodies that ought to be dropped -- a wrong PASS, and strictly
+/// worse than the wrong FAIL being fixed.
+///
+/// It does not, and the reason is narrow enough to be worth pinning rather than asserting:
+/// `ClauseRole` is consulted for exactly one outcome, the unevaluatable one. `Outcome`'s
+/// doc puts it as "role matters for exactly one variant" and `to_status` only branches on
+/// `Unevaluatable`. A populated collection that genuinely violates its clause is `Violated`,
+/// which maps to FAIL under either role. So the gate still closes here, on real evidence.
+///
+/// Distinct from `a_named_rule_gate_does_not_drop_a_satisfiable_body`, which covers the
+/// *unevaluatable* input (`Tags: []`). This one covers populated, violating input, where the
+/// correct behaviour is the opposite: the gate must close.
+#[test]
+fn a_named_rule_gate_does_not_soften_a_real_violation() -> Result<()> {
+    // Populated and genuinely violating: Tags is ['Backup'], the gate wants 'Owner'. Nothing
+    // is unevaluatable, so role must not change the answer.
+    let violating = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Backup'] }
+            }
+        }
+    }
+    "#;
+    let satisfying = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let rules = r###"
+    rule tags_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule body when tags_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    // Liveness: with 'Owner' present the gate opens and both rules apply, so the referenced
+    // rule really is being consulted and the row below is not passing on a dead query.
+    assert_eq!(
+        status_of(rules, satisfying)?,
+        Status::PASS,
+        "liveness: the gate must open and the body pass when Tags == ['Owner']"
+    );
+
+    // The claim: a real violation inside a rule used as a gate is still a FAIL. If Gate
+    // strictness had laundered it to SKIP the file would come back SKIP, not FAIL.
+    assert_eq!(
+        status_of(rules, violating)?,
+        Status::FAIL,
+        "a populated, violating collection was softened by the gate role -- Gate strictness \
+         must only affect unevaluatable clauses, never real violations"
+    );
+
+    Ok(())
+}
+
+/// The same named rule referenced from a gate and from a body answers each independently.
+///
+/// This is what the `(rule, role)` cache key buys, and it is the part a role parameter alone
+/// would not fix. `rules_status` memoises a rule's status; keyed on the name alone, the first
+/// reference to reach a rule decided the cached value and every later reference reused it
+/// whatever role it was in. With one reference from a gate and one from a body in the same
+/// file, the answer would then depend on evaluation order -- and rule iteration order is not
+/// something a rule author controls or can see.
+///
+/// `vac` is unevaluatable (`Tags: []`), which is the one outcome where the two roles disagree,
+/// so this file forces both answers out of the same rule in a single run: `asserts` references
+/// it from a body and `gated` references it from a `when`.
+///
+/// Declaration order is load-bearing. `eval_rules_file` walks top-level rules in order, so
+/// `asserts` resolves `vac` first and populates the cache under the assertion role, where the
+/// answer is "failure". Keyed on the name alone that entry is what the later gate reference
+/// reads, the gate closes, and `gated` is dropped. Swapping the two rules hides it again, which
+/// is why the order is called out rather than left to look incidental.
+///
+/// That this test is the *only* thing pinning the cache key is measured, not assumed. Mutating
+/// `rule_status` to keep the role parameter but look up and store under a fixed
+/// `ClauseRole::Assertion` -- role threaded, cache keyed on the name -- leaves
+/// `a_named_rule_gate_does_not_drop_a_satisfiable_body` and
+/// `a_named_rule_gate_does_not_soften_a_real_violation` both green and fails only this one. So
+/// the original reproduction would have ratified a half-fix whose answer depends on rule
+/// declaration order.
+#[test]
+fn the_same_named_rule_answers_both_roles_independently() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    // `asserts` before `gated`, deliberately -- see the note above on declaration order.
+    let rules = r###"
+    rule vac {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule asserts {
+        vac
+    }
+    rule gated when vac {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    let report_for = |data: &str| -> Result<Vec<String>> {
+        let resources = PathAwareValue::try_from(data)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let _ = eval_rules_file(&rules_file, &mut root, None)?;
+        let top = root.reset_recorder().extract();
+        Ok(simplified_json_from_root(&top)?
+            .not_applicable
+            .into_iter()
+            .collect())
+    };
+
+    // Liveness: with `Tags: ['Owner']` every rule applies, so nothing is not-applicable. An
+    // absence claim is satisfied when nothing runs at all, so without this row a query that
+    // stopped selecting would let the claim below pass while blind.
+    let populated = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+    let live = report_for(populated)?;
+    assert!(
+        live.is_empty(),
+        "liveness: with `Tags: ['Owner']` nothing should be not-applicable, got {:?}",
+        live
+    );
+
+    // The claim: the earlier assertion-role answer must not reach the gate. `gated`'s own
+    // check passes, so it must not be reported not-applicable.
+    let dropped = report_for(input)?;
+    assert!(
+        dropped.is_empty(),
+        "a rule was reported not-applicable: the assertion-role status of `vac` was reused \
+         for the gate reference, closing it. not_applicable = {:?}",
         dropped
     );
 
