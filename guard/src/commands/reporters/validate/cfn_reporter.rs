@@ -6,16 +6,12 @@ use fancy_regex::Regex;
 use lazy_static::*;
 
 use crate::commands::reporters::validate::common::{
-    find_all_failing_clauses, GenericReporter, NameInfo, SkippedRules, StructureType,
-    StructuredSummary,
+    GenericReporter, NameInfo, SkippedRules, StructureType, StructuredSummary,
 };
-use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::errors::Error;
 
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
-use crate::rules::EvaluationType;
 use crate::rules::Status;
 
 lazy_static! {
@@ -28,113 +24,6 @@ lazy_static! {
 pub(crate) struct CfnReporter {}
 
 impl Reporter for CfnReporter {
-    fn report(
-        &self,
-        writer: &mut dyn Write,
-        _status: Option<Status>,
-        failed_rules: &[&StatusContext],
-        passed_or_skipped: &[&StatusContext],
-        longest_rule_name: usize,
-        rules_file: &str,
-        data_file: &str,
-        _data: &Traversal<'_>,
-        output_format_type: OutputFormatType,
-    ) -> crate::rules::Result<()> {
-        let renderer =
-            match output_format_type {
-                OutputFormatType::SingleLineSummary => {
-                    Box::new(SingleLineReporter {}) as Box<dyn GenericReporter>
-                }
-                OutputFormatType::JSON => Box::new(StructuredSummary::new(StructureType::JSON))
-                    as Box<dyn GenericReporter>,
-                OutputFormatType::YAML => Box::new(StructuredSummary::new(StructureType::YAML))
-                    as Box<dyn GenericReporter>,
-                OutputFormatType::Junit => unreachable!(),
-                OutputFormatType::Sarif => unreachable!(),
-            };
-        let failed = if !failed_rules.is_empty() {
-            let mut by_resource_name = HashMap::new();
-            for (idx, each_failed_rule) in failed_rules.iter().enumerate() {
-                let failed = find_all_failing_clauses(each_failed_rule);
-                for (clause_idx, each_failing_clause) in failed.iter().enumerate() {
-                    match each_failing_clause.eval_type {
-                        EvaluationType::Clause | EvaluationType::BlockClause => {
-                            if each_failing_clause.eval_type == EvaluationType::BlockClause {
-                                match &each_failing_clause.msg {
-                                    Some(msg) => {
-                                        if msg.contains("DEFAULT") {
-                                            continue;
-                                        }
-                                    }
-
-                                    None => {
-                                        continue;
-                                    }
-                                }
-                            }
-                            let mut resource_info = super::common::extract_name_info(
-                                &each_failed_rule.context,
-                                each_failing_clause,
-                            )?;
-                            let (resource_name, property_path) =
-                                match CFN_RESOURCES.captures(&resource_info.path) {
-                                    Ok(Some(caps)) => {
-                                        (caps["name"].to_string(), caps["rest"].replace('/', "."))
-                                    }
-                                    Ok(None) => (
-                                        format!(
-                                            "Rule {} Resource {} {}",
-                                            each_failed_rule.context, idx, clause_idx
-                                        ),
-                                        "".to_string(),
-                                    ),
-                                    Err(e) => return Err(Error::from(Box::new(e))),
-                                };
-                            resource_info.path = property_path;
-                            by_resource_name
-                                .entry(resource_name)
-                                .or_insert(Vec::new())
-                                .push(resource_info);
-                        }
-
-                        _ => unreachable!(),
-                    }
-                }
-            }
-            by_resource_name
-        } else {
-            HashMap::new()
-        };
-        let as_vec = passed_or_skipped.to_vec();
-        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
-            as_vec.iter().partition(|status| match status.status {
-                // This uses the dereference deep trait of Rust
-                Some(Status::SKIP) => true,
-                _ => false,
-            });
-        // The StatusContext path carries no record tree, so there is nothing to mine a reason
-        // from: every skip here is reported without one. This is the pre-record reporting path;
-        // the record-based path in `common::report_from_events` is where reasons come from.
-        let skipped = skipped
-            .iter()
-            .map(|s| (s.context.clone(), None))
-            .collect::<SkippedRules>();
-        let passed = passed
-            .iter()
-            .map(|s| s.context.clone())
-            .collect::<HashSet<String>>();
-        renderer.report(
-            writer,
-            rules_file,
-            data_file,
-            failed,
-            passed,
-            skipped,
-            longest_rule_name,
-        )?;
-        Ok(())
-    }
-
     fn report_eval<'value>(
         &self,
         _write: &mut dyn Write,

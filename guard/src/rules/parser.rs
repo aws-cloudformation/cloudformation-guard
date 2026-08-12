@@ -32,7 +32,7 @@ use crate::rules::values::*;
 pub(crate) type Span<'a> = LocatedSpan<&'a str, &'a str>;
 const DEFAULT_RULE_NAME: &str = "default";
 
-pub(crate) fn from_str2(in_str: &str) -> Span {
+pub(crate) fn from_str2(in_str: &str) -> Span<'_> {
     Span::new_extra(in_str, "")
 }
 
@@ -783,7 +783,7 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     ))(input)
 }
 
-fn extract_message(input: Span) -> IResult<Span, &str> {
+fn extract_message(input: Span<'_>) -> IResult<'_, Span<'_>, &str> {
     match input.find_substring(">>") {
         None => Err(nom::Err::Failure(ParserError {
             span: input,
@@ -797,7 +797,7 @@ fn extract_message(input: Span) -> IResult<Span, &str> {
     }
 }
 
-fn custom_message(input: Span) -> IResult<Span, &str> {
+fn custom_message(input: Span<'_>) -> IResult<'_, Span<'_>, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
@@ -1055,7 +1055,7 @@ fn clause_with_map<'loc, A, M, T: 'loc>(
     input: Span<'loc>,
     mut access: A,
     mut mapper: M,
-) -> IResult<Span<'loc>, T>
+) -> IResult<'loc, Span<'loc>, T>
 where
     A: FnMut(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
     M: FnMut(GuardAccessClause<'loc>) -> T + 'loc,
@@ -1386,7 +1386,7 @@ fn cnf_clauses<'loc, T, E, F, M>(
     mut f: F,
     _m: M,
     _non_empty: bool,
-) -> IResult<Span<'loc>, Conjunctions<E>>
+) -> IResult<'loc, Span<'loc>, Conjunctions<E>>
 where
     F: FnMut(Span<'loc>) -> IResult<Span<'loc>, E>,
     M: FnMut(Vec<E>) -> T,
@@ -1428,7 +1428,7 @@ fn disjunction_clauses<'loc, E, F>(
     input: Span<'loc>,
     mut parser: F,
     non_empty: bool,
-) -> IResult<Span<'loc>, Disjunctions<E>>
+) -> IResult<'loc, Span<'loc>, Disjunctions<E>>
 where
     F: FnMut(Span<'loc>) -> IResult<Span<'loc>, E>,
     E: Clone + 'loc,
