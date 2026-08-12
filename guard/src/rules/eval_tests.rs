@@ -5,7 +5,9 @@ use pretty_assertions::{assert_eq, assert_ne};
 use std::collections::HashMap;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
-use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
+use crate::rules::eval_context::{
+    root_scope, simplified_json_from_root, ClauseReport, EventRecord, RecordTracker,
+};
 
 use super::*;
 
@@ -5125,6 +5127,122 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     assert_eq!(status_of(rules, input)?, Status::FAIL);
 
     Ok(())
+}
+
+/// Every FAIL must state a reason. This asserts report *contents*, not just status.
+///
+/// The gap this closes: no test in the repository asserted anything about a report's
+/// `checks`, so a FAIL that produced an empty report was green in all 355 of them. The
+/// empty-collection FAIL added by `2224cb1` did exactly that — `eval_context.rs`'s
+/// `QueryResult::Resolved` arm wrapped its whole body in `if let Some(to) = to` with no
+/// `else`, and that FAIL is the one construction site pairing a resolved `from` with
+/// `to: None`, so it pushed no `ClauseReport` at all.
+///
+/// The visible result was exit 19 with `checks: []` in JSON and YAML, `results: []` in
+/// SARIF, an empty `<failure/>` in JUnit, and "Number of non-compliant resources 0" on the
+/// console — a blocked deployment with nothing to act on, and the message built at the
+/// construction site never reaching any output.
+///
+/// Written against the general property rather than the one operator that exposed it: any
+/// rule reporting FAIL must carry at least one clause explaining why.
+#[test]
+fn a_failing_rule_always_reports_at_least_one_reason() -> Result<()> {
+    // Three shapes that all FAIL, including both operand orders of the empty-collection
+    // case. The third is a plain scalar mismatch, which reported correctly all along and
+    // is here so the test would catch a regression in the normal path too.
+    let rulesets = [
+        r###"
+        rule tags_must_name_owner {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+        }
+        "###,
+        r###"
+        let expected = 'Owner'
+        rule tags_must_name_owner_mirrored {
+            %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags
+        }
+        "###,
+        r###"
+        rule name_must_be_private {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+        }
+        "###,
+    ];
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmptyTags: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    // Asserted through the serialized structured output rather than the internal report
+    // type, for two reasons: the builder is private to eval_context, and this is the
+    // artifact a user or a CI job actually consumes. `checks: []` under a FAIL is exactly
+    // what the defect looked like from outside.
+    for rules in rulesets {
+        let resources = PathAwareValue::try_from(input)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+        assert_eq!(
+            status,
+            Status::FAIL,
+            "ruleset was expected to fail, ruleset was: {}",
+            rules
+        );
+
+        // Assert on the CONSTRUCTED report, not on the recorded evaluation tree.
+        //
+        // This distinction is the whole point. `eval.rs` always wrote a ClauseValueCheck
+        // record, so a test that walked the recorder passed even with the defect present --
+        // I wrote that test first and the mutation check caught it. The report builder in
+        // eval_context is where the record was dropped, so that is the layer to assert at.
+        let top = root.reset_recorder().extract();
+        let report = simplified_json_from_root(&top)?;
+
+        assert!(
+            !report.not_compliant.is_empty(),
+            "a failing file reported nothing non-compliant, ruleset was: {}",
+            rules
+        );
+        for clause in &report.not_compliant {
+            assert!(
+                !clause_report_is_empty(clause),
+                "rule reported FAIL with an empty report, so every format renders it as a \
+                 blocked deployment with no stated reason. Ruleset was: {}",
+                rules
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// True when a report names a failure but carries nothing explaining it.
+///
+/// Structural rather than message-keyed on purpose: the property is "the report has
+/// something in it", and asserting on wording would accept a report that says the wrong
+/// thing while rejecting a correct rewording.
+fn clause_report_is_empty(report: &ClauseReport<'_>) -> bool {
+    match report {
+        ClauseReport::Rule(rule) => {
+            rule.checks.is_empty() || rule.checks.iter().all(clause_report_is_empty)
+        }
+        // A block report is a leaf: it carries its own message rather than children.
+        ClauseReport::Block(_) => false,
+        ClauseReport::Disjunctions(disj) => {
+            disj.checks.is_empty() || disj.checks.iter().all(clause_report_is_empty)
+        }
+        // A leaf clause report is the thing that explains a failure, so reaching one means
+        // the report is not empty.
+        ClauseReport::Clause(_) => false,
+    }
 }
 
 /// A denylist written with a parameter did not block the value it named.

@@ -2988,6 +2988,44 @@ fn report_all_failed_clauses_for_rules<'value>(
                                         ));
                                     }
                                 }
+                            } else {
+                                // A resolved left-hand value with nothing on the right.
+                                //
+                                // Without this branch the FAIL pushes no ClauseReport at
+                                // all, so every reporter shows a blocked deployment with
+                                // no stated reason: `checks: []` in JSON and YAML,
+                                // `results: []` in SARIF, an empty `<failure/>` in JUnit,
+                                // and "Number of non-compliant resources 0" on the
+                                // console -- under `Status = FAIL`. The engineer gets an
+                                // exit 19 they cannot diagnose, and the message built at
+                                // the construction site never reaches any output.
+                                //
+                                // Reported as Unary rather than Binary because
+                                // `BinaryComparison.to` is not an Option and cannot
+                                // represent "there was no right-hand value", whereas
+                                // `UnaryComparison { value, comparison }` is exactly this
+                                // shape. Written against `to == None` generally rather
+                                // than against the one operator that currently produces
+                                // it, so any future comparison that has a left value and
+                                // no right one reports instead of vanishing.
+                                clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
+                                    UnaryReport {
+                                        context: current.context.to_string(),
+                                        messages: Messages {
+                                            custom_message: Some(custom_message),
+                                            error_message: Some(format!(
+                                                "Check was not compliant as property value [{from}] had nothing to compare against.{err}",
+                                                from = res,
+                                                err = error_message
+                                            )),
+                                            location: Some(res.clone().self_path().1),
+                                        },
+                                        check: UnaryCheck::Resolved(UnaryComparison {
+                                            value: res.clone(),
+                                            comparison: (*cmp, *not),
+                                        }),
+                                    },
+                                )));
                             }
                         }
                     }
