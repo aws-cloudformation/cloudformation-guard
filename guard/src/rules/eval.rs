@@ -212,8 +212,18 @@ pub(super) enum EvaluationResult {
     /// place a rule author sees it. It matters for the empty-reference cases: a clause that
     /// fails because the thing it compares against resolved to no values needs to say so,
     /// or the author is left looking for a fault in the template rather than in the ruleset.
+    ///
+    /// Still `Status` rather than `Outcome`: this variant carries the clause's whole answer
+    /// straight to `end_record`, so there is no fold to lose information in, which is what
+    /// the sibling variant's migration was for.
     EmptyQueryResult(Status, Option<String>),
-    QueryValueResult(Vec<(QueryResult, Status)>),
+    /// One entry per left-hand value, carrying why that value reached its answer.
+    ///
+    /// [`Outcome`] rather than [`Status`] so the fold in `eval_guard_access_clause` can
+    /// distinguish "not applicable" from "satisfied" without a lossy lift. `Status` has
+    /// no way to say "nothing to compare", which is what made an empty `statues` vector
+    /// indistinguishable from "everything passed".
+    QueryValueResult(Vec<(QueryResult, Outcome)>),
 }
 
 /// Explanation attached to a clause that could not compare because its right-hand reference
@@ -538,7 +548,10 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                         _ => unreachable!(),
                     }
 
-                    results.push((result, status));
+                    // Lifted here rather than at the fold: the unary path decides a
+                    // plain pass/fail per value, so the reason is exactly what `Status`
+                    // already carries and `from_status` loses nothing.
+                    results.push((result, Outcome::from_status(status)));
                 }
                 EvaluationResult::QueryValueResult(results)
             } else {
@@ -672,28 +685,27 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     for each in lhs {
         match (*operation)(&each) {
             Ok(true) => {
-                status.push((each, Status::PASS));
+                status.push((each, Outcome::Satisfied));
             }
 
             Ok(false) => {
-                status.push((each, Status::FAIL));
+                status.push((each, Outcome::Violated));
             }
 
-            // `EMPTY` against a type that cannot be empty. Returning this error unconditionally
-            // aborted the whole rules file, discarding every other rule's verdict; one unanswerable
-            // clause is a verdict about that clause, not about the file.
+            // `EMPTY` against a type that cannot be empty. Returning this error from here aborted the
+            // whole rules file, discarding every other rule's verdict; one unanswerable clause is a
+            // verdict about that clause, not about the file.
             //
-            // An assertion is answered here, as a fail-closed per-value verdict. A *gate* cannot be,
-            // and the reason is worth stating because the obvious fix is wrong: `eval_rule` collapses
-            // both FAIL and SKIP on a condition to a rule-level SKIP, so neither status makes an
-            // unevaluatable gate fail closed -- returning either one silently disarms the block it
-            // guards and the file exits 0. `Status` has no third value to say "could not tell", so the
-            // error is the channel, and the three condition sites catch it and fail their own rule or
-            // block rather than letting it escape. #720's `Outcome` lattice replaces this with a value.
-            Err(e) if is_unevaluatable(&e) => match role.is_strict() {
-                true => status.push((each, Status::FAIL)),
-                false => return Err(e),
-            },
+            // `Outcome::Unevaluatable` is what its own documentation describes -- "a reference
+            // resolved to no values, or a type did not support the operation" -- so the role is
+            // applied once, by `to_status`, rather than here. The version of this fix on
+            // #717 predates the lattice and had to choose the status itself.
+            //
+            // `record_unary_clause` has already recorded this value with the matching status and the
+            // message naming the offending path, so nothing is lost by not propagating.
+            Err(Error::IncompatibleError(_)) => {
+                status.push((each, Outcome::Unevaluatable));
+            }
 
             Err(e) => return Err(e),
         }
@@ -885,7 +897,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<(QueryResult, Status)> {
+) -> Result<(QueryResult, Outcome)> {
     let (lhs_value, rhs_value, outcome, reason) = match each_res {
         ComparisonResult::Comparable(ComparisonWithRhs {
             outcome,
@@ -929,7 +941,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
     Ok(if outcome {
         eval_context.start_record(&context)?;
         eval_context.end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
-        (lhs_value, Status::PASS)
+        (lhs_value, Outcome::Satisfied)
     } else {
         // Locate the finding on whichever side actually points into the input.
         //
@@ -974,7 +986,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 status: Status::FAIL,
             })),
         )?;
-        (lhs_value, Status::FAIL)
+        (lhs_value, Outcome::Violated)
     })
 }
 
@@ -1012,7 +1024,7 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<Vec<(QueryResult, Status)>> {
+) -> Result<Vec<(QueryResult, Outcome)>> {
     let mut status = Vec::with_capacity(comparisons.len());
     for each_res in comparisons {
         status.push(report_value(
@@ -1032,7 +1044,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
-) -> Result<Vec<(QueryResult, Status)>> {
+) -> Result<Vec<(QueryResult, Outcome)>> {
     let mut statues = Vec::with_capacity(rhs_comparisons.len());
     let mut by_lhs_value = HashMap::new();
     for each in &rhs_comparisons {
@@ -1080,7 +1092,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                 eval_context.start_record(&context)?;
                 eval_context
                     .end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
-                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::PASS))
+                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Outcome::Satisfied))
             }
             None => {
                 eval_context.start_record(&context)?;
@@ -1101,7 +1113,7 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                         comparison: cmp,
                     })),
                 )?;
-                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::FAIL))
+                statues.push((QueryResult::Resolved(Rc::clone(lhs)), Outcome::Violated))
             }
         }
     }
@@ -1253,7 +1265,7 @@ fn binary_operation<'value, 'loc: 'value>(
         )),
 
         operators::EvalResult::Result(results) => {
-            let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+            let mut statues: Vec<(QueryResult, Outcome)> = Vec::with_capacity(lhs.len());
             for each in results {
                 match each {
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
@@ -1271,7 +1283,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 },
                             )),
                         )?;
-                        statues.push((QueryResult::UnResolved(ur), Status::FAIL));
+                        statues.push((QueryResult::UnResolved(ur), Outcome::Violated));
                     }
 
                     // One left-hand value was an empty collection, so there was nothing
@@ -1355,9 +1367,7 @@ fn binary_operation<'value, 'loc: 'value>(
                         // and a FAIL is what blocks a deployment. `closes_gate` answers a
                         // different question -- whether a condition silences the block it
                         // guards -- and the gate branch below deliberately does not fail.
-                        if crate::rules::eval::outcome::Outcome::Unevaluatable.blocks(role)
-                            && !cmp.1
-                        {
+                        if Outcome::Unevaluatable.blocks(role) && !cmp.1 {
                             eval_context.start_record(&context)?;
                             eval_context.end_record(
                                 &context,
@@ -1375,8 +1385,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                     },
                                 )),
                             )?;
-                            statues.push((QueryResult::Resolved(value), Status::FAIL));
-                        } else if crate::rules::eval::outcome::Outcome::Unevaluatable.blocks(role) {
+                            statues.push((QueryResult::Resolved(value), Outcome::Violated));
+                        } else if Outcome::Unevaluatable.blocks(role) {
                             // A negated assertion over nothing. Vacuously true, but not
                             // evidence of anything, so it must not satisfy a disjunction.
                             //
@@ -1390,7 +1400,7 @@ fn binary_operation<'value, 'loc: 'value>(
                             // but reporting a clause the author negated over an empty
                             // collection as a finding would be noise -- nothing is wrong with
                             // the template.
-                            statues.push((QueryResult::Resolved(value), Status::SKIP));
+                            statues.push((QueryResult::Resolved(value), Outcome::NotApplicable));
                         } else {
                             // A gate. The vacuous PASS here is load-bearing and cannot be
                             // replaced with SKIP, which is what sank the two earlier attempts
@@ -1413,7 +1423,7 @@ fn binary_operation<'value, 'loc: 'value>(
                             // That SKIP does not open a gate either is a real design wart,
                             // recorded on `Outcome::closes_gate`. It is pre-existing for every
                             // non-PASS condition and is not made worse here.
-                            statues.push((QueryResult::Resolved(value), Status::PASS));
+                            statues.push((QueryResult::Resolved(value), Outcome::Satisfied));
                         }
                         // A negated comparison contributes nothing, and that is a known
                         // defect rather than a decision. Read on before "fixing" it.
@@ -1521,7 +1531,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 },
                             )),
                         )?;
-                        statues.push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
+                        statues.push((QueryResult::Resolved(Rc::clone(&lhs)), Outcome::Violated));
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
@@ -1541,7 +1551,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 },
                             )),
                         )?;
-                        statues.push((QueryResult::Resolved(nc.pair.lhs), Status::FAIL));
+                        statues.push((QueryResult::Resolved(nc.pair.lhs), Outcome::Violated));
                     }
 
                     operators::ValueEvalResult::ComparisonResult(
@@ -1553,7 +1563,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::Success),
                             )?;
-                            statues.push((QueryResult::Resolved(lin.lhs), Status::PASS));
+                            statues.push((QueryResult::Resolved(lin.lhs), Outcome::Satisfied));
                         }
 
                         operators::Compare::QueryIn(qin) => {
@@ -1563,7 +1573,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     &context,
                                     RecordType::ClauseValueCheck(ClauseCheck::Success),
                                 )?;
-                                statues.push((QueryResult::Resolved(each), Status::PASS));
+                                statues.push((QueryResult::Resolved(each), Outcome::Satisfied));
                             }
                         }
 
@@ -1573,7 +1583,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::Success),
                             )?;
-                            statues.push((QueryResult::Resolved(pair.lhs), Status::PASS));
+                            statues.push((QueryResult::Resolved(pair.lhs), Outcome::Satisfied));
                         }
 
                         operators::Compare::ValueIn(val) => {
@@ -1582,7 +1592,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::Success),
                             )?;
-                            statues.push((QueryResult::Resolved(val.lhs), Status::PASS));
+                            statues.push((QueryResult::Resolved(val.lhs), Outcome::Satisfied));
                         }
                     },
 
@@ -1610,8 +1620,10 @@ fn binary_operation<'value, 'loc: 'value>(
                                     },
                                 )),
                             )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
+                            statues.push((
+                                QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                Outcome::Violated,
+                            ));
                         }
 
                         operators::Compare::ValueIn(pair) => {
@@ -1629,8 +1641,10 @@ fn binary_operation<'value, 'loc: 'value>(
                                     },
                                 )),
                             )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
+                            statues.push((
+                                QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                Outcome::Violated,
+                            ));
                         }
 
                         operators::Compare::ListIn(lin) => {
@@ -1648,8 +1662,10 @@ fn binary_operation<'value, 'loc: 'value>(
                                     },
                                 )),
                             )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&lin.lhs)), Status::FAIL));
+                            statues.push((
+                                QueryResult::Resolved(Rc::clone(&lin.lhs)),
+                                Outcome::Violated,
+                            ));
                         }
 
                         operators::Compare::QueryIn(qin) => {
@@ -1675,8 +1691,10 @@ fn binary_operation<'value, 'loc: 'value>(
                                         },
                                     )),
                                 )?;
-                                statues
-                                    .push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&lhs)),
+                                    Outcome::Violated,
+                                ));
                             }
                         }
                     },
@@ -1701,7 +1719,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
-    let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+    let mut statues: Vec<(QueryResult, Outcome)> = Vec::with_capacity(lhs.len());
 
     let cmp = cmp.widened_for(rhs.len());
     let recorded_cmp = cmp.as_cmp_operator();
@@ -1721,7 +1739,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         to: None,
                     })),
                 )?;
-                statues.push((each.clone(), Status::FAIL));
+                statues.push((each.clone(), Outcome::Violated));
             }
 
             QueryResult::Literal(l) | QueryResult::Resolved(l) => {
@@ -1939,13 +1957,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 // which is the argument for the lattice in miniature: the third answer is a value
                 // rather than a special case each fold has to remember.
                 let outcome = {
-                    let lifted = result.into_iter().map(|(_value, status)| {
-                        crate::rules::eval::outcome::Outcome::from_status(status)
-                    });
+                    let outcomes = result.into_iter().map(|(_value, outcome)| outcome);
                     let folded = if all {
-                        crate::rules::eval::outcome::Outcome::all(lifted)
+                        Outcome::all(outcomes)
                     } else {
-                        crate::rules::eval::outcome::Outcome::any(lifted)
+                        Outcome::any(outcomes)
                     };
                     folded.to_status(role)
                 };
@@ -2308,7 +2324,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
             // `Outcome::blocks`: a gate that closes blocks nothing and still silences
             // everything it guarded, which is the hazard the two predicates exist to
             // keep apart.
-            if crate::rules::eval::outcome::Outcome::from_status(status).closes_gate() {
+            if Outcome::from_status(status).closes_gate() {
                 resolver.end_record(&when_context, RecordType::WhenCondition(status))?;
                 resolver.end_record(
                     &context,
@@ -2784,9 +2800,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             // and it is deliberately not `Outcome::blocks`: a gate that closes
                             // blocks nothing and still silences everything it guarded, which is
                             // the hazard the two predicates exist to keep apart.
-                            if crate::rules::eval::outcome::Outcome::from_status(status)
-                                .closes_gate()
-                            {
+                            if Outcome::from_status(status).closes_gate() {
                                 // Not applicable to this resource, so it contributes to neither
                                 // count. If that holds for every resource the fold below answers
                                 // SKIP, which is the honest answer: the block applied to nothing.
@@ -3067,7 +3081,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // `Outcome::blocks`: a gate that closes blocks nothing and still silences
                 // everything it guarded, which is the hazard the two predicates exist to
                 // keep apart.
-                if crate::rules::eval::outcome::Outcome::from_status(status).closes_gate() {
+                if Outcome::from_status(status).closes_gate() {
                     resolver.end_record(&when_context, RecordType::RuleCondition(status))?;
                     resolver.end_record(
                         &context,
