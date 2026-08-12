@@ -3,7 +3,6 @@ pub(crate) mod display;
 pub(crate) mod errors;
 pub(crate) mod eval;
 pub(crate) mod eval_context;
-pub(crate) mod evaluate;
 pub(crate) mod exprs;
 pub(crate) mod functions;
 mod libyaml;

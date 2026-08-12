@@ -392,6 +392,12 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
     }
 }
 
+impl<'loc> std::fmt::Display for GuardNamedRuleClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rule({}@{})", self.dependent_rule, self.location)
+    }
+}
+
 impl<'loc> std::fmt::Display for AccessClause<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
