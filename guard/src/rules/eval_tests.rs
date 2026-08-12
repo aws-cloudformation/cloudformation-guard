@@ -5185,6 +5185,100 @@ fn in_does_not_certify_an_empty_collection() -> Result<()> {
     Ok(())
 }
 
+/// A LIVE DEFECT, pre-existing in v3.2.0: the ordering operators certify an empty collection.
+///
+/// This is the same class as `in_does_not_certify_an_empty_collection` but a *different
+/// impl* — `CommonOperator`, not `contained_in` — so a fix for `IN` will not touch it. Worth
+/// its own test for that reason.
+///
+/// The argument that this is a defect rather than defensible vacuous truth is stronger here
+/// than for `IN`. `Ports <= 100` and `Ports > 100` are exact logical negations, and **both**
+/// return PASS on the same `Ports: []`. Universal quantification over an empty set defends
+/// "every element satisfies P" for both P and not-P; it cannot defend certifying `x <= 100`
+/// and `x > 100` for the same x. `<` and `>=` behave identically — all four route through
+/// the same impl.
+///
+/// Ignored rather than fixed for the same reason as the `IN` case, and here the hazard is
+/// measured rather than inferred: `rule r when ...Ports <= 100 { ...Name == 'safe' }` exits
+/// 19 on `Ports: []` *because* the vacuous PASS opens the gate and the body then catches a
+/// violating name. Making the comparison non-PASS in the comparator turns that into exit 0
+/// with the body dropped — one unenforced clause traded for a disarmed block.
+#[test]
+#[ignore = "known defect, pre-existing in v3.2.0: <= and > both certify an empty collection"]
+fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [] } }
+        }
+    }
+    "#;
+
+    // Exact logical negations. At most one may pass for any given input.
+    let le = r###"
+    rule ports_must_be_low {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100
+    }
+    "###;
+    let gt = r###"
+    rule ports_must_be_high {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports > 100
+    }
+    "###;
+
+    let mut passes = 0;
+    for rules in [le, gt] {
+        let resources = PathAwareValue::try_from(input)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        if eval_rules_file(&rules_file, &mut root, None)? == Status::PASS {
+            passes += 1;
+        }
+    }
+
+    assert!(
+        passes <= 1,
+        "both `Ports <= 100` and `Ports > 100` certified the same empty collection; \
+         they are exact negations so at most one may pass"
+    );
+
+    Ok(())
+}
+
+/// The control for the ordering operators, which must keep passing.
+///
+/// Both polarities on populated collections, so a future fix for the empty case cannot
+/// quietly break ordinary numeric comparison. These are the rows that make the empty row
+/// above interpretable — without them, a wrong answer on `[]` could just mean the rule or
+/// the query was malformed.
+#[test]
+fn ordering_operators_still_decide_populated_collections_correctly() -> Result<()> {
+    let rules = r###"
+    rule ports_must_be_low {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100
+    }
+    "###;
+
+    let low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [80] } } } }
+    "#;
+    let high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let resources = PathAwareValue::try_from(low)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
+
+    let resources = PathAwareValue::try_from(high)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
 /// The control for the above, which must keep passing: `IN` on a populated collection.
 ///
 /// Pinned separately so that a future fix for the empty case cannot quietly break the
@@ -6027,15 +6121,21 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 /// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
 /// runs it, and it will start passing the moment the underlying issue is addressed.
 ///
-/// Note for anyone running `--ignored`: three tests are ignored in this crate and they are
+/// Note for anyone running `--ignored`: four tests are ignored in this crate and they are
 /// not the same kind of thing.
 ///
-/// - This one and `in_does_not_certify_an_empty_collection` are live reproductions of real
-///   defects, parked with their reasons. Both should start passing when addressed. This one
-///   is specific to work on this branch; the `IN` one is pre-existing in v3.2.0.
+/// - This one is a live reproduction of a defect specific to work on this branch.
+/// - `in_does_not_certify_an_empty_collection` and
+///   `ordering_operators_do_not_certify_an_empty_collection` are live reproductions of
+///   defects pre-existing in v3.2.0 — the same class in two different comparator impls, so
+///   fixing one will not resolve the other. Each has a companion, non-ignored control test
+///   pinning that populated collections still decide correctly.
 /// - `test_string_in_comparison` is an upstream failure parked in 2023 (commit `1aca9003`,
 ///   verified by `git blame`) and fails identically on the pre-branch tree. It is not this
 ///   branch's and is not expected to pass here.
+///
+/// So three of the four should start passing when their defect is addressed; the fourth is
+/// not ours.
 #[test]
 #[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {

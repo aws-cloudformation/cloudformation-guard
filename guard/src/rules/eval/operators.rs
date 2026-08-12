@@ -163,6 +163,22 @@ where
 }
 
 impl Comparator for CommonOperator {
+    /// Serves `<`, `<=`, `>` and `>=` (instantiated only at the four sites near the end of
+    /// this file).
+    ///
+    /// KNOWN WRONG PASS: all four certify an empty left-hand collection. `Ports <= 100` and
+    /// `Ports > 100` are exact logical negations and both return PASS on `Ports: []`, which
+    /// is why this is a defect rather than defensible vacuous truth. Pre-existing in v3.2.0.
+    /// Full matrix and the reasoning are recorded in `contained_in` above, alongside the
+    /// same defect for `IN`.
+    ///
+    /// Relevant to fixing it: the `flattened` calls below are what destroy per-result
+    /// provenance, so an empty list cannot be attributed to the resource that had it and a
+    /// per-element guard has nothing to attach to. `flattened` has exactly two callers, both
+    /// here, so converting them to `selected` is local -- but the *decision* belongs at the
+    /// `EmptyLhsCollection` arm in eval.rs, where the clause's role is visible. Failing an
+    /// empty comparison here closes any `when` gate built on it and drops the guarded body;
+    /// measured for this operator class, and the reason two earlier attempts were reverted.
     fn compare<'value>(
         &self,
         lhs: &[QueryResult],
@@ -301,26 +317,61 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                     // Measured identical on v3.2.0, so it is pre-existing and not a
                     // regression from the empty-collection work on this branch.
                     //
-                    // Read as universal quantification ("every tag is an allowed tag") the
-                    // vacuous truth is defensible. Two measurements argue against leaving
-                    // it:
+                    // NOT IN-SPECIFIC. The four ordering operators have the same wrong
+                    // PASS on an empty left side, via `CommonOperator` rather than this
+                    // function, so a fix here does not touch them. Measured, numeric
+                    // fixtures, both controls correct on every row:
                     //
-                    // - The same template under `==` fails (19). One spelling of "the tag
-                    //   must be Owner" blocks the deployment and the other certifies it.
-                    // - `Tags not in ['Owner']` on the same empty list also *fails* (19).
-                    //   A proposition and its negation cannot both be unsatisfied, so
-                    //   whatever the intended reading, the current pair is inconsistent.
+                    //     rule          Ports:[80]  Ports:[8080]  Ports:[]
+                    //     Ports <= 100      0            19           0    <- wrong PASS
+                    //     Ports >  100     19             0           0    <- wrong PASS
+                    //     Ports <  100      0            19           0    <- wrong PASS
+                    //     Ports >= 100     19             0           0    <- wrong PASS
+                    //     Tags IN [..]      0            19           0    <- this arm
+                    //     Tags not in [..] 19             0          19
                     //
-                    // Not fixed here for two reasons. The guard belongs at the eval.rs
-                    // `EmptyLhsCollection` arm, where the clause's role is visible and the
-                    // assertion/gate split already exists -- failing this inside a `when`
-                    // condition would close the gate and drop the guarded body, which is
-                    // how two earlier attempts on this branch regressed. And
+                    // `<= 100` and `> 100` are exact logical negations and BOTH certify the
+                    // same empty list. That is the argument for treating this as a defect
+                    // rather than defensible vacuous truth: universal quantification over an
+                    // empty set defends "every element satisfies P" for both P and not-P,
+                    // but it cannot defend certifying `x <= 100` and `x > 100` for the same
+                    // x. `Lt`/`Ge` behave identically, which is expected -- all four route
+                    // through the same `CommonOperator` impl, instantiated only at the four
+                    // Lt/Gt/Le/Ge sites below.
+                    //
+                    // The IN/NOT-IN pair here is weaker evidence and is kept only for
+                    // completeness: `Tags not in ['Owner']` also fails on the empty list, so
+                    // that pair is inconsistent too, but the quantification reading is at
+                    // least arguable for it.
+                    //
+                    // Also inconsistent by spelling: the same template under `==` fails
+                    // (19), so one way of writing "the tag must be Owner" blocks a
+                    // deployment and another certifies it.
+                    //
+                    // WHERE A FIX BELONGS, and why not here. The guard has to sit at the
+                    // eval.rs `EmptyLhsCollection` arm where the clause's role is visible.
+                    // Failing an empty comparison inside a `when` condition closes the gate
+                    // and drops the guarded body -- measured for this exact class:
+                    //
+                    //     rule r when ...Ports <= 100 { ...Name == 'safe' }
+                    //
+                    // exits 19 on `Ports: []` because the vacuous PASS *opens* the gate and
+                    // the body then catches a violating Name. Make the comparison non-PASS
+                    // in the comparator and that becomes exit 0 with the body dropped --
+                    // trading one unenforced clause for an entire disarmed block, which is
+                    // how two earlier attempts on this branch regressed.
+                    //
                     // `EmptyLhsCollection` is currently emitted only by `EqOperation`, so
                     // routing `InOperation` and `CommonOperator` through it is a change to
-                    // the comparator contract rather than a local patch. The documented
-                    // examples in docs/CLAUSES.md only show scalar left-hand sides, so the
-                    // documentation does not settle the list case.
+                    // the comparator contract. Smaller than it sounds, though: `flattened`
+                    // -- the thing that destroys per-result provenance and so prevents a
+                    // per-element guard -- has exactly two callers, both inside
+                    // `CommonOperator::compare`. Converting them to `selected` is local to
+                    // one function, not a change to every list comparison.
+                    //
+                    // docs/CLAUSES.md shows only scalar left-hand sides for `IN`, so the
+                    // documentation does not settle the list case; the reading is upstream's
+                    // to choose.
                     let diff = lhsl
                         .iter()
                         .filter(|each| !rhsl.contains(each))
