@@ -5280,32 +5280,32 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     Ok(())
 }
 
-/// A LIVE DEFECT, pre-existing in v3.2.0: `IN` certifies an empty collection as compliant.
+/// `IN` must not certify an empty collection as compliant. Was pre-existing in v3.2.0.
 ///
-/// `Tags IN ['Owner']` against `Tags: []` exits 0 and reports `"compliant"` with
+/// `Tags IN ['Owner']` against `Tags: []` used to exit 0 and report `"compliant"` with
 /// `not_applicable: []` — an affirmative certification that the policy held. The mechanism
-/// is in `contained_in`: `diff` is "elements of the left side absent from the right", so an
-/// empty left side produces an empty `diff` and an affirmative `Success`. This is *not* the
-/// empty-`statues` fold that `2224cb1` addressed for `==`; a result is pushed, and it is a
-/// positive one. A fix must suppress a wrong Success rather than supply a missing entry.
+/// was in `contained_in`: `diff` is "elements of the left side absent from the right", so an
+/// empty left side produced an empty `diff` and an affirmative `Success`. That made it a
+/// wrong Success to suppress rather than a missing entry to supply, so it needed a
+/// different fix from the empty-`statues` fold that `2224cb1` addressed for `==`.
 ///
-/// Two measurements say the current behaviour is not merely a defensible reading of
-/// universal quantification:
+/// Two measurements say the old behaviour was not merely a defensible reading of universal
+/// quantification:
 ///
-/// - The same template under `==` fails (exit 19). One spelling of "the tag must be Owner"
-///   blocks the deployment and the other certifies it.
-/// - `Tags not in ['Owner']` on the same empty list *also* fails (19). A proposition and its
-///   negation cannot both be unsatisfied, so the pair is internally inconsistent whatever
-///   the intended reading.
+/// - The same template under `==` failed (exit 19). One spelling of "the tag must be Owner"
+///   blocked the deployment and the other certified it.
+/// - `Tags not in ['Owner']` on the same empty list *also* failed (19). A proposition and
+///   its negation cannot both be unsatisfied, so the pair was internally inconsistent
+///   whatever the intended reading. That spelling now passes, which is the vacuous-truth
+///   reading and the consistent one.
 ///
-/// Ignored rather than fixed because the guard belongs at the `eval.rs`
-/// `EmptyLhsCollection` arm, where the clause role is visible — failing this inside a `when`
-/// condition would close the gate and drop the guarded body, which is how two earlier
-/// attempts on this branch regressed. `EmptyLhsCollection` is currently emitted only by
-/// `EqOperation`, so routing `InOperation` and `CommonOperator` through it changes the
-/// comparator contract. Runs under `cargo test -- --ignored`; will pass when addressed.
+/// Fixed by routing the empty collection through `elements_or_record_empty` to
+/// `EmptyLhsCollection`, which `binary_operation` resolves by role: an assertion fails, a
+/// gate contributes nothing and stays decided by its other conditions. Deciding it inside
+/// the comparator instead would close a `when` gate and drop the guarded body, which is how
+/// two earlier attempts regressed;
+/// `an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block` pins that.
 #[test]
-#[ignore = "known defect, pre-existing in v3.2.0: IN certifies an empty collection as compliant"]
 fn in_does_not_certify_an_empty_collection() -> Result<()> {
     let rules = r###"
     rule tags_must_name_owner {
@@ -5336,26 +5336,27 @@ fn in_does_not_certify_an_empty_collection() -> Result<()> {
     Ok(())
 }
 
-/// A LIVE DEFECT, pre-existing in v3.2.0: the ordering operators certify an empty collection.
+/// The ordering operators must not certify an empty collection. Was pre-existing in v3.2.0.
 ///
-/// This is the same class as `in_does_not_certify_an_empty_collection` but a *different
-/// impl* — `CommonOperator`, not `contained_in` — so a fix for `IN` will not touch it. Worth
-/// its own test for that reason.
+/// Same class as `in_does_not_certify_an_empty_collection` but a *different impl* —
+/// `CommonOperator`, not `contained_in` — so a fix for `IN` alone would not have touched it.
+/// Worth its own test for that reason, and both now route through the one shared guard in
+/// `elements_or_record_empty`.
 ///
 /// The argument that this is a defect rather than defensible vacuous truth is stronger here
 /// than for `IN`. `Ports <= 100` and `Ports > 100` are exact logical negations, and **both**
-/// return PASS on the same `Ports: []`. Universal quantification over an empty set defends
+/// returned PASS on the same `Ports: []`. Universal quantification over an empty set defends
 /// "every element satisfies P" for both P and not-P; it cannot defend certifying `x <= 100`
-/// and `x > 100` for the same x. `<` and `>=` behave identically — all four route through
+/// and `x > 100` for the same x. `<` and `>=` behaved identically — all four route through
 /// the same impl.
 ///
-/// Ignored rather than fixed for the same reason as the `IN` case, and here the hazard is
-/// measured rather than inferred: `rule r when ...Ports <= 100 { ...Name == 'safe' }` exits
-/// 19 on `Ports: []` *because* the vacuous PASS opens the gate and the body then catches a
-/// violating name. Making the comparison non-PASS in the comparator turns that into exit 0
-/// with the body dropped — one unenforced clause traded for a disarmed block.
+/// The gate hazard that blocked two earlier attempts is measured rather than inferred:
+/// `rule r when ...Ports <= 100 { ...Name == 'safe' }` exits 19 on `Ports: []` *because* the
+/// vacuous PASS opens the gate and the body then catches a violating name. Deciding the
+/// empty comparison inside the comparator turns that into exit 0 with the body dropped — one
+/// unenforced clause traded for a disarmed block. Avoided by leaving the decision to
+/// `binary_operation`, which contributes nothing for a gate.
 #[test]
-#[ignore = "known defect, pre-existing in v3.2.0: <= and > both certify an empty collection"]
 fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
     let input = r#"
     {
@@ -5544,6 +5545,149 @@ fn in_still_decides_populated_collections_correctly() -> Result<()> {
     let resources = PathAwareValue::try_from(violating)?;
     let mut root = root_scope(&rules_file, Rc::new(resources));
     assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// `NOT IN` over an empty collection is vacuously satisfied, a deliberate change from FAIL.
+///
+/// Before the shared empty-collection guard, `Tags not in ['Owner']` on `Tags: []` FAILed:
+/// `contained_in` built an affirmative Success out of the empty `diff` and the negation
+/// inverted it. That rejected a compliant template, since no element of `[]` is in
+/// `['Owner']` and there is nothing to collide with.
+///
+/// It now routes through `EmptyLhsCollection`, where a negated clause contributes no entry
+/// because `role.is_strict() && !cmp.1` is false, so the fold sees no failures and reports
+/// PASS. Same path `!=` already took, so this inherits that path's known
+/// disjunction-absorption hazard rather than introducing one — see
+/// `a_vacuous_negated_clause_does_not_absorb_a_disjunction`, still ignored.
+#[test]
+fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
+    let rules = r###"
+    rule tags_must_not_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags not in ['Owner']
+    }
+    "###;
+
+    let colliding = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Owner'] } } } }
+    "#;
+    let clean = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Backup'] } } } }
+    "#;
+    let empty = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: [] } } } }
+    "#;
+
+    // Liveness first. Without these two rows the empty-collection claim below would go
+    // green on a rule that stopped selecting anything at all.
+    assert_eq!(
+        status_of(rules, colliding)?,
+        Status::FAIL,
+        "liveness: `not in` must still catch a colliding tag"
+    );
+    assert_eq!(
+        status_of(rules, clean)?,
+        Status::PASS,
+        "liveness: `not in` must still pass a non-colliding tag"
+    );
+
+    assert_eq!(
+        status_of(rules, empty)?,
+        Status::PASS,
+        "`not in` over an empty collection is vacuously satisfied; the old FAIL rejected a \
+         compliant template"
+    );
+
+    Ok(())
+}
+
+/// The mirrored spelling of an ordering comparison must answer for an empty collection too.
+///
+/// `%limit >= ...Ports` and `...Ports <= %limit` mean the same thing, so certifying
+/// `Ports: []` under one and not the other leaves the defect reachable by writing the clause
+/// backwards — legal Guard, and a rule author has no reason to think the two differ. This is
+/// why `CommonOperator::compare` routes *both* sides through `elements_or_record_empty`; a
+/// left-side-only fix satisfies `ordering_operators_do_not_certify_an_empty_collection` while
+/// leaving this shape wrong. Same argument `EqOperation` makes for its mirrored empty-RHS
+/// guard, pinned by `an_empty_collection_fails_when_it_is_the_right_hand_operand`.
+#[test]
+fn a_mirrored_empty_collection_fails_an_ordering_comparison() -> Result<()> {
+    let rules = r###"
+    let limit = 100
+    rule ports_must_be_low {
+        %limit >= Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports
+    }
+    "###;
+
+    let empty = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [] } } } }
+    "#;
+    let live_low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
+    "#;
+    let live_high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    // Liveness, and `[9]` rather than `[80]` for the same reason as the forward test:
+    // `"9" <= "100"` is false lexicographically and true numerically, so this row also pins
+    // numeric comparison in the mirrored direction.
+    assert_eq!(
+        status_of(rules, live_low)?,
+        Status::PASS,
+        "liveness: `%limit >= Ports` must pass on [9]"
+    );
+    assert_eq!(
+        status_of(rules, live_high)?,
+        Status::FAIL,
+        "liveness: `%limit >= Ports` must fail on [8080]"
+    );
+
+    // FAIL specifically, not merely "not PASS": as an assertion, `EmptyLhsCollection` is
+    // resolved to FAIL, so asserting the exact status confirms the mirrored guard fired
+    // rather than the clause having been skipped for some unrelated reason.
+    assert_eq!(
+        status_of(rules, empty)?,
+        Status::FAIL,
+        "the mirrored spelling certified an empty collection"
+    );
+
+    Ok(())
+}
+
+/// An empty collection in a `when` condition built on an ordering operator must not disarm
+/// the guarded block.
+///
+/// This is the measured hazard that reverted two earlier attempts, and it is specific to
+/// `CommonOperator` — the existing coverage
+/// (`an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block`) exercises
+/// `==` and so goes through `EqOperation`. Here the gate contributes no entry rather than a
+/// FAIL, so it stays open, the body runs, and the violating Name is caught. Deciding the
+/// empty comparison inside the comparator turns this into exit 0 with the body dropped:
+/// one unenforced clause traded for an entire disarmed block.
+#[test]
+fn an_empty_collection_in_an_ordering_gate_does_not_disarm_the_block() -> Result<()> {
+    let rules = r###"
+    rule name_must_be_safe when Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100 {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Name != 'insecure'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            sg: {
+                Type: 'AWS::EC2::SecurityGroup',
+                Properties: { Name: "insecure", Ports: [] }
+            }
+        }
+    }
+    "#;
+
+    // FAIL because the body ran and `insecure` violated it. SKIP would mean the gate closed
+    // and the violation went unreported.
+    assert_eq!(status_of(rules, input)?, Status::FAIL);
 
     Ok(())
 }

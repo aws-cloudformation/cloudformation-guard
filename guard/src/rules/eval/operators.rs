@@ -148,60 +148,108 @@ where
     aggregated
 }
 
-fn flattened<U>(query_results: &[QueryResult], c: U) -> Vec<Rc<PathAwareValue>>
-where
-    U: FnMut(&UnResolved),
-{
-    // TODO: this can probably be improved with less clones..
-    selected(query_results, c, |into, p| match &*p {
-        PathAwareValue::List((_, list)) => {
-            into.extend(list.iter().cloned().map(Rc::new).collect::<Vec<_>>());
-        }
+/// Split each already-selected value into the elements to compare, recording
+/// [`ValueEvalResult::EmptyLhsCollection`] for any value that was an empty collection.
+///
+/// This is the one place a comparator turns "there was nothing to compare" into a
+/// record, so the three [`Comparator`] impls cannot drift apart on it again. They had:
+/// `EqOperation` emitted `EmptyLhsCollection`, `InOperation` built an affirmative
+/// `Success(ListIn)` out of an empty `diff`, and `CommonOperator` iterated an empty vec
+/// and pushed nothing. Three spellings of one question, two of which certified an empty
+/// collection as compliant -- `Ports <= 100` and `Ports > 100` are exact logical
+/// negations and both returned PASS on `Ports: []`.
+///
+/// A comparator deliberately does not decide what an empty collection *means*; it only
+/// refuses to stay silent about one. The role-dependent decision stays at the
+/// `EmptyLhsCollection` arm of `binary_operation`, which fails it as an assertion and
+/// contributes nothing for a gate -- failing a gate here would close it and drop every
+/// check in the guarded body, which is how two earlier attempts regressed.
+///
+/// Takes the output of [`selected`], never [`flattened`]: one entry per query result is
+/// what lets an empty list be attributed to the resource that had it. Testing a whole
+/// flattened side for emptiness instead is defeated by any sibling resource with a
+/// non-empty list, which is the common shape in real templates and exactly how an
+/// earlier attempt at this fix silently did nothing.
+fn elements_or_record_empty(
+    results: &mut Vec<ValueEvalResult>,
+    selected_values: &[Rc<PathAwareValue>],
+) -> Vec<Rc<PathAwareValue>> {
+    let mut elements = Vec::with_capacity(selected_values.len());
+    for each in selected_values {
+        match &**each {
+            PathAwareValue::List((_, list)) if list.is_empty() => {
+                results.push(ValueEvalResult::EmptyLhsCollection(Rc::clone(each)));
+            }
 
-        rest => into.push(Rc::new(rest.clone())),
-    })
+            PathAwareValue::List((_, list)) => {
+                elements.extend(list.iter().cloned().map(Rc::new));
+            }
+
+            _ => elements.push(Rc::clone(each)),
+        }
+    }
+    elements
 }
 
 impl Comparator for CommonOperator {
     /// Serves `<`, `<=`, `>` and `>=` (instantiated only at the four sites near the end of
     /// this file).
     ///
-    /// KNOWN WRONG PASS: all four certify an empty left-hand collection. `Ports <= 100` and
-    /// `Ports > 100` are exact logical negations and both return PASS on `Ports: []`, which
-    /// is why this is a defect rather than defensible vacuous truth. Pre-existing in v3.2.0.
-    /// Full matrix and the reasoning are recorded in `contained_in` above, alongside the
-    /// same defect for `IN`.
+    /// An empty collection on either side is recorded as
+    /// [`ValueEvalResult::EmptyLhsCollection`] and resolved by role in `binary_operation`.
+    /// All four operators previously certified one: `Ports <= 100` and `Ports > 100` are
+    /// exact logical negations and both returned PASS on `Ports: []`, which is what made it
+    /// a defect rather than defensible vacuous truth. Pre-existing in v3.2.0.
     ///
-    /// Relevant to fixing it: the `flattened` calls below are what destroy per-result
-    /// provenance, so an empty list cannot be attributed to the resource that had it and a
-    /// per-element guard has nothing to attach to. `flattened` has exactly two callers, both
-    /// here, so converting them to `selected` is local -- but the *decision* belongs at the
-    /// `EmptyLhsCollection` arm in eval.rs, where the clause's role is visible. Failing an
-    /// empty comparison here closes any `when` gate built on it and drops the guarded body;
-    /// measured for this operator class, and the reason two earlier attempts were reverted.
+    /// Uses [`selected`] rather than [`flattened`] for both sides. `flattened` splices list
+    /// elements into one flat vec, which destroys per-result provenance: an empty list
+    /// leaves no entry, so the cross product below silently produces no comparison and the
+    /// clause reports PASS on zero evidence. With `selected`, each entry is still one query
+    /// result, so [`elements_or_record_empty`] can attribute the empty list to the resource
+    /// that had it.
+    ///
+    /// Both sides, not just the left. These operators are asymmetric in spelling but not in
+    /// meaning: `100 >= Ports` has to answer for `Ports: []` the same way `Ports <= 100`
+    /// does, or the defect stays reachable by writing the clause backwards -- the same
+    /// argument `EqOperation` makes for its mirrored empty-RHS guard.
     fn compare<'value>(
         &self,
         lhs: &[QueryResult],
         rhs: &[QueryResult],
     ) -> crate::rules::Result<EvalResult> {
         let mut results = Vec::with_capacity(lhs.len());
-        let lhs_flattened = flattened(lhs, |ur| {
-            results.push(ValueEvalResult::LhsUnresolved(ur.clone()))
-        });
-        let rhs_flattened = flattened(rhs, |ur| {
-            results.extend(lhs_flattened.iter().map(|lhs| {
-                ValueEvalResult::ComparisonResult(ComparisonResult::RhsUnresolved(
-                    ur.clone(),
-                    lhs.clone(),
-                ))
-            }))
-        });
-        let rhs = &rhs_flattened;
-        for each_lhs in lhs_flattened {
-            for each_rhs in rhs {
+        let lhs_selected = selected(
+            lhs,
+            |ur| results.push(ValueEvalResult::LhsUnresolved(ur.clone())),
+            Vec::push,
+        );
+        // Expand the left side before reading the right, so an unresolved right-hand
+        // reference is still blamed once per left-hand *element* rather than once per
+        // query result. `flattened` used to make that the only available granularity;
+        // keeping it means this change is confined to the empty-collection guard and does
+        // not quietly alter how many blame entries an unresolved reference produces.
+        let lhs_elements = elements_or_record_empty(&mut results, &lhs_selected);
+
+        let rhs_selected = selected(
+            rhs,
+            |ur| {
+                results.extend(lhs_elements.iter().map(|lhs| {
+                    ValueEvalResult::ComparisonResult(ComparisonResult::RhsUnresolved(
+                        ur.clone(),
+                        Rc::clone(lhs),
+                    ))
+                }))
+            },
+            Vec::push,
+        );
+
+        let rhs_elements = elements_or_record_empty(&mut results, &rhs_selected);
+
+        for each_lhs in &lhs_elements {
+            for each_rhs in &rhs_elements {
                 results.push(match_value(
-                    each_lhs.clone(),
-                    each_rhs.clone(),
+                    Rc::clone(each_lhs),
+                    Rc::clone(each_rhs),
                     self.comparator,
                 ));
             }
@@ -307,19 +355,21 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         )))
                     }
                 } else {
-                    // KNOWN WRONG PASS on an empty left-hand list, recorded rather than
-                    // changed because it is a semantics decision for upstream.
-                    //
                     // `diff` is "elements of the left side absent from the right", so an
                     // empty left side yields an empty `diff` and the affirmative Success
-                    // below. `Tags IN ['Owner']` therefore certifies `Tags: []` as
-                    // *compliant* -- exit 0, `"compliant": [...]`, `not_applicable: []`.
-                    // Measured identical on v3.2.0, so it is pre-existing and not a
-                    // regression from the empty-collection work on this branch.
+                    // below: `Tags IN ['Owner']` certified `Tags: []` as *compliant* --
+                    // exit 0, `"compliant": [...]`, `not_applicable: []`. Pre-existing in
+                    // v3.2.0, not a regression from the empty-collection work.
                     //
-                    // NOT IN-SPECIFIC. The four ordering operators have the same wrong
-                    // PASS on an empty left side, via `CommonOperator` rather than this
-                    // function, so a fix here does not touch them. Measured, numeric
+                    // Now recorded as EmptyLhsCollection and resolved by role in
+                    // `binary_operation`: an assertion fails, a gate contributes nothing so
+                    // it stays decided by its other conditions. Deciding it here instead
+                    // would close any `when` gate built on it and drop the guarded body,
+                    // which is how two earlier attempts regressed.
+                    //
+                    // The four ordering operators had the same wrong PASS via
+                    // `CommonOperator` rather than this function; both now route through
+                    // `elements_or_record_empty`. Measured before the fix, numeric
                     // fixtures, both controls correct on every row:
                     //
                     //     rule          Ports:[80]  Ports:[8080]  Ports:[]
@@ -330,48 +380,29 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                     //     Tags IN [..]      0            19           0    <- this arm
                     //     Tags not in [..] 19             0          19
                     //
-                    // `<= 100` and `> 100` are exact logical negations and BOTH certify the
-                    // same empty list. That is the argument for treating this as a defect
+                    // `<= 100` and `> 100` are exact logical negations and BOTH certified
+                    // the same empty list. That is the argument for treating this as a defect
                     // rather than defensible vacuous truth: universal quantification over an
                     // empty set defends "every element satisfies P" for both P and not-P,
                     // but it cannot defend certifying `x <= 100` and `x > 100` for the same
-                    // x. `Lt`/`Ge` behave identically, which is expected -- all four route
-                    // through the same `CommonOperator` impl, instantiated only at the four
-                    // Lt/Gt/Le/Ge sites below.
+                    // x. It was also inconsistent by spelling -- the same template under
+                    // `==` failed (19), so one way of writing "the tag must be Owner"
+                    // blocked a deployment and another certified it.
                     //
-                    // The IN/NOT-IN pair here is weaker evidence and is kept only for
-                    // completeness: `Tags not in ['Owner']` also fails on the empty list, so
-                    // that pair is inconsistent too, but the quantification reading is at
-                    // least arguable for it.
-                    //
-                    // Also inconsistent by spelling: the same template under `==` fails
-                    // (19), so one way of writing "the tag must be Owner" blocks a
-                    // deployment and another certifies it.
-                    //
-                    // WHERE A FIX BELONGS, and why not here. The guard has to sit at the
-                    // eval.rs `EmptyLhsCollection` arm where the clause's role is visible.
-                    // Failing an empty comparison inside a `when` condition closes the gate
-                    // and drops the guarded body -- measured for this exact class:
-                    //
-                    //     rule r when ...Ports <= 100 { ...Name == 'safe' }
-                    //
-                    // exits 19 on `Ports: []` because the vacuous PASS *opens* the gate and
-                    // the body then catches a violating Name. Make the comparison non-PASS
-                    // in the comparator and that becomes exit 0 with the body dropped --
-                    // trading one unenforced clause for an entire disarmed block, which is
-                    // how two earlier attempts on this branch regressed.
-                    //
-                    // `EmptyLhsCollection` is currently emitted only by `EqOperation`, so
-                    // routing `InOperation` and `CommonOperator` through it is a change to
-                    // the comparator contract. Smaller than it sounds, though: `flattened`
-                    // -- the thing that destroys per-result provenance and so prevents a
-                    // per-element guard -- has exactly two callers, both inside
-                    // `CommonOperator::compare`. Converting them to `selected` is local to
-                    // one function, not a change to every list comparison.
+                    // `Tags not in ['Owner']` moves the other way, from 19 to 0. That is the
+                    // vacuous-truth reading and it is correct: no element of `[]` is in
+                    // `['Owner']`, and the old FAIL rejected a compliant template. It routes
+                    // through the same "negated clauses contribute nothing" path that `!=`
+                    // already uses, so it inherits that path's known disjunction-absorption
+                    // hazard rather than introducing one -- see the `EmptyLhsCollection` arm
+                    // in eval.rs.
                     //
                     // docs/CLAUSES.md shows only scalar left-hand sides for `IN`, so the
-                    // documentation does not settle the list case; the reading is upstream's
-                    // to choose.
+                    // documentation does not settle the list case.
+                    if lhsl.is_empty() {
+                        return ValueEvalResult::EmptyLhsCollection(Rc::clone(&lhs_value));
+                    }
+
                     let diff = lhsl
                         .iter()
                         .filter(|each| !rhsl.contains(each))
@@ -466,6 +497,13 @@ impl Comparator for InOperation {
                     rhs.into_iter()
                         .for_each(|r| results.push(contained_in(Rc::clone(l), r)));
                 } else if let PathAwareValue::List((_, list)) = &**l {
+                    // Same empty-`diff` trap as the one in `contained_in`, reached when the
+                    // left side is a literal empty list rather than a queried one.
+                    if list.is_empty() {
+                        results.push(ValueEvalResult::EmptyLhsCollection(Rc::clone(l)));
+                        return Ok(EvalResult::Result(results));
+                    }
+
                     let diff = list
                         .iter()
                         .cloned()
@@ -507,6 +545,12 @@ impl Comparator for InOperation {
                 .for_each(|l| match &*r {
                     PathAwareValue::String(_) => match &*l {
                         PathAwareValue::List((_, lhsl)) => {
+                            // Zero elements would push nothing and the clause would vanish
+                            // into a PASS on no evidence, the same way the ordering
+                            // operators did before `elements_or_record_empty`.
+                            if lhsl.is_empty() {
+                                results.push(ValueEvalResult::EmptyLhsCollection(Rc::clone(&l)));
+                            }
                             for eachl in lhsl {
                                 results.push(string_in(Rc::new(eachl.clone()), Rc::clone(&r)));
                             }
@@ -599,11 +643,12 @@ impl Comparator for EqOperation {
                     single_value => {
                         for eachr in rhs {
                             match &*eachr {
-                                PathAwareValue::List((_, rhsl)) => {
-                                    // The mirror image of the empty-collection case
-                                    // handled in the `(None, Some(_))` arm below: here it
-                                    // is the *right* side that is an empty list, so this
-                                    // loop pushes nothing and the comparison vanishes.
+                                PathAwareValue::List(_) => {
+                                    // The mirror image of the empty-collection case handled
+                                    // in the `(None, Some(_))` arm below: here it is the
+                                    // *right* side that is an empty list, so without the
+                                    // guard in `elements_or_record_empty` this loop pushes
+                                    // nothing and the comparison vanishes.
                                     //
                                     // `'Owner' == Properties.Tags` with `Tags: []` has to
                                     // fail for the same reason `Properties.Tags ==
@@ -611,15 +656,13 @@ impl Comparator for EqOperation {
                                     // defect reachable by writing the clause backwards,
                                     // which is legal Guard and which a rule author has no
                                     // reason to think differs.
-                                    if rhsl.is_empty() {
-                                        results.push(ValueEvalResult::EmptyLhsCollection(
-                                            Rc::clone(&eachr),
-                                        ));
-                                    }
-                                    for each_rhs in rhsl {
+                                    for each_rhs in elements_or_record_empty(
+                                        &mut results,
+                                        std::slice::from_ref(&eachr),
+                                    ) {
                                         results.push(match_value(
                                             Rc::new(single_value.clone()),
-                                            Rc::new(each_rhs.clone()),
+                                            each_rhs,
                                             compare_eq,
                                         ));
                                     }
@@ -670,31 +713,29 @@ impl Comparator for EqOperation {
 
                     single_value => {
                         for each in lhs_selected {
-                            if let PathAwareValue::List((_, lhs_list)) = &*each {
-                                // An empty list contributes no elements, so this loop
-                                // would push nothing and the clause would vanish: the
-                                // enclosing fold reads zero results as "nothing to
-                                // check" and reports PASS. `Tags == 'Owner'` against
-                                // `Tags: []` then claims to have verified a property
-                                // that was never compared, while the same rule against
-                                // a *missing* Tags correctly fails.
+                            if each.is_list() {
+                                // An empty list contributes no elements, so without the
+                                // guard in `elements_or_record_empty` this loop would push
+                                // nothing and the clause would vanish: the enclosing fold
+                                // reads zero results as "nothing to check" and reports
+                                // PASS. `Tags == 'Owner'` against `Tags: []` then claims to
+                                // have verified a property that was never compared, while
+                                // the same rule against a *missing* Tags correctly fails.
                                 //
-                                // Recorded per element rather than by testing the whole
-                                // flattened LHS. This arm uses `selected`, not
-                                // `flattened`, so `each` is still one query result --
-                                // one resource's value. A whole-LHS emptiness test would
-                                // be defeated by any sibling resource with a non-empty
-                                // list, which is the common shape in real templates and
-                                // exactly how an earlier attempt at this fix silently
-                                // did nothing.
-                                if lhs_list.is_empty() {
-                                    results.push(ValueEvalResult::EmptyLhsCollection(Rc::clone(
-                                        &each,
-                                    )));
-                                }
-                                for each_lhs in lhs_list {
+                                // `each` is one query result -- one resource's value --
+                                // because this arm uses `selected`, not `flattened`. That
+                                // is what the helper needs to attribute the empty list to
+                                // the resource that had it; a whole-LHS emptiness test
+                                // would be defeated by any sibling resource with a
+                                // non-empty list, which is the common shape in real
+                                // templates and exactly how an earlier attempt at this fix
+                                // silently did nothing.
+                                for each_lhs in elements_or_record_empty(
+                                    &mut results,
+                                    std::slice::from_ref(&each),
+                                ) {
                                     results.push(match_value(
-                                        Rc::new(each_lhs.clone()),
+                                        each_lhs,
                                         Rc::new(single_value.clone()),
                                         compare_eq,
                                     ));
