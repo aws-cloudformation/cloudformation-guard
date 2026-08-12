@@ -102,35 +102,43 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
     return resource.display().to_string();
 }
 
-pub fn replace_home_directory_with_tilde(text: String) -> String {
-    let home_dir_string = match env::var("HOME") {
-        Ok(home_path) => home_path,
-        Err(_) => panic!("HOME variable required for tests!"),
-    };
-
-    text.replace(&home_dir_string, "~")
-}
-
+/// Reduce resource paths in captured output to bare filenames, so expected-output fixtures do
+/// not depend on where the repository is checked out.
+///
+/// Anchored on `CARGO_MANIFEST_DIR`. Every resource path that reaches test output is rooted
+/// there, because `get_full_path_for_resource_file` builds them from it.
+///
+/// This replaced a `$HOME`-based version that first rewrote the home directory to `~` and then
+/// matched `~/…`, which had two bugs:
+///
+/// - `$HOME` was substituted by plain substring match, so a checkout whose path merely
+///   *contains* `$HOME` was corrupted rather than normalised. With `HOME=/home/u`, the path
+///   `/local/home/u/repo/tests/resources/x.yaml` became `/local~/repo/tests/resources/x.yaml`,
+///   and reducing the tail then left `/localx.yaml` welded together. `/local/home` is a real
+///   layout rather than a hypothetical, and it failed 15 of the 96 `validate` tests while
+///   leaving them looking like product failures.
+/// - a checkout *outside* `$HOME` produced no `~` at all, so the reduction never fired and every
+///   comparison saw a full absolute path.
+///
+/// Anchoring on the crate directory also leaves URLs alone by construction, which a regex over
+/// bare absolute paths would not: the SARIF fixtures contain
+/// `//docs.oasis-open.org/…/sarif-schema-2.1.0.json`, and reducing that to its basename would
+/// break them. It is the only slash-bearing file reference in `guard/resources`, so the
+/// distinction is load-bearing for exactly one fixture and easy to lose.
 pub fn replace_path_with_filenames(text: String) -> String {
     let extensions = ["yaml", "yml", "json"];
-    // pattern to match anything between "~/" and any of the extensions
+    // Any path rooted at the crate directory, reduced to its final component.
     let pattern = format!(
-        r#"~/(?:[\w/\-]+/)?([\w/\-]+\.(?:{}))"#,
+        r#"{}[\w/.\-]*/([\w.\-]+\.(?:{}))"#,
+        fancy_regex::escape(env!("CARGO_MANIFEST_DIR")),
         extensions.join("|")
     );
     let re = Regex::new(&pattern).unwrap();
-    // replace the entire match with match group 1 (the file name)
-    let replaced_filenames = re.replace_all(&text, "$1");
-
-    replaced_filenames.to_string()
+    re.replace_all(&text, "$1").to_string()
 }
 
 pub fn sanitize_path(string_to_sanitize: String) -> String {
-    // replace the home directory to avoid regex issues with path matches beyond the
-    // leading forward slash for example '[/Users/...' or 'name="/User...'
-    let replaced_home_directory = replace_home_directory_with_tilde(string_to_sanitize);
-    // return the blob of text with full path replaced with just the filename
-    replace_path_with_filenames(replaced_home_directory)
+    replace_path_with_filenames(string_to_sanitize)
 }
 
 pub fn compare_write_buffer_with_file(
