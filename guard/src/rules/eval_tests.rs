@@ -393,8 +393,8 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::NotComparable(NotComparableWithRhs {
-            pair: LhsRhsPair { rhs: value, .. },
+        RhsComparison::NotComparable(NotComparableWithRhs {
+            pair: ComparedPair { rhs: value, .. },
             ..
         }) => {
             let rhs_ptr = match &rhs[0] {
@@ -417,7 +417,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert!(!(*outcome));
         }
 
@@ -433,7 +433,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert!(*outcome);
         }
 
@@ -478,8 +478,8 @@ fn each_lhs_value_eq_compare() -> Result<()> {
     assert_eq!(result.len(), 2);
     for cmp_result in result {
         match cmp_result {
-            ComparisonResult::Comparable(ComparisonWithRhs {
-                pair: LhsRhsPair { rhs, .. },
+            RhsComparison::Comparable(ComparisonWithRhs {
+                pair: ComparedPair { rhs, .. },
                 outcome,
             }) => {
                 if outcome {
@@ -556,7 +556,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     &rhs_query_result,
                 )? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if !outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             } else {
@@ -618,7 +618,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                 for cmp_result in each_lhs_compare(compare_eq, Rc::clone(&lhs), &rhs_query_result)?
                 {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             } else {
@@ -656,7 +656,7 @@ macro_rules! test_case {
                         &[QueryResult::Resolved(Rc::new(rhs_value.clone()))],
                     )? {
                         match cmp_result {
-                            ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                            RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                                 assert_eq!(outcome, $assert);
                             }
 
