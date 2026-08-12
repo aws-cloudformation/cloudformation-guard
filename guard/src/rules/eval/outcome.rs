@@ -257,9 +257,22 @@ impl Outcome {
     /// Negating "did not apply" or "could not be evaluated" must not manufacture
     /// affirmative evidence — that is the defect where `not <skipped rule>` reported
     /// compliance for a check that never ran.
-    /// Not yet called. Negation is still applied to per-value [`Status`] inside
-    /// `binary_operation` before the fold sees it, so the inversion never passes through an
-    /// `Outcome`.
+    ///
+    /// Not called by the evaluator, and not for want of finishing the migration: this
+    /// evaluator has no verdict-negation site. Negation is applied to *flags* before a
+    /// comparison happens (`comparator.1 ^ gac.negation` in `eval_guard_access_clause`), and
+    /// to *evidence payloads* afterwards (the `(CmpOperator, bool)` wrapper in `operators.rs`
+    /// rebuilds `Compare` values with reversed diffs so the report names the right values).
+    /// Neither is an `Outcome` being inverted. The two places that do invert a verdict —
+    /// `eval_guard_named_clause` and `eval_parameterized_rule_call` — deliberately fail closed
+    /// on SKIP rather than leaving it unchanged, which is the opposite of what this does, so
+    /// routing them through it would be wrong rather than merely verbose.
+    ///
+    /// Retained rather than deleted because `de_morgan_holds_over_the_whole_domain` is stated
+    /// in terms of it, and that law is part of the algebra's specification: it is verified over
+    /// all sixteen pairs, and its comment records an earlier version that restricted itself to
+    /// the evidence-bearing variants on reasoning that turned out to be wrong. Deleting the
+    /// function would delete the law.
     #[allow(dead_code)]
     pub(crate) fn negate(self) -> Outcome {
         match self {
