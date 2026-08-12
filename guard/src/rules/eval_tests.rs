@@ -5287,20 +5287,72 @@ fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
     }
     "###;
 
-    let mut passes = 0;
-    for rules in [le, gt] {
-        let resources = PathAwareValue::try_from(input)?;
+    // Liveness FIRST, and it is not decoration. An earlier version of this test asserted
+    // only `passes <= 1` over the two negations, which had two false greens:
+    //
+    // - Rename one character in the Type filter and both rules SKIP. SKIP is not PASS, so
+    //   `passes == 0` satisfied `<= 1` and the test went green while blind.
+    // - Add one resource that genuinely violates `<= 100`. The rule aggregates across
+    //   resources, so `> 100` becomes FAIL overall and `passes` drops to 1 — green, with the
+    //   rule text unchanged and the empty resource still certified under both negations.
+    //   Verified from the blame paths that the empty resource is never named.
+    //
+    // Going absolute per operator kills the second but not the first: rot yields SKIP and
+    // `SKIP != PASS`, so an `assert_ne!(PASS)` claim alone still passes blind. The liveness
+    // rows are what close that — under rot they fail before the claim is reached.
+    //
+    // `[9]` rather than `[80]` for the liveness row on purpose: `"9" <= "100"` is false
+    // lexicographically and true numerically, so this row also pins numeric comparison. That
+    // matters because an earlier measurement of this operator class was confounded by string
+    // ordering, and `[8080]` discriminates nothing — it is false under both readings.
+    let live_low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
+    "#;
+    let live_high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    let status_of_pair = |rules: &str, data: &str| -> Result<Status> {
+        let resources = PathAwareValue::try_from(data)?;
         let rules_file = RulesFile::try_from(rules)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
-        if eval_rules_file(&rules_file, &mut root, None)? == Status::PASS {
-            passes += 1;
-        }
-    }
+        eval_rules_file(&rules_file, &mut root, None)
+    };
 
-    assert!(
-        passes <= 1,
-        "both `Ports <= 100` and `Ports > 100` certified the same empty collection; \
-         they are exact negations so at most one may pass"
+    assert_eq!(
+        status_of_pair(le, live_low)?,
+        Status::PASS,
+        "liveness: `Ports <= 100` must pass on [9] — numerically true, lexicographically \
+         false, so this also pins numeric semantics. A SKIP here means the query stopped \
+         selecting and every other row in this test is meaningless."
+    );
+    assert_eq!(
+        status_of_pair(le, live_high)?,
+        Status::FAIL,
+        "liveness: `Ports <= 100` must fail on [8080]"
+    );
+    assert_eq!(
+        status_of_pair(gt, live_high)?,
+        Status::PASS,
+        "liveness: `Ports > 100` must pass on [8080]"
+    );
+    assert_eq!(
+        status_of_pair(gt, live_low)?,
+        Status::FAIL,
+        "liveness: `Ports > 100` must fail on [9]"
+    );
+
+    // The claim, stated absolutely per operator rather than as a count. Each negation is
+    // asserted on its own, so no aggregation across resources and no SKIP can launder it.
+    assert_ne!(
+        status_of_pair(le, input)?,
+        Status::PASS,
+        "`Ports <= 100` certified an empty collection"
+    );
+    assert_ne!(
+        status_of_pair(gt, input)?,
+        Status::PASS,
+        "`Ports > 100` certified an empty collection"
     );
 
     Ok(())
@@ -5312,6 +5364,14 @@ fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
 /// quietly break ordinary numeric comparison. These are the rows that make the empty row
 /// above interpretable — without them, a wrong answer on `[]` could just mean the rule or
 /// the query was malformed.
+///
+/// It also pins **numeric** rather than lexicographic comparison, which is a stronger
+/// guarantee than it looks and is load-bearing here: an earlier measurement of this operator
+/// class was discarded as confounded by string ordering. Note which fixtures carry that
+/// weight. `[8080]` discriminates nothing — `8080 <= 100` and `"8080" <= "100"` are both
+/// false. `[80]` and `[9]` are the discriminating ones: `"80" <= "100"` and `"9" <= "100"` are
+/// both false lexicographically (`'8'`/`'9'` > `'1'` at index 0) and true numerically, so a
+/// PASS on either can only be numeric.
 #[test]
 fn ordering_operators_still_decide_populated_collections_correctly() -> Result<()> {
     let rules = r###"
@@ -5320,8 +5380,13 @@ fn ordering_operators_still_decide_populated_collections_correctly() -> Result<(
     }
     "###;
 
+    // Both discriminate numeric from lexicographic; `[9]` most sharply, since it is a single
+    // digit and cannot be read as "shorter string sorts first".
     let low = r#"
     { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [80] } } } }
+    "#;
+    let single_digit = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
     "#;
     let high = r#"
     { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
@@ -5329,13 +5394,20 @@ fn ordering_operators_still_decide_populated_collections_correctly() -> Result<(
 
     let rules_file = RulesFile::try_from(rules)?;
 
-    let resources = PathAwareValue::try_from(low)?;
-    let mut root = root_scope(&rules_file, Rc::new(resources));
-    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
-
-    let resources = PathAwareValue::try_from(high)?;
-    let mut root = root_scope(&rules_file, Rc::new(resources));
-    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+    for (data, want, why) in [
+        (low, Status::PASS, "80 <= 100 numerically; false lexicographically"),
+        (single_digit, Status::PASS, "9 <= 100 numerically; false lexicographically"),
+        (high, Status::FAIL, "8080 <= 100 is false under either reading"),
+    ] {
+        let resources = PathAwareValue::try_from(data)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            want,
+            "{}",
+            why
+        );
+    }
 
     Ok(())
 }
@@ -6181,6 +6253,15 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 ///
 /// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
 /// runs it, and it will start passing the moment the underlying issue is addressed.
+///
+/// Known weakness, recorded rather than fixed. `assert_eq!(FAIL)` is satisfied by *any* part
+/// of the rule failing, so a one-line template edit reaches green without a fix: change
+/// `Tags: []` to `Tags: ['Owner']` and the second disjunct performs a real comparison, really
+/// fails, and the test passes while the vacuous-absorption defect is untouched. The rule is
+/// named `vacuous_ne_absorbs_or`, so the signal to a reader editing the template is at least
+/// present. Left as-is because tightening it would need the same liveness-plus-absolute shape
+/// as `ordering_operators_do_not_certify_an_empty_collection`, and the fixture here has only
+/// one meaningful data shape to vary — the empty list is the whole point of it.
 ///
 /// Note for anyone running `--ignored`: five tests are ignored in this crate and they are
 /// not the same kind of thing.
