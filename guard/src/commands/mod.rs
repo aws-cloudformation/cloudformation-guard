@@ -15,7 +15,6 @@ pub mod rulegen;
 pub mod test;
 pub mod validate;
 
-mod common_test_helpers;
 pub mod completions;
 pub mod reporters;
 mod tracker;

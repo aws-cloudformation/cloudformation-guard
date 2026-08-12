@@ -393,33 +393,6 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn record_deprecation(&mut self, _notice: String) {}
 }
 
-pub(crate) trait EvaluationContext {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>>;
-
-    fn rule_status(&self, rule_name: &str) -> Result<Status>;
-
-    #[allow(clippy::too_many_arguments)]
-    fn end_evaluation(
-        &self,
-        eval_type: EvaluationType,
-        context: &str,
-        msg: String,
-        from: Option<PathAwareValue>,
-        to: Option<PathAwareValue>,
-        status: Option<Status>,
-        comparator: Option<(CmpOperator, bool)>,
-    );
-
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
-}
-
-pub(crate) trait Evaluate {
-    fn evaluate<'s>(
-        &self,
-        context: &'s PathAwareValue,
-        var_resolver: &'s dyn EvaluationContext,
-    ) -> Result<Status>;
-}
 
 pub fn short_form_to_long(fn_ref: &str) -> &'static str {
     match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
