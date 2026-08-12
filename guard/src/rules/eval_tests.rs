@@ -5129,6 +5129,96 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     Ok(())
 }
 
+/// A LIVE DEFECT, pre-existing in v3.2.0: `IN` certifies an empty collection as compliant.
+///
+/// `Tags IN ['Owner']` against `Tags: []` exits 0 and reports `"compliant"` with
+/// `not_applicable: []` — an affirmative certification that the policy held. The mechanism
+/// is in `contained_in`: `diff` is "elements of the left side absent from the right", so an
+/// empty left side produces an empty `diff` and an affirmative `Success`. This is *not* the
+/// empty-`statues` fold that `2224cb1` addressed for `==`; a result is pushed, and it is a
+/// positive one. A fix must suppress a wrong Success rather than supply a missing entry.
+///
+/// Two measurements say the current behaviour is not merely a defensible reading of
+/// universal quantification:
+///
+/// - The same template under `==` fails (exit 19). One spelling of "the tag must be Owner"
+///   blocks the deployment and the other certifies it.
+/// - `Tags not in ['Owner']` on the same empty list *also* fails (19). A proposition and its
+///   negation cannot both be unsatisfied, so the pair is internally inconsistent whatever
+///   the intended reading.
+///
+/// Ignored rather than fixed because the guard belongs at the `eval.rs`
+/// `EmptyLhsCollection` arm, where the clause role is visible — failing this inside a `when`
+/// condition would close the gate and drop the guarded body, which is how two earlier
+/// attempts on this branch regressed. `EmptyLhsCollection` is currently emitted only by
+/// `EqOperation`, so routing `InOperation` and `CommonOperator` through it changes the
+/// comparator contract. Runs under `cargo test -- --ignored`; will pass when addressed.
+#[test]
+#[ignore = "known defect, pre-existing in v3.2.0: IN certifies an empty collection as compliant"]
+fn in_does_not_certify_an_empty_collection() -> Result<()> {
+    let rules = r###"
+    rule tags_must_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags IN ['Owner']
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+
+    // FAIL, matching what the same rule spelled with `==` already does. SKIP would also be
+    // arguable — "no tags, so nothing to check" — but PASS is not: it affirmatively
+    // certifies a bucket that carries none of the required tags.
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// The control for the above, which must keep passing: `IN` on a populated collection.
+///
+/// Pinned separately so that a future fix for the empty case cannot quietly break the
+/// ordinary one. Both polarities are exercised — a satisfying list passes, a violating list
+/// fails — which is what establishes that the rule and query are well formed and that only
+/// the empty case is wrong.
+#[test]
+fn in_still_decides_populated_collections_correctly() -> Result<()> {
+    let rules = r###"
+    rule tags_must_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags IN ['Owner']
+    }
+    "###;
+
+    let satisfying = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Owner'] } } } }
+    "#;
+    let violating = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Backup'] } } } }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let resources = PathAwareValue::try_from(satisfying)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
+
+    let resources = PathAwareValue::try_from(violating)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
 /// Every FAIL must state a reason. This asserts report *contents*, not just status.
 ///
 /// The gap this closes: no test in the repository asserted anything about a report's
@@ -5937,11 +6027,15 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 /// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
 /// runs it, and it will start passing the moment the underlying issue is addressed.
 ///
-/// Note for anyone running `--ignored`: two tests are ignored in this crate and they are
-/// not the same kind of thing. This one is a live reproduction of a defect on this branch.
-/// The other, `test_string_in_comparison`, is an upstream failure parked in 2023 (commit
-/// `1aca9003`) and fails identically on the pre-branch tree — it is not this branch's, and
-/// it is not expected to pass here.
+/// Note for anyone running `--ignored`: three tests are ignored in this crate and they are
+/// not the same kind of thing.
+///
+/// - This one and `in_does_not_certify_an_empty_collection` are live reproductions of real
+///   defects, parked with their reasons. Both should start passing when addressed. This one
+///   is specific to work on this branch; the `IN` one is pre-existing in v3.2.0.
+/// - `test_string_in_comparison` is an upstream failure parked in 2023 (commit `1aca9003`,
+///   verified by `git blame`) and fails identically on the pre-branch tree. It is not this
+///   branch's and is not expected to pass here.
 #[test]
 #[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {

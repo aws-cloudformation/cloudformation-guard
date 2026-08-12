@@ -291,6 +291,36 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         )))
                     }
                 } else {
+                    // KNOWN WRONG PASS on an empty left-hand list, recorded rather than
+                    // changed because it is a semantics decision for upstream.
+                    //
+                    // `diff` is "elements of the left side absent from the right", so an
+                    // empty left side yields an empty `diff` and the affirmative Success
+                    // below. `Tags IN ['Owner']` therefore certifies `Tags: []` as
+                    // *compliant* -- exit 0, `"compliant": [...]`, `not_applicable: []`.
+                    // Measured identical on v3.2.0, so it is pre-existing and not a
+                    // regression from the empty-collection work on this branch.
+                    //
+                    // Read as universal quantification ("every tag is an allowed tag") the
+                    // vacuous truth is defensible. Two measurements argue against leaving
+                    // it:
+                    //
+                    // - The same template under `==` fails (19). One spelling of "the tag
+                    //   must be Owner" blocks the deployment and the other certifies it.
+                    // - `Tags not in ['Owner']` on the same empty list also *fails* (19).
+                    //   A proposition and its negation cannot both be unsatisfied, so
+                    //   whatever the intended reading, the current pair is inconsistent.
+                    //
+                    // Not fixed here for two reasons. The guard belongs at the eval.rs
+                    // `EmptyLhsCollection` arm, where the clause's role is visible and the
+                    // assertion/gate split already exists -- failing this inside a `when`
+                    // condition would close the gate and drop the guarded body, which is
+                    // how two earlier attempts on this branch regressed. And
+                    // `EmptyLhsCollection` is currently emitted only by `EqOperation`, so
+                    // routing `InOperation` and `CommonOperator` through it is a change to
+                    // the comparator contract rather than a local patch. The documented
+                    // examples in docs/CLAUSES.md only show scalar left-hand sides, so the
+                    // documentation does not settle the list case.
                     let diff = lhsl
                         .iter()
                         .filter(|each| !rhsl.contains(each))
