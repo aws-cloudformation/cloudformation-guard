@@ -5184,7 +5184,8 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // Not because the language makes that unavoidable — an earlier version of this comment
     // claimed "every named rule in Guard is also top-level" and that is false. A
     // *parameterized* rule lands in a separate `parameterized_rules` vec (`exprs.rs:283`)
-    // which the fold never iterates (`eval.rs:2352`), so `rule vac_eq(unused)` gated by
+    // which the fold never iterates (the `for each_rule in &rule.guard_rules` loop in
+    // `eval_rules_file`), so `rule vac_eq(unused)` gated by
     // `when vac_eq("x")` escapes the fold entirely.
     //
     // It escapes the defect too, which is the actual reason not to use it here: measured, that
@@ -5205,8 +5206,9 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // choice are load-bearing.
     //
     // The file status cannot express this regression. `eval_rules_file` evaluates every
-    // top-level rule with `ClauseRole::Assertion` unconditionally (eval.rs:2354) and folds
-    // `fails > 0 -> FAIL` (eval.rs:2379), so a `vac_eq` that fails strictly forces the file to
+    // top-level rule with `ClauseRole::Assertion` unconditionally -- the `eval_rule(..,
+    // ClauseRole::Assertion)` call in `eval_rules_file` -- and folds `fails > 0 -> FAIL` in
+    // that same function, so a `vac_eq` that fails strictly forces the file to
     // FAIL however the gate behaves. Keying the rule-status cache on `(rule, role)` fixes the
     // gate and cannot touch that fold.
     //
