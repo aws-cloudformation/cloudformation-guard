@@ -708,8 +708,9 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
             // Already resolved by this wrapper. The bare CmpOperator comparator only
             // ever yields EmptyRhs, so these cannot arrive here; pass them through
             // unchanged rather than double-inverting.
-            resolved @ (EvalResult::EmptyRhsUnsatisfiable
-            | EvalResult::EmptyRhsVacuouslyTrue) => resolved,
+            resolved @ (EvalResult::EmptyRhsUnsatisfiable | EvalResult::EmptyRhsVacuouslyTrue) => {
+                resolved
+            }
 
             EvalResult::Result(r) => {
                 if self.1 {

@@ -768,7 +768,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // A filter predicate selects values; it is a test, not an
                         // assertion, so an unevaluatable clause makes the filter
                         // select nothing rather than fail.
-                        |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
+                        |gc, r| {
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
+                        },
                     ) {
                         Ok(status) => {
                             resolver.end_record(&context, RecordType::Filter(status))?;
@@ -806,7 +808,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // A filter predicate selects values; it is a test, not an
                         // assertion, so an unevaluatable clause makes the filter
                         // select nothing rather than fail.
-                        |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
+                        |gc, r| {
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
+                        },
                     ) {
                         Ok(status) => match status {
                             Status::PASS => query_retrieval_with_converter(
