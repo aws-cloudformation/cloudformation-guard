@@ -47,7 +47,7 @@ pub(crate) struct EventRecord<'value> {
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
     rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
-    rules_status: HashMap<&'value str, Status>,
+    rules_status: HashMap<(&'value str, super::eval::ClauseRole), Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     recorder: RecordTracker<'value>,
     /// Notices about behaviour that changes in a later release, collected during evaluation.
@@ -1131,8 +1131,12 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 
     #[allow(clippy::never_loop)]
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        if let Some(status) = self.rules_status.get(rule_name) {
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        if let Some(status) = self.rules_status.get(&(rule_name, role)) {
             return Ok(*status);
         }
 
@@ -1149,11 +1153,23 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
         let status = 'done: loop {
             for each_rule in rule {
-                // Resolving a named rule's status for a reference elsewhere. The
-                // rule's own clauses are assertions; the reference site decides
-                // how to interpret the resulting status.
-                let status =
-                    super::eval::eval_rule(each_rule, self, super::eval::ClauseRole::Assertion)?;
+                // The reference site's role is carried into the rule's own body rather
+                // than being fixed at Assertion.
+                //
+                // This used to pass `ClauseRole::Assertion` unconditionally, which made
+                // `ClauseRole` unable to cross the named-rule boundary: a `when` condition
+                // referencing a rule whose body contains an unevaluatable clause got a FAIL
+                // from that clause, the rule came back non-PASS, and `eval_rule` then
+                // dropped every check in the guarded block while still exiting 0. Trading
+                // one unenforced clause for a whole disarmed block is the same hazard
+                // recorded on the `EmptyLhsCollection` arm in eval.rs, reached one level
+                // further out.
+                //
+                // Propagating the role gives an unevaluatable clause inside the body the
+                // strictness the *reference* deserves: a failure when the reference is an
+                // assertion, inapplicable when it is a gate. That is exactly the
+                // Unevaluatable split `Outcome::to_status` describes.
+                let status = super::eval::eval_rule(each_rule, self, role)?;
                 if status != SKIP {
                     break 'done status;
                 }
@@ -1161,7 +1177,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             break SKIP;
         };
 
-        self.rules_status.insert(rule_name, status);
+        // Keyed on `(rule, role)`, not the rule name. The same rule referenced from a body
+        // and from a `when` condition are two different questions and must not share a
+        // cache slot -- whichever reference ran first would otherwise decide the answer for
+        // the other, making the outcome depend on evaluation order.
+        self.rules_status.insert((rule_name, role), status);
         Ok(status)
     }
 
@@ -1569,8 +1589,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         Rc::clone(&self.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1616,8 +1640,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         Rc::clone(&self.scope.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {

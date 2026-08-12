@@ -338,8 +338,16 @@ fn empty_lhs_message() -> String {
 /// invoked from a `when` condition evaluated its body with assertion strictness and
 /// produced exactly the wrong-PASS described above. With an explicit parameter type
 /// every construction site has to name which case it is.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum ClauseRole {
+// `Eq`/`Hash` are here because the role is half of the `rules_status` cache key in
+// `eval_context.rs`. Keying that cache on the rule name alone is what previously made a
+// named rule's status role-blind: the first reference to reach it decided the cached
+// value, and every later reference reused it whatever role it was in.
+// `pub(crate)`, not `pub(super)`: `EvalContext::rule_status` takes a `ClauseRole` and that
+// trait is `pub(crate)`, so a narrower visibility here makes the trait method expose a more
+// private type than itself. `cargo clippy -- -D warnings` rejects that as
+// `private_interfaces`, once for the trait and once per implementor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ClauseRole {
     /// The clause is an assertion in a rule body. An unevaluatable clause is a
     /// failure: the rule claimed something it could not establish.
     Assertion,
@@ -1664,7 +1672,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
 
-    match resolver.rule_status(&gnc.dependent_rule) {
+    match resolver.rule_status(&gnc.dependent_rule, role) {
         Ok(status) => {
             let status = match status {
                 Status::PASS => {
@@ -2078,8 +2086,8 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.root()
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
+    fn rule_status(&mut self, rule_name: &'value str, role: ClauseRole) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {

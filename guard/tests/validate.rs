@@ -490,6 +490,46 @@ mod validate_tests {
         );
     }
 
+    /// The named-rule spelling of the same gate, where the exit code cannot detect the defect.
+    ///
+    /// `inner_gate` is a plain rule, so it is also a top-level rule, and its own undecidable
+    /// condition fails it as an assertion. That failure exits the file 19 no matter what happens to
+    /// `guarded`, so a test that checks only the exit code passes while the guarded rule is silently
+    /// dropped. This asserts on `guarded`.
+    ///
+    /// The cause was the rule-status cache, keyed on the rule name alone: `inner_gate` was evaluated
+    /// once as an assertion, and the gate reference read that cached FAIL instead of re-evaluating
+    /// with gate semantics. Keying on `(rule, role)` makes the reference ask its own question, and the
+    /// undecidable answer then reaches the enclosing condition as an error rather than as a status.
+    ///
+    /// Measured: the merge-base reports `guarded` FAIL, this branch reported SKIP before the fix.
+    #[test]
+    fn an_undecidable_named_gate_does_not_silence_the_outer_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["undecidable_nested_gate_named.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("SKIP rules"),
+            "`guarded` must not be reported as not applicable; its gate could not be decided, which \
+             is not the same as a gate that did not match:\n{}",
+            output
+        );
+        assert!(
+            output.contains("guarded"),
+            "`guarded` must be named as failing:\n{}",
+            output
+        );
+    }
+
     /// Two skip reasons in one junit report stay two reasons.
     ///
     /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text
