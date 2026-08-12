@@ -5178,8 +5178,20 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     }
     "#;
 
-    // The named-rule spelling is the subject, so it has to stay. Every named rule in Guard is
-    // also a top-level rule, so `vac_eq` cannot be hidden from the file-level fold.
+    // The named-rule spelling is the subject, so it has to stay, and `vac_eq` is therefore
+    // also a top-level rule subject to the file-level fold.
+    //
+    // Not because the language makes that unavoidable — an earlier version of this comment
+    // claimed "every named rule in Guard is also top-level" and that is false. A
+    // *parameterized* rule lands in a separate `parameterized_rules` vec (`exprs.rs:283`)
+    // which the fold never iterates (`eval.rs:2352`), so `rule vac_eq(unused)` gated by
+    // `when vac_eq("x")` escapes the fold entirely.
+    //
+    // It escapes the defect too, which is the actual reason not to use it here: measured, that
+    // shape reports the gated rule as compliant with nothing dropped. The parameterized
+    // boundary threads the reference-site role correctly, so a fixture built on it pins the
+    // *working* path — the same tell as the inline `when` spelling, and already covered by
+    // `parameterized_rule_used_as_a_gate_does_not_disarm_the_block` above.
     let named_gate = r###"
     rule vac_eq {
         Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
@@ -5237,11 +5249,25 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
         live
     );
 
-    // The claim.
+    // The claim, stated name-independently: with the gate condition failing, NOTHING should be
+    // dropped. Not "nothing called `body`".
+    //
+    // An earlier version asserted `!dropped.iter().any(|name| name == "body")`, which is
+    // vacuously true the moment the gated rule is renamed — measured: rename it and the test
+    // goes green with the defect fully live, the renamed rule sitting in `not_applicable`
+    // where nothing looks for it. The liveness row above cannot catch that, because
+    // `live.is_empty()` is itself name-independent and holds under any renaming.
+    //
+    // Worth being precise about what liveness does buy here, since it is not this. Rotting the
+    // query makes `body` not-applicable, which *violates* an absence claim rather than
+    // satisfying it — so for the rot mutation liveness gives a clearer diagnostic, not
+    // false-green protection. The mutation that passes blind is the rename. The general form:
+    // an absence claim needs a mutation probe on its own matching key, and liveness guards the
+    // query rather than the key.
     let dropped = report_for(input)?;
     assert!(
-        !dropped.iter().any(|name| name == "body"),
-        "`body` was reported not-applicable even though its own check passes: the failing \
+        dropped.is_empty(),
+        "a rule was reported not-applicable even though its own check passes: the failing \
          gate condition swallowed it. not_applicable = {:?}",
         dropped
     );
