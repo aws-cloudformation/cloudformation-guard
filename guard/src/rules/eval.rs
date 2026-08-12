@@ -1314,26 +1314,24 @@ fn binary_operation<'value, 'loc: 'value>(
                         // so a FAIL emitted here is one the `not` can never reach; it has
                         // to opt out instead.
                         //
-                        // Opting out must not mean "push nothing and let the fold decide".
-                        // An empty `statues` reaches the fold at eval.rs:1384 with
-                        // `fails == 0`, which breaks `Status::PASS` -- and PASS
-                        // short-circuits `eval_conjunction_clauses`, satisfying an entire
-                        // `or` block and abandoning its siblings unevaluated. So
+                        // Opting out means "push nothing", and that is NOT neutral: an empty
+                        // `statues` reaches the fold with `fails == 0`, which breaks
+                        // `Status::PASS`. PASS short-circuits `eval_conjunction_clauses`, so
                         //
                         //     Tags != 'Owner'  or  Name == 'safebucket'
                         //
-                        // reported a violating template as *compliant*, because the first
-                        // disjunct was vacuously true over an empty list and the real check
-                        // never ran. `vacuously_satisfied` records that this happened so the
-                        // caller can return SKIP rather than an empty result vector; SKIP is
-                        // absorbing rather than short-circuiting in that fold, which leaves
-                        // the decision to the siblings.
+                        // reports a violating template as *compliant* -- the vacuous first
+                        // disjunct satisfies the whole `or` and the real check never runs.
+                        // Pre-existing: v3.2.0 exits 0 for that ruleset too.
                         //
-                        // This is the same defect, and the same resolution, as
-                        // EmptyRhsVacuouslyTrue at eval.rs:867. That arm returns SKIP for
-                        // exactly this reason and names this disjunction shape in its
-                        // comment; the empty-*collection* path reached the same hazard by a
-                        // different route and did not get the same protection.
+                        // Returning SKIP instead is the resolution EmptyRhsVacuouslyTrue
+                        // uses at eval.rs:867 for the identical hazard. It was implemented
+                        // here twice and reverted twice (see fb64016); the reproduction is
+                        // parked as `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
+                        // A `vacuously_satisfied` flag carried that state in the reverted
+                        // version and no longer exists -- the only thing keeping the
+                        // *positive* case out of this trap is the FAIL pushed below, which
+                        // puts an entry in `statues` so the fold never sees `fails == 0`.
                         //
                         // `some` needs no handling here, which is worth saying because it
                         // is not obvious. Block-level `some` is decided in
@@ -1406,6 +1404,48 @@ fn binary_operation<'value, 'loc: 'value>(
                         // disjunctions. Net effect of the revert: a working gate keeps
                         // working. The second is worth more, because the gate case drops an
                         // entire guarded block rather than one clause.
+                        //
+                        // MEASURED CORRECTION, and it is about the FAIL path above rather
+                        // than the reverted SKIP.
+                        //
+                        // At a *syntactic* `when`, failing here does NOT close the gate.
+                        // `role.is_strict()` is false for a gate, so this arm contributes
+                        // nothing and the gate is left to its other conditions. Verified:
+                        // `rule r when ...Tags == 'Owner' { ...Name == 'safe' }` against
+                        // `Tags: []` exits 19 with the failure on `/Properties/Name` and
+                        // `not_applicable: []` -- the gate opened and the body ran. Same for
+                        // an `IN` gate, and the negated pair inverts correctly. So "it would
+                        // close the gate" is not the reason `IN` and the ordering operators
+                        // are unfixed; the reason is only that they never emit
+                        // EmptyLhsCollection and so never reach this arm.
+                        //
+                        // Across a NAMED-RULE boundary the FAIL pushed below does drop the
+                        // body, and that is a regression this branch introduced:
+                        //
+                        //     rule vac_eq { ...Tags == 'Owner' }
+                        //     rule body when vac_eq { ...Name == 'publicbucket' }
+                        //
+                        // with `Tags: []` and `Name: publicbucket`, so the body is
+                        // *satisfiable*. v3.2.0 exits 0 with both rules compliant. This
+                        // branch exits 19 with `not_compliant: [vac_eq]` and
+                        // `not_applicable: [body]` -- the body's verdict destroyed. Present
+                        // from 2224cb1 onward and identical at every later commit.
+                        //
+                        // Cause is the same boundary described above: eval_context.rs:1116
+                        // evaluates a named rule's body with ClauseRole::Assertion whatever
+                        // the reference site is, so `role.is_strict()` is true even when the
+                        // rule is being used as a gate, this arm fires, `vac_eq` becomes
+                        // FAIL, and eval_rule reads the non-PASS condition as "does not
+                        // apply". `role` cannot fix it -- the boundary erases the reference
+                        // context before `role` is chosen.
+                        //
+                        // Scope: only rulesets that gate on a named rule whose body compares
+                        // an empty collection. The same shape with populated data is 0 on
+                        // every pin. Left in place rather than reverted because reverting
+                        // restores the original wrong PASS (`Tags == 'Owner'` certifying
+                        // `Tags: []`), which is the worse of the two -- but it is a real
+                        // wrong FAIL and it is why the (rule, role) cache keying is a
+                        // prerequisite rather than a nicety.
                     }
 
                     operators::ValueEvalResult::ComparisonResult(

@@ -5129,6 +5129,67 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     Ok(())
 }
 
+/// A LIVE DEFECT INTRODUCED BY THIS BRANCH: a wrong FAIL across a named-rule gate.
+///
+/// This is the cost of the empty-collection FAIL, and it was not visible until a reviewer
+/// measured the *satisfiable-body* case. Earlier gate fixtures all used a failing body, so
+/// both "gate opened, body failed" and "gate closed, body dropped" exited 19 and the exit
+/// code could not tell them apart.
+///
+/// `vac_eq` compares an empty collection, so it FAILs (correctly, as an assertion). `body`
+/// gates on it. `eval_rule` treats any non-PASS condition as "rule does not apply", so
+/// `body` is dropped even though its own check would pass:
+///
+/// - v3.2.0: exit 0, both rules compliant.
+/// - this branch: exit 19, `not_compliant: [vac_eq]`, `not_applicable: [body]`.
+///
+/// Cause is the named-rule boundary: `eval_context.rs:1116` evaluates a named rule's body
+/// with `ClauseRole::Assertion` whatever the reference site is, so the `role.is_strict()`
+/// guard on the empty-collection arm cannot see that the rule is being used as a gate. At a
+/// *syntactic* `when` the guard works and the gate opens — verified separately — so this is
+/// specific to the named-rule spelling.
+///
+/// Not reverted, deliberately: reverting restores the original wrong PASS, where
+/// `Tags == 'Owner'` certifies `Tags: []` as compliant, and a wrong PASS on a policy gate is
+/// worse than a wrong FAIL. But it is a real regression, and it is why keying the rule-status
+/// cache on `(rule, role)` is a prerequisite for finishing this work rather than a
+/// refinement. Scope is bounded: the same shape with populated data is unaffected on every
+/// pin.
+#[test]
+#[ignore = "known regression from this branch: empty-collection FAIL drops a named-rule gate's body"]
+fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
+    let rules = r###"
+    rule vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule body when vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    // `Name` matches what `body` requires, so `body` is satisfiable. Only `Tags: []` is
+    // unusual, and it is what makes `vac_eq` fail.
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+
+    // What v3.2.0 does. Currently FAIL, with `body` reported not-applicable.
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
+
+    Ok(())
+}
+
 /// A LIVE DEFECT, pre-existing in v3.2.0: `IN` certifies an empty collection as compliant.
 ///
 /// `Tags IN ['Owner']` against `Tags: []` exits 0 and reports `"compliant"` with
@@ -6121,21 +6182,29 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 /// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
 /// runs it, and it will start passing the moment the underlying issue is addressed.
 ///
-/// Note for anyone running `--ignored`: four tests are ignored in this crate and they are
+/// Note for anyone running `--ignored`: five tests are ignored in this crate and they are
 /// not the same kind of thing.
 ///
-/// - This one is a live reproduction of a defect specific to work on this branch.
-/// - `in_does_not_certify_an_empty_collection` and
-///   `ordering_operators_do_not_certify_an_empty_collection` are live reproductions of
-///   defects pre-existing in v3.2.0 — the same class in two different comparator impls, so
-///   fixing one will not resolve the other. Each has a companion, non-ignored control test
-///   pinning that populated collections still decide correctly.
-/// - `test_string_in_comparison` is an upstream failure parked in 2023 (commit `1aca9003`,
-///   verified by `git blame`) and fails identically on the pre-branch tree. It is not this
-///   branch's and is not expected to pass here.
+/// Introduced by this branch, so ours to answer for:
+/// - This one, the vacuous-negation disjunction absorption.
+/// - `a_named_rule_gate_does_not_drop_a_satisfiable_body` — a wrong FAIL: the
+///   empty-collection FAIL drops the body of a rule that gates on it via a named reference.
+///   Both of these need the rule-status cache keyed on `(rule, role)`, which is the single
+///   prerequisite for finishing this work.
 ///
-/// So three of the four should start passing when their defect is addressed; the fourth is
-/// not ours.
+/// Pre-existing in v3.2.0, recorded not caused:
+/// - `in_does_not_certify_an_empty_collection` and
+///   `ordering_operators_do_not_certify_an_empty_collection` — the same class in two
+///   different comparator impls, so fixing one will not resolve the other. Each has a
+///   companion, non-ignored control pinning that populated collections still decide
+///   correctly.
+///
+/// Not ours at all:
+/// - `test_string_in_comparison`, an upstream failure parked in 2023 (commit `1aca9003`,
+///   verified by `git blame`), failing identically on the pre-branch tree.
+///
+/// So four of the five should start passing when their defect is addressed; the fifth is not
+/// ours and is not expected to.
 #[test]
 #[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
