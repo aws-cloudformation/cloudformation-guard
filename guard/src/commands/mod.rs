@@ -17,7 +17,6 @@ pub mod validate;
 
 pub mod completions;
 pub mod reporters;
-mod tracker;
 
 //
 // Constants

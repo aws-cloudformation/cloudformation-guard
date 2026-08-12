@@ -254,12 +254,6 @@ pub(crate) struct BlockGuardClause<'loc> {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub(crate) struct WhenGuardBlockClause<'loc> {
-    pub(crate) conditions: WhenConditions<'loc>,
-    pub(crate) block: Block<'loc, GuardClause<'loc>>,
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct ParameterizedNamedRuleClause<'loc> {
     pub(crate) parameters: Vec<LetValue<'loc>>,
     pub(crate) named_rule: GuardNamedRuleClause<'loc>,

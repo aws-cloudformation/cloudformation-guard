@@ -131,36 +131,6 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
-pub(crate) enum EvaluationType {
-    File,
-    Rule,
-    Type,
-    Condition,
-    ConditionBlock,
-    Filter,
-    Conjunction,
-    BlockClause,
-    Clause,
-}
-
-impl std::fmt::Display for EvaluationType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EvaluationType::File => f.write_str("File")?,
-            EvaluationType::Rule => f.write_str("Rule")?,
-            EvaluationType::Type => f.write_str("Type")?,
-            EvaluationType::Condition => f.write_str("Condition")?,
-            EvaluationType::ConditionBlock => f.write_str("ConditionBlock")?,
-            EvaluationType::Filter => f.write_str("Filter")?,
-            EvaluationType::Conjunction => f.write_str("Conjunction")?,
-            EvaluationType::BlockClause => f.write_str("BlockClause")?,
-            EvaluationType::Clause => f.write_str("Clause")?,
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct UnResolved {
     pub(crate) traversed_to: Rc<PathAwareValue>,
@@ -380,10 +350,6 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()>;
-    fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
-        Ok(())
-    }
-
     /// Note that a clause took a path whose answer is going to change, without changing this run's
     /// answer.
     ///
