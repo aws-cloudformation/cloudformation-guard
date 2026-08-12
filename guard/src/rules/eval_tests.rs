@@ -5936,6 +5936,12 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 ///
 /// Left ignored rather than deleted so the reproduction survives: `cargo test -- --ignored`
 /// runs it, and it will start passing the moment the underlying issue is addressed.
+///
+/// Note for anyone running `--ignored`: two tests are ignored in this crate and they are
+/// not the same kind of thing. This one is a live reproduction of a defect on this branch.
+/// The other, `test_string_in_comparison`, is an upstream failure parked in 2023 (commit
+/// `1aca9003`) and fails identically on the pre-branch tree — it is not this branch's, and
+/// it is not expected to pass here.
 #[test]
 #[ignore = "known defect: vacuous negation absorbs a disjunction; both fixes regressed gates"]
 fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
