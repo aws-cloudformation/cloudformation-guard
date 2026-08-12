@@ -10336,3 +10336,87 @@ fn role_does_not_change_a_populated_comparison() -> Result<()> {
 
     Ok(())
 }
+
+/// The four cells of zero-selection, pinned so the asymmetry is intentional not incidental.
+///
+/// Measured on a template containing no S3 bucket at all, so the bucket query selects nothing:
+///
+///     <query> == %lit     SKIP
+///     %lit == <query>      FAIL   <- the asymmetry, and only here
+///     <query> != %lit     SKIP
+///     %lit != <query>      SKIP
+///
+/// A comment in `CmpOperator::compare` used to call the FAIL a contradiction of
+/// docs/QUERY_AND_FILTERING.md:222, which says a query matching nothing makes block level
+/// clauses skip. On the measurements that claim is too strong, twice over: the doc sentence is
+/// about clauses whose *subject* is the empty query, and the disagreement is confined to the
+/// positive spelling -- both negated forms already agree at SKIP.
+///
+/// The reading that makes all four cells right is that Guard's comparison is not
+/// operand-symmetric even when the operator is. The left side is the subject being checked and
+/// the right side is the reference it is checked against:
+///
+/// - no subject values: there is nothing to assert, so the rule does not apply. SKIP. This is
+///   what lets one ruleset run against templates that do not all contain the resource type,
+///   which is the case the doc sentence describes.
+/// - no reference values: the assertion is that the subject is among the references, and
+///   nothing is among zero references, so it cannot hold. FAIL. Making this SKIP instead is
+///   how an allowlist that resolved empty used to report compliance, which
+///   `positive_comparison_against_empty_reference_fails` exists to prevent.
+///
+/// So this is pinned rather than fixed, and deliberately: "fix the asymmetry" means picking one
+/// of those two to break. Making the mirrored form SKIP reintroduces the empty-allowlist wrong
+/// PASS; making the forward form FAIL breaks every ruleset run against a template lacking the
+/// resource type. v3.2.0 exits 0 for both spellings, so it had the wrong PASS in both.
+#[test]
+fn zero_selection_is_asymmetric_by_operand_role() -> Result<()> {
+    let no_bucket =
+        r#"{ Resources: { q: { Type: 'AWS::SQS::Queue', Properties: { Name: "q" } } } }"#;
+    let one_bucket = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: 'Owner' } } } }
+    "#;
+    let query = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags";
+
+    for (label, clause, want) in [
+        (
+            "forward positive",
+            format!("{query} == %expected"),
+            Status::SKIP,
+        ),
+        (
+            "mirrored positive",
+            format!("%expected == {query}"),
+            Status::FAIL,
+        ),
+        (
+            "forward negated",
+            format!("{query} != %expected"),
+            Status::SKIP,
+        ),
+        (
+            "mirrored negated",
+            format!("%expected != {query}"),
+            Status::SKIP,
+        ),
+    ] {
+        let rules = format!("let expected = 'Owner'\nrule r {{ {clause} }}");
+
+        // Liveness first: with a bucket present the clause must actually decide, or the
+        // zero-selection row below is satisfied by a rule that never ran.
+        let live = status_of(rules.as_str(), one_bucket)?;
+        assert_ne!(
+            live,
+            Status::SKIP,
+            "liveness: `{clause}` must decide when a bucket is present, got SKIP -- the \
+             zero-selection assertion below would then prove nothing"
+        );
+
+        assert_eq!(
+            status_of(rules.as_str(), no_bucket)?,
+            want,
+            "{label}: `{clause}` against a template with no S3 bucket"
+        );
+    }
+
+    Ok(())
+}

@@ -815,18 +815,32 @@ impl Comparator for crate::rules::CmpOperator {
         // Known gap, and it is a documented-behaviour question rather than a comparator
         // bug, so it is recorded here rather than patched.
         //
-        // The rule above is stated *positionally*, but zero selection is a property of the
-        // query, not of the side it sits on. Written the other way round --
+        // The rule above is stated *positionally*, and that is deliberate rather than an
+        // oversight. Written the other way round --
         // `%expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags` -- the
-        // literal is the non-empty left side, so a template containing no S3 bucket at all
-        // reaches the empty-RHS path below and FAILs, while the forward spelling of the
-        // same clause skips. Measured on a template holding only an SQS queue: mirrored 19,
-        // forward 0.
+        // literal is the non-empty left side, so a template containing no S3 bucket reaches
+        // the empty-RHS path below and FAILs, while the forward spelling skips. Measured on a
+        // template holding only an SQS queue: mirrored 19, forward 0. The disagreement is
+        // confined to the positive spelling; both negated forms already agree at SKIP.
         //
-        // docs/QUERY_AND_FILTERING.md:222: "A template contains resources but none match,
-        // for example, a `AWS::EC2::Volume` resource type, then the query will return empty
-        // results and the block level clauses will be skipped." Both spellings are that
-        // case, so the mirrored one contradicts the documentation.
+        // An earlier version of this comment called that a contradiction of
+        // docs/QUERY_AND_FILTERING.md:222 -- "the query will return empty results and the
+        // block level clauses will be skipped". That reading was too strong. The doc sentence
+        // is about clauses whose *subject* is the empty query, and a Guard comparison is not
+        // operand-symmetric even when its operator is: the left side is the subject being
+        // checked, the right side the reference it is checked against.
+        //
+        // Under that reading both cells are right. No subject values means nothing to assert,
+        // so the rule does not apply -- which is what lets one ruleset run against templates
+        // that do not all contain the resource type, the case the doc describes. No reference
+        // values means the assertion cannot hold, because nothing is among zero references;
+        // making that a SKIP is how an empty allowlist used to report compliance.
+        //
+        // Pinned rather than changed by `zero_selection_is_asymmetric_by_operand_role`, which
+        // asserts all four cells with liveness rows. "Fixing the asymmetry" means choosing one
+        // of the two to break: SKIP for the mirrored form reintroduces the empty-allowlist
+        // wrong PASS, FAIL for the forward form breaks every ruleset run against a template
+        // lacking the resource type. v3.2.0 exits 0 for both, so it had the wrong PASS twice.
         //
         // What makes this not simply fixable: `%lit IN %empt` where `%empt` filters on an
         // absent resource type is *the same documented case*, and
