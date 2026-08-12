@@ -5140,8 +5140,15 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
 /// gates on it. `eval_rule` treats any non-PASS condition as "rule does not apply", so
 /// `body` is dropped even though its own check would pass:
 ///
-/// - v3.2.0: exit 0, both rules compliant.
+/// - v3.2.0: exit 0, both rules compliant — but see below, that PASS is itself the defect.
 /// - this branch: exit 19, `not_compliant: [vac_eq]`, `not_applicable: [body]`.
+///
+/// The regression is the `not_applicable: [body]`, not the exit code, and the distinction is
+/// the point: exit 19 cannot tell "gate opened, body failed" from "gate closed, body dropped".
+/// v3.2.0's exit 0 is not the target to restore, because it comes from `Tags == 'Owner'`
+/// reporting *compliant* against `Tags: []` — the empty-collection wrong PASS this branch
+/// removes. Asserting that status would make this test green exactly when the defect is
+/// reintroduced.
 ///
 /// Cause is the named-rule boundary: `eval_context.rs:1116` evaluates a named rule's body
 /// with `ClauseRole::Assertion` whatever the reference site is, so the `role.is_strict()`
