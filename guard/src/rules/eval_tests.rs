@@ -329,7 +329,7 @@ fn query_empty_and_non_empty() -> Result<()> {
             }
         }
 
-        EvaluationResult::EmptyQueryResult(_) => unreachable!(),
+        EvaluationResult::EmptyQueryResult(..) => unreachable!(),
     }
 
     let query = AccessQuery::try_from("Resources.*[ Type == /Broker/ ]")?.query;
@@ -343,7 +343,7 @@ fn query_empty_and_non_empty() -> Result<()> {
     )?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
-        EvaluationResult::EmptyQueryResult(status) => {
+        EvaluationResult::EmptyQueryResult(status, _) => {
             assert_eq!(status, Status::FAIL);
         }
     }
@@ -4087,24 +4087,101 @@ fn positive_comparison_against_empty_reference_fails() -> Result<()> {
     Ok(())
 }
 
+/// A negated comparison whose reference resolved to no values fails as an assertion.
+///
+/// This asserted SKIP until the semantics were settled in review, on the reading that the
+/// clause is vacuously satisfied: there is nothing to collide with, and a denylist is
+/// legitimately empty whenever the template contains none of the denied values.
+///
+/// The reading was rejected because the two error modes are not symmetric. A wrong FAIL is
+/// visible and gets investigated; a wrong SKIP exits 0 and is indistinguishable from PASS in
+/// CI, so a rule whose only check is `Property != %empty_reference` silently enforced nothing.
+/// That is a denylist bypass, and it is the hole this branch exists to close.
+///
+/// The alternative considered was to keep the SKIP and require authors to declare the
+/// expectation with an accompanying `!empty` clause. Rejected: it leaves every existing
+/// ruleset without such a guard silently defeatable, which is the state being fixed.
+///
+/// FAIL specifically, not merely "not SKIP" — a PASS here would short-circuit a disjunction
+/// and abandon its sibling disjuncts, which
+/// `vacuous_negated_comparison_does_not_satisfy_a_disjunction` covers.
 #[test]
-fn negated_comparison_against_empty_reference_does_not_fail() -> Result<()> {
-    // "the name must NOT be one of the denied names", where the denylist is empty.
-    // Nothing to collide with, so the clause is vacuously satisfied and must not
-    // fail: a denylist is legitimately empty whenever the template contains none of
-    // the denied values.
-    //
-    // SKIP specifically, not merely "not FAIL". The distinction is load-bearing: a
-    // PASS here would short-circuit a disjunction and abandon its sibling disjuncts
-    // (see vacuous_negated_comparison_does_not_satisfy_a_disjunction), while a FAIL
-    // would reject compliant templates whose denylist is legitimately empty. Only
-    // SKIP is both non-failing and non-satisfying, so assert it exactly.
+fn negated_comparison_against_empty_reference_fails() -> Result<()> {
     let rules = r###"
     let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
     rule name_must_not_be_denied {
         Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
     }
     "###;
+    assert_eq!(status_of(rules, ONE_BUCKET)?, Status::FAIL);
+    Ok(())
+}
+
+/// The escape hatch for a reference that is legitimately allowed to be empty.
+///
+/// Failing closed on an empty reference is only defensible if an author who genuinely expects
+/// one has a way to say so. `when <reference> !empty { ... }` is that way, and it needs no new
+/// machinery: the gate's own `!empty` check fails when the reference resolved to nothing, so
+/// `eval_rule` treats the rule as inapplicable and the guarded comparison never runs.
+///
+/// Asserted rather than assumed. The claim was made in review as the reason failing closed is
+/// safe, and if it were wrong the change would leave no way to express a permissibly-empty
+/// denylist at all.
+#[test]
+fn an_empty_reference_can_be_guarded_with_a_when_not_empty_gate() -> Result<()> {
+    let guarded = r###"
+    let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule name_must_not_be_denied when %denied !empty {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+    }
+    "###;
+
+    // The gate closes on the empty reference, so the rule does not apply and the clause that
+    // would otherwise fail never runs.
+    assert_eq!(
+        status_of(guarded, ONE_BUCKET)?,
+        Status::SKIP,
+        "the `when %denied !empty` guard must make the rule inapplicable rather than failing \
+         it -- without this there is no way to express a permissibly-empty reference"
+    );
+
+    // Liveness: with a non-empty reference the gate opens and the comparison decides. Without
+    // this row the assertion above is satisfied by a rule that never ran for any reason.
+    let with_keys = r#"
+    {
+        Resources: {
+            bucket: { Type: 'AWS::S3::Bucket', Properties: { BucketName: "PUBLIC-INSECURE" } },
+            key: { Type: 'AWS::KMS::Key', Properties: { KeyId: "PUBLIC-INSECURE" } }
+        }
+    }
+    "#;
+    assert_eq!(
+        status_of(guarded, with_keys)?,
+        Status::FAIL,
+        "liveness: with a populated reference the gate must open and the collision be caught"
+    );
+
+    Ok(())
+}
+
+/// Failing closed must not disarm a block when the clause is a `when` condition itself.
+///
+/// `eval_rule` reads any non-PASS condition as "this rule does not apply" and drops every
+/// check in the guarded body, so a gate that cannot compare has to stay a SKIP. Failing it
+/// would trade one bypassed clause for an entire unenforced block while still exiting 0 --
+/// strictly worse than the bug being fixed, and the reason this arm is role-aware rather than
+/// an unconditional FAIL.
+#[test]
+fn failing_closed_on_an_empty_reference_does_not_disarm_a_gate() -> Result<()> {
+    let rules = r###"
+    let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule name_is_safe when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == 'PUBLIC-INSECURE'
+    }
+    "###;
+
+    // The gate cannot compare, so it stays SKIP and the rule is inapplicable. A FAIL there
+    // would look identical from the exit code while silently dropping the body.
     assert_eq!(status_of(rules, ONE_BUCKET)?, Status::SKIP);
     Ok(())
 }
@@ -4592,10 +4669,11 @@ fn boolean_empty_is_an_incompatible_type() -> Result<()> {
             let err = match result {
                 Err(e) => e,
                 Ok(status) => panic!(
-                    "`Enabled {comparator}` on the boolean {value} returned {status:?} instead \
-                     of an incompatible-type error. Before this fix `!EMPTY` passed for every \
+                    "`Enabled {}` on the boolean {} returned {:?} instead of an \
+                     incompatible-type error. Before this fix `!EMPTY` passed for every \
                      boolean and `EMPTY` failed for every boolean, in both cases without \
-                     comparing anything."
+                     comparing anything.",
+                    comparator, value, status
                 ),
             };
 
@@ -4603,7 +4681,8 @@ fn boolean_empty_is_an_incompatible_type() -> Result<()> {
             assert!(
                 message.contains("EMPTY"),
                 "expected the incompatible-type error to name the EMPTY operation so the \
-                 author can find the clause, got: {message}"
+                 author can find the clause, got: {}",
+                message
             );
         }
     }

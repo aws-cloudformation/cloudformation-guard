@@ -546,7 +546,8 @@ mod context_start_line_tests {
         for line in 0..16usize {
             assert!(
                 context_start_line(line) >= 1,
-                "context_start_line({line}) returned 0, which is not a valid 1-based line"
+                "context_start_line({}) returned 0, which is not a valid 1-based line",
+                line
             );
         }
     }

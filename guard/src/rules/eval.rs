@@ -174,8 +174,34 @@ macro_rules! box_create_func {
 }
 
 pub(super) enum EvaluationResult {
-    EmptyQueryResult(Status),
+    /// An overall status with no per-value results, plus an optional explanation.
+    ///
+    /// The message is threaded into the `BlockCheck` the clause reports, which is the only
+    /// place a rule author sees it. It matters for the empty-reference cases: a clause that
+    /// fails because the thing it compares against resolved to no values needs to say so,
+    /// or the author is left looking for a fault in the template rather than in the ruleset.
+    EmptyQueryResult(Status, Option<String>),
     QueryValueResult(Vec<(QueryResult, Status)>),
+}
+
+/// Explanation attached to a clause that could not compare because its right-hand reference
+/// resolved to no values.
+///
+/// Names the remedy as well as the cause. An author who genuinely expects a possibly-empty
+/// reference can wrap the clause in `when <reference> !empty { ... }`: the gate's own
+/// `!empty` check fails when the reference is empty, so the block is skipped rather than
+/// failed, and the comparison never runs.
+fn empty_reference_message(negated: bool) -> String {
+    let clause = if negated {
+        "negated comparison"
+    } else {
+        "comparison"
+    };
+    format!(
+        "The {clause} could not be performed: the reference on the right-hand side resolved \
+         to no values. If an empty reference is expected here, guard the clause with `when \
+         <reference> !empty {{ ... }}` so it is skipped rather than failed."
+    )
 }
 
 /// Why a clause is being evaluated, which decides what an unevaluatable clause
@@ -311,30 +337,36 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                 }
                 EvaluationResult::QueryValueResult(results)
             } else {
-                EvaluationResult::EmptyQueryResult({
-                    let result = !cmp.1;
-                    let result = if inverse { !result } else { result };
-                    match result {
-                        true => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::Success),
-                            )?;
-                            Status::PASS
+                EvaluationResult::EmptyQueryResult(
+                    {
+                        let result = !cmp.1;
+                        let result = if inverse { !result } else { result };
+                        match result {
+                            true => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(ClauseCheck::Success),
+                                )?;
+                                Status::PASS
+                            }
+                            false => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(
+                                        ClauseCheck::NoValueForEmptyCheck(custom_message),
+                                    ),
+                                )?;
+                                Status::FAIL
+                            }
                         }
-                        false => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::NoValueForEmptyCheck(
-                                    custom_message,
-                                )),
-                            )?;
-                            Status::FAIL
-                        }
-                    }
-                })
+                    },
+                    // The unary EMPTY path already records its own ClauseValueCheck above,
+                    // including NoValueForEmptyCheck for the failing case, so there is
+                    // nothing an extra block-level message would add here.
+                    None,
+                )
             }
         });
     }
@@ -343,7 +375,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     // This only happens when the query has filters in them
     //
     if lhs.is_empty() {
-        return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP));
+        return Ok(EvaluationResult::EmptyQueryResult(Status::SKIP, None));
     }
 
     use CmpOperator::*;
@@ -819,7 +851,7 @@ fn binary_operation<'value, 'loc: 'value>(
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
     match results {
-        operators::EvalResult::Skip => Ok(EvaluationResult::EmptyQueryResult(Status::SKIP)),
+        operators::EvalResult::Skip => Ok(EvaluationResult::EmptyQueryResult(Status::SKIP, None)),
 
         // Positive comparison against a reference that resolved to nothing. No value
         // can be one of zero references, so the clause is unsatisfiable and every
@@ -836,50 +868,63 @@ fn binary_operation<'value, 'loc: 'value>(
         // apply" and skips the whole body -- so failing here would silently disarm
         // every check in the guarded block and exit 0, which is worse than the bug
         // being fixed.
-        operators::EvalResult::EmptyRhsUnsatisfiable => {
-            Ok(EvaluationResult::EmptyQueryResult(if role.is_strict() {
+        operators::EvalResult::EmptyRhsUnsatisfiable => Ok(EvaluationResult::EmptyQueryResult(
+            if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
-            }))
-        }
+            },
+            Some(empty_reference_message(false)),
+        )),
 
-        // Negated comparison against a reference that resolved to nothing. There is
-        // nothing to collide with, so the clause is vacuously satisfied and must not
-        // fail: an empty denylist is the normal state whenever a template contains
-        // none of the denied values.
+        // Negated comparison against a reference that resolved to nothing. Fails closed as
+        // an assertion.
         //
-        // Reported as SKIP rather than PASS, which matters inside a disjunction.
-        // eval_conjunction_clauses treats PASS as short-circuiting (eval.rs, the
-        // `Status::PASS` arm does `continue 'conjunction`) but SKIP as absorbing
-        // (`Status::SKIP => {}`). A vacuous PASS therefore satisfies an entire `or`
-        // block and abandons the sibling disjuncts unevaluated -- so
+        // The tempting reading is that this is vacuously satisfied -- there is nothing to
+        // collide with, and an empty denylist is the normal state whenever a template
+        // contains none of the denied values. That reading is what the previous SKIP
+        // encoded, and the comment here used to claim "the weaker status costs nothing in
+        // the standalone case". What it costs is the enforcement of the clause: a rule whose
+        // only check is `Property != %empty_reference` exited 0 having compared nothing,
+        // which is a denylist bypass rather than a compliant result.
         //
-        //     Encrypted != %empty_denylist  or  Encrypted == true
+        // The two error modes are not symmetric, which is what settles it. A wrong FAIL is
+        // visible and gets investigated. A wrong SKIP exits 0 and is indistinguishable from
+        // PASS in CI, so nobody ever looks. Requiring the author to declare the expectation
+        // instead -- an accompanying `!empty` guard -- was considered and rejected: it leaves
+        // every existing ruleset that lacks such a guard silently defeatable, which is the
+        // state being fixed.
         //
-        // would pass an unencrypted resource, because the first disjunct is
-        // vacuously true and the real check never runs. SKIP keeps the clause
-        // non-failing while leaving the decision to its siblings, which is the
-        // behavior base 57bbdbf had here and the reason that ruleset failed
-        // correctly before.
+        // The legitimate empty-reference case keeps an escape hatch, and it needs no new
+        // machinery: `when <reference> !empty { ... }` closes on an empty reference, because
+        // the gate's own `!empty` check fails, so the block is skipped and the comparison
+        // never runs. `an_empty_reference_can_be_guarded_with_a_when_not_empty_gate` pins it.
         //
-        // Both outcomes exit 0 for a clause evaluated on its own, so the weaker
-        // status costs nothing in the standalone case.
-        operators::EvalResult::EmptyRhsVacuouslyTrue => {
-            Ok(EvaluationResult::EmptyQueryResult(Status::SKIP))
-        }
+        // Role-aware for the same reason as the arm above rather than failing unconditionally.
+        // Failing a `when` condition makes `eval_rule` treat the rule as inapplicable and drop
+        // every check in the guarded body, so a gate that cannot compare must stay a SKIP or
+        // this fix would trade a bypassed clause for a disarmed block.
+        operators::EvalResult::EmptyRhsVacuouslyTrue => Ok(EvaluationResult::EmptyQueryResult(
+            if role.is_strict() {
+                Status::FAIL
+            } else {
+                Status::SKIP
+            },
+            Some(empty_reference_message(true)),
+        )),
 
         // Unreached in practice: `cmp` here is a (CmpOperator, bool) pair, and that
         // wrapper always resolves EmptyRhs into one of the two variants above. Fail
         // closed rather than panicking, so a future refactor that routes around the
         // wrapper cannot turn this into a silent pass.
-        operators::EvalResult::EmptyRhs => {
-            Ok(EvaluationResult::EmptyQueryResult(if role.is_strict() {
+        operators::EvalResult::EmptyRhs => Ok(EvaluationResult::EmptyQueryResult(
+            if role.is_strict() {
                 Status::FAIL
             } else {
                 Status::SKIP
-            }))
-        }
+            },
+            Some(empty_reference_message(cmp.1)),
+        )),
 
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
@@ -1284,12 +1329,12 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
     match statues {
         Ok(statues) => match statues {
-            EvaluationResult::EmptyQueryResult(status) => {
+            EvaluationResult::EmptyQueryResult(status, message) => {
                 resolver.end_record(
                     &blk_context,
                     RecordType::GuardClauseBlockCheck(BlockCheck {
                         status,
-                        message: None,
+                        message,
                         at_least_one_matches: all,
                     }),
                 )?;
