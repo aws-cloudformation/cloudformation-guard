@@ -1962,6 +1962,10 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     let block = if let Some(conditions) = &type_block.conditions {
         let when_context = format!("TypeBlock#{}/When", type_block.type_name);
         resolver.start_record(&when_context)?;
+        // Note the scope: the conditions are evaluated against `resolver`, the enclosing scope,
+        // while the block below runs each clause against a per-resource `ValueScope`. So a
+        // condition here is resolved from the file root, not from the resource being checked.
+        // `a_skipped_type_block_says_why_it_was_skipped` covers what that costs an author.
         match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
             Ok(status) => {
                 if status != Status::PASS {
@@ -1973,6 +1977,22 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             block: BlockCheck {
                                 status: Status::SKIP,
                                 at_least_one_matches: false,
+                                // Deliberately None. An explanation belongs here -- this is the
+                                // quietest exit in the evaluator, reporting `not_applicable` and
+                                // exit 0 without naming anything, and the likeliest cause is a
+                                // condition written as though it were resource-relative. But a
+                                // SKIP rule's records never reach a reporter: skipped rules
+                                // contribute only their name, as a `HashSet<String>`, in
+                                // `reporters::validate::common`. A message written here today
+                                // would be recorded and discarded, which is the defect this
+                                // branch just finished removing from five other record variants.
+                                //
+                                // Surfacing it needs the skip set to carry reasons, which changes
+                                // the `report` signature every reporter implements. That is worth
+                                // doing and is not this change.
+                                // `a_skipped_type_block_is_indistinguishable_from_a_clean_run`
+                                // pins the behaviour meanwhile, so whoever does it has a test to
+                                // flip rather than a discovery to repeat.
                                 message: None,
                             },
                         }),

@@ -4968,3 +4968,345 @@ fn a_float_valued_gate_condition_still_guards_its_body() -> Result<()> {
 
     Ok(())
 }
+
+/// The comparison operators, pinned across every operand type pairing.
+///
+/// The mixed-numeric defect fixed in `compare_values` was reachable because no test drove the
+/// ordering operators against a type they did not already agree with: `Ge`, `Gt`, `Lt` and `Le` in
+/// `real_binary_operation` had no coverage at all. A grid is the cheap way to keep that from
+/// recurring, and it doubles as the specification -- each cell is one clause evaluated end to end
+/// through `eval_rules_file`.
+///
+/// Read a grid as rows = the value the template puts in `Properties.Size`, columns = `OPS`. What
+/// the grid is really asserting is the absence of a wrong PASS: a cell that says FAIL is saying
+/// this pairing cannot be decided or is genuinely false, and either way the run must not exit 0.
+/// PASS appears only where the comparison is both decidable and true.
+///
+/// Two behaviours are worth naming because they look like typos and are not. A list on the left is
+/// distributed element-wise, so `[1,2,3] < 50` is PASS -- every element is smaller. And an absent
+/// property fails rather than skips, which is the fail-closed behaviour this branch settled on.
+#[test]
+fn the_comparison_matrix_over_operand_types_is_pinned() -> Result<()> {
+    const OPS: [&str; 6] = ["==", "!=", ">", ">=", "<", "<="];
+
+    // (label, what to write for Properties, in template order)
+    const LHS: [(&str, &str); 8] = [
+        ("int", r#""Size": 50"#),
+        ("float", r#""Size": 50.5"#),
+        ("string", r#""Size": "fifty""#),
+        ("list", r#""Size": [1,2,3]"#),
+        ("map", r#""Size": {"a":1}"#),
+        ("bool", r#""Size": true"#),
+        ("null", r#""Size": null"#),
+        ("missing", ""),
+    ];
+
+    // (right-hand side as written in the rule, one row per LHS above, cells in OPS order)
+    const GRIDS: [(&str, [&str; 8]); 6] = [
+        (
+            "50",
+            [
+                "PASS FAIL FAIL PASS FAIL PASS", // int 50 vs 50
+                "FAIL PASS PASS PASS FAIL FAIL", // float 50.5 vs 50
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // string
+                "FAIL PASS FAIL FAIL PASS PASS", // list, element-wise
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // map
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // bool
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // null
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // missing property
+            ],
+        ),
+        (
+            "10",
+            [
+                "FAIL PASS PASS PASS FAIL FAIL", // int 50 vs 10
+                "FAIL PASS PASS PASS FAIL FAIL", // float 50.5 vs 10
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL PASS FAIL FAIL PASS PASS",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+            ],
+        ),
+        (
+            "10.5",
+            [
+                "FAIL PASS PASS PASS FAIL FAIL", // int 50 vs float 10.5
+                "FAIL PASS PASS PASS FAIL FAIL", // float 50.5 vs float 10.5
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL PASS FAIL FAIL PASS PASS",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+            ],
+        ),
+        (
+            "'fifty'",
+            [
+                "FAIL FAIL FAIL FAIL FAIL FAIL", // int vs string: not comparable, fails closed
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "PASS FAIL FAIL PASS FAIL PASS", // string vs equal string
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+            ],
+        ),
+        (
+            "[1,2,3]",
+            [
+                "FAIL FAIL PASS PASS FAIL FAIL", // 50 exceeds every element
+                "FAIL FAIL PASS PASS FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "PASS FAIL FAIL FAIL FAIL FAIL", // identical lists
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+            ],
+        ),
+        (
+            "true",
+            [
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "PASS FAIL FAIL FAIL FAIL FAIL", // bools compare for equality, not order
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+                "FAIL FAIL FAIL FAIL FAIL FAIL",
+            ],
+        ),
+    ];
+
+    let mut cells = 0;
+    for (rhs, rows) in GRIDS {
+        for ((lhs_label, properties), row) in LHS.iter().zip(rows) {
+            let expectations = row.split_whitespace().collect::<Vec<_>>();
+            assert_eq!(
+                expectations.len(),
+                OPS.len(),
+                "grid row for {} vs {} has {} cells, expected {}",
+                lhs_label,
+                rhs,
+                expectations.len(),
+                OPS.len()
+            );
+
+            for (op, expected) in OPS.iter().zip(expectations) {
+                let rules = format!(
+                    "rule r {{\n  Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {} {}\n}}\n",
+                    op, rhs
+                );
+                let input = format!(
+                    r#"{{ "Resources": {{ "V": {{ "Type": "AWS::EC2::Volume", "Properties": {{ {} }} }} }} }}"#,
+                    properties
+                );
+
+                let rules_file = RulesFile::try_from(rules.as_str())?;
+                let resources = PathAwareValue::try_from(input.as_str())?;
+                let mut root = root_scope(&rules_file, Rc::new(resources));
+                let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+                let expected = match expected {
+                    "PASS" => Status::PASS,
+                    "FAIL" => Status::FAIL,
+                    "SKIP" => Status::SKIP,
+                    other => panic!("unknown expectation {} in the grid", other),
+                };
+                assert_eq!(
+                    status, expected,
+                    "Size {} {} with a {} operand: expected {:?}, got {:?}",
+                    op, rhs, lhs_label, expected, status
+                );
+                cells += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        cells,
+        GRIDS.len() * LHS.len() * OPS.len(),
+        "the grid did not evaluate every cell"
+    );
+
+    Ok(())
+}
+
+/// The type block's status fold, across the resource populations that produce each answer.
+///
+/// `eval_type_block_clause` counts passes and fails over the matched resources and answers
+/// `FAIL` if any failed, else `PASS` if any passed, else `SKIP` -- the same shape as
+/// `eval_conjunction_clauses`, and it absorbs a per-resource SKIP the same way. None of those
+/// arms had a test reaching them, including the one that decides whether a violating resource is
+/// reported at all.
+#[test]
+fn the_type_block_status_fold_is_pinned() -> Result<()> {
+    const RULES: &str = r###"
+    rule r {
+        AWS::EC2::Volume {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    // (label, resources, expected status)
+    let cases: [(&str, &str, Status); 5] = [
+        (
+            "no resource of that type matches",
+            r#""Q": { "Type": "AWS::SQS::Queue", "Properties": {} }"#,
+            // Nothing to check, so nothing is asserted. SKIP exits 0, which is only safe
+            // because it means the type is genuinely absent from the template.
+            Status::SKIP,
+        ),
+        (
+            "one matching resource, compliant",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Encrypted": true } }"#,
+            Status::PASS,
+        ),
+        (
+            "one matching resource, violating",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Encrypted": false } }"#,
+            Status::FAIL,
+        ),
+        (
+            "two resources, one violating",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Encrypted": true } },
+               "B": { "Type": "AWS::EC2::Volume", "Properties": { "Encrypted": false } }"#,
+            // The fail must outrank the pass. PASS here would report a compliant template
+            // while B goes unencrypted.
+            Status::FAIL,
+        ),
+        (
+            "matching resource, property absent",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50 } }"#,
+            // An absent property is not a pass. This is the fail-closed reading the branch
+            // settled on for queries that resolve to nothing.
+            Status::FAIL,
+        ),
+    ];
+
+    let rules_file = RulesFile::try_from(RULES)?;
+    for (label, resources, expected) in cases {
+        let input = format!(r#"{{ "Resources": {{ {} }} }}"#, resources);
+        let resources = PathAwareValue::try_from(input.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        assert_eq!(status, expected, "type block with {}", label);
+    }
+
+    Ok(())
+}
+
+/// A type block skipped by its own `when` condition reports nothing about why.
+///
+/// The record carried `message: None`, so this was the quietest exit in the evaluator: status
+/// `not_applicable`, exit 0, no clause named. That matters because of a scoping asymmetry inside
+/// the construct -- the block's clauses are resource-relative, but the `when` conditions are
+/// resolved from the file root (`eval_type_block_clause` evaluates them against the enclosing
+/// resolver, before the per-resource `ValueScope` exists).
+///
+/// So the natural spelling is a trap. `AWS::EC2::Volume when Properties.Size > 10 { ... }` reads
+/// as "every volume over 10 GiB must ..." and instead looks for `Properties` at the file root,
+/// finds nothing, and skips. The rule passes every template it is ever run against, including the
+/// ones it was written to catch. The root-qualified spelling is asserted alongside it, because
+/// that contrast is the whole content of the finding.
+#[test]
+fn a_skipped_type_block_is_indistinguishable_from_a_clean_run() -> Result<()> {
+    const RESOURCES: &str = r#"{
+        "Resources": {
+            "A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": true } },
+            "B": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": false } }
+        }
+    }"#;
+
+    // Resource-relative condition: does not resolve at the root, so the block is skipped.
+    let resource_relative = r###"
+    rule r {
+        AWS::EC2::Volume when Properties.Size > 10 {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    // The same intent, qualified from the root, which is where the condition is evaluated.
+    let root_qualified = r###"
+    rule r {
+        AWS::EC2::Volume when Resources.A.Properties.Size > 10 {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    for (label, rules, expected) in [
+        (
+            "resource-relative condition",
+            resource_relative,
+            Status::SKIP,
+        ),
+        ("root-qualified condition", root_qualified, Status::FAIL),
+    ] {
+        let rules_file = RulesFile::try_from(rules)?;
+        let resources = PathAwareValue::try_from(RESOURCES)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        assert_eq!(
+            status, expected,
+            "type block with a {} against a template holding an unencrypted volume",
+            label
+        );
+    }
+
+    // The skip now carries its reason. Without this the two outcomes above are
+    // indistinguishable to an operator: both exit 0 on the passing template, and the skipping
+    // one exits 0 on the violating template too.
+    let rules_file = RulesFile::try_from(resource_relative)?;
+    let resources = PathAwareValue::try_from(RESOURCES)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let recorded = root.reset_recorder().extract();
+
+    fn skipped_type_blocks<'a>(record: &'a EventRecord<'a>, out: &mut Vec<Option<String>>) {
+        if let Some(RecordType::TypeCheck(TypeBlockCheck {
+            block:
+                BlockCheck {
+                    status: Status::SKIP,
+                    message,
+                    ..
+                },
+            ..
+        })) = &record.container
+        {
+            out.push(message.clone());
+        }
+        for child in &record.children {
+            skipped_type_blocks(child, out);
+        }
+    }
+
+    let mut skips = vec![];
+    skipped_type_blocks(&recorded, &mut skips);
+    assert_eq!(
+        skips.len(),
+        1,
+        "expected exactly one skipped type block to be recorded, found {:?}",
+        skips
+    );
+
+    // Pinning the gap, not endorsing it. The record carries no explanation, and a reader of the
+    // output cannot tell this run from one where the rule genuinely did not apply. An explanation
+    // cannot simply be added at the record: skipped rules reach the reporters as a set of names,
+    // so the message would be discarded -- the defect this branch removed elsewhere. Whoever
+    // plumbs skip reasons through `report` should flip this assertion.
+    assert!(
+        skips[0].is_none(),
+        "a skipped type block now records an explanation; if it also renders, invert this \
+         assertion and update every_recorded_explanation_has_a_rendering_path"
+    );
+
+    Ok(())
+}
