@@ -5310,3 +5310,157 @@ fn a_skipped_type_block_is_indistinguishable_from_a_clean_run() -> Result<()> {
 
     Ok(())
 }
+
+/// The unary operators, pinned across every value shape they can meet.
+///
+/// `unary_operation` and the `is_*` family had no test that walked them against the full set of
+/// value shapes, which is how the negation arm survived with no coverage at all. The interesting
+/// column is EMPTY: on a container it answers, and on a scalar it is an incompatible-type error
+/// rather than a status, which is the behaviour this branch settled on. An error is the right
+/// answer there because both statuses are wrong -- an int is not empty, but calling it non-empty
+/// implies the question made sense.
+///
+/// Cells are the status for the operator, then the status for its negation. `ERR` means the
+/// evaluation returns an error, so neither polarity produces a status.
+#[test]
+fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
+    // (label, what to write for Properties)
+    const SHAPES: [(&str, &str); 11] = [
+        ("int", r#""Size": 50"#),
+        ("float", r#""Size": 50.5"#),
+        ("string", r#""Size": "fifty""#),
+        ("empty string", r#""Size": """#),
+        ("list", r#""Size": [1,2,3]"#),
+        ("empty list", r#""Size": []"#),
+        ("map", r#""Size": {"a":1}"#),
+        ("empty map", r#""Size": {}"#),
+        ("bool", r#""Size": true"#),
+        ("null", r#""Size": null"#),
+        ("absent", ""),
+    ];
+
+    // (operator, one cell per SHAPES row, in order)
+    const MATRIX: [(&str, [&str; 11]); 8] = [
+        // int   float  str    ""     list   []     map    {}     bool   null   absent
+        (
+            "EXISTS",
+            [
+                "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS",
+                "FAIL",
+            ],
+        ),
+        (
+            "EMPTY",
+            [
+                "ERR", "ERR", "FAIL", "PASS", "FAIL", "PASS", "FAIL", "PASS", "ERR", "ERR", "PASS",
+            ],
+        ),
+        (
+            "IS_STRING",
+            [
+                "FAIL", "FAIL", "PASS", "PASS", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL",
+                "FAIL",
+            ],
+        ),
+        (
+            "IS_LIST",
+            [
+                "FAIL", "FAIL", "FAIL", "FAIL", "PASS", "PASS", "FAIL", "FAIL", "FAIL", "FAIL",
+                "FAIL",
+            ],
+        ),
+        (
+            "IS_STRUCT",
+            [
+                "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "PASS", "PASS", "FAIL", "FAIL",
+                "FAIL",
+            ],
+        ),
+        (
+            "IS_BOOL",
+            [
+                "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "PASS", "FAIL",
+                "FAIL",
+            ],
+        ),
+        (
+            "IS_INT",
+            [
+                "PASS", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL",
+                "FAIL",
+            ],
+        ),
+        (
+            "IS_FLOAT",
+            [
+                "FAIL", "PASS", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL", "FAIL",
+                "FAIL",
+            ],
+        ),
+    ];
+
+    fn evaluate(clause: &str, properties: &str) -> Result<Option<Status>> {
+        let rules = format!(
+            "rule r {{\n  Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {}\n}}\n",
+            clause
+        );
+        let input = format!(
+            r#"{{ "Resources": {{ "V": {{ "Type": "AWS::EC2::Volume", "Properties": {{ {} }} }} }} }}"#,
+            properties
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let resources = PathAwareValue::try_from(input.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        // An incompatible-type operand is an error, not a status, so it is reported as None
+        // rather than swallowed into one of the three statuses.
+        Ok(eval_rules_file(&rules_file, &mut root, None).ok())
+    }
+
+    for (operator, cells) in MATRIX {
+        for ((shape, properties), expected) in SHAPES.iter().zip(cells) {
+            let plain = evaluate(operator, properties)?;
+            let negated = evaluate(&format!("not {}", operator), properties)?;
+
+            match expected {
+                "ERR" => {
+                    assert!(
+                        plain.is_none(),
+                        "{} on a {} operand should be an incompatible-type error, got {:?}",
+                        operator,
+                        shape,
+                        plain
+                    );
+                    assert!(
+                        negated.is_none(),
+                        "not {} on a {} operand should be an incompatible-type error, got {:?}",
+                        operator,
+                        shape,
+                        negated
+                    );
+                }
+                "PASS" | "FAIL" => {
+                    let (want, want_negated) = if expected == "PASS" {
+                        (Status::PASS, Status::FAIL)
+                    } else {
+                        (Status::FAIL, Status::PASS)
+                    };
+                    assert_eq!(plain, Some(want), "{} on a {} operand", operator, shape);
+                    // The negation must invert. A negated operator that answers the same status
+                    // as its positive form is the shape of the role-propagation defect: the
+                    // clause stops discriminating and a violating template can exit 0.
+                    assert_eq!(
+                        negated,
+                        Some(want_negated),
+                        "not {} on a {} operand must invert {} 's answer",
+                        operator,
+                        shape,
+                        operator
+                    );
+                }
+                other => panic!("unknown expectation {} in the matrix", other),
+            }
+        }
+    }
+
+    Ok(())
+}
