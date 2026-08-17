@@ -4921,3 +4921,50 @@ fn boolean_empty_is_an_incompatible_type() -> Result<()> {
 
     Ok(())
 }
+
+/// A gate that compares against a decimal must still guard its body.
+///
+/// This is the composed form of the mixed-numeric defect fixed in `compare_values`, and it is the
+/// reason that defect mattered more than a wrong FAIL. `Size > 10` against `Size: 50.5` was
+/// NotComparable, `eval_rule` maps any non-PASS condition to `Status::SKIP`, and SKIP exits 0. So
+/// the rule below stopped enforcing encryption entirely -- and it did so silently, with no clause
+/// named in the output -- the moment a template wrote a volume size as `50.5` instead of `50`.
+///
+/// Both fixtures are asserted, because the integer one is what makes the decimal one meaningful:
+/// without it a reader cannot tell whether the rule ever had teeth.
+#[test]
+fn a_float_valued_gate_condition_still_guards_its_body() -> Result<()> {
+    let rules = r###"
+    rule large_volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size > 10 {
+        Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Encrypted == true
+    }
+    "###;
+
+    let integer_size = r#"{
+        "Resources": {
+            "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": false } }
+        }
+    }"#;
+    let decimal_size = r#"{
+        "Resources": {
+            "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50.5, "Encrypted": false } }
+        }
+    }"#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+    for (label, input) in [("integer", integer_size), ("decimal", decimal_size)] {
+        let resources = PathAwareValue::try_from(input)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+        assert_eq!(
+            status,
+            Status::FAIL,
+            "the {} template has an unencrypted volume over 10 GiB and must FAIL. SKIP here means \
+             the gate could not evaluate its comparison, dropped the body, and exited 0",
+            label
+        );
+    }
+
+    Ok(())
+}

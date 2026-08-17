@@ -1044,6 +1044,40 @@ impl PathAwareValue {
     }
 }
 
+/// Order an integer against a float without going through a lossy conversion.
+///
+/// `(i as f64).partial_cmp(f)` is the obvious spelling and it is wrong: `i64` values above 2^53
+/// are not exactly representable in `f64`, so the cast rounds and two distinct values can compare
+/// `Equal`. Casting the other way is exact once the float is known to be in range, because
+/// `floor` is exact on `f64` and `as i64` then truncates a value that is already integral.
+///
+/// Returns `None` only for NaN, matching what `f64::partial_cmp` does for float-to-float.
+fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+
+    // 2^63. `i64::MAX as f64` rounds *up* to this value, so comparing against `i64::MAX as f64`
+    // would let f == 2^63 through, and the `as i64` below would then saturate to `i64::MAX` and
+    // report a spurious `Equal`. Bound on 2^63 itself instead.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f >= TWO_POW_63 {
+        return Some(Ordering::Less); // every i64 is smaller
+    }
+    if f < -TWO_POW_63 {
+        return Some(Ordering::Greater); // every i64 is larger
+    }
+
+    // -2^63 <= f < 2^63, so `floor` is representable as i64 and the cast is exact.
+    let truncated = f.floor();
+    Some(match i.cmp(&(truncated as i64)) {
+        // Same integral part, so the float decides it: anything above its own floor has a
+        // fraction left over and is therefore the larger of the two.
+        Ordering::Equal if f > truncated => Ordering::Less,
+        ordering => ordering,
+    })
+}
+
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {
     match (first, other) {
         //
@@ -1058,6 +1092,21 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
                 "Float values are not comparable".to_owned(),
             )),
         },
+
+        // A number is a number. Without these two arms `Size > 10` reports the template's own
+        // value as not comparable the moment someone writes `50.5` instead of `50`, and in a
+        // `when` condition that non-PASS becomes a SKIP, which exits 0 and takes the guarded
+        // body with it. Pinned by `mixed_int_and_float_operands_compare_numerically`.
+        (PathAwareValue::Int((_, i)), PathAwareValue::Float((_, f))) => {
+            compare_int_to_float(*i, *f)
+                .ok_or_else(|| Error::NotComparable("Float values are not comparable".to_owned()))
+        }
+        (PathAwareValue::Float((_, f)), PathAwareValue::Int((_, i))) => {
+            compare_int_to_float(*i, *f)
+                .map(Ordering::reverse)
+                .ok_or_else(|| Error::NotComparable("Float values are not comparable".to_owned()))
+        }
+
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
         (_, _) => Err(Error::NotComparable(format!(
             "PathAwareValues are not comparable {}, {}",

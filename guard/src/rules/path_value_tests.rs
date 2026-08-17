@@ -407,3 +407,83 @@ fn merge_values_test() -> Result<(), Error> {
 
     Ok(())
 }
+
+/// Mixed integer and float operands order numerically, and exactly.
+///
+/// `compare_values` matched Int/Int and Float/Float and nothing in between, so every mixed
+/// numeric comparison reached the `NotComparable` catch-all. `Size > 10` against a template
+/// carrying `Size: 50.5` reported "PathAwareValues are not comparable float, int" and FAILed a
+/// compliant volume. Worse in a `when` condition, where the non-PASS became a SKIP and dropped
+/// the guarded body at exit 0 -- see `a_float_valued_gate_condition_still_guards_its_body` in
+/// eval_tests.rs.
+///
+/// The precision cases below are the reason this is not `(i as f64).partial_cmp(f)`. `i64` values
+/// above 2^53 do not survive a round trip through `f64`: `9007199254740993i64` (2^53 + 1) casts to
+/// `9007199254740992.0`, so the lossy spelling reports `Equal` for two values that differ by one.
+#[test]
+fn mixed_int_and_float_operands_compare_numerically() {
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn flt(f: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::root(), f))
+    }
+
+    // (int operand, float operand, how the int orders against the float)
+    let cases: [(i64, f64, Ordering); 12] = [
+        (50, 10.0, Ordering::Greater),
+        (10, 50.5, Ordering::Less),
+        (50, 50.0, Ordering::Equal),
+        (50, 50.5, Ordering::Less), // same floor, float carries the fraction
+        (51, 50.5, Ordering::Greater),
+        (-1, -0.5, Ordering::Less), // floor(-0.5) is -1, and -0.5 is the larger
+        (-1, -1.0, Ordering::Equal),
+        (0, -0.0, Ordering::Equal),
+        // 2^53 + 1 against 2^53: exact here, Equal under an `as f64` cast on the integer.
+        (
+            9_007_199_254_740_993,
+            9_007_199_254_740_992.0,
+            Ordering::Greater,
+        ),
+        // Out of i64 range in both directions: no cast, no saturation.
+        (i64::MAX, 1.0e300, Ordering::Less),
+        (i64::MIN, -1.0e300, Ordering::Greater),
+        // i64::MIN is exactly -2^63, which f64 represents exactly.
+        (i64::MIN, -9_223_372_036_854_775_808.0, Ordering::Equal),
+    ];
+
+    for (i, f, expected) in cases {
+        assert_eq!(
+            compare_values(&int(i), &flt(f)).unwrap(),
+            expected,
+            "comparing int {} against float {}",
+            i,
+            f
+        );
+        assert_eq!(
+            compare_values(&flt(f), &int(i)).unwrap(),
+            expected.reverse(),
+            "comparing float {} against int {} (reversed operands)",
+            f,
+            i
+        );
+    }
+
+    // The operators built on compare_values, so the fix reaches the surface the rules use.
+    assert!(compare_gt(&flt(50.5), &int(10)).unwrap());
+    assert!(compare_ge(&flt(50.5), &int(10)).unwrap());
+    assert!(compare_lt(&int(10), &flt(50.5)).unwrap());
+    assert!(compare_le(&int(10), &flt(50.5)).unwrap());
+    assert!(compare_eq(&flt(50.0), &int(50)).unwrap());
+    assert!(!compare_eq(&flt(50.5), &int(50)).unwrap());
+
+    // NaN stays not-comparable, the same answer Float/Float already gave.
+    assert!(matches!(
+        compare_values(&int(1), &flt(f64::NAN)),
+        Err(Error::NotComparable(_))
+    ));
+    assert!(matches!(
+        compare_values(&flt(f64::NAN), &int(1)),
+        Err(Error::NotComparable(_))
+    ));
+}
