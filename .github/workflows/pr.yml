@@ -53,35 +53,110 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
+  # These jobs install a binary built from the branch under test, not the last published release.
+  #
+  # They used to resolve "latest release" from the GitHub API and install that, which tested the
+  # installer against a binary having nothing to do with the change under review, and made the job
+  # depend on an API whose anonymous limit is 60 requests per hour per source IP -- shared across
+  # every job on a runner. That limit is what failed the Windows job on an unrelated pull request.
+  #
+  # Packaging the local build into the release layout and pointing the installer at it with
+  # GUARD_DOWNLOAD_BASE_URL removes the network from the critical path and makes the assertion
+  # meaningful: the checksum of the installed binary is compared against the one just built.
+  #
+  # GITHUB_TOKEN is still exported. Nothing in the pinned path needs it, but any future step that
+  # resolves a version should be authenticated by default rather than discover the limit in CI.
   installScript:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: Testing Install Script (install-guard.sh)
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
-      - name: Test install script on ${{ matrix.os }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build cfn-guard from this branch
+        working-directory: cloudformation-guard
+        run: cargo build --release --bin cfn-guard
+      - name: Package the build into the release layout and install it
+        working-directory: cloudformation-guard
         run: |
-          set -e
-          cd cloudformation-guard
-          sh install-guard.sh
+          set -eu
+          VERSION=$(./target/release/cfn-guard --version | awk '{ print $2 }')
+          MAJOR=${VERSION%%.*}
+          case "$(uname -s)" in
+            Darwin) OS_TYPE=macos ;;
+            *) OS_TYPE=ubuntu ;;
+          esac
+          ARCH_TYPE=$(uname -m)
+          [ "$ARCH_TYPE" = "arm64" ] && ARCH_TYPE=aarch64
+          NAME="cfn-guard-v${MAJOR}-${ARCH_TYPE}-${OS_TYPE}-latest"
+
+          mkdir -p "stage/${NAME}" "artifacts/${VERSION}"
+          cp target/release/cfn-guard "stage/${NAME}/cfn-guard"
+          tar -czf "artifacts/${VERSION}/${NAME}.tar.gz" -C stage "${NAME}"
+
+          GUARD_DOWNLOAD_BASE_URL="file://${PWD}/artifacts" sh install-guard.sh -v "${VERSION}"
+
+          # The installer reports success on its own terms; this checks it installed the binary we
+          # just built rather than something already on the runner.
+          "${HOME}/.guard/bin/cfn-guard" --version
+          BUILT=$(shasum -a 256 target/release/cfn-guard | awk '{ print $1 }')
+          INSTALLED=$(shasum -a 256 "${HOME}/.guard/${MAJOR}/${NAME}/cfn-guard" | awk '{ print $1 }')
+          if [ "$BUILT" != "$INSTALLED" ]; then
+            echo "installed binary does not match the one built from this branch" >&2
+            echo "  built:     $BUILT" >&2
+            echo "  installed: $INSTALLED" >&2
+            exit 1
+          fi
+          echo "installed binary matches this branch's build ($BUILT)"
 
   installScriptWindows:
     runs-on: windows-latest
     name: Testing Windows Install Script (install-guard.ps1)
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v3
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
-      - name: Test install script on windows-latest
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build cfn-guard from this branch
+        working-directory: cloudformation-guard
+        run: cargo build --release --bin cfn-guard
+      - name: Package the build into the release layout and install it
+        working-directory: cloudformation-guard
+        shell: pwsh
         run: |
-          cd cloudformation-guard
-          ./install-guard.ps1
+          $ErrorActionPreference = 'Stop'
+          $version = (& ./target/release/cfn-guard.exe --version).Split(' ')[1]
+          $major = $version.Split('.')[0]
+          $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+            'Arm64' { 'aarch64' } 'X64' { 'x86_64' } 'X86' { 'i686' }
+          }
+          $name = "cfn-guard-v$major-$arch-windows-latest"
+
+          New-Item -ItemType Directory -Force -Path "stage/$name", "artifacts/$version" | Out-Null
+          Copy-Item target/release/cfn-guard.exe "stage/$name/cfn-guard.exe"
+          tar -czf "artifacts/$version/$name.tar.gz" -C stage $name
+
+          $env:GUARD_DOWNLOAD_BASE_URL = "file://$($PWD.Path -replace '\\','/')/artifacts"
+          ./install-guard.ps1 -Version $version
+
+          # The installer reports success on its own terms; this checks it installed the binary we
+          # just built rather than something already on the runner.
+          $built = (Get-FileHash target/release/cfn-guard.exe -Algorithm SHA256).Hash
+          $installed = (Get-FileHash "$env:USERPROFILE\.guard\$major\$name\cfn-guard.exe" -Algorithm SHA256).Hash
+          if ($built -ne $installed) {
+            throw "installed binary ($installed) does not match this branch's build ($built)"
+          }
+          Write-Host "installed binary matches this branch's build ($built)"
 
   linting:
     name: Linting check (clippy)
