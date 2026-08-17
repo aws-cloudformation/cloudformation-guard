@@ -201,6 +201,29 @@ mod validate_tests {
     #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
+    // A rule whose only check compares against a reference that resolved to no values must
+    // not reach a successful exit. It used to: the comparison reported SKIP, the file status
+    // was SKIP, and the process exited 0 having enforced nothing. Exit code rather than
+    // reported status is the assertion that matters here, because 0 is what a CI gate reads,
+    // and SKIP and PASS are indistinguishable from outside the process.
+    // These fixtures sit at the resources/validate root rather than in data-dir/ and
+    // rules-dir/, because test_updated_summary_output evaluates every rules file in
+    // rules-dir/ against every data file in data-dir/ and compares the result to a
+    // checked-in golden output.
+    #[case(
+        vec!["bucket-with-no-kms-keys-template.yaml"],
+        vec!["denied_names_from_empty_reference.guard"],
+        StatusCode::VALIDATION_ERROR
+    )]
+    // The same comparison with the possibly-empty reference declared as a `when` guard. The
+    // condition fails, the rule does not apply, and exiting 0 is correct. Without this row
+    // the case above is also satisfied by failing every ruleset that mentions an empty
+    // reference, which would leave no way to express a permissibly-empty denylist.
+    #[case(
+        vec!["bucket-with-no-kms-keys-template.yaml"],
+        vec!["denied_names_guarded_by_not_empty.guard"],
+        StatusCode::SUCCESS
+    )]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,

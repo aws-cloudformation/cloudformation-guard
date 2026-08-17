@@ -231,6 +231,33 @@ Resources.NewVolume.Properties.VolumeType IN [ 'io1','io2','gp3' ]
 
 > While these examples illustrate using `S3Bucket`, `NewVolume` in the query, often these are user defined and can be arbitrarily named in an IaC template. To write a rule that is generic and applies to all `AWS::S3::Bucket` resources defined in the template the most common form of query used is `Resources.*[ Type == ‘AWS::S3::Bucket’ ]` to select them. See [Guard: Query and Filtering](QUERY_AND_FILTERING.md) for details on usage and explore the examples directory.
 
+#### Comparing against a query that resolves to no values
+
+When the RHS of a binary operator is a query, it can resolve to no values at all. This usually happens because the query selects a resource type that the input does not contain:
+
+```
+# %denied is empty for any template that defines no KMS keys
+let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+
+rule bucket_name_is_not_denied {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}
+```
+
+There is nothing to compare the LHS against, so the clause cannot be decided and it `FAIL`s. This applies to both polarities: `IN %denied` and `!= %denied` both fail when `%denied` resolves to no values. The failure message says that the reference resolved to no values, so the fault is not mistaken for one in the input.
+
+Failing here is deliberate, and it is a change from earlier versions, which reported `SKIP`. A `SKIP` exits `0` and is indistinguishable from a `PASS` at a CI gate, so the rule above reported success for every template while comparing nothing, including a template whose bucket name was on the denylist that the query failed to populate.
+
+If a query is expected to resolve to no values, state that with a `when` guard. The condition fails, so the rule does not apply and is reported as `SKIP`:
+
+```
+rule bucket_name_is_not_denied when %denied !empty {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}
+```
+
+This is the same `when %query !empty` idiom used to scope a rule to templates that contain the resources it checks. A comparison written directly as a `when` condition is also reported as `SKIP` rather than `FAIL` when its reference is empty, because a failing condition would drop the block it guards.
+
 ## Custom Message
 
 You can add a custom message to a clause. A custom message is added at the end of a clause as follows:

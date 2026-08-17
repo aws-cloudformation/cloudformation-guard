@@ -863,11 +863,16 @@ fn binary_operation<'value, 'loc: 'value>(
         // from a raw lhs entry -- an lhs can be QueryResult::Literal (a `let`
         // literal), which every reporter treats as unreachable in a comparison.
         //
-        // In a `when` condition this must stay a SKIP. A FAIL there makes the gate
-        // not-PASS, and eval_rule treats a non-PASS condition as "rule does not
-        // apply" and skips the whole body -- so failing here would silently disarm
-        // every check in the guarded block and exit 0, which is worse than the bug
-        // being fixed.
+        // In a `when` condition this stays a SKIP, because of how the condition fold
+        // treats the two statuses. `eval_conjunction_clauses` absorbs a SKIP (`Status::SKIP
+        // => {}`) but counts a FAIL, and it answers FAIL before PASS. So a FAIL here
+        // overrides sibling conditions that passed and drops a body those siblings would
+        // have enforced, at exit 0; a SKIP is absorbed and lets them decide.
+        // `empty_reference_in_a_when_condition_does_not_disarm_the_block` pins that.
+        //
+        // With a single condition the two statuses are indistinguishable -- `eval_rule` maps
+        // every non-PASS condition to `Status::SKIP` for the rule either way -- so the
+        // difference is only observable alongside a condition that passes.
         operators::EvalResult::EmptyRhsUnsatisfiable => Ok(EvaluationResult::EmptyQueryResult(
             if role.is_strict() {
                 Status::FAIL
@@ -900,10 +905,10 @@ fn binary_operation<'value, 'loc: 'value>(
         // the gate's own `!empty` check fails, so the block is skipped and the comparison
         // never runs. `an_empty_reference_can_be_guarded_with_a_when_not_empty_gate` pins it.
         //
-        // Role-aware for the same reason as the arm above rather than failing unconditionally.
-        // Failing a `when` condition makes `eval_rule` treat the rule as inapplicable and drop
-        // every check in the guarded body, so a gate that cannot compare must stay a SKIP or
-        // this fix would trade a bypassed clause for a disarmed block.
+        // Role-aware for the same reason as the arm above rather than failing unconditionally:
+        // a FAIL on a `when` condition is counted by the condition fold and outranks sibling
+        // conditions that passed, so it would drop a body those siblings would have enforced.
+        // `negated_empty_reference_in_a_when_condition_does_not_disarm_the_block` pins that.
         operators::EvalResult::EmptyRhsVacuouslyTrue => Ok(EvaluationResult::EmptyQueryResult(
             if role.is_strict() {
                 Status::FAIL

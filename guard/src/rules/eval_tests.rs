@@ -4164,25 +4164,44 @@ fn an_empty_reference_can_be_guarded_with_a_when_not_empty_gate() -> Result<()> 
     Ok(())
 }
 
-/// Failing closed must not disarm a block when the clause is a `when` condition itself.
+/// Why the empty-reference arms stay a SKIP for a `when` condition instead of failing closed
+/// like an assertion.
 ///
-/// `eval_rule` reads any non-PASS condition as "this rule does not apply" and drops every
-/// check in the guarded body, so a gate that cannot compare has to stay a SKIP. Failing it
-/// would trade one bypassed clause for an entire unenforced block while still exiting 0 --
-/// strictly worse than the bug being fixed, and the reason this arm is role-aware rather than
-/// an unconditional FAIL.
+/// The condition fold in `eval_conjunction_clauses` absorbs a SKIP but counts a FAIL, and it
+/// answers FAIL before PASS. A gate that cannot compare therefore has to SKIP: failing it
+/// would outrank the sibling conditions that did pass, make the rule inapplicable, and drop a
+/// body those siblings would have enforced -- all at exit 0, which is the same wrong-PASS
+/// shape this branch exists to close.
+///
+/// Two ANDed conditions here. The first compares against an empty reference and cannot be
+/// evaluated; the second passes. With the SKIP the second decides, the body runs, and its
+/// violation is reported as a FAIL. Under an unconditional FAIL the rule reports SKIP and
+/// nothing is enforced.
+///
+/// This shape is required to observe the difference at all. With a single condition both
+/// statuses are indistinguishable, because `eval_rule` maps every non-PASS condition to a
+/// rule-level SKIP; a disjunction hides it too, since a passing arm short-circuits either
+/// way. An earlier version of this test used one condition and passed no matter which status
+/// the arm returned.
+///
+/// `empty_reference_in_a_when_condition_does_not_disarm_the_block` is the same test for the
+/// positive polarity, which reaches the other empty-reference arm.
 #[test]
-fn failing_closed_on_an_empty_reference_does_not_disarm_a_gate() -> Result<()> {
+fn negated_empty_reference_in_a_when_condition_does_not_disarm_the_block() -> Result<()> {
     let rules = r###"
     let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
-    rule name_is_safe when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied {
-        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == 'PUBLIC-INSECURE'
+    rule name_is_approved when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+                               Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == 'approved-name'
     }
     "###;
 
-    // The gate cannot compare, so it stays SKIP and the rule is inapplicable. A FAIL there
-    // would look identical from the exit code while silently dropping the body.
-    assert_eq!(status_of(rules, ONE_BUCKET)?, Status::SKIP);
+    assert_eq!(
+        status_of(rules, ONE_BUCKET)?,
+        Status::FAIL,
+        "the unevaluatable condition must be absorbed so the passing condition still applies \
+         the rule; a FAIL there reports SKIP and drops the body"
+    );
     Ok(())
 }
 
