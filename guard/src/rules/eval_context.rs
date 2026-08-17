@@ -2002,15 +2002,20 @@ fn report_all_failed_clauses_for_rules<'value>(
 
             Some(RecordType::BlockGuardCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
                 if current.children.is_empty() {
                     clauses.push(ClauseReport::Block(GuardBlockReport {
                         context: current.context.clone(),
                         messages: Messages {
-                            error_message: Some(String::from(
-                                "query for block clause did not retrieve any value",
-                            )),
+                            // The record's own explanation when it carries one. This arm used to
+                            // hardcode the generic sentence below and ignore `message` entirely,
+                            // so a block that had said precisely why it failed was reported as
+                            // though it had merely selected nothing.
+                            error_message: Some(message.clone().unwrap_or_else(|| {
+                                String::from("query for block clause did not retrieve any value")
+                            })),
                             custom_message: None,
                             location: None,
                         },
@@ -2021,32 +2026,87 @@ fn report_all_failed_clauses_for_rules<'value>(
                 }
             }
 
+            // A disjunction records a message only on the error path in `eval_conjunction_clauses`,
+            // where it bails before any disjunct produced a child record. Reported as a block
+            // rather than as an empty `Disjunctions`, for the same reason as the arms below: an
+            // empty list of checks tells the reader nothing, and the message is the only account of
+            // what went wrong.
             Some(RecordType::Disjunction(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
+                let nested = report_all_failed_clauses_for_rules(&current.children);
+                if nested.is_empty() {
+                    if let Some(explanation) = message {
+                        clauses.push(ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(explanation.clone()),
+                                custom_message: None,
+                                location: None,
+                            },
+                            unresolved: None,
+                        }));
+                    }
+                    continue;
+                }
                 clauses.push(ClauseReport::Disjunctions(DisjunctionsReport {
-                    checks: report_all_failed_clauses_for_rules(&current.children),
+                    checks: nested,
                 }));
             }
 
+            // These four recurse into their children for the per-value detail. Each can also carry
+            // a message of its own, and that message used to be discarded: the arm matched with
+            // `..`, ignoring the field, and reported whatever the children produced.
+            //
+            // Nothing is what the children produce when the clause failed *because* there was
+            // nothing to compare. An empty-reference comparison records its explanation here and
+            // has no per-value results by construction, so the report came back empty, the console
+            // printed "Number of non-compliant resources 0", and the structured output carried
+            // "checks": [] with a null error_message -- for a run that had correctly exited 19.
+            //
+            // So: recurse when the children have something to say, and fall back to this record's
+            // own message when they do not. A failing clause now always explains itself somewhere.
             Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             }))
-            | Some(RecordType::TypeBlock(Status::FAIL))
             | Some(RecordType::TypeCheck(TypeBlockCheck {
                 block:
                     BlockCheck {
                         status: Status::FAIL,
+                        message,
                         ..
                     },
                 ..
             }))
             | Some(RecordType::WhenCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
+                let nested = report_all_failed_clauses_for_rules(&current.children);
+                if nested.is_empty() {
+                    if let Some(explanation) = message {
+                        clauses.push(ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(explanation.clone()),
+                                custom_message: None,
+                                location: None,
+                            },
+                            unresolved: None,
+                        }));
+                    }
+                } else {
+                    clauses.extend(nested);
+                }
+            }
+
+            // TypeBlock carries a bare Status with no message, so there is nothing to fall back to.
+            Some(RecordType::TypeBlock(Status::FAIL)) => {
                 clauses.extend(report_all_failed_clauses_for_rules(&current.children));
             }
 

@@ -438,7 +438,53 @@ fn single_line(
         writeln!(writer, "}}")?;
     }
 
+    // Failures that belong to no resource.
+    //
+    // Everything above is organised by resource, because a violation normally points at a value in
+    // the input. A clause that failed *because it had nothing to compare* points at nothing, so it
+    // never reaches a resource bucket, and `pprint_clauses` renders a block through its `unresolved`
+    // query, which such a block does not have either. The result was a run that correctly exited 19
+    // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
+    // explanation was recorded and then dropped on the floor.
+    let mut unattributed = Vec::new();
+    for each_rule in &failure_report.not_compliant {
+        collect_unattributed_explanations(each_rule, &mut unattributed);
+    }
+    if !unattributed.is_empty() {
+        writeln!(writer, "Clauses that could not be evaluated:")?;
+        for (context, message) in unattributed {
+            writeln!(writer, "  {context}")?;
+            writeln!(writer, "    {message}")?;
+        }
+    }
+
     Ok(())
+}
+
+/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
+///
+/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
+/// the value it got to, and the per-resource output renders that. A block with no such value failed
+/// for a reason that is only in its message.
+fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
+    match clause {
+        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
+            if let Some(explanation) = &blk.messages.error_message {
+                out.push((blk.context.to_string(), explanation.clone()));
+            }
+        }
+        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
+        ClauseReport::Rule(rule) => {
+            for child in &rule.checks {
+                collect_unattributed_explanations(child, out);
+            }
+        }
+        ClauseReport::Disjunctions(ors) => {
+            for child in &ors.checks {
+                collect_unattributed_explanations(child, out);
+            }
+        }
+    }
 }
 
 ///

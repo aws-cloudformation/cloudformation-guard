@@ -257,6 +257,83 @@ mod validate_tests {
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
+    /// A clause that fails because its reference resolved to nothing must say so in the output.
+    ///
+    /// Exit code alone is not enough, and asserting only the exit code is how this was missed: the
+    /// run correctly returned 19 while the console said "Number of non-compliant resources 0" and
+    /// the structured output carried `"checks": []` with a null error_message. The explanation was
+    /// built, recorded, and discarded by the reporter, so an operator got a failure with no stated
+    /// reason -- and docs/CLAUSES.md promised one.
+    ///
+    /// Both output paths are asserted because they discard messages independently. The structured
+    /// reporter walks the record tree, and the console reporter additionally organises findings by
+    /// resource, which a clause with nothing to compare cannot be attributed to.
+    #[rstest::rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    fn empty_reference_failure_explains_itself_in_the_output(#[case] output_format: Option<&str>) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["denied_names_from_empty_reference.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the clause must still fail; this test is about the explanation, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("resolved to no values"),
+            "output ({:?}) did not explain that the reference resolved to no values.\n{}",
+            output_format.unwrap_or("console"),
+            output
+        );
+        assert!(
+            output.contains("!empty"),
+            "the explanation should name the `!empty` guard as the remedy, got:\n{}",
+            output
+        );
+    }
+
+    /// The counterpart: a run with nothing wrong must not print the section.
+    ///
+    /// Without this, the assertion above is satisfied by a reporter that prints the explanation
+    /// unconditionally.
+    #[test]
+    fn a_clean_run_does_not_print_an_unevaluated_clause_section() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["denied_names_guarded_by_not_empty.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("Clauses that could not be evaluated"),
+            "a guarded, skipped clause is not an unevaluated failure, got:\n{}",
+            output
+        );
+    }
+
     #[test]
     fn test_single_data_file_single_rules_file_compliant() {
         let mut reader = Reader::default();

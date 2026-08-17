@@ -4804,6 +4804,54 @@ fn the_role_reaching_a_leaf_clause_survives_every_nesting() -> Result<()> {
 
     Ok(())
 }
+
+/// Every explanation this module records must have a path to the reader.
+///
+/// A message written into a record and never rendered is worse than no message: the code reads as
+/// though the failure explains itself, the documentation says it does, and the operator sees
+/// nothing. That is exactly what happened to the empty-reference explanation. It was constructed,
+/// threaded into a `BlockCheck`, asserted in review to be actionable -- and dropped, because
+/// `report_all_failed_clauses_for_rules` matched the block with `..`, ignored the field, and
+/// recursed into children that an empty comparison does not have. The console printed "Number of
+/// non-compliant resources 0" for a run that had correctly exited 19.
+///
+/// The fix was per-variant, so this test guards the property rather than any one variant: it counts
+/// the `message: Some(...)` sites in this module and pins the total. Adding one changes the count
+/// and fails here, which is the prompt to check that the new message can actually be rendered. The
+/// variants and their counts are listed so the next person can tell at a glance which reporter path
+/// a new message needs to reach.
+///
+/// Counting source text is crude, and deliberately so. The alternative -- asserting rendered output
+/// for each site -- is not reachable: most of these are `Err(_)` arms for conditions an ordinary
+/// rules file cannot provoke, so there would be nothing to drive them with. A count that must be
+/// consciously updated is worth more than coverage that silently omits the unreachable half.
+#[test]
+fn every_recorded_explanation_has_a_rendering_path() {
+    let source = include_str!("eval.rs");
+    let sites = source.matches("message: Some").count();
+
+    // Site counts by the record variant each lands on, as of this change:
+    //
+    //   ClauseValueCheck        3   leaf value checks; rendered by the clause arms already
+    //   GuardClauseBlockCheck   4   rendered: falls back to the message when no children report
+    //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
+    //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
+    //   TypeCheck               2   rendered: same fallback
+    //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
+    //
+    // Every variant that can carry a message now has a rendering path. If this total changes,
+    // find the new site, note which variant it records against, and confirm
+    // report_all_failed_clauses_for_rules surfaces it.
+    const SITES_EXPECTED: usize = 13;
+
+    assert_eq!(
+        sites, SITES_EXPECTED,
+        "the number of recorded explanations in eval.rs changed from {SITES_EXPECTED} to {sites}. \
+         A new message needs a rendering path in report_all_failed_clauses_for_rules, or it will \
+         be recorded and silently discarded; update the table above once you have checked."
+    );
+}
+
 /// `EMPTY` and `!EMPTY` on a boolean are an incompatible-type error, not a silent pass.
 ///
 /// The Bool arm of `element_empty_operation` computed `(*boolean).to_string().is_empty()`.
