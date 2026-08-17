@@ -4173,7 +4173,7 @@ fn an_empty_reference_can_be_guarded_with_a_when_not_empty_gate() -> Result<()> 
 /// body those siblings would have enforced -- all at exit 0, which is the same wrong-PASS
 /// shape this branch exists to close.
 ///
-/// Two ANDed conditions here. The first compares against an empty reference and cannot be
+/// Two conditions joined by AND here. The first compares against an empty reference and cannot be
 /// evaluated; the second passes. With the SKIP the second decides, the body runs, and its
 /// violation is reported as a FAIL. Under an unconditional FAIL the rule reports SKIP and
 /// nothing is enforced.
