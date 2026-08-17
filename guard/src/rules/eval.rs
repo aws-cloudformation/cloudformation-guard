@@ -1627,11 +1627,33 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     Ok(status)
 }
 
+/// `role` is the role of the context this `when` block appears in, and it is inherited by the
+/// guarded body.
+///
+/// Required rather than defaulted on purpose. This function used to take no role and hardcode
+/// [`ClauseRole::Assertion`] for the body, on the reasoning that a guarded block holds the rule's
+/// own assertions however its conditions were evaluated. That is true of a rule evaluated as an
+/// assertion and false of one evaluated as a gate: the body of a gate is part of deciding whether
+/// the gate applies, so an unevaluatable clause in it has to SKIP rather than fail closed.
+///
+/// Getting it wrong produced the exact wrong-PASS this module exists to prevent. A parameterized
+/// rule used as a gate, whose body wrapped an empty-reference clause in `when { ... }`, failed that
+/// clause as an assertion; `eval_conjunction_clauses` counts a FAIL and absorbs a SKIP, and answers
+/// FAIL before PASS, so the failure outranked a passing sibling condition, the enclosing rule was
+/// treated as inapplicable, and its guarded checks were dropped at exit 0. Spelling the same rule
+/// without the inner `when` exited 19.
+///
+/// Taking it as a parameter with no default means a caller that forgets to thread it does not
+/// compile, which is a stronger guarantee than any test:
+/// `nested_when_inherits_the_enclosing_role` and the generated matrix in
+/// `the_role_reaching_a_leaf_clause_survives_every_nesting` pin the behaviour, but only this
+/// signature prevents the omission being reintroduced silently.
 fn eval_when_condition_block<'value, 'loc: 'value>(
     context: String,
     conditions: &'value WhenConditions<'loc>,
     block: &'value Block<'loc, GuardClause<'loc>>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Result<Status> {
     resolver.start_record(&context)?;
     let when_context = format!("{}/When", context);
@@ -1672,11 +1694,12 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
     };
 
     Ok(
-        // The guarded block holds the rule's actual assertions, regardless of how
-        // the conditions were evaluated.
-        match eval_general_block_clause(block, resolver, |gc, r| {
-            eval_guard_clause(gc, r, ClauseRole::Assertion)
-        }) {
+        // The guarded body inherits the role of the context the `when` block sits in, rather than
+        // assuming it is an assertion. Its own conditions were evaluated as gates above -- that is
+        // what `eval_when_clause` does and it is unconditional -- but the body is only assertions
+        // when the enclosing context is one. See this function's doc comment for what assuming
+        // otherwise cost.
+        match eval_general_block_clause(block, resolver, |gc, r| eval_guard_clause(gc, r, role)) {
             Ok(status) => {
                 resolver.end_record(
                     &context,
@@ -1896,6 +1919,7 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
             conditions,
             block,
             resolver,
+            role,
         ),
         GuardClause::ParameterizedNamedRule(prc) => {
             eval_parameterized_rule_call(prc, resolver, role)
@@ -2116,7 +2140,7 @@ pub(in crate::rules) fn eval_rule_clause<'value, 'loc: 'value>(
         RuleClause::Clause(gc) => eval_guard_clause(gc, resolver, role),
         RuleClause::TypeBlock(tb) => eval_type_block_clause(tb, resolver, role),
         RuleClause::WhenBlock(conditions, block) => {
-            eval_when_condition_block("RuleClause".to_string(), conditions, block, resolver)
+            eval_when_condition_block("RuleClause".to_string(), conditions, block, resolver, role)
         }
     }
 }

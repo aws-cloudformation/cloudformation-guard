@@ -4639,6 +4639,171 @@ fn a_skipping_parameterized_gate_does_not_drop_a_body_its_sibling_enforces() -> 
     Ok(())
 }
 
+/// A `when` block inside a gate must not evaluate its body as an assertion.
+///
+/// `eval_when_condition_block` took no role and hardcoded `ClauseRole::Assertion` for the guarded
+/// body, on the reasoning that a guarded block holds the rule's own assertions however its
+/// conditions were evaluated. True of a rule evaluated as an assertion; false of one evaluated as a
+/// gate.
+///
+/// The cost was a wrong PASS of exactly the shape this module exists to prevent. Wrapping an
+/// empty-reference clause in `when { ... }` inside a parameterized gate failed it as an assertion;
+/// `eval_conjunction_clauses` counts a FAIL and absorbs a SKIP and answers FAIL before PASS, so the
+/// failure outranked the passing sibling condition, the enclosing rule became inapplicable, and its
+/// guarded check was dropped at exit 0. The same rule without the inner `when` exited 19.
+///
+/// Both spellings are asserted together, because the defect was invisible in either alone: each on
+/// its own merely looks like whatever the current behaviour is, and only the pair shows that
+/// wrapping a clause in `when` changed its meaning.
+#[test]
+fn nested_when_inherits_the_enclosing_role() -> Result<()> {
+    // A gate whose body holds the empty-reference clause directly. The clause SKIPs as a gate, the
+    // SKIP is absorbed, the passing sibling applies the rule, and the body decides.
+    let direct = r###"
+    let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule relevant(ty) {
+        Resources.*[ Type == %ty ].Properties.BucketName != %denied
+    }
+    rule guarded when relevant('AWS::S3::Bucket')
+                      Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == 'approved-name'
+    }
+    "###;
+
+    // The same gate, with the clause wrapped in a `when` block whose condition passes. Wrapping
+    // must not change what the clause means.
+    let nested = r###"
+    let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+    rule relevant(ty) {
+        when Resources.*[ Type == %ty ] !empty {
+            Resources.*[ Type == %ty ].Properties.BucketName != %denied
+        }
+    }
+    rule guarded when relevant('AWS::S3::Bucket')
+                      Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == 'approved-name'
+    }
+    "###;
+
+    assert_eq!(
+        status_of(direct, ONE_BUCKET)?,
+        Status::FAIL,
+        "baseline: the gate does not apply, the sibling passes, and the body catches the name"
+    );
+    assert_eq!(
+        status_of(nested, ONE_BUCKET)?,
+        Status::FAIL,
+        "wrapping the gate's clause in `when` dropped the guarded body: the clause failed as an \
+         assertion, which outranked the passing sibling condition and exited 0"
+    );
+
+    Ok(())
+}
+
+/// Exhaustive check that the role reaching a leaf clause survives arbitrary `when` nesting.
+///
+/// `nested_when_inherits_the_enclosing_role` pins the one shape that was broken. This pins the
+/// surface around it, because the defect was not that one arm was wrong on purpose -- it was that
+/// role threading is invisible when omitted. Three of the four arms of `eval_guard_clause` forwarded
+/// `role` and one silently did not, and nothing failed.
+///
+/// The axes are the enclosing role, the nesting depth, and the leaf clause's polarity. Rows are
+/// generated rather than written out, and `ROWS_EXPECTED` is asserted against the product of the
+/// axis lengths, so dropping an axis value fails instead of quietly shrinking coverage.
+///
+/// What makes each cell observable: an empty-reference clause is the leaf precisely because it
+/// answers differently by role -- FAIL as an assertion, SKIP as a gate. The fixtures are built so
+/// the two answers produce *different file statuses*, which a single fixture would not do:
+///
+/// - As an assertion, a correct leaf FAILs the rule, so the file FAILs. Leaking the gate role
+///   instead would SKIP it.
+/// - As a gate, a correct leaf SKIPs, is absorbed by the condition fold, and lets the passing
+///   sibling apply the rule, whose body is written to pass -- so the file PASSes. Leaking the
+///   assertion role instead would FAIL the gate, outrank the sibling, and SKIP the rule.
+///
+/// So expected FAIL for assertions and PASS for gates, with SKIP being the signature of a leaked
+/// role in either direction.
+#[test]
+fn the_role_reaching_a_leaf_clause_survives_every_nesting() -> Result<()> {
+    // (label, clause tail against an empty reference)
+    const LEAVES: [(&str, &str); 2] = [("negated", "!= %denied"), ("positive", "IN %denied")];
+    const DEPTHS: [usize; 3] = [0, 1, 2];
+    const ROLES: [&str; 2] = ["assertion", "gate"];
+    const ROWS_EXPECTED: usize = 2 * 3 * 2;
+
+    let mut rows = 0;
+
+    for (leaf_label, leaf_tail) in LEAVES {
+        for depth in DEPTHS {
+            for role in ROLES {
+                // The gate fixture has to use a *parameterized* rule. A plain named rule is also
+                // evaluated as a top-level rule in its own right, as an assertion, so its own
+                // failure would decide the file status and mask what the gate reference did with
+                // it. A parameterized rule needs arguments, so it is only ever evaluated where it
+                // is called. An earlier version of this matrix used a plain rule and failed on
+                // that, not on the behaviour under test.
+                //
+                // The type is therefore spelled through the parameter in the gate case and
+                // literally in the assertion case, so both fixtures select the same resources.
+                let ty = if role == "gate" {
+                    "%ty"
+                } else {
+                    "'AWS::S3::Bucket'"
+                };
+                let condition = format!("Resources.*[ Type == {ty} ] !empty");
+
+                // Wrap the leaf in `depth` passing `when` blocks.
+                let mut body =
+                    format!("Resources.*[ Type == {ty} ].Properties.BucketName {leaf_tail}");
+                for _ in 0..depth {
+                    body = format!("when {condition} {{\n            {body}\n        }}");
+                }
+
+                let rules = if role == "assertion" {
+                    // Top level, so the clauses are assertions.
+                    format!(
+                        "let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId\n\
+                         rule r {{\n        {body}\n    }}"
+                    )
+                } else {
+                    // Invoked as a parameterized gate, with a passing sibling condition so a gate
+                    // FAIL is distinguishable from a gate SKIP, and a body written to pass.
+                    format!(
+                        "let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId\n\
+                         rule relevant(ty) {{\n        {body}\n    }}\n\
+                         rule guarded when relevant('AWS::S3::Bucket')\n\
+                                           Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {{\n\
+                             Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName \
+                             == 'PUBLIC-INSECURE'\n\
+                         }}"
+                    )
+                };
+
+                let expected = if role == "assertion" {
+                    Status::FAIL
+                } else {
+                    Status::PASS
+                };
+
+                let got = status_of(rules.as_str(), ONE_BUCKET)?;
+                assert_eq!(
+                    got, expected,
+                    "{role} leaf {leaf_label} at nesting depth {depth}: expected {expected:?}, \
+                     got {got:?}. SKIP here means the role was lost on the way to the leaf and the \
+                     clause answered as the other kind.\nrules:\n{rules}"
+                );
+                rows += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        rows, ROWS_EXPECTED,
+        "the matrix must cover every combination of the axes; an axis lost a value"
+    );
+
+    Ok(())
+}
 /// `EMPTY` and `!EMPTY` on a boolean are an incompatible-type error, not a silent pass.
 ///
 /// The Bool arm of `element_empty_operation` computed `(*boolean).to_string().is_empty()`.
