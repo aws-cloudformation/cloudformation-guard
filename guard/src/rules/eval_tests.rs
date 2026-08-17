@@ -7266,49 +7266,6 @@ fn every_recorded_explanation_has_a_rendering_path() {
     );
 }
 
-    //   ClauseValueCheck        4   leaf value checks; rendered by the clause arms already
-    //   GuardClauseBlockCheck   4   rendered: falls back to the message when no children report
-    //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
-    //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
-    //   TypeCheck               5   four failures, plus the one skip site below
-    //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
-    //
-    // The fifth GuardClauseBlockCheck is the newest: a `when` condition that references a rule
-    // which did not apply. That gate now answers SKIP instead of FAIL, so the conjunction absorbs
-    // it rather than dropping the guarded body, and the resulting rule-level SKIP needs to say
-    // which condition declined. It reaches the reader through `find_skip_reason`, and is asserted
-    // end to end by `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
-    //
-    // The TypeCheck skip site is the one that was hardest to render. A skipped rule used to reach
-    // the reporters as a bare name, so a message on a skip record was recorded and discarded --
-    // this test refused an earlier attempt to add one, which is what it is for. Skips now carry
-    // their reason through `find_skip_reason`. It is one `message:` site holding four sentences:
-    // an empty selection, an unselectable one, a `when` condition that exempted everything, and
-    // clauses that were inapplicable to everything. `a_skipped_type_block_explains_itself_in_the_output`
-    // and `a_type_block_skip_names_the_cause_it_can_support` assert them end to end.
-    //
-    // The per-slot variant of that message is deliberately gone. Recording it against the
-    // resource slot put a second `TypeCheck` where display.rs documents a `TypeBlock`, and
-    // `find_skip_reason` reads it off the block's own record anyway, so the reason now travels in
-    // a local instead of a record.
-    //
-    // If this total changes, find the new site, note which variant it records against, and confirm
-    // it reaches rendered output before updating the number.
-    //
-    // Eighteen rather than seventeen on this branch: the NotComparable arm records
-    // `Some(nc.reason)` on a ClauseValueCheck, a variant that already had a rendering
-    // path. Checked rather than assumed -- `Properties.Size > 'not-a-number'` against
-    // an integer Size prints `Error = [... not comparable int, String]` in the console.
-    const SITES_EXPECTED: usize = 18;
-
-    assert_eq!(
-        sites, SITES_EXPECTED,
-        "the number of recorded explanations in eval.rs changed from {SITES_EXPECTED} to {sites}. \
-         A new message needs a rendering path, or it will be recorded and silently discarded; \
-         update the table above once you have checked that it reaches the output."
-    );
-}
-
 /// `EMPTY` and `!EMPTY` on a boolean are an incompatible-type error, not a silent pass.
 ///
 /// `EMPTY` on a boolean fails, in both polarities, and says why.
@@ -10342,32 +10299,39 @@ fn role_does_not_change_a_populated_comparison() -> Result<()> {
 /// Measured on a template containing no S3 bucket at all, so the bucket query selects nothing:
 ///
 ///     <query> == %lit     SKIP
-///     %lit == <query>      FAIL   <- the asymmetry, and only here
+///     %lit == <query>      FAIL
 ///     <query> != %lit     SKIP
-///     %lit != <query>      SKIP
+///     %lit != <query>      FAIL
 ///
-/// A comment in `CmpOperator::compare` used to call the FAIL a contradiction of
-/// docs/QUERY_AND_FILTERING.md:222, which says a query matching nothing makes block level
-/// clauses skip. On the measurements that claim is too strong, twice over: the doc sentence is
-/// about clauses whose *subject* is the empty query, and the disagreement is confined to the
-/// positive spelling -- both negated forms already agree at SKIP.
-///
-/// The reading that makes all four cells right is that Guard's comparison is not
-/// operand-symmetric even when the operator is. The left side is the subject being checked and
-/// the right side is the reference it is checked against:
+/// The rule the four cells follow is that Guard's comparison is not operand-symmetric even when
+/// the operator is. The left side is the subject being checked and the right side is the
+/// reference it is checked against, and only the subject's emptiness excuses the clause:
 ///
 /// - no subject values: there is nothing to assert, so the rule does not apply. SKIP. This is
-///   what lets one ruleset run against templates that do not all contain the resource type,
-///   which is the case the doc sentence describes.
-/// - no reference values: the assertion is that the subject is among the references, and
-///   nothing is among zero references, so it cannot hold. FAIL. Making this SKIP instead is
-///   how an allowlist that resolved empty used to report compliance, which
+///   what lets one ruleset run against templates that do not all contain the resource type.
+/// - no reference values: the clause cannot be decided, in either polarity, so it fails. FAIL.
+///   Making this SKIP is how an allowlist that resolved empty used to report compliance, which
 ///   `positive_comparison_against_empty_reference_fails` exists to prevent.
 ///
-/// So this is pinned rather than fixed, and deliberately: "fix the asymmetry" means picking one
-/// of those two to break. Making the mirrored form SKIP reintroduces the empty-allowlist wrong
-/// PASS; making the forward form FAIL breaks every ruleset run against a template lacking the
-/// resource type. v3.2.0 exits 0 for both spellings, so it had the wrong PASS in both.
+/// The mirrored negated cell asserted SKIP until the semantics were settled in review on
+/// PR #717. The argument for SKIP was that the clause is vacuously satisfied -- nothing can
+/// collide with zero references -- and it was rejected because a wrong SKIP exits 0 and is
+/// indistinguishable from a pass in CI, so `Property != %empty_reference` silently enforced
+/// nothing. `negated_comparison_against_empty_reference_fails` carries the full reasoning.
+///
+/// That decision also removed the wrinkle this test used to record. A comment in
+/// `CmpOperator::compare` once called the mirrored FAIL a contradiction of
+/// docs/QUERY_AND_FILTERING.md:222, which says a query matching nothing makes block level
+/// clauses skip; the answer was that the doc sentence is about clauses whose *subject* is the
+/// empty query, and that the disagreement was confined to the positive spelling because both
+/// negated forms agreed at SKIP. The second half of that no longer holds: both negated forms
+/// now follow the same operand-role rule as the positive ones, so the split is clean and the
+/// doc sentence is simply about the subject side.
+///
+/// This remains pinned rather than "fixed". Collapsing the asymmetry means picking one side to
+/// break: making the mirrored form SKIP reintroduces the empty-allowlist wrong PASS, and making
+/// the forward form FAIL breaks every ruleset run against a template lacking the resource type.
+/// v3.2.0 exits 0 for all four, so it had the wrong PASS in both mirrored cells.
 #[test]
 fn zero_selection_is_asymmetric_by_operand_role() -> Result<()> {
     let no_bucket =
@@ -10396,7 +10360,7 @@ fn zero_selection_is_asymmetric_by_operand_role() -> Result<()> {
         (
             "mirrored negated",
             format!("%expected != {query}"),
-            Status::SKIP,
+            Status::FAIL,
         ),
     ] {
         let rules = format!("let expected = 'Owner'\nrule r {{ {clause} }}");
