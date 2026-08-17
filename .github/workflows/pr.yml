@@ -42,6 +42,30 @@ jobs:
       - name: Shellcheck
         run: shellcheck install-guard.sh
 
+  # The PowerShell counterpart to shellcheck. install-guard.ps1 had no static analysis, which is
+  # how a WMI cmdlet that PowerShell 6 removed sat in it unnoticed -- this workflow runs pwsh 7,
+  # so nothing here would have caught it before a user did. Configured by
+  # .github/PSScriptAnalyzerSettings.psd1; runs on ubuntu because the analyser is
+  # platform independent and a Linux runner is cheaper than a Windows one.
+  psscriptanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -AcceptLicense
+      - name: Analyze install-guard.ps1
+        shell: pwsh
+        run: |
+          $findings = Invoke-ScriptAnalyzer -Path install-guard.ps1 `
+            -Settings .github/PSScriptAnalyzerSettings.psd1
+          if ($findings) {
+            $findings | Format-Table -AutoSize Severity, Line, RuleName, Message | Out-String -Width 200 | Write-Host
+            throw "PSScriptAnalyzer reported $($findings.Count) finding(s)"
+          }
+          Write-Host "PSScriptAnalyzer: no findings"
+
   formatting:
     name: Formatting check (cargo fmt)
     runs-on: ubuntu-latest
