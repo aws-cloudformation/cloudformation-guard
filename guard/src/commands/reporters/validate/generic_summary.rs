@@ -252,6 +252,11 @@ fn print_rules_output(
     if !rules.is_empty() {
         writeln!(writer, "--")?;
     }
+    // Sorted for the same reason the failing and skipped sections are: `rules` is a HashSet, and
+    // Rust seeds its hasher per process, so iterating it directly printed the compliant rules in a
+    // different order on every run of the same binary over the same input.
+    let mut rules = rules.into_iter().collect::<Vec<String>>();
+    rules.sort();
     for rule in rules {
         writeln!(
             writer,

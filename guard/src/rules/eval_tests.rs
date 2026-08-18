@@ -4102,7 +4102,7 @@ fn positive_comparison_against_empty_reference_fails() -> Result<()> {
 /// expectation with an accompanying `!empty` clause. Rejected: it leaves every existing
 /// ruleset without such a guard silently defeatable, which is the state being fixed.
 ///
-/// FAIL specifically, not merely "not SKIP" — a PASS here would short-circuit a disjunction
+/// FAIL specifically, not merely "not SKIP" -- a PASS here would short-circuit a disjunction
 /// and abandon its sibling disjuncts, which
 /// `vacuous_negated_comparison_does_not_satisfy_a_disjunction` covers.
 #[test]
@@ -4841,32 +4841,31 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //   GuardClauseBlockCheck   5   rendered: falls back to the message when no children report
     //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
-    //   TypeCheck               6   four failures, plus the two skips below
+    //   TypeCheck               5   four failures, plus the one skip site below
     //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
     //
     // The fifth GuardClauseBlockCheck is the newest: a `when` condition that references a rule
     // which did not apply. That gate now answers SKIP instead of FAIL, so the conjunction absorbs
     // it rather than dropping the guarded body, and the resulting rule-level SKIP needs to say
-    // which condition declined. It reaches the reader through `find_skip_reason`, the same route
-    // as the two TypeCheck skips below, and is asserted end to end by
-    // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
+    // which condition declined. It reaches the reader through `find_skip_reason`, and is asserted
+    // end to end by `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
     //
-    // The two TypeCheck skips are the newest and were the hardest to render. A skipped rule used
-    // to reach the reporters as a bare name, so a message on a skip record was recorded and
-    // discarded -- this test refused an earlier attempt to add one, which is what it is for.
-    // Skips now carry their reason through `find_skip_reason`, and both are asserted end to end by
-    // `a_skipped_type_block_explains_itself_in_the_output`.
+    // The TypeCheck skip site is the one that was hardest to render. A skipped rule used to reach
+    // the reporters as a bare name, so a message on a skip record was recorded and discarded --
+    // this test refused an earlier attempt to add one, which is what it is for. Skips now carry
+    // their reason through `find_skip_reason`. It is one `message:` site holding four sentences:
+    // an empty selection, an unselectable one, a `when` condition that exempted everything, and
+    // clauses that were inapplicable to everything. `a_skipped_type_block_explains_itself_in_the_output`
+    // and `a_type_block_skip_names_the_cause_it_can_support` assert them end to end.
+    //
+    // The per-slot variant of that message is deliberately gone. Recording it against the
+    // resource slot put a second `TypeCheck` where display.rs documents a `TypeBlock`, and
+    // `find_skip_reason` reads it off the block's own record anyway, so the reason now travels in
+    // a local instead of a record.
     //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    //
-    // Eighteen since the unresolvable-slot arm: a type block whose query cannot select
-    // anything records a SKIP with its reason instead of returning an Err that aborted the
-    // whole rules file. Checked rather than assumed -- against a document with no Resources
-    // at its root the console prints `no AWS::EC2::Volume could be selected from the input`,
-    // carried through by find_skip_reason, and
-    // an_unresolved_type_block_query_skips_without_aborting_the_file pins the behaviour.
-    const SITES_EXPECTED: usize = 18;
+    const SITES_EXPECTED: usize = 17;
 
     assert_eq!(
         sites, SITES_EXPECTED,
@@ -5810,6 +5809,497 @@ fn an_unresolved_type_block_query_skips_without_aborting_the_file() -> Result<()
         "the unrelated rule fails on this input, and an unresolvable type block elsewhere in the \
          file must not suppress that"
     );
+
+    Ok(())
+}
+
+/// An index literal too large for the array must not panic the process.
+///
+/// The parser reads index literals as `i64` and narrows them with `as i32`, so a positive literal
+/// above `i32::MAX` arrives at the evaluator as a negative number, and `2147483648` arrives as
+/// exactly `i32::MIN`. The three places that turned an index into a slot took its absolute value
+/// with `-index`, which is not representable for `i32::MIN`: debug builds panicked with "attempt to
+/// negate with overflow" and release builds wrapped, then failed the bounds check with a value
+/// nobody could read.
+///
+/// A panic is the wrong answer for any rule text. cfn-guard is a library as well as a CLI, and this
+/// input is reachable from a ruleset with a typo in it -- the repo fuzzes rule parsing precisely
+/// because that is not a hypothetical.
+///
+/// Both the interpolated-key path and the plain list path are exercised, because they call different
+/// functions with the same defect. What each answers is unchanged for in-range indices; the
+/// out-of-range ones now resolve to nothing instead of aborting.
+#[test]
+fn an_out_of_range_index_does_not_panic() -> Result<()> {
+    const DATA: &str = r#"{ "Items": [ "zero", "one" ], "Resources": { "A": { "Type": "t" } } }"#;
+
+    // `i32::MIN` after the parser's `as i32` narrowing, spelled both ways, plus the plain negative.
+    let queries = [
+        "Items[2147483648]",
+        "Items[-2147483648]",
+        "Items[-1]",
+        "Items[0]",
+    ];
+
+    for query in queries {
+        let rules = format!("rule r {{\n    {} == \"zero\"\n}}\n", query);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let value = PathAwareValue::try_from(DATA)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        // The verdict is not the point -- not panicking is. Asserting `is_ok` also covers the
+        // release-build half, where the wrapped index produced a retrieval error rather than a
+        // crash and so would have passed a panic-only test.
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        assert!(
+            status.is_ok(),
+            "{} returned an error instead of resolving or failing to resolve: {:?}",
+            query,
+            status.err()
+        );
+    }
+
+    // In-range indices still answer what they always did, in case `unsigned_abs` changed more than
+    // the overflow case. Guard treats a negative index as its absolute value rather than as an
+    // offset from the end, which is surprising but long-standing, so `[-1]` and `[1]` agree.
+    for (query, expected) in [
+        ("Items[0]", Status::PASS),
+        ("Items[1]", Status::FAIL),
+        ("Items[-1]", Status::FAIL),
+    ] {
+        let rules = format!("rule r {{\n    {} == \"zero\"\n}}\n", query);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let value = PathAwareValue::try_from(DATA)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            expected,
+            "{} against {}",
+            query,
+            DATA
+        );
+    }
+
+    Ok(())
+}
+
+/// A type block that reports SKIP names a cause it can actually support.
+///
+/// There are four ways to get here and the block used to distinguish two of them, so the other two
+/// were told the wrong story: the fallback sentence claimed "every X in the input was exempted by
+/// the type block's `when` condition", which is a false statement whenever the block has no `when`
+/// condition at all. That is reachable two ways -- a filter in a body clause selecting nothing, and
+/// an inner `when` that does not fire -- and both are ordinary rule shapes rather than contrivances.
+///
+/// Naming the wrong cause is worse than naming none, because it sends the reader to inspect a
+/// condition that does not exist. This whole branch is about making an exit-0 non-check visible, and
+/// a wrong explanation is a regression against that, not a cosmetic one.
+///
+/// Asserted through the record tree rather than the console, so the test does not depend on which
+/// reporter is in play; `a_skipped_type_block_explains_itself_in_the_output` covers the rendering.
+#[test]
+fn a_type_block_skip_names_the_cause_it_can_support() -> Result<()> {
+    // One volume, 5 GiB, unencrypted. It carries a tag so that a filter over `Tags` selects
+    // nothing rather than failing to resolve `Tags` at all -- those are different outcomes, and
+    // only the first one reaches the SKIP arms under test.
+    const ONE_SMALL_VOLUME: &str = r#"{
+        "Resources": {
+            "Vol": {
+                "Type": "AWS::EC2::Volume",
+                "Properties": {
+                    "Size": 5,
+                    "Encrypted": false,
+                    "Tags": [ { "Key": "Name", "Value": "v" } ]
+                }
+            }
+        }
+    }"#;
+
+    // (label, rules, the fragment the reason must contain, a fragment it must not)
+    let cases = [
+        (
+            "a `when` condition that exempted the only volume",
+            r###"
+            rule r {
+                AWS::EC2::Volume when Properties.Size > 10 {
+                    Properties.Encrypted == true
+                }
+            }
+            "###,
+            "exempted by the type block's `when` condition",
+            "no clause in the type block applied",
+        ),
+        (
+            "no `when` condition, body filter selects nothing",
+            r###"
+            rule r {
+                AWS::EC2::Volume {
+                    Properties.Tags[ Key == 'nope' ].Value == 'x'
+                }
+            }
+            "###,
+            "no clause in the type block applied",
+            // Tighter than "was exempted": a block with no `when` of its own must not mention one
+            // at all, which is the mistake this case exists to catch.
+            "`when` condition",
+        ),
+        (
+            "no `when` condition, inner `when` does not fire",
+            r###"
+            rule r {
+                AWS::EC2::Volume {
+                    when Properties.Size > 100 {
+                        Properties.Encrypted == true
+                    }
+                }
+            }
+            "###,
+            "no clause in the type block applied",
+            // Tighter than "was exempted": a block with no `when` of its own must not mention one
+            // at all, which is the mistake this case exists to catch.
+            "`when` condition",
+        ),
+        (
+            "the type is absent from the input entirely",
+            r###"
+            rule r {
+                AWS::SQS::Queue {
+                    Properties.QueueName exists
+                }
+            }
+            "###,
+            "no AWS::SQS::Queue in the input",
+            "exempted",
+        ),
+    ];
+
+    for (label, rules, expected, forbidden) in cases {
+        let rules_file = RulesFile::try_from(rules)?;
+        let value = PathAwareValue::try_from(ONE_SMALL_VOLUME)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            Status::SKIP,
+            "{label}: the rule does not apply on this input"
+        );
+        let top = root.reset_recorder().extract();
+        // Arguments spelled out rather than captured inline: this crate is on edition 2018, where a
+        // lone string literal passed to `assert!`/`panic!` becomes the payload verbatim instead of
+        // going through `format_args!`, so `{label}` would print as those seven characters.
+        let reason = crate::rules::eval_context::find_skip_reason(&top)
+            .unwrap_or_else(|| panic!("{}: no skip reason was recorded at all", label));
+        assert!(
+            reason.contains(expected),
+            "{}: wanted {:?} in the reason, got {:?}",
+            label,
+            expected,
+            reason
+        );
+        assert!(
+            !reason.contains(forbidden),
+            "{}: the reason claimed {:?}, which this rule cannot support: {:?}",
+            label,
+            forbidden,
+            reason
+        );
+    }
+
+    Ok(())
+}
+
+/// The two spellings of a `when` gate on an inapplicable rule have to agree, and neither may
+/// silently disarm the block.
+///
+/// `eval_conjunction_clauses` absorbs a SKIP and counts a FAIL, and answers FAIL before PASS. So a
+/// gate condition that returns FAIL because the rule it references did not apply outranks the
+/// sibling conditions that passed: the `when` does not pass, `eval_rule` drops the body, and the
+/// file exits 0 having enforced nothing. That is the failure mode `ClauseRole::Gate` exists to
+/// prevent -- "the block it guards is still decided by the remaining conditions".
+///
+/// `eval_parameterized_rule_call` was given a `Status::SKIP if !negation => Status::SKIP` arm for
+/// exactly this, with a comment claiming it mirrors `eval_guard_named_clause`. It did not:
+/// `eval_guard_named_clause` had no such arm, so the plain reference still answered FAIL. Two
+/// rulesets that differ only in whether the gate takes a parameter disagreed -- one exited 0 with
+/// the body unenforced, the other exited 19 having enforced it.
+///
+/// Both spellings are asserted here rather than only the fixed one, because the property under test
+/// is the agreement. A future change that "fixes" the parameterized arm back to FAIL would keep a
+/// single-spelling test passing.
+///
+/// The single-condition case is asserted alongside: with one condition, SKIP and FAIL are
+/// indistinguishable at the rule level (`eval_rule` maps every non-PASS condition to SKIP), so a
+/// test that used one condition would have passed against the defect.
+#[test]
+fn a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block() -> Result<()> {
+    // `skipper`'s filter selects nothing, so its only clause -- and therefore the rule -- is SKIP.
+    // `Present` is 3, so the guarded body fails if it is ever reached.
+    const DATA: &str = r#"{ "Present": 3, "Items": [ { "Kind": "yes", "Value": 1 } ] }"#;
+
+    let named = r###"
+    rule skipper {
+        Items[ Kind == 'nope' ].Value == 1
+    }
+
+    rule gated when skipper
+                    Present exists {
+        Present == 2
+    }
+    "###;
+
+    let parameterized = r###"
+    rule skipper(v) {
+        Items[ Kind == 'nope' ].Value == %v
+    }
+
+    rule gated when skipper(1)
+                    Present exists {
+        Present == 2
+    }
+    "###;
+
+    for (label, rules) in [
+        ("a plain named-rule gate", named),
+        ("a parameterized gate", parameterized),
+    ] {
+        let rules_file = RulesFile::try_from(rules)?;
+        let value = PathAwareValue::try_from(DATA)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            Status::FAIL,
+            "{label} on a rule that did not apply was absorbed by neither the conjunction nor the \
+             fold: the sibling condition passed, so the body had to be enforced and it fails on \
+             this input. SKIP here means the body was dropped at exit 0."
+        );
+    }
+
+    // With the gate as the only condition the rule is genuinely inapplicable, and stays so.
+    let sole_condition = r###"
+    rule skipper {
+        Items[ Kind == 'nope' ].Value == 1
+    }
+
+    rule gated when skipper {
+        Present == 2
+    }
+    "###;
+    let rules_file = RulesFile::try_from(sole_condition)?;
+    let value = PathAwareValue::try_from(DATA)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::SKIP,
+        "with nothing else to decide the `when`, a gate on an inapplicable rule leaves the rule \
+         inapplicable"
+    );
+
+    Ok(())
+}
+
+/// Generated rule shapes, checked against invariants that need no oracle.
+///
+/// Every hand-written test in this file asserts a verdict someone worked out by hand, which means it
+/// covers the combinations that occurred to whoever wrote it. The regression this branch introduced
+/// was invisible to all of them and to a differential over the repository's 45 rule files, because it
+/// only appeared when a rules file held a type block *and* an unrelated rule -- with one rule per
+/// file, an abort and a clean skip both leave nothing reported and are indistinguishable. Combining
+/// constructs is what a generator does that a fixture author does not.
+///
+/// The invariants below hold regardless of what the right answer for a given rule is, which is what
+/// makes generation useful here: there is no oracle, so anything requiring one is not asserted.
+///
+/// 1. **Canary isolation.** Prepending an always-failing rule must still report that rule's failure.
+///    This is the invariant that catches an abort, and the one the regression violated.
+/// 2. **Determinism.** The same input evaluated twice gives the same status.
+/// 3. **Negation discriminates.** For a clause both polarities can decide, `not X` and `X` must not
+///    agree. A clause that answers the same either way has stopped checking anything, which is the
+///    defect `a54e4ca` and `0e140b3` fixed.
+///
+/// The one documented exception is stated in the code: an incompatible-type error still propagates
+/// out and aborts the rules file, so a canary in the same file loses its finding. That is unchanged
+/// from the merge-base -- verified with both binaries -- and is the hazard #717's notes flagged when
+/// it converted `EMPTY` on an unsupported type into an error. Asserting it rather than skipping it
+/// means the day someone converts that error into a per-clause failure, this test tells them the
+/// exception can be removed.
+#[test]
+fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
+    const FILTER: &str = "Resources.*[ Type == 'AWS::EC2::Volume' ]";
+    const CANARY: &str = "rule zz_canary_must_fail {\n    Region == 'no-such-region-zzz'\n}\n\n";
+
+    // (label, clause). Every one is valid in an assertion and in a condition.
+    let clauses: [(&str, String); 7] = [
+        ("eq_int", format!("{FILTER}.Properties.Size == 50")),
+        ("gt_int", format!("{FILTER}.Properties.Size > 10")),
+        ("le_float", format!("{FILTER}.Properties.Size <= 100.5")),
+        (
+            "in_list",
+            format!("{FILTER}.Properties.Size IN [10, 50, 100]"),
+        ),
+        ("exists", format!("{FILTER}.Properties.Size EXISTS")),
+        ("is_int", format!("{FILTER}.Properties.Size IS_INT")),
+        // EMPTY on an integer is an incompatible-type error, the one case that still
+        // propagates out and aborts the file. It is here so the exception documented in the
+        // loop below is actually exercised: the assertion at the end fails without it, which
+        // is how this clause came to be added rather than assumed.
+        ("empty_on_scalar", format!("{FILTER}.Properties.Size EMPTY")),
+    ];
+
+    // (label, document). The families matter more than the count: a query that resolves, one that
+    // resolves to the wrong type, one that resolves to nothing, and one with no root at all -- which
+    // is the input that turned an unresolvable type block query into an abort.
+    let templates: [(&str, &str); 6] = [
+        (
+            "resolvable",
+            r#"{"Region":"us-east-1","Resources":{"V":{"Type":"AWS::EC2::Volume","Properties":{"Size":50,"Encrypted":true}}}}"#,
+        ),
+        (
+            "violating",
+            r#"{"Region":"us-east-1","Resources":{"V":{"Type":"AWS::EC2::Volume","Properties":{"Size":50,"Encrypted":false}}}}"#,
+        ),
+        (
+            "float_size",
+            r#"{"Region":"us-east-1","Resources":{"V":{"Type":"AWS::EC2::Volume","Properties":{"Size":50.5,"Encrypted":false}}}}"#,
+        ),
+        (
+            "string_size",
+            r#"{"Region":"us-east-1","Resources":{"V":{"Type":"AWS::EC2::Volume","Properties":{"Size":"50","Encrypted":false}}}}"#,
+        ),
+        (
+            "absent_property",
+            r#"{"Region":"us-east-1","Resources":{"V":{"Type":"AWS::EC2::Volume","Properties":{}}}}"#,
+        ),
+        (
+            "absent_root",
+            r#"{"Region":"us-east-1","Account":"123456789012"}"#,
+        ),
+    ];
+
+    // Each takes a clause and yields a rule body. `body` is a second assertion, so guarded shapes
+    // have something to guard.
+    fn shapes(clause: &str, body: &str) -> Vec<(&'static str, String)> {
+        vec![
+            ("bare", format!("rule r {{\n    {clause}\n}}\n")),
+            ("gate", format!("rule r when {clause} {{\n    {body}\n}}\n")),
+            (
+                "nested_when",
+                format!("rule r {{\n    when {clause} {{\n        when {clause} {{\n            {body}\n        }}\n    }}\n}}\n"),
+            ),
+            ("conjunction", format!("rule r {{\n    {clause}\n    {body}\n}}\n")),
+            ("disjunction", format!("rule r {{\n    {clause} or\n    {body}\n}}\n")),
+            (
+                "type_block_gate",
+                "rule r {\n    AWS::EC2::Volume when Properties.Size > 10 {\n        Properties.Encrypted == true\n    }\n}\n".to_string(),
+            ),
+        ]
+    }
+
+    fn evaluate(rules: &str, data: &str) -> Result<Status> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let resources = PathAwareValue::try_from(data)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        eval_rules_file(&rules_file, &mut root, None)
+    }
+
+    let body = format!("{FILTER}.Properties.Encrypted == true");
+    let mut cells = 0;
+    let mut aborting = 0;
+
+    for (clause_label, clause) in &clauses {
+        for (shape_label, rule) in shapes(clause, &body) {
+            for (tmpl_label, data) in templates {
+                let case = format!("{clause_label}/{shape_label} over {tmpl_label}");
+                let alone = evaluate(&rule, data);
+
+                // 2. Determinism. Cheap, and it catches state or ordering leaking between runs.
+                let again = evaluate(&rule, data);
+                match (&alone, &again) {
+                    (Ok(first), Ok(second)) => assert_eq!(
+                        first, second,
+                        "{case}: evaluating the same input twice gave different statuses"
+                    ),
+                    (Err(_), Err(_)) => {}
+                    _ => panic!(
+                        "{}: one of two identical evaluations errored and the other did not",
+                        case
+                    ),
+                }
+
+                // 1. Canary isolation.
+                let with_canary = evaluate(&format!("{CANARY}{rule}"), data);
+                match alone {
+                    Ok(_) => assert_eq!(
+                        with_canary.as_ref().ok(),
+                        Some(&Status::FAIL),
+                        "{case}: adding an unrelated always-failing rule stopped that rule's \
+                         failure being reported, which is what an abort looks like from outside"
+                    ),
+                    Err(_) => {
+                        // The documented exception: an incompatible-type error propagates out of the
+                        // rule and aborts the file, so the canary's verdict is lost with it.
+                        // Unchanged from the merge-base. If this ever starts passing, the error has
+                        // become a per-clause failure and the exception should be deleted.
+                        assert!(
+                            with_canary.is_err(),
+                            "{}: the rule alone errored but the canary variant did not, so the \
+                             exception below no longer describes reality",
+                            case
+                        );
+                        aborting += 1;
+                    }
+                }
+                cells += 1;
+            }
+        }
+    }
+
+    // 4. The generator cannot silently shrink. 7 clauses x 6 shapes x 6 templates.
+    assert_eq!(cells, 7 * 6 * 6, "the generated space changed size");
+    // Some cells must abort, or the exception above is untested and could rot into a lie.
+    assert!(
+        aborting > 0,
+        "no generated rule produced an incompatible-type error, so the documented abort exception \
+         was never exercised"
+    );
+
+    // 3. Negation. Two assertions, because the obvious one is wrong.
+    //
+    // `not X` does not have to differ from `X` in general: a comparison that cannot be decided fails
+    // closed in *both* polarities, which is deliberate and documented in CLAUSES.md -- `Size == 50`
+    // and `not Size == 50` both FAIL when Size is the string "50", and both fail when the right-hand
+    // reference resolves to nothing. An earlier version of this test asserted they always differ and
+    // failed on exactly that case, which is the right outcome for the wrong reason.
+    //
+    // What always holds is that they must not both PASS. A clause and its negation both holding is
+    // incoherent regardless of what the operands are.
+    //
+    // The stronger form is asserted where decidability is known: over the two templates whose
+    // properties are present and of the expected type, every clause here can be decided, so a `not`
+    // that changed nothing is the defect `a54e4ca` and `0e140b3` fixed -- and that defect made the
+    // pair identical, which the both-PASS rule alone would miss whenever the answer was FAIL.
+    const DECIDABLE: [&str; 2] = ["resolvable", "violating"];
+    for (clause_label, clause) in &clauses {
+        for (tmpl_label, data) in templates {
+            let plain = evaluate(&format!("rule r {{\n    {clause}\n}}\n"), data);
+            let negated = evaluate(&format!("rule r {{\n    not {clause}\n}}\n"), data);
+            let (Ok(p), Ok(n)) = (plain, negated) else {
+                continue; // an incompatible-type error has no polarity to compare
+            };
+            assert!(
+                !(p == Status::PASS && n == Status::PASS),
+                // Explicit arguments: on edition 2018 a single-literal assert message is not a
+                // format string, so inline captures would print as braces.
+                "{} over {}: the clause and its negation both passed",
+                clause_label,
+                tmpl_label
+            );
+            if DECIDABLE.contains(&tmpl_label) && p != Status::SKIP && n != Status::SKIP {
+                assert_ne!(
+                    p, n,
+                    "{clause_label} over {tmpl_label}: the clause and its negation both answered \
+                     {p:?} over input that decides it, so the `not` changed nothing"
+                );
+            }
+        }
+    }
 
     Ok(())
 }

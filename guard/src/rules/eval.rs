@@ -1912,9 +1912,10 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
         // guards is still decided by the remaining conditions" -- so returning FAIL here
         // defeated the role propagation this branch added for parameterized calls.
         //
-        // Negated calls deliberately keep falling through: `not r(...)` where `r` did not
-        // apply must not report PASS on the strength of a check that never ran, which is the
-        // same fail-closed reasoning `eval_guard_named_clause` uses for its assertion case.
+        // Negated calls keep falling through, and for a gate the PASS the `_` arm returns is the
+        // intended outcome: `when not r(...)` opens the gate when `r` did not apply. A negated
+        // assertion never reaches that arm, because the `role.is_strict()` arm above already failed
+        // it closed. Same reasoning, and the same arm order, as `eval_guard_named_clause`.
         Status::SKIP if !call_rule.named_rule.negation => Status::SKIP,
 
         _ => {
