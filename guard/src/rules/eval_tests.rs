@@ -5202,29 +5202,31 @@ fn the_type_block_status_fold_is_pinned() -> Result<()> {
     Ok(())
 }
 
-/// A type block skipped by its own `when` condition reports nothing about why.
+/// A type block's `when` conditions are evaluated against each resource, not the file root.
 ///
-/// The record carried `message: None`, so this was the quietest exit in the evaluator: status
-/// `not_applicable`, exit 0, no clause named. That matters because of a scoping asymmetry inside
-/// the construct -- the block's clauses are resource-relative, but the `when` conditions are
-/// resolved from the file root (`eval_type_block_clause` evaluates them against the enclosing
-/// resolver, before the per-resource `ValueScope` exists).
+/// The conditions used to be evaluated once, before the loop over matched resources, against the
+/// enclosing resolver -- while the block's clauses were evaluated against each resource. That
+/// split made the natural spelling a trap. `AWS::EC2::Volume when Properties.Size > 10 { ... }`
+/// reads as "every volume over 10 GiB must ..." and instead looked for `Properties` at the file
+/// root, found nothing, and skipped: `not_applicable`, exit 0, for every template it was ever run
+/// against, including the ones it was written to catch.
 ///
-/// So the natural spelling is a trap. `AWS::EC2::Volume when Properties.Size > 10 { ... }` reads
-/// as "every volume over 10 GiB must ..." and instead looks for `Properties` at the file root,
-/// finds nothing, and skips. The rule passes every template it is ever run against, including the
-/// ones it was written to catch. The root-qualified spelling is asserted alongside it, because
-/// that contrast is the whole content of the finding.
+/// All three spellings are asserted because the change has a cost as well as a benefit, and the
+/// cost should be visible in a test rather than inferred from a commit message. A literal
+/// root-anchored path resolved before and does not now. The variable idiom is unaffected, which is
+/// what makes the trade acceptable: `ValueScope::resolve_variable` delegates to the parent, and
+/// real rulesets reach the file root that way rather than by spelling out `Resources.<name>`.
 #[test]
-fn a_skipped_type_block_is_indistinguishable_from_a_clean_run() -> Result<()> {
-    const RESOURCES: &str = r#"{
+fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
+    // Both volumes are over 10 GiB. B is unencrypted, so any spelling that actually applies the
+    // block must FAIL, and SKIP means the condition never matched anything.
+    const BOTH_LARGE: &str = r#"{
         "Resources": {
             "A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": true } },
             "B": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": false } }
         }
     }"#;
 
-    // Resource-relative condition: does not resolve at the root, so the block is skipped.
     let resource_relative = r###"
     rule r {
         AWS::EC2::Volume when Properties.Size > 10 {
@@ -5233,8 +5235,16 @@ fn a_skipped_type_block_is_indistinguishable_from_a_clean_run() -> Result<()> {
     }
     "###;
 
-    // The same intent, qualified from the root, which is where the condition is evaluated.
-    let root_qualified = r###"
+    let through_a_variable = r###"
+    let volumes = Resources.*[ Type == 'AWS::EC2::Volume' ]
+    rule r {
+        AWS::EC2::Volume when %volumes !empty {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    let root_anchored = r###"
     rule r {
         AWS::EC2::Volume when Resources.A.Properties.Size > 10 {
             Properties.Encrypted == true
@@ -5243,70 +5253,61 @@ fn a_skipped_type_block_is_indistinguishable_from_a_clean_run() -> Result<()> {
     "###;
 
     for (label, rules, expected) in [
+        // The spelling that used to skip everything.
         (
-            "resource-relative condition",
+            "a resource-relative condition",
             resource_relative,
-            Status::SKIP,
+            Status::FAIL,
         ),
-        ("root-qualified condition", root_qualified, Status::FAIL),
+        // Unaffected: variables resolve through the parent scope.
+        (
+            "a condition on a variable",
+            through_a_variable,
+            Status::FAIL,
+        ),
+        // The cost of the change. A path anchored at the file root no longer resolves, because
+        // the condition is now evaluated where the clauses are: at the resource.
+        ("a root-anchored literal path", root_anchored, Status::SKIP),
     ] {
         let rules_file = RulesFile::try_from(rules)?;
-        let resources = PathAwareValue::try_from(RESOURCES)?;
+        let resources = PathAwareValue::try_from(BOTH_LARGE)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
-        let status = eval_rules_file(&rules_file, &mut root, None)?;
         assert_eq!(
-            status, expected,
-            "type block with a {} against a template holding an unencrypted volume",
+            eval_rules_file(&rules_file, &mut root, None)?,
+            expected,
+            "type block with {} over a template holding an unencrypted 50 GiB volume",
             label
         );
     }
 
-    // The skip now carries its reason. Without this the two outcomes above are
-    // indistinguishable to an operator: both exit 0 on the passing template, and the skipping
-    // one exits 0 on the violating template too.
+    // Per-resource applicability is the point of the change, so assert it rather than assuming it
+    // follows. A resource the condition exempts must not shield one it does not.
     let rules_file = RulesFile::try_from(resource_relative)?;
-    let resources = PathAwareValue::try_from(RESOURCES)?;
-    let mut root = root_scope(&rules_file, Rc::new(resources));
-    eval_rules_file(&rules_file, &mut root, None)?;
-    let recorded = root.reset_recorder().extract();
-
-    fn skipped_type_blocks<'a>(record: &'a EventRecord<'a>, out: &mut Vec<Option<String>>) {
-        if let Some(RecordType::TypeCheck(TypeBlockCheck {
-            block:
-                BlockCheck {
-                    status: Status::SKIP,
-                    message,
-                    ..
-                },
-            ..
-        })) = &record.container
-        {
-            out.push(message.clone());
-        }
-        for child in &record.children {
-            skipped_type_blocks(child, out);
-        }
+    for (label, resources, expected) in [
+        (
+            "one exempt resource and one violating",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 5, "Encrypted": false } },
+               "B": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50, "Encrypted": false } }"#,
+            Status::FAIL,
+        ),
+        (
+            "every resource exempt",
+            r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 5, "Encrypted": false } }"#,
+            // Nothing was asserted, and SKIP says so. A PASS here would claim the unencrypted
+            // volume had been checked.
+            Status::SKIP,
+        ),
+    ] {
+        let input = format!(r#"{{ "Resources": {{ {} }} }}"#, resources);
+        let values = PathAwareValue::try_from(input.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(values));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            expected,
+            "type block over {}",
+            label
+        );
     }
-
-    let mut skips = vec![];
-    skipped_type_blocks(&recorded, &mut skips);
-    assert_eq!(
-        skips.len(),
-        1,
-        "expected exactly one skipped type block to be recorded, found {:?}",
-        skips
-    );
-
-    // Pinning the gap, not endorsing it. The record carries no explanation, and a reader of the
-    // output cannot tell this run from one where the rule genuinely did not apply. An explanation
-    // cannot simply be added at the record: skipped rules reach the reporters as a set of names,
-    // so the message would be discarded -- the defect this branch removed elsewhere. Whoever
-    // plumbs skip reasons through `report` should flip this assertion.
-    assert!(
-        skips[0].is_none(),
-        "a skipped type block now records an explanation; if it also renders, invert this \
-         assertion and update every_recorded_explanation_has_a_rendering_path"
-    );
 
     Ok(())
 }

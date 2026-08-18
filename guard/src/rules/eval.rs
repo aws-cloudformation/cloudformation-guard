@@ -1959,72 +1959,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
 ) -> Result<Status> {
     let context = format!("TypeBlock#{}", type_block.type_name);
     resolver.start_record(&context)?;
-    let block = if let Some(conditions) = &type_block.conditions {
-        let when_context = format!("TypeBlock#{}/When", type_block.type_name);
-        resolver.start_record(&when_context)?;
-        // Note the scope: the conditions are evaluated against `resolver`, the enclosing scope,
-        // while the block below runs each clause against a per-resource `ValueScope`. So a
-        // condition here is resolved from the file root, not from the resource being checked.
-        // `a_skipped_type_block_says_why_it_was_skipped` covers what that costs an author.
-        match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
-            Ok(status) => {
-                if status != Status::PASS {
-                    resolver.end_record(&when_context, RecordType::TypeCondition(status))?;
-                    resolver.end_record(
-                        &context,
-                        RecordType::TypeCheck(TypeBlockCheck {
-                            type_name: &type_block.type_name,
-                            block: BlockCheck {
-                                status: Status::SKIP,
-                                at_least_one_matches: false,
-                                // Deliberately None. An explanation belongs here -- this is the
-                                // quietest exit in the evaluator, reporting `not_applicable` and
-                                // exit 0 without naming anything, and the likeliest cause is a
-                                // condition written as though it were resource-relative. But a
-                                // SKIP rule's records never reach a reporter: skipped rules
-                                // contribute only their name, as a `HashSet<String>`, in
-                                // `reporters::validate::common`. A message written here today
-                                // would be recorded and discarded, which is the defect this
-                                // branch just finished removing from five other record variants.
-                                //
-                                // Surfacing it needs the skip set to carry reasons, which changes
-                                // the `report` signature every reporter implements. That is worth
-                                // doing and is not this change.
-                                // `a_skipped_type_block_is_indistinguishable_from_a_clean_run`
-                                // pins the behaviour meanwhile, so whoever does it has a test to
-                                // flip rather than a discovery to repeat.
-                                message: None,
-                            },
-                        }),
-                    )?;
-                    return Ok(Status::SKIP);
-                }
-                resolver.end_record(&when_context, RecordType::TypeCondition(Status::PASS))?;
-                &type_block.block
-            }
-
-            Err(e) => {
-                resolver.end_record(&when_context, RecordType::TypeCondition(Status::FAIL))?;
-                resolver.end_record(
-                    &context,
-                    RecordType::TypeCheck(TypeBlockCheck {
-                        type_name: &type_block.type_name,
-                        block: BlockCheck {
-                            status: Status::FAIL,
-                            message: Some(format!(
-                                "Error {} during type condition evaluation, bailing",
-                                e
-                            )),
-                            at_least_one_matches: false,
-                        },
-                    }),
-                )?;
-                return Err(e);
-            }
-        }
-    } else {
-        &type_block.block
-    };
+    let block = &type_block.block;
 
     let values = match resolver.query(&type_block.query) {
         Ok(values) => values,
@@ -2070,6 +2005,73 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     root: Rc::clone(rv),
                     parent: resolver,
                 };
+
+                // Conditions are evaluated per resource, against the same scope as the clauses
+                // they guard.
+                //
+                // They used to be evaluated once, before this loop, against the enclosing
+                // resolver -- so a condition resolved from the file root while the block's
+                // clauses resolved from each resource. That split made the natural spelling a
+                // trap: `AWS::EC2::Volume when Properties.Size > 10 { ... }` reads as "every
+                // volume over 10 GiB must ..." and instead looked for `Properties` at the file
+                // root, found nothing, and skipped every template it was ever run against --
+                // reporting `not_applicable` at exit 0, including for the templates it was
+                // written to catch.
+                //
+                // The cost is the mirror image, and it is real: a condition written as a literal
+                // root-anchored path (`when Resources.A.Properties.Size > 10`) resolved before
+                // and does not now, because `ValueScope::query` starts at the resource. Accepted
+                // for two reasons. A condition over one named resource does not belong on a
+                // block that iterates all of them, and the variable idiom that real rulesets use
+                // is unaffected -- `ValueScope::resolve_variable` delegates to the parent, so
+                // `let vols = ...` followed by `when %vols !empty` still resolves at the root.
+                // `a_type_block_condition_is_evaluated_against_each_resource` asserts all three
+                // spellings so the trade is visible rather than inferred.
+                if let Some(conditions) = &type_block.conditions {
+                    let when_context = format!("{}/When", block_context);
+                    val_resolver.start_record(&when_context)?;
+                    match eval_conjunction_clauses(conditions, &mut val_resolver, eval_when_clause)
+                    {
+                        Ok(status) => {
+                            val_resolver
+                                .end_record(&when_context, RecordType::TypeCondition(status))?;
+                            if status != Status::PASS {
+                                // Not applicable to this resource, so it contributes to neither
+                                // count. If that holds for every resource the fold below answers
+                                // SKIP, which is the honest answer: the block applied to nothing.
+                                val_resolver.end_record(
+                                    &block_context,
+                                    RecordType::TypeBlock(Status::SKIP),
+                                )?;
+                                continue;
+                            }
+                        }
+
+                        Err(e) => {
+                            val_resolver.end_record(
+                                &when_context,
+                                RecordType::TypeCondition(Status::FAIL),
+                            )?;
+                            val_resolver
+                                .end_record(&block_context, RecordType::TypeBlock(Status::FAIL))?;
+                            val_resolver.end_record(
+                                &context,
+                                RecordType::TypeCheck(TypeBlockCheck {
+                                    type_name: &type_block.type_name,
+                                    block: BlockCheck {
+                                        status: Status::FAIL,
+                                        message: Some(format!(
+                                            "Error {} during type condition evaluation, bailing",
+                                            e
+                                        )),
+                                        at_least_one_matches: false,
+                                    },
+                                }),
+                            )?;
+                            return Err(e);
+                        }
+                    }
+                }
 
                 match eval_general_block_clause(block, &mut val_resolver, |gc, r| {
                     eval_guard_clause(gc, r, role)
