@@ -5712,3 +5712,90 @@ fn an_index_after_an_interpolated_key_is_not_applied_twice() -> Result<()> {
 
     Ok(())
 }
+
+/// An unresolvable type block query must skip, not abort the rules file.
+///
+/// This one is a regression this branch introduced and a defect it inherited, in the same place.
+///
+/// Moving a type block's conditions per-resource removed an early return that had been masking an
+/// error path: the condition never passed when written resource-relative, so the block's query never
+/// ran. With the conditions inside the loop the query always runs, and against a document with no
+/// `Resources` at its root it produced an `UnResolved` slot, whose arm returned `Err`. An `Err` from
+/// a rule aborts the whole rules file, so a violation an *unrelated* rule had already found stopped
+/// being reported and the exit code went from 19 to 255.
+///
+/// The inherited half is that a type block with no `when` at all reached the same `Err` on the
+/// merge-base, so the abort predates this work; the change only made it reachable for the guarded
+/// form. Both are fixed by treating an unselectable slot the way the `values.is_empty()` branch
+/// already treats an empty selection -- as not applicable. `ur.reason` moves onto the record instead
+/// of into an error, so the explanation still reaches the reader.
+///
+/// The last assertion is the one that matters. A differential against the merge-base is what found
+/// this, and it only found it once the corpus contained a rules file holding a type block *and*
+/// something else; with one rule per file the abort and a clean skip are indistinguishable by exit
+/// code alone.
+#[test]
+fn an_unresolved_type_block_query_skips_without_aborting_the_file() -> Result<()> {
+    // No `Resources` key at all, so the type block's query cannot be resolved.
+    const NO_RESOURCES: &str = r#"{ "Region": "us-east-1", "Account": "123456789012" }"#;
+
+    let plain = r###"
+    rule r {
+        AWS::EC2::Volume {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    let guarded = r###"
+    rule r {
+        AWS::EC2::Volume when Properties.Size > 10 {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+
+    for (label, rules) in [("without a when", plain), ("with a when", guarded)] {
+        let rules_file = RulesFile::try_from(rules)?;
+        let resources = PathAwareValue::try_from(NO_RESOURCES)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        assert!(
+            status.is_ok(),
+            "a type block {} whose query cannot be resolved returned an error, which aborts the \
+             whole rules file: {:?}",
+            label,
+            status.err()
+        );
+        assert_eq!(
+            status.unwrap(),
+            Status::SKIP,
+            "a type block {} over a document that does not contain the type is not applicable",
+            label
+        );
+    }
+
+    // The reason the Err mattered: it took unrelated rules down with it. This file holds a failing
+    // rule that has nothing to do with the type block, and its verdict has to survive.
+    let two_rules = r###"
+    rule unrelated_violation {
+        Region == "eu-west-1"
+    }
+    rule type_block_rule {
+        AWS::EC2::Volume when Properties.Size > 10 {
+            Properties.Encrypted == true
+        }
+    }
+    "###;
+    let rules_file = RulesFile::try_from(two_rules)?;
+    let resources = PathAwareValue::try_from(NO_RESOURCES)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::FAIL,
+        "the unrelated rule fails on this input, and an unresolvable type block elsewhere in the \
+         file must not suppress that"
+    );
+
+    Ok(())
+}

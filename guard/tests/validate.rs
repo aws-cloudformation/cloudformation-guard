@@ -851,6 +851,23 @@ mod validate_tests {
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
+    /// A type block whose query cannot be resolved must not take the process down with it.
+    ///
+    /// Introduced by #432, "fixing panic in evaluator when query from typeblock is unresolved",
+    /// which replaced `QueryResult::UnResolved(_) => unreachable!()` -- a real panic on this fuzzed
+    /// input -- with a recorded failure and an `Err`. The assertion was `INTERNAL_FAILURE` because
+    /// that is what an `Err` escaping `execute` produces, so the exit code was the observable proof
+    /// that the panic was gone.
+    ///
+    /// The no-panic property is the point of that fix and it still holds. What changed is the
+    /// representation: an unresolvable slot is now not-applicable rather than an error, because an
+    /// `Err` from one rule aborts the whole rules file and takes the verdicts of unrelated rules
+    /// with it -- see `an_unresolved_type_block_query_skips_without_aborting_the_file`. This input
+    /// is a garbage rule (`d1z::Y` with a clause `m < ...`) against an empty document, so the
+    /// retrieval of `m` fails closed and the run reports a violation instead of an internal error.
+    ///
+    /// The assertion is deliberately not `SUCCESS`. That would mean the fuzzed rule had been quietly
+    /// accepted, which is the failure mode this whole branch exists to remove.
     #[test]
     fn test_with_payload_failing_type_block() {
         let payload = r#"{"data": [ "{}" ], "rules" : [ "d1z::Y\n\t\tm<0m<03333333" ]}"#;
@@ -860,7 +877,7 @@ mod validate_tests {
             .payload()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]

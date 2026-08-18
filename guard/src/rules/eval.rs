@@ -1984,6 +1984,11 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
 
     let mut fails = 0;
     let mut passes = 0;
+    // Tracked only so the SKIP below can name the right cause. A block that selected nothing and a
+    // block whose condition exempted everything both report SKIP, and telling a reader the wrong
+    // one of those is worse than telling them nothing -- which is the defect this branch spent most
+    // of its commits removing.
+    let mut unresolved = 0;
     for (idx, each) in values.iter().enumerate() {
         match each {
             QueryResult::Literal(rv) | QueryResult::Resolved(rv) => {
@@ -2098,23 +2103,49 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     }
                 }
             }
+            // A slot the type block's query could not resolve is not applicable, not an error.
+            //
+            // This used to return `Err`, which aborts the whole rules file: a document with no
+            // `Resources` at its root took every other rule in the file down with it, so a
+            // violation an unrelated rule had already found stopped being reported. The exit code
+            // went from 19 to 255 and the finding vanished.
+            //
+            // The situation is the one the `values.is_empty()` branch above already answers with
+            // SKIP -- the document does not contain the type being checked -- so it gets the same
+            // answer here, and `ur.reason` is carried onto the record rather than into an error, so
+            // the explanation still reaches the reader through `find_skip_reason`. Counting it as
+            // neither a pass nor a fail leaves the fold below to decide: if no slot resolved, the
+            // block applied to nothing and reports SKIP.
+            //
+            // Found by differential against the merge-base rather than by reading. Moving the type
+            // block's conditions per-resource removed an early return that had been masking this
+            // for the `when` form, so a latent abort became a reachable one. The plain form aborted
+            // on the merge-base too, which is how the pre-existing half was confirmed. Pinned by
+            // `an_unresolved_type_block_query_skips_without_aborting_the_file`.
             QueryResult::UnResolved(ur) => {
+                unresolved += 1;
+                let block_context = format!("{}/{}", context, idx);
+                resolver.start_record(&block_context)?;
                 resolver.end_record(
-                    &context,
+                    &block_context,
                     RecordType::TypeCheck(TypeBlockCheck {
                         type_name: &type_block.type_name,
                         block: BlockCheck {
                             at_least_one_matches: false,
-                            status: Status::FAIL,
-                            message: ur.reason.clone(),
+                            status: Status::SKIP,
+                            message: Some(match &ur.reason {
+                                Some(reason) => format!(
+                                    "no {} could be selected from the input: {}",
+                                    type_block.type_name, reason
+                                ),
+                                None => format!(
+                                    "no {} could be selected from the input",
+                                    type_block.type_name
+                                ),
+                            }),
                         },
                     }),
                 )?;
-
-                return Err(Error::MissingValue(format!(
-                    "Unable to resolve type block query: {}",
-                    type_block.type_name,
-                )));
             }
         }
     }
@@ -2139,6 +2170,13 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 // a legitimate outcome and also the shape of a rule that silently never fires, and
                 // the reader cannot tell which from a bare "not applicable".
                 message: match status {
+                    // Two ways to reach SKIP with resources in hand, and they mean different
+                    // things to whoever is reading the output: the query selected nothing, or it
+                    // selected resources and the condition exempted all of them.
+                    Status::SKIP if unresolved > 0 => Some(format!(
+                        "no {} could be selected from the input, so the type block had nothing to check",
+                        type_block.type_name
+                    )),
                     Status::SKIP => Some(format!(
                         "every {} in the input was exempted by the type block's `when` condition, so none was checked",
                         type_block.type_name
