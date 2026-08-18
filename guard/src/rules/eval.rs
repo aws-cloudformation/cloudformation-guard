@@ -107,6 +107,7 @@ fn record_unary_clause<'eval, 'value, 'loc: 'value, O>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'eval mut dyn EvalContext<'value, 'loc>,
+    role: ClauseRole,
 ) -> Box<dyn FnMut(&QueryResult) -> Result<bool> + 'eval>
 where
     O: Fn(&QueryResult) -> Result<bool> + 'eval,
@@ -138,7 +139,19 @@ where
             }
 
             Err(e) => {
-                check.status = Status::FAIL;
+                // An incompatible type means this value cannot answer the clause, which is the same
+                // situation as an empty reference and gets the same treatment: a failure as an
+                // assertion, not applicable as a gate. Recording the role-derived status keeps the
+                // record and the verdict the driver loop pushes in agreement; recording FAIL for a
+                // clause the rule then treats as inapplicable is how a report ends up contradicting
+                // its own exit code.
+                //
+                // Other errors keep FAIL because they still abort the run, so the record is only ever
+                // read if something later decides not to propagate them.
+                check.status = match (&e, role.is_strict()) {
+                    (Error::IncompatibleError(_), false) => Status::SKIP,
+                    _ => Status::FAIL,
+                };
                 check.message = Some(format!("{}", e));
                 eval_context.end_record(
                     &context,
@@ -154,7 +167,7 @@ where
 }
 
 macro_rules! box_create_func {
-    ($name: ident, $not: expr, $inverse: expr, $cmp: ident, $eval: ident, $cxt: ident, $msg: ident) => {{
+    ($name: ident, $not: expr, $inverse: expr, $cmp: ident, $eval: ident, $cxt: ident, $msg: ident, $role: ident) => {{
         {
             match $not {
                 true => record_unary_clause(
@@ -163,11 +176,17 @@ macro_rules! box_create_func {
                     $cxt,
                     $msg,
                     $eval,
+                    $role,
                 ),
 
-                false => {
-                    record_unary_clause(inverse_operation($name, $inverse), $cmp, $cxt, $msg, $eval)
-                }
+                false => record_unary_clause(
+                    inverse_operation($name, $inverse),
+                    $cmp,
+                    $cxt,
+                    $msg,
+                    $eval,
+                    $role,
+                ),
             }
         }
     }};
@@ -246,6 +265,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'l, 'loc>,
+    role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
 
@@ -387,7 +407,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::Empty, not_empty) => box_create_func!(
             element_empty_operation,
@@ -396,7 +417,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsString, is_not_string) => box_create_func!(
             is_string_operation,
@@ -405,7 +427,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsMap, is_not_map) => box_create_func!(
             is_struct_operation,
@@ -414,7 +437,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsList, is_not_list) => box_create_func!(
             is_list_operation,
@@ -423,7 +447,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsBool, is_not_bool) => box_create_func!(
             is_bool_operation,
@@ -432,7 +457,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsInt, is_not_int) => box_create_func!(
             is_int_operation,
@@ -441,7 +467,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsNull, is_not_null) => box_create_func!(
             is_null_operation,
@@ -450,7 +477,8 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (CmpOperator::IsFloat, is_not_float) => box_create_func!(
             is_float_operation,
@@ -459,20 +487,41 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message
+            custom_message,
+            role
         ),
         (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
     };
     let mut status = Vec::with_capacity(lhs.len());
     for each in lhs {
-        match (*operation)(&each)? {
-            true => {
+        match (*operation)(&each) {
+            Ok(true) => {
                 status.push((each, Status::PASS));
             }
 
-            false => {
+            Ok(false) => {
                 status.push((each, Status::FAIL));
             }
+
+            // `EMPTY` against a type that cannot be empty used to return this error, and returning it
+            // from here aborted the whole rules file: every other rule's verdict was discarded and the
+            // run exited 255 rather than reporting what it had already found. One unanswerable clause
+            // is a verdict about that clause, not about the file.
+            //
+            // The status is the same fail-closed rule the rest of the evaluator uses. `record_unary_clause`
+            // has already recorded this value with the matching status and the message naming the
+            // offending path, so nothing is lost by not propagating.
+            Err(Error::IncompatibleError(_)) => {
+                status.push((
+                    each,
+                    match role.is_strict() {
+                        true => Status::FAIL,
+                        false => Status::SKIP,
+                    },
+                ));
+            }
+
+            Err(e) => return Err(e),
         }
     }
     Ok(EvaluationResult::QueryValueResult(status))
@@ -1232,6 +1281,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver,
+            role,
         )
     } else {
         let (rhs, _) = match &gac.access_clause.compare_with {
@@ -1336,6 +1386,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 let outcome = loop {
                     let mut fails = 0;
                     let mut pass = 0;
+                    let mut skips = 0;
                     for (_value, status) in result {
                         match status {
                             Status::PASS => {
@@ -1344,8 +1395,24 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                             Status::FAIL => {
                                 fails += 1;
                             }
-                            Status::SKIP => unreachable!(),
+                            // A value the clause could not answer at all, which today means an
+                            // incompatible type met while evaluating a `when` condition. Only a gate
+                            // produces it -- an assertion fails closed instead -- so this arm cannot
+                            // change a verdict that existed before it: `unary_operation` pushed
+                            // nothing but PASS and FAIL, which is why what it replaces was an
+                            // `unreachable!()` rather than a case anyone had considered.
+                            Status::SKIP => {
+                                skips += 1;
+                            }
                         }
+                    }
+                    // Nothing was decided either way. Saying so leaves the gate's remaining
+                    // conditions free to decide it, where reporting FAIL would disarm the block they
+                    // guard and reporting PASS would claim a condition held on the strength of a
+                    // check that never ran. Guarded on `skips > 0` so an empty result set keeps
+                    // whatever the two branches below already gave it.
+                    if pass == 0 && fails == 0 && skips > 0 {
+                        break Status::SKIP;
                     }
                     if all {
                         if fails > 0 {

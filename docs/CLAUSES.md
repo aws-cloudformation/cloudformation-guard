@@ -93,6 +93,8 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
+On a value that cannot be empty — a number or a boolean — `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
+
 `exists` - Checks if each occurrence of the query exists.
 
 ```

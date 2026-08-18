@@ -316,6 +316,7 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
+        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(expected) => {
@@ -340,6 +341,7 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
+        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
@@ -4877,23 +4879,36 @@ fn every_recorded_explanation_has_a_rendering_path() {
 
 /// `EMPTY` and `!EMPTY` on a boolean are an incompatible-type error, not a silent pass.
 ///
-/// The Bool arm of `element_empty_operation` computed `(*boolean).to_string().is_empty()`.
-/// Neither "true" nor "false" is ever the empty string, so EMPTY on a boolean was
-/// unconditionally false and `!EMPTY` unconditionally true: a clause that reads like a check
-/// and cannot fail for any input. A rule author writing `Properties.Enabled !EMPTY` got a
-/// green check that verified nothing.
+/// `EMPTY` on a boolean fails, in both polarities, and says why.
 ///
-/// Removing the arm lets a boolean reach the same `IncompatibleError` every other unsupported
-/// type already reached, which surfaces the mistake with the offending path instead of
-/// certifying it.
+/// The Bool arm of `element_empty_operation` computed `(*boolean).to_string().is_empty()`. Neither
+/// "true" nor "false" is ever the empty string, so EMPTY on a boolean was unconditionally false and
+/// `!EMPTY` unconditionally true: a clause that reads like a check and cannot fail for any input. A
+/// rule author writing `Properties.Enabled !EMPTY` got a green check that verified nothing.
+///
+/// Removing the arm lets a boolean reach the same incompatible-type treatment every other unsupported
+/// type gets. That treatment used to be an error that aborted the file, and is now a fail-closed
+/// verdict on the clause -- see `an_incompatible_type_does_not_discard_other_rules`. Both polarities
+/// FAIL, deliberately: the question is unanswerable, so neither spelling gets to claim an answer.
 ///
 /// All four combinations are covered because the two axes fail differently. The old code made
-/// `!EMPTY` a silent *pass* and `EMPTY` a silent *fail*, so a test on one polarity alone would
-/// have left the other spelling unguarded, and `true` versus `false` is exactly the axis the
-/// old implementation was insensitive to -- asserting only one value would not have
-/// distinguished "handled" from "ignored".
+/// `!EMPTY` a silent *pass* and `EMPTY` a silent *fail*, so a test on one polarity alone would have
+/// left the other spelling unguarded, and `true` versus `false` is exactly the axis the old
+/// implementation was insensitive to -- asserting only one value would not have distinguished
+/// "handled" from "ignored".
 #[test]
-fn boolean_empty_is_an_incompatible_type() -> Result<()> {
+fn empty_on_a_boolean_fails_closed_in_both_polarities() -> Result<()> {
+    fn recorded_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+        if let Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(check))) = &record.container {
+            if let Some(message) = &check.value.message {
+                out.push(message.clone());
+            }
+        }
+        for child in &record.children {
+            recorded_messages(child, out);
+        }
+    }
+
     for value in ["true", "false"] {
         for comparator in ["EMPTY", "!EMPTY"] {
             let rules = format!(
@@ -4919,25 +4934,34 @@ fn boolean_empty_is_an_incompatible_type() -> Result<()> {
             let resources = PathAwareValue::try_from(input.as_str())?;
             let rules_file = RulesFile::try_from(rules.as_str())?;
             let mut root = root_scope(&rules_file, Rc::new(resources));
-            let result = eval_rules_file(&rules_file, &mut root, None);
+            let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-            let err = match result {
-                Err(e) => e,
-                Ok(status) => panic!(
-                    "`Enabled {}` on the boolean {} returned {:?} instead of an \
-                     incompatible-type error. Before this fix `!EMPTY` passed for every \
-                     boolean and `EMPTY` failed for every boolean, in both cases without \
-                     comparing anything.",
-                    comparator, value, status
-                ),
-            };
+            assert_eq!(
+                status,
+                Status::FAIL,
+                "`Enabled {}` on the boolean {} must fail closed. Before this fix `!EMPTY` passed \
+                 for every boolean and `EMPTY` failed for every boolean, in both cases without \
+                 comparing anything.",
+                comparator,
+                value
+            );
 
-            let message = format!("{err}");
+            let mut messages = Vec::new();
+            recorded_messages(&root.reset_recorder().extract(), &mut messages);
             assert!(
-                message.contains("EMPTY"),
-                "expected the incompatible-type error to name the EMPTY operation so the \
-                 author can find the clause, got: {}",
-                message
+                messages.iter().any(|m| m.contains("EMPTY")),
+                "the recorded explanation should name the EMPTY operation so the author can find \
+                 the clause; `{} {}` recorded {:?}",
+                value,
+                comparator,
+                messages
+            );
+            assert!(
+                messages.iter().any(|m| m.contains("Enabled")),
+                "the recorded explanation should name the offending path; `{} {}` recorded {:?}",
+                value,
+                comparator,
+                messages
             );
         }
     }
@@ -5339,13 +5363,14 @@ fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
 ///
 /// `unary_operation` and the `is_*` family had no test that walked them against the full set of
 /// value shapes, which is how the negation arm survived with no coverage at all. The interesting
-/// column is EMPTY: on a container it answers, and on a scalar it is an incompatible-type error
-/// rather than a status, which is the behaviour this branch settled on. An error is the right
-/// answer there because both statuses are wrong -- an int is not empty, but calling it non-empty
-/// implies the question made sense.
+/// column is EMPTY: on a container it answers, and on a scalar the question is unanswerable, because
+/// both statuses are wrong -- an int is not empty, but calling it non-empty implies the question made
+/// sense.
 ///
-/// Cells are the status for the operator, then the status for its negation. `ERR` means the
-/// evaluation returns an error, so neither polarity produces a status.
+/// Cells are the status for the operator, then the status for its negation. `CLOSED` marks the
+/// unanswerable cells, which FAIL in both polarities rather than inverting. Those cells used to be an
+/// error that aborted the whole rules file, discarding every other rule's verdict; the matrix pinned
+/// that as `ERR` until `an_incompatible_type_does_not_discard_other_rules` replaced it.
 #[test]
 fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
     // (label, what to write for Properties)
@@ -5376,7 +5401,8 @@ fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
         (
             "EMPTY",
             [
-                "ERR", "ERR", "FAIL", "PASS", "FAIL", "PASS", "FAIL", "PASS", "ERR", "ERR", "PASS",
+                "CLOSED", "CLOSED", "FAIL", "PASS", "FAIL", "PASS", "FAIL", "PASS", "CLOSED",
+                "CLOSED", "PASS",
             ],
         ),
         (
@@ -5435,8 +5461,9 @@ fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let resources = PathAwareValue::try_from(input.as_str())?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
-        // An incompatible-type operand is an error, not a status, so it is reported as None
-        // rather than swallowed into one of the three statuses.
+        // `None` is an error escaping the evaluation. No cell in this matrix should produce one --
+        // an unanswerable clause is a verdict about that clause now, not an abort -- so the option is
+        // kept in order to fail on it explicitly rather than to tolerate it.
         Ok(eval_rules_file(&rules_file, &mut root, None).ok())
     }
 
@@ -5446,20 +5473,23 @@ fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
             let negated = evaluate(&format!("not {}", operator), properties)?;
 
             match expected {
-                "ERR" => {
-                    assert!(
-                        plain.is_none(),
-                        "{} on a {} operand should be an incompatible-type error, got {:?}",
+                "CLOSED" => {
+                    // Both polarities, and both FAIL. A negation that inverted here would be the
+                    // worse outcome: `not EMPTY` on an int would PASS, certifying a clause the
+                    // evaluator could not evaluate.
+                    assert_eq!(
+                        plain,
+                        Some(Status::FAIL),
+                        "{} on a {} operand cannot be answered, so it must fail closed",
                         operator,
-                        shape,
-                        plain
+                        shape
                     );
-                    assert!(
-                        negated.is_none(),
-                        "not {} on a {} operand should be an incompatible-type error, got {:?}",
+                    assert_eq!(
+                        negated,
+                        Some(Status::FAIL),
+                        "not {} on a {} operand must also fail closed rather than inverting",
                         operator,
-                        shape,
-                        negated
+                        shape
                     );
                 }
                 "PASS" | "FAIL" => {
@@ -6114,12 +6144,12 @@ fn a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block() -> Result<()>
 ///    agree. A clause that answers the same either way has stopped checking anything, which is the
 ///    defect `a54e4ca` and `0e140b3` fixed.
 ///
-/// The one documented exception is stated in the code: an incompatible-type error still propagates
-/// out and aborts the rules file, so a canary in the same file loses its finding. That is unchanged
-/// from the merge-base -- verified with both binaries -- and is the hazard #717's notes flagged when
-/// it converted `EMPTY` on an unsupported type into an error. Asserting it rather than skipping it
-/// means the day someone converts that error into a per-clause failure, this test tells them the
-/// exception can be removed.
+/// Invariant 1 held an exception until recently: an incompatible-type error propagated out and
+/// aborted the rules file, so a canary in the same file lost its finding, and the test asserted the
+/// exception rather than skipping the cell. That is what told us the exception could be deleted once
+/// the error became a per-clause failure, and it is why the assertion is now unconditional -- no
+/// generated cell may error at all. Asserting an exception you intend to remove is worth more than
+/// excluding the cell, because the exclusion would still be here.
 #[test]
 fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     const FILTER: &str = "Resources.*[ Type == 'AWS::EC2::Volume' ]";
@@ -6136,10 +6166,10 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
         ),
         ("exists", format!("{FILTER}.Properties.Size EXISTS")),
         ("is_int", format!("{FILTER}.Properties.Size IS_INT")),
-        // EMPTY on an integer is an incompatible-type error, the one case that still
-        // propagates out and aborts the file. It is here so the exception documented in the
-        // loop below is actually exercised: the assertion at the end fails without it, which
-        // is how this clause came to be added rather than assumed.
+        // EMPTY on an integer cannot be answered: an int is not empty, but calling it non-empty
+        // implies the question made sense. It fails closed in both polarities and, until this
+        // branch, aborted the whole file instead. The clause earns its place by being the one that
+        // used to abort -- it is what the canary invariant was strengthened against.
         ("empty_on_scalar", format!("{FILTER}.Properties.Size EMPTY")),
     ];
 
@@ -6201,7 +6231,6 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
 
     let body = format!("{FILTER}.Properties.Encrypted == true");
     let mut cells = 0;
-    let mut aborting = 0;
 
     for (clause_label, clause) in &clauses {
         for (shape_label, rule) in shapes(clause, &body) {
@@ -6223,29 +6252,22 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
                     ),
                 }
 
-                // 1. Canary isolation.
+                // 1. Canary isolation. No cell may error: an error escaping one rule aborts the
+                // file and discards every other rule's verdict, which the canary is there to detect.
+                assert!(
+                    alone.is_ok(),
+                    "{}: the rule returned an error rather than a verdict, which aborts the whole \
+                     rules file: {:?}",
+                    case,
+                    alone.as_ref().err()
+                );
                 let with_canary = evaluate(&format!("{CANARY}{rule}"), data);
-                match alone {
-                    Ok(_) => assert_eq!(
-                        with_canary.as_ref().ok(),
-                        Some(&Status::FAIL),
-                        "{case}: adding an unrelated always-failing rule stopped that rule's \
-                         failure being reported, which is what an abort looks like from outside"
-                    ),
-                    Err(_) => {
-                        // The documented exception: an incompatible-type error propagates out of the
-                        // rule and aborts the file, so the canary's verdict is lost with it.
-                        // Unchanged from the merge-base. If this ever starts passing, the error has
-                        // become a per-clause failure and the exception should be deleted.
-                        assert!(
-                            with_canary.is_err(),
-                            "{}: the rule alone errored but the canary variant did not, so the \
-                             exception below no longer describes reality",
-                            case
-                        );
-                        aborting += 1;
-                    }
-                }
+                assert_eq!(
+                    with_canary.as_ref().ok(),
+                    Some(&Status::FAIL),
+                    "{case}: adding an unrelated always-failing rule stopped that rule's \
+                     failure being reported, which is what an abort looks like from outside"
+                );
                 cells += 1;
             }
         }
@@ -6253,12 +6275,6 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
 
     // 4. The generator cannot silently shrink. 7 clauses x 6 shapes x 6 templates.
     assert_eq!(cells, 7 * 6 * 6, "the generated space changed size");
-    // Some cells must abort, or the exception above is untested and could rot into a lie.
-    assert!(
-        aborting > 0,
-        "no generated rule produced an incompatible-type error, so the documented abort exception \
-         was never exercised"
-    );
 
     // 3. Negation. Two assertions, because the obvious one is wrong.
     //
@@ -6276,12 +6292,22 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     // that changed nothing is the defect `a54e4ca` and `0e140b3` fixed -- and that defect made the
     // pair identical, which the both-PASS rule alone would miss whenever the answer was FAIL.
     const DECIDABLE: [&str; 2] = ["resolvable", "violating"];
+    // Decidability is a property of the clause as well as the template. `EMPTY` on an integer cannot
+    // be answered whatever the document says, so it fails closed in both polarities by design and the
+    // stronger assertion does not apply to it. The both-PASS rule below still does, which is the half
+    // that would catch a fail-closed clause turning into a pass-open one.
+    const UNANSWERABLE: [&str; 1] = ["empty_on_scalar"];
     for (clause_label, clause) in &clauses {
         for (tmpl_label, data) in templates {
             let plain = evaluate(&format!("rule r {{\n    {clause}\n}}\n"), data);
             let negated = evaluate(&format!("rule r {{\n    not {clause}\n}}\n"), data);
             let (Ok(p), Ok(n)) = (plain, negated) else {
-                continue; // an incompatible-type error has no polarity to compare
+                // Explicit arguments: on edition 2018 a single-literal panic message is not a format
+                // string, so inline captures would print as braces.
+                panic!(
+                    "{} over {}: evaluation returned an error rather than a verdict",
+                    clause_label, tmpl_label
+                );
             };
             assert!(
                 !(p == Status::PASS && n == Status::PASS),
@@ -6291,7 +6317,11 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
                 clause_label,
                 tmpl_label
             );
-            if DECIDABLE.contains(&tmpl_label) && p != Status::SKIP && n != Status::SKIP {
+            if DECIDABLE.contains(&tmpl_label)
+                && !UNANSWERABLE.contains(clause_label)
+                && p != Status::SKIP
+                && n != Status::SKIP
+            {
                 assert_ne!(
                     p, n,
                     "{clause_label} over {tmpl_label}: the clause and its negation both answered \

@@ -337,6 +337,54 @@ mod validate_tests {
         );
     }
 
+    /// A clause the evaluator cannot answer must not discard the rest of the file.
+    ///
+    /// `EMPTY` on an integer returned an error, and an error from one rule propagates out of
+    /// `eval_rules_file` and aborts the run. So a rules file whose first rule had already reported a
+    /// genuine violation exited 255 with nothing printed, instead of 19 with the finding. A gate
+    /// keyed on "nonzero" still fails, but one keyed on 19, or one parsing the report, loses the
+    /// finding entirely -- and the more rules a file has, the more it loses.
+    ///
+    /// Asserted on the output as well as the exit code, because the exit code alone was never the
+    /// whole problem: the run has to say which rule failed, and an aborted run says nothing at all.
+    #[test]
+    fn an_incompatible_type_does_not_discard_other_rules() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["volume-with-a-region.yaml"])
+            .rules(vec!["empty_on_a_scalar_with_an_unrelated_rule.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the file must report its violations rather than aborting; 255 here means an error \
+             escaped one rule and took every other rule's verdict with it"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("unrelated_violation"),
+            "the unrelated rule's failure was not reported, which is what the abort used to \
+             discard:\n{}",
+            output
+        );
+        assert!(
+            output.contains("empty_on_a_scalar"),
+            "the unanswerable clause should report its own failure too, not vanish:\n{}",
+            output
+        );
+        assert!(
+            output.contains("EMPTY"),
+            "the report should name the operation that could not be performed so the author can \
+             find the clause:\n{}",
+            output
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
