@@ -2313,6 +2313,27 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     Ok(overall)
 }
 
+/// The clause type a disjunction is over, spelled the same way by every compiler.
+///
+/// `std::any::type_name` is documented as being for diagnostics only, with no guarantee of
+/// stability across versions, and this one is not confined to diagnostics: it goes into a record
+/// context, which reaches verbose output and is compared byte for byte by four golden-file tests.
+/// rustc 1.77.2 renders `cfn_guard::rules::exprs::GuardClause<'_>` and later versions render the
+/// path without the elided lifetime, so those tests fail on any newer toolchain -- they had to be
+/// skipped to measure coverage on nightly at all, which is how this surfaced.
+///
+/// Taking the path before the generic arguments is stable on both and keeps what the context is
+/// for: saying which kind of clause the disjunction holds. Dropping the name entirely and writing
+/// `disjunction` would also be stable, and was rejected because the type is the only thing
+/// distinguishing one disjunction record from another in a nested rule.
+fn disjunction_type_name<T>() -> &'static str {
+    let name = std::any::type_name::<T>();
+    match name.find('<') {
+        Some(generics_start) => &name[..generics_start],
+        None => name,
+    }
+}
+
 #[allow(clippy::never_loop)]
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
@@ -2325,7 +2346,7 @@ where
     Ok(loop {
         let mut num_passes = 0;
         let mut num_fails = 0;
-        let context = format!("{}#disjunction", std::any::type_name::<T>());
+        let context = format!("{}#disjunction", disjunction_type_name::<T>());
         'conjunction: for conjunction in conjunctions {
             let mut num_of_disjunction_fails = 0;
             let multiple_ors_present = conjunction.len() > 1;

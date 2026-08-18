@@ -5580,3 +5580,36 @@ fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
 
     Ok(())
 }
+
+/// The disjunction context must not carry compiler-version-dependent text.
+///
+/// `std::any::type_name` is documented as being for diagnostics with no stability guarantee, and
+/// this use is not confined to diagnostics: the result goes into a record context that reaches
+/// verbose output, which four golden-file tests compare byte for byte. rustc 1.77.2 renders
+/// `GuardClause<'_>` and later versions render `GuardClause`, so before this was normalised the
+/// suite passed on the pinned toolchain and failed on any newer one -- those four tests had to be
+/// skipped to measure coverage on nightly at all.
+///
+/// Asserting the absence of generic arguments rather than a literal expected string, because the
+/// module path could legitimately change if these types move, and pinning it would turn a rename
+/// into a test failure for no reason. What must not come back is the part that varies by compiler.
+#[test]
+fn the_disjunction_context_is_stable_across_compilers() {
+    for name in [
+        disjunction_type_name::<GuardClause<'_>>(),
+        disjunction_type_name::<RuleClause<'_>>(),
+        disjunction_type_name::<WhenGuardClause<'_>>(),
+    ] {
+        assert!(
+            !name.contains('<') && !name.contains('>'),
+            "the disjunction context still carries generic arguments ({}), which rustc renders \
+             differently between versions",
+            name
+        );
+        assert!(
+            name.ends_with("Clause"),
+            "expected the clause type's name, got {}",
+            name
+        );
+    }
+}
