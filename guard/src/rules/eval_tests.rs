@@ -5475,3 +5475,108 @@ fn the_unary_operator_matrix_over_value_shapes_is_pinned() -> Result<()> {
 
     Ok(())
 }
+
+/// The status decisions that a coverage sweep found nothing reaching.
+///
+/// Grouped into one test because they share a purpose rather than a mechanism: each is a line that
+/// decides PASS, FAIL or SKIP and that no test in the suite executed. That is the shape the two
+/// defects in this branch's parent PR had, and the shape the mixed-numeric defect had -- not an
+/// exotic input, just a decision nobody had ever asserted.
+///
+/// None of these turned out to be wrong, which is worth recording as plainly as a bug would be: an
+/// audit that only reports its finds is indistinguishable from one that stopped early.
+#[test]
+fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
+    const RESOURCES: &str = r#"{
+        "Resources": { "B": { "Type": "AWS::S3::Bucket", "Properties": { "Name": "b" } } }
+    }"#;
+
+    // A clause-level `not` in front of `EMPTY`, where two negations compose: the operator's own
+    // flag and the clause's. The arm that applies the second had never run in either direction.
+    //
+    // The query has to end in a filter, or be a lone variable, to reach that arm at all.
+    // `unary_operation` handles `EMPTY` on such a query in a separate early-return block, and the
+    // clause-level flip lives inside that block. A first version of this test used
+    // `not Resources.B.Properties.Missing EMPTY`, a plain key path: it produced the right answer
+    // by an entirely different route and left the arm at zero. Worth knowing before editing these.
+    let clause_level_negation = [
+        // %buckets is not empty, so `EMPTY` is false and the clause's `not` makes it true.
+        (
+            "not %buckets EMPTY",
+            "let buckets = Resources.*[ Type == \"AWS::S3::Bucket\" ]\n\
+             rule r { not %buckets EMPTY }",
+            Status::PASS,
+        ),
+        // Both negations applied. If the two flips ever collapsed into one, this row and the one
+        // above would agree -- and a clause that answers the same either way has stopped
+        // discriminating, which is the defect this branch opened with.
+        (
+            "not %buckets not EMPTY",
+            "let buckets = Resources.*[ Type == \"AWS::S3::Bucket\" ]\n\
+             rule r { not %buckets not EMPTY }",
+            Status::FAIL,
+        ),
+        // The same clause without the leading `not`, so the flip is visibly what moves the answer.
+        (
+            "%buckets EMPTY, no clause negation",
+            "let buckets = Resources.*[ Type == \"AWS::S3::Bucket\" ]\n\
+             rule r { %buckets EMPTY }",
+            Status::FAIL,
+        ),
+        // A filter as the final query part reaches the same block by the other condition, and a
+        // filter selecting nothing takes the empty branch inside it.
+        (
+            "not <filter> EMPTY, filter matches",
+            r#"rule r { not Resources.*[ Type == "AWS::S3::Bucket" ] EMPTY }"#,
+            Status::PASS,
+        ),
+        (
+            "not <filter> EMPTY, filter matches nothing",
+            r#"rule r { not Resources.*[ Type == "AWS::None::Type" ] EMPTY }"#,
+            Status::FAIL,
+        ),
+    ];
+
+    // A negated parameterized call. The SKIP case is already covered; these are the two where the
+    // invoked rule reached a verdict and the negation has to invert it.
+    let negated_parameterized = [
+        (
+            "not r(x) where r fails",
+            "rule inner(n) { Resources.B.Properties.Name == %n }\nrule r { not inner(\"wrong\") }",
+            Status::PASS,
+        ),
+        (
+            "not r(x) where r passes",
+            "rule inner(n) { Resources.B.Properties.Name == %n }\nrule r { not inner(\"b\") }",
+            Status::FAIL,
+        ),
+    ];
+
+    // A disjunction in which every disjunct skipped. SKIP rather than PASS matters: PASS would
+    // report that one of the alternatives held when none of them was evaluated.
+    let all_disjuncts_skip = [(
+        "gate disjunction where both sides skip",
+        "rule gate(ty) { Resources.*[ Type == %ty ].Properties.Name == \"zzz\" }\n\
+         rule r when gate(\"AWS::None::One\") or gate(\"AWS::None::Two\") { \
+         Resources.B.Properties.Name == \"nope\" }",
+        Status::SKIP,
+    )];
+
+    for (label, rules, expected) in clause_level_negation
+        .iter()
+        .chain(negated_parameterized.iter())
+        .chain(all_disjuncts_skip.iter())
+    {
+        let rules_file = RulesFile::try_from(*rules)?;
+        let resources = PathAwareValue::try_from(RESOURCES)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            *expected,
+            "{}",
+            label
+        );
+    }
+
+    Ok(())
+}
