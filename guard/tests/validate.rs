@@ -268,17 +268,44 @@ mod validate_tests {
     /// Both output paths are asserted because they discard messages independently. The structured
     /// reporter walks the record tree, and the console reporter additionally organises findings by
     /// resource, which a clause with nothing to compare cannot be attributed to.
+    ///
+    /// Parameterized over the data shape as well, because the console reporter is really two: with a
+    /// `/Resources` key the CloudFormation-aware one renders the finding, and without one it delegates
+    /// to the generic reporter. Only the first was covered here, which is how the generic reporter
+    /// kept discarding the explanation after this test started passing -- it collected findings from
+    /// `ClauseValueCheck` records only, and a comparison that never ran against a value records its
+    /// explanation on the enclosing block instead.
     #[rstest::rstest]
-    #[case(None)]
-    #[case(Some("json"))]
-    fn empty_reference_failure_explains_itself_in_the_output(#[case] output_format: Option<&str>) {
+    #[case(
+        None,
+        "bucket-with-no-kms-keys-template.yaml",
+        "denied_names_from_empty_reference.guard"
+    )]
+    #[case(
+        Some("json"),
+        "bucket-with-no-kms-keys-template.yaml",
+        "denied_names_from_empty_reference.guard"
+    )]
+    #[case(
+        None,
+        "flat-document-with-empty-filter.yaml",
+        "denied_names_from_empty_reference_flat.guard"
+    )]
+    #[case(
+        Some("json"),
+        "flat-document-with-empty-filter.yaml",
+        "denied_names_from_empty_reference_flat.guard"
+    )]
+    fn empty_reference_failure_explains_itself_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] rules_file: &str,
+    ) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let mut runner = ValidateTestRunner::default();
-        let runner = runner
-            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
-            .rules(vec!["denied_names_from_empty_reference.guard"]);
+        let runner = runner.data(vec![data_file]).rules(vec![rules_file]);
         let status_code = match output_format {
             Some(format) => runner
                 .output_format(Some(format))
@@ -298,8 +325,9 @@ mod validate_tests {
         let output = writer.stripped().expect("failed to read the writer");
         assert!(
             output.contains("resolved to no values"),
-            "output ({:?}) did not explain that the reference resolved to no values.\n{}",
+            "the {} output for {} did not explain that the reference resolved to no values.\n{}",
             output_format.unwrap_or("console"),
+            data_file,
             output
         );
         assert!(
@@ -619,6 +647,55 @@ mod validate_tests {
             expected,
             output
         );
+    }
+
+    /// The same explanation has to reach junit, which is the format a pipeline gates on.
+    ///
+    /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already
+    /// recorded had nowhere to go, and the element came out as `<testcase status="skip"/>`. A
+    /// consumer parsing junit saw a rule silently not apply -- the failure mode this branch exists to
+    /// remove, one output format further out than the reporters it started with.
+    ///
+    /// Asserted on the contents of the `<skipped>` element rather than on the whole document, so the
+    /// reason has to arrive somewhere a junit consumer actually reads. A substring assertion over the
+    /// document would also pass if the text leaked into an attribute of the wrong element.
+    #[test]
+    fn a_skipped_rule_explains_itself_in_junit_output() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"])
+            .output_format(Some("junit"))
+            .show_summary(vec!["none"])
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a rule that does not apply exits 0; this test is about the explanation"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let inside_skipped = output
+            .split("<skipped>")
+            .nth(1)
+            .and_then(|rest| rest.split("</skipped>").next());
+
+        match inside_skipped {
+            None => panic!(
+                "junit emitted no <skipped> element for a rule that did not apply:\n{}",
+                output
+            ),
+            Some(body) => assert!(
+                body.contains("no AWS::EC2::Volume in the input"),
+                "the <skipped> element did not carry the reason; body was {:?} in:\n{}",
+                body,
+                output
+            ),
+        }
     }
 
     /// The counterpart: a run with nothing wrong must not print the section.

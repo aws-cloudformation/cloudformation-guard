@@ -10,7 +10,8 @@ use crate::rules::eval_context::{
 
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
+    BlockCheck, ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
+    UnResolved,
 };
 use fancy_regex::Regex;
 use lazy_static::*;
@@ -166,6 +167,30 @@ pub(super) fn find_failing_clauses<'record, 'value>(
             ..
         })) => vec![current],
 
+        // A clause that failed without producing any per-value result carries its explanation on the
+        // block record instead, and there is no `ClauseValueCheck` underneath it to find. The
+        // empty-reference failures are the case that matters: the comparison never ran, so nothing
+        // was recorded per value, and this reporter used to walk past the block and report nothing at
+        // all -- a run that exits 19 and prints an empty violation section.
+        //
+        // Children first, so a block that does have per-value findings still reports those. Reporting
+        // the block instead would replace a path and a value with a one-line summary, which is the
+        // opposite of the intent.
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            message: Some(_),
+            status: Status::FAIL,
+            ..
+        })) => {
+            let mut from_children = Vec::new();
+            for child in &current.children {
+                from_children.extend(find_failing_clauses(child));
+            }
+            match from_children.is_empty() {
+                true => vec![current],
+                false => from_children,
+            }
+        }
+
         _ => {
             let mut acc = Vec::new();
             for child in &current.children {
@@ -188,6 +213,17 @@ pub(super) fn extract_name_info_from_record<'record>(
         })) => NameInfo {
             message: msg.clone(),
             rule: name,
+            ..Default::default()
+        },
+
+        // The block-level counterpart of the arms below: no path and no value, because the comparison
+        // never ran against one. The explanation is all there is, and printing it beats printing
+        // nothing.
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            message: Some(msg), ..
+        })) => NameInfo {
+            error: Some(msg.clone()),
+            rule: rule_name,
             ..Default::default()
         },
 
