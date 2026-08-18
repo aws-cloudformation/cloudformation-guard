@@ -22,7 +22,7 @@ use crate::rules::{
 use cruet::case::{camel, class, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::rc::Rc;
 use std::vec::Vec;
@@ -1628,6 +1628,44 @@ pub(crate) struct Messages {
     pub(crate) location: Option<Location>,
 }
 
+/// The explanation for a rule that did not apply, if the evaluator recorded one.
+///
+/// A skipped rule reaches the reporters as a name and nothing else, which is why explanations
+/// written onto skip records used to be constructed and discarded -- the same defect that had five
+/// message-bearing record variants rendering nothing. Walking the rule's own subtree is what makes
+/// the message reachable, so a message may now be added to any of the block-shaped records below
+/// and it will surface.
+///
+/// The first explanation found wins rather than all of them being concatenated. A rule that skips
+/// usually skips for one reason, and a reporter line that grows without bound with nesting depth is
+/// worse than a slightly incomplete one.
+pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+    let own = match &record.container {
+        Some(RecordType::TypeCheck(TypeBlockCheck { block, .. })) => match block {
+            BlockCheck {
+                status: Status::SKIP,
+                message,
+                ..
+            } => message.clone(),
+            _ => None,
+        },
+        Some(RecordType::GuardClauseBlockCheck(block))
+        | Some(RecordType::WhenCheck(block))
+        | Some(RecordType::BlockGuardCheck(block))
+        | Some(RecordType::Disjunction(block)) => match block {
+            BlockCheck {
+                status: Status::SKIP,
+                message,
+                ..
+            } => message.clone(),
+            _ => None,
+        },
+        _ => None,
+    };
+
+    own.or_else(|| record.children.iter().find_map(find_skip_reason))
+}
+
 pub(crate) type Metadata = HashMap<String, String>;
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -1638,6 +1676,11 @@ pub(crate) struct FileReport<'value> {
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) not_compliant: Vec<ClauseReport<'value>>,
     pub(crate) not_applicable: BTreeSet<String>,
+    /// Why each inapplicable rule did not apply, for the ones where the evaluator knows something
+    /// a bare "not applicable" does not convey. Omitted when empty, so a run with nothing to
+    /// explain serialises to exactly the document consumers parse today.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) not_applicable_reasons: BTreeMap<String, String>,
     pub(crate) compliant: BTreeSet<String>,
 }
 
@@ -1651,6 +1694,8 @@ impl<'value> FileReport<'value> {
         self.not_compliant.extend(report.not_compliant);
         self.compliant.extend(report.compliant);
         self.not_applicable.extend(report.not_applicable);
+        self.not_applicable_reasons
+            .extend(report.not_applicable_reasons);
     }
 }
 
@@ -2481,6 +2526,7 @@ pub(crate) fn simplified_json_from_root<'value>(
         Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
             let mut pass: BTreeSet<String> = BTreeSet::new();
             let mut skip: BTreeSet<String> = BTreeSet::new();
+            let mut skip_reasons: BTreeMap<String, String> = BTreeMap::new();
             for each in &root.children {
                 if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) =
                     &each.container
@@ -2491,6 +2537,9 @@ pub(crate) fn simplified_json_from_root<'value>(
                         }
                         SKIP => {
                             skip.insert(name.to_string());
+                            if let Some(reason) = find_skip_reason(each) {
+                                skip_reasons.insert(name.to_string(), reason);
+                            }
                         }
                         _ => {}
                     }
@@ -2501,6 +2550,7 @@ pub(crate) fn simplified_json_from_root<'value>(
                 name,
                 not_compliant: report_all_failed_clauses_for_rules(&root.children),
                 not_applicable: skip,
+                not_applicable_reasons: skip_reasons,
                 compliant: pass,
                 ..Default::default()
             }

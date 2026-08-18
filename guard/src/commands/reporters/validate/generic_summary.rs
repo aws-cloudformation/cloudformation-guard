@@ -95,10 +95,13 @@ impl Reporter for GenericSummary {
                 Some(Status::SKIP) => true,
                 _ => false,
             });
+        // The StatusContext path carries no record tree, so there is nothing to mine a reason
+        // from: every skip here is reported without one. This is the pre-record reporting path;
+        // the record-based path in `common::report_from_events` is where reasons come from.
         let skipped = skipped
             .iter()
-            .map(|s| s.context.clone())
-            .collect::<HashSet<String>>();
+            .map(|s| (s.context.clone(), None))
+            .collect::<SkippedRules>();
         let passed = passed
             .iter()
             .map(|s| s.context.clone())
@@ -158,7 +161,7 @@ impl SingleLineSummary {
         &self,
         failed: &HashMap<String, Vec<NameInfo<'_>>>,
         passed: &HashSet<String>,
-        skipped: &HashSet<String>,
+        skipped: &SkippedRules,
     ) -> bool {
         if self.summary_table.is_empty() {
             return false;
@@ -259,6 +262,36 @@ fn print_rules_output(
     Ok(())
 }
 
+/// Skipped rules, each followed by the evaluator's reason when it recorded one.
+///
+/// Separate from `print_rules_output` rather than a flag on it: that function also prints the
+/// compliant set, which has no reasons, and threading an always-`None` argument through it to
+/// serve one caller reads worse than two small functions.
+fn print_skipped_rules_output(
+    writer: &mut dyn Write,
+    rules: SkippedRules,
+    data_file_name: &str,
+) -> crate::rules::Result<()> {
+    if !rules.is_empty() {
+        writeln!(writer, "--")?;
+    }
+    // Sorted so two runs over the same input produce the same output. The map is a HashMap, so
+    // iterating it directly would reorder the lines between runs.
+    let mut rules = rules.into_iter().collect::<Vec<(String, Option<String>)>>();
+    rules.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for (rule, reason) in rules {
+        writeln!(
+            writer,
+            "Rule [{rule}] is not applicable for template [{data_file_name}]"
+        )?;
+        if let Some(reason) = reason {
+            writeln!(writer, "  {reason}")?;
+        }
+    }
+
+    Ok(())
+}
+
 impl GenericReporter for SingleLineSummary {
     fn report(
         &self,
@@ -267,7 +300,7 @@ impl GenericReporter for SingleLineSummary {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()> {
         if !self.is_reportable(&failed, &passed, &skipped) {
@@ -299,7 +332,7 @@ impl GenericReporter for SingleLineSummary {
             print_rules_output(writer, passed, "compliant", data_file_name)?;
         }
         if self.summary_table.contains(SummaryType::SKIP) {
-            print_rules_output(writer, skipped, "not applicable", data_file_name)?;
+            print_skipped_rules_output(writer, skipped, data_file_name)?;
         }
         writeln!(writer, "--")?;
         Ok(())

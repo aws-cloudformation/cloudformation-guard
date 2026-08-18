@@ -1986,7 +1986,15 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 block: BlockCheck {
                     status: Status::SKIP,
                     at_least_one_matches: false,
-                    message: None,
+                    // Reaches the reader now that a skipped rule carries its reason through to the
+                    // reporters. Naming which of the two skips happened is the whole point: an
+                    // absent resource type is the ordinary, correct reason for a rule not to
+                    // apply, and a condition that matched nothing is the one worth a second look,
+                    // because a rule that never fires looks exactly like a rule that passes.
+                    message: Some(format!(
+                        "no {} in the input, so the type block had nothing to check",
+                        type_block.type_name
+                    )),
                 },
             }),
         )?;
@@ -2144,7 +2152,18 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
             type_name: &type_block.type_name,
             block: BlockCheck {
                 status,
-                message: None,
+                // Only the SKIP needs explaining. Reaching here with neither a pass nor a fail
+                // means the input did contain resources of this type and not one of them was
+                // checked -- every one was exempted by the block's own `when` condition. That is
+                // a legitimate outcome and also the shape of a rule that silently never fires, and
+                // the reader cannot tell which from a bare "not applicable".
+                message: match status {
+                    Status::SKIP => Some(format!(
+                        "every {} in the input was exempted by the type block's `when` condition, so none was checked",
+                        type_block.type_name
+                    )),
+                    _ => None,
+                },
                 at_least_one_matches: false,
             },
         }),

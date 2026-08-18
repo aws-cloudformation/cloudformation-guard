@@ -4810,45 +4810,55 @@ fn the_role_reaching_a_leaf_clause_survives_every_nesting() -> Result<()> {
 /// A message written into a record and never rendered is worse than no message: the code reads as
 /// though the failure explains itself, the documentation says it does, and the operator sees
 /// nothing. That is exactly what happened to the empty-reference explanation. It was constructed,
-/// threaded into a `BlockCheck`, asserted in review to be actionable -- and dropped, because
-/// `report_all_failed_clauses_for_rules` matched the block with `..`, ignored the field, and
-/// recursed into children that an empty comparison does not have. The console printed "Number of
-/// non-compliant resources 0" for a run that had correctly exited 19.
+/// stored, and dropped, and the claim that it "names the cause and the remedy" went into
+/// docs/CLAUSES.md and into a review comment before anyone checked the output.
 ///
-/// The fix was per-variant, so this test guards the property rather than any one variant: it counts
-/// the `message: Some(...)` sites in this module and pins the total. Adding one changes the count
-/// and fails here, which is the prompt to check that the new message can actually be rendered. The
-/// variants and their counts are listed so the next person can tell at a glance which reporter path
-/// a new message needs to reach.
-///
-/// Counting source text is crude, and deliberately so. The alternative -- asserting rendered output
-/// for each site -- is not reachable: most of these are `Err(_)` arms for conditions an ordinary
-/// rules file cannot provoke, so there would be nothing to drive them with. A count that must be
-/// consciously updated is worth more than coverage that silently omits the unreachable half.
+/// So this counts the sites rather than trusting the next author to check. The count is taken by
+/// exclusion -- every `message:` field that is not `None`, not a type annotation, and not a
+/// forward of the rule author's own `custom_message` -- because the first version counted the
+/// literal string `message: Some` and undercounted the moment a message was built in a `match`
+/// arm instead. Counting what is left over cannot be fooled by a new spelling.
 #[test]
 fn every_recorded_explanation_has_a_rendering_path() {
     let source = include_str!("eval.rs");
-    let sites = source.matches("message: Some").count();
+    let total = source.matches("message: ").count();
+    // `message: None` is an explicit no-explanation, and `message: Option<...>` is a struct field
+    // or function parameter rather than a construction site.
+    let empty = source.matches("message: None").count();
+    let declarations = source.matches("message: Option").count();
+    // The rule author's own message, which has always rendered. A different feature from the
+    // evaluator explaining its own verdict, and not what this test guards.
+    let custom = source.matches("message: custom_message").count()
+        + source.matches("message: gnc.custom_message").count()
+        + source
+            .matches("message: self.call_rule.named_rule.custom_message")
+            .count();
+    let sites = total - empty - declarations - custom;
 
-    // Site counts by the record variant each lands on, as of this change:
+    // Evaluator-generated explanations, by the record variant each lands on:
     //
     //   ClauseValueCheck        3   leaf value checks; rendered by the clause arms already
     //   GuardClauseBlockCheck   4   rendered: falls back to the message when no children report
     //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
-    //   TypeCheck               2   rendered: same fallback
+    //   TypeCheck               6   four failures, plus the two skips below
     //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
     //
-    // Every variant that can carry a message now has a rendering path. If this total changes,
-    // find the new site, note which variant it records against, and confirm
-    // report_all_failed_clauses_for_rules surfaces it.
-    const SITES_EXPECTED: usize = 13;
+    // The two TypeCheck skips are the newest and were the hardest to render. A skipped rule used
+    // to reach the reporters as a bare name, so a message on a skip record was recorded and
+    // discarded -- this test refused an earlier attempt to add one, which is what it is for.
+    // Skips now carry their reason through `find_skip_reason`, and both are asserted end to end by
+    // `a_skipped_type_block_explains_itself_in_the_output`.
+    //
+    // If this total changes, find the new site, note which variant it records against, and confirm
+    // it reaches rendered output before updating the number.
+    const SITES_EXPECTED: usize = 17;
 
     assert_eq!(
         sites, SITES_EXPECTED,
         "the number of recorded explanations in eval.rs changed from {SITES_EXPECTED} to {sites}. \
-         A new message needs a rendering path in report_all_failed_clauses_for_rules, or it will \
-         be recorded and silently discarded; update the table above once you have checked."
+         A new message needs a rendering path, or it will be recorded and silently discarded; \
+         update the table above once you have checked that it reaches the output."
     );
 }
 

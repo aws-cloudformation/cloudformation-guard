@@ -309,6 +309,74 @@ mod validate_tests {
         );
     }
 
+    /// A rule that skipped has to say why, in both the console and the structured output.
+    ///
+    /// This is the case `every_recorded_explanation_has_a_rendering_path` refused earlier in this
+    /// branch. A message was written onto the skip record and it went nowhere: a skipped rule
+    /// reached the reporters as a bare name, so the explanation was constructed and discarded --
+    /// the same defect that had five other message-bearing record variants rendering nothing.
+    /// Making it reachable meant the skip set had to carry reasons, which changed the shape of
+    /// `FileReport` and of the `GenericReporter::report` signature.
+    ///
+    /// Both skip causes are asserted, because telling them apart is the whole value. "No volumes
+    /// in the template" is the ordinary reason for a rule not to apply. "Every volume was exempted
+    /// by the condition" is the one worth a second look, since a rule that never fires looks
+    /// exactly like a rule that passes -- both report SKIP and exit 0.
+    #[rstest::rstest]
+    #[case(
+        None,
+        "volume-below-threshold-template.yaml",
+        "was exempted by the type block"
+    )]
+    #[case(
+        Some("json"),
+        "volume-below-threshold-template.yaml",
+        "was exempted by the type block"
+    )]
+    #[case(None, "no-volumes-template.yaml", "no AWS::EC2::Volume in the input")]
+    #[case(
+        Some("json"),
+        "no-volumes-template.yaml",
+        "no AWS::EC2::Volume in the input"
+    )]
+    fn a_skipped_type_block_explains_itself_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] expected: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec![data_file])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::SUCCESS, status_code,
+            "a rule that does not apply exits 0; this test is about the explanation, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains(expected),
+            "the {} output for {} did not explain why the rule was skipped; wanted {:?} in:\n{}",
+            output_format.unwrap_or("console"),
+            data_file,
+            expected,
+            output
+        );
+    }
+
     /// The counterpart: a run with nothing wrong must not print the section.
     ///
     /// Without this, the assertion above is satisfied by a reporter that prints the explanation

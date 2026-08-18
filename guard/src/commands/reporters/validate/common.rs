@@ -3,8 +3,9 @@ use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
-    BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport, GuardClauseReport,
-    InComparison, UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
+    find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
+    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
+    ValueUnResolved,
 };
 
 use crate::rules::values::CmpOperator;
@@ -59,6 +60,14 @@ impl<'a> Default for NameInfo<'a> {
     }
 }
 
+/// Rules that did not apply, each with the evaluator's reason when it recorded one.
+///
+/// One map rather than a name set plus a parallel reason map: the reason belongs to the skip, and
+/// two collections keyed by rule name can drift. `None` is the ordinary case -- most skips are a
+/// condition that legitimately did not match -- and `Some` is for the skips where the evaluator
+/// knows something the reader cannot infer from a bare "not applicable".
+pub(super) type SkippedRules = HashMap<String, Option<String>>;
+
 pub(super) trait GenericReporter: Debug {
     #[allow(clippy::too_many_arguments)]
     fn report(
@@ -68,7 +77,7 @@ pub(super) trait GenericReporter: Debug {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()>;
 }
@@ -97,6 +106,12 @@ struct DataOutput<'a> {
     rules_from: &'a str,
     not_compliant: HashMap<String, Vec<NameInfo<'a>>>,
     not_applicable: HashSet<String>,
+    /// Omitted entirely when no skip carried a reason, which keeps the document shape identical
+    /// to what consumers parse today. BTreeMap rather than HashMap so the order is stable across
+    /// runs -- a reporter that reshuffles its own output on every invocation is unusable in a
+    /// diff.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    not_applicable_reasons: BTreeMap<String, String>,
     compliant: HashSet<String>,
 }
 
@@ -108,15 +123,20 @@ impl GenericReporter for StructuredSummary {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         _: usize,
     ) -> crate::rules::Result<()> {
+        let not_applicable_reasons = skipped
+            .iter()
+            .filter_map(|(rule, reason)| reason.clone().map(|reason| (rule.clone(), reason)))
+            .collect::<BTreeMap<String, String>>();
         let value = DataOutput {
             rules_from: rules_file_name,
             data_from: data_file_name,
             not_compliant: failed,
             compliant: passed,
-            not_applicable: skipped,
+            not_applicable: skipped.into_keys().collect(),
+            not_applicable_reasons,
         };
 
         match &self.hierarchy_type {
@@ -339,7 +359,7 @@ pub(super) fn report_from_events(
 ) -> crate::rules::Result<()> {
     let mut longest_rule_length = 0;
     let mut failed = HashMap::new();
-    let mut skipped = HashSet::new();
+    let mut skipped = SkippedRules::new();
     let mut success = HashSet::new();
     for each_rule in &root_record.children {
         if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) = &each_rule.container
@@ -361,7 +381,7 @@ pub(super) fn report_from_events(
                 }
 
                 Status::SKIP => {
-                    skipped.insert(name.to_string());
+                    skipped.insert(name.to_string(), find_skip_reason(each_rule));
                 }
             }
         }
