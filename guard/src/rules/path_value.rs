@@ -636,7 +636,9 @@ impl QueryResolver for PathAwareValue {
                                     match query[1] {
                                         QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
-                                            let check = if index >= 0 { index } else { -index } as usize;
+                                            // `unsigned_abs`: see `eval_context::retrieve_index`.
+                                            // `-index` panics on `i32::MIN`.
+                                            let check = index.unsigned_abs() as usize;
                                             if check < keys.len() {
                                                 vec![keys[check]]
                                             } else {
@@ -1005,7 +1007,8 @@ impl PathAwareValue {
         list: &'v Vec<PathAwareValue>,
         query: &[QueryPart<'_>],
     ) -> Result<&'v PathAwareValue, Error> {
-        let check = if index >= 0 { index } else { -index } as usize;
+        // `unsigned_abs`: see `eval_context::retrieve_index`. `-index` panics on `i32::MIN`.
+        let check = index.unsigned_abs() as usize;
         if check < list.len() {
             Ok(&list[check])
         } else {

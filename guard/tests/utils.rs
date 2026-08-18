@@ -109,7 +109,7 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
 /// there, because `get_full_path_for_resource_file` builds them from it.
 ///
 /// This replaced a `$HOME`-based version that first rewrote the home directory to `~` and then
-/// matched `~/…`, which had two bugs:
+/// matched `~/...`, which had two bugs:
 ///
 /// - `$HOME` was substituted by plain substring match, so a checkout whose path merely
 ///   *contains* `$HOME` was corrupted rather than normalised. With `HOME=/home/u`, the path
@@ -122,7 +122,7 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
 ///
 /// Anchoring on the crate directory also leaves URLs alone by construction, which a regex over
 /// bare absolute paths would not: the SARIF fixtures contain
-/// `//docs.oasis-open.org/…/sarif-schema-2.1.0.json`, and reducing that to its basename would
+/// `//docs.oasis-open.org/.../sarif-schema-2.1.0.json`, and reducing that to its basename would
 /// break them. It is the only slash-bearing file reference in `guard/resources`, so the
 /// distinction is load-bearing for exactly one fixture and easy to lose.
 pub fn replace_path_with_filenames(text: String) -> String {
