@@ -255,6 +255,13 @@ fn print_rules_output(
     // Sorted for the same reason the failing and skipped sections are: `rules` is a HashSet, and
     // Rust seeds its hasher per process, so iterating it directly printed the compliant rules in a
     // different order on every run of the same binary over the same input.
+    //
+    // This section was the worst of the three, and was missed when the other two were sorted.
+    // Measured on `seven-compliant-rules.guard` with `--show-summary pass`: twenty runs of the
+    // merge-base produced twenty distinct orderings in one measurement and nineteen in another.
+    // The count varies between measurements because the orderings come from a per-process hasher
+    // seed, so treat any single figure as an illustration rather than a constant -- what is fixed is
+    // that the merge-base produced many and the sorted version produces one.
     let mut rules = rules.into_iter().collect::<Vec<String>>();
     rules.sort();
     for rule in rules {
@@ -322,10 +329,17 @@ impl GenericReporter for SingleLineSummary {
             }
             // Sorted by rule name. `failed` is a HashMap, so iterating it directly emitted the
             // failing rules in whatever order the hasher produced -- two runs of the same binary
-            // over the same input printed the same findings in different orders. Verified before
-            // and after: twelve identical runs produced two distinct outputs on the merge-base as
-            // well as here, so this is pre-existing rather than introduced, but it makes report
-            // diffing useless and any golden file covering two failing rules flaky.
+            // over the same input printed the same findings in different orders.
+            //
+            // Measured on `three-failing-rules.guard`, twenty runs each: the merge-base produced six
+            // distinct reports with `--show-summary all` and five by default; sorted, it produces
+            // one. Pre-existing rather than introduced here, but it makes report diffing useless and
+            // any golden file covering two or more failing rules flaky.
+            //
+            // The distinct-report count is itself unstable between measurements, which is worth
+            // knowing before treating any single figure here as exact: the orderings are drawn from a
+            // per-process hasher seed, so the number of *different* orderings twenty runs happen to
+            // produce varies too. Only the sorted result is a fixed point.
             //
             // Sorting here rather than changing the map type, because the ordering is a property of
             // the report and every other reporter is free to choose its own.
