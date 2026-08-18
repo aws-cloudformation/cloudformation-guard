@@ -187,7 +187,7 @@ A value literal can be from any of the following supported categories,
 
 - arrays of primitive/associative array types
 
-Comparisons are between values of the same kind, with one exception: `integer` and `float` compare against each other as numbers. `Size > 10` holds for a `Size` of `50.5`, and `Size == 50` holds for a `Size` of `50.0`. Earlier versions treated the two as different types and reported that they could not be compared, which failed the clause. Comparing across kinds that are not both numeric, a `string` against an `integer`, say, still cannot be decided, and the clause fails rather than guessing.
+Comparisons are between values of the same kind, with one exception: `integer` and `float` compare against each other as numbers. That includes range membership, so `Size IN r[5.0, 100.0]` holds for a `Size` of `50` and `Size IN r[5, 100]` holds for a `Size` of `50.5`. `Size > 10` holds for a `Size` of `50.5`, and `Size == 50` holds for a `Size` of `50.0`. Earlier versions treated the two as different types and reported that they could not be compared, which failed the clause. Comparing across kinds that are not both numeric, a `string` against an `integer`, say, still cannot be decided, and the clause fails rather than guessing.
 
 The distinction matters most inside a `when` condition. A condition that cannot be decided does not pass, and a rule whose condition does not pass is reported as not applicable, so the block it guards is never checked. A rule written as
 

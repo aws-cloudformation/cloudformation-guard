@@ -1047,6 +1047,48 @@ impl PathAwareValue {
     }
 }
 
+/// Is an integer inside a float range, and a float inside an integer range.
+///
+/// `WithinRange` is generic over a single type, so `i64` has an impl for `RangeType<i64>` and `f64`
+/// for `RangeType<f64>`, and the two mixed pairings have none. They fell through to `compare_values`,
+/// which reports `int` against `range(float, float)` as incomparable -- so `Size IN r[5.0, 100.0]`
+/// failed a `Size: 50` that sits inside the range, and `IN r[5, 100]` failed a `Size: 50.5`. A wrong
+/// verdict rather than a wrong skip, and the same defect as the scalar case one function below: the
+/// mixed-numeric widening landed on the scalar arms and stopped there.
+///
+/// Bounds are compared through `compare_int_to_float` for the reason given on that function. Casting
+/// the integer to `f64` instead would round above 2^53 and silently move the bound, which on a range
+/// check means quietly admitting or excluding a value at the edge.
+fn int_within_float_range(value: i64, range: &RangeType<f64>) -> bool {
+    let above_lower = match compare_int_to_float(value, range.lower) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => range.inclusive & LOWER_INCLUSIVE > 0,
+        _ => false,
+    };
+    let below_upper = match compare_int_to_float(value, range.upper) {
+        Some(Ordering::Less) => true,
+        Some(Ordering::Equal) => range.inclusive & UPPER_INCLUSIVE > 0,
+        _ => false,
+    };
+    above_lower && below_upper
+}
+
+fn float_within_int_range(value: f64, range: &RangeType<i64>) -> bool {
+    // `compare_int_to_float` orders the integer against the float, so each result is reversed to
+    // read as the value against the bound.
+    let above_lower = match compare_int_to_float(range.lower, value).map(Ordering::reverse) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => range.inclusive & LOWER_INCLUSIVE > 0,
+        _ => false,
+    };
+    let below_upper = match compare_int_to_float(range.upper, value).map(Ordering::reverse) {
+        Some(Ordering::Less) => true,
+        Some(Ordering::Equal) => range.inclusive & UPPER_INCLUSIVE > 0,
+        _ => false,
+    };
+    above_lower && below_upper
+}
+
 /// Order an integer against a float without going through a lossy conversion.
 ///
 /// `(i as f64).partial_cmp(f)` is the obvious spelling and it is wrong: `i64` values above 2^53
@@ -1183,6 +1225,14 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
             return Ok(value.is_within(r))
+        }
+
+        (PathAwareValue::Int((_, value)), PathAwareValue::RangeFloat((_, r))) => {
+            return Ok(int_within_float_range(*value, r))
+        }
+
+        (PathAwareValue::Float((_, value)), PathAwareValue::RangeInt((_, r))) => {
+            return Ok(float_within_int_range(*value, r))
         }
 
         (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {

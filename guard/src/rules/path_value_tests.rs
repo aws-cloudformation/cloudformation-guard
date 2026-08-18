@@ -487,3 +487,142 @@ fn mixed_int_and_float_operands_compare_numerically() {
         Err(Error::NotComparable(_))
     ));
 }
+
+/// A number is inside a range of the other numeric kind, or outside it, but never incomparable.
+///
+/// `WithinRange` is generic over one type, so `i64` has an impl for `RangeType<i64>` and `f64` for
+/// `RangeType<f64>`, and the two mixed pairings had none. The range table fell through to
+/// `compare_values`, which reports `int` against `range(float, float)` as incomparable. So
+/// `Size IN r[5.0, 100.0]` failed a `Size: 50` that sits inside the range: a wrong verdict, not a
+/// wrong skip.
+///
+/// This is the same defect as `mixed_int_and_float_operands_compare_numerically` and was left behind
+/// by that fix -- the widening landed on the scalar arms and stopped there.
+///
+/// Asserted against `compare_eq` only, because that is the table the evaluator consults. `PartialEq`
+/// carries a second, partial copy of the same semantics; see the note on `impl Eq for PathAwareValue`
+/// for why range membership does not belong there.
+///
+/// Boundaries are asserted in both polarities because the inclusivity flags are the part a lossy
+/// conversion would break invisibly: a bound that rounds moves the edge without changing any
+/// interior answer, so a test over interior values alone would pass against a broken implementation.
+#[test]
+fn mixed_numeric_range_membership_is_decided() {
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn flt(f: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::root(), f))
+    }
+    fn range_f(lower: f64, upper: f64, inclusive: u8) -> PathAwareValue {
+        PathAwareValue::RangeFloat((
+            Path::root(),
+            RangeType {
+                lower,
+                upper,
+                inclusive,
+            },
+        ))
+    }
+    fn range_i(lower: i64, upper: i64, inclusive: u8) -> PathAwareValue {
+        PathAwareValue::RangeInt((
+            Path::root(),
+            RangeType {
+                lower,
+                upper,
+                inclusive,
+            },
+        ))
+    }
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+
+    // (label, value, range, expected)
+    let cases: [(&str, PathAwareValue, PathAwareValue, bool); 12] = [
+        (
+            "int inside a float range",
+            int(50),
+            range_f(5.0, 100.0, BOTH),
+            true,
+        ),
+        (
+            "int below a float range",
+            int(1),
+            range_f(5.0, 100.0, BOTH),
+            false,
+        ),
+        (
+            "int above a float range",
+            int(500),
+            range_f(5.0, 100.0, BOTH),
+            false,
+        ),
+        (
+            "float inside an int range",
+            flt(50.5),
+            range_i(5, 100, BOTH),
+            true,
+        ),
+        (
+            "float below an int range",
+            flt(0.5),
+            range_i(5, 100, BOTH),
+            false,
+        ),
+        (
+            "float above an int range",
+            flt(500.5),
+            range_i(5, 100, BOTH),
+            false,
+        ),
+        // Edges, both polarities. An implementation that rounds a bound gets these wrong while
+        // answering every interior case correctly.
+        (
+            "int on an inclusive float lower bound",
+            int(5),
+            range_f(5.0, 100.0, BOTH),
+            true,
+        ),
+        (
+            "int on an exclusive float lower bound",
+            int(5),
+            range_f(5.0, 100.0, UPPER_INCLUSIVE),
+            false,
+        ),
+        (
+            "int on an inclusive float upper bound",
+            int(100),
+            range_f(5.0, 100.0, BOTH),
+            true,
+        ),
+        (
+            "int on an exclusive float upper bound",
+            int(100),
+            range_f(5.0, 100.0, LOWER_INCLUSIVE),
+            false,
+        ),
+        // 2^53 + 1 against a float bound of 2^53: the integer is the larger, so it is outside an
+        // upper bound there. Casting it to f64 would round it down to equal and admit it.
+        (
+            "an integer above 2^53 against a float upper bound",
+            int(9_007_199_254_740_993),
+            range_f(0.0, 9_007_199_254_740_992.0, BOTH),
+            false,
+        ),
+        // The mirror: the same integer as an inclusive lower bound accepts itself.
+        (
+            "an integer above 2^53 on its own float lower bound",
+            int(9_007_199_254_740_993),
+            range_f(9_007_199_254_740_993.0, 1.0e300, BOTH),
+            true,
+        ),
+    ];
+
+    for (label, value, range, expected) in cases {
+        assert_eq!(
+            compare_eq(&value, &range).unwrap(),
+            expected,
+            "compare_eq: {}",
+            label
+        );
+    }
+}
