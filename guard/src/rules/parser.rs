@@ -811,12 +811,16 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
     let (input, var) = opt(variable_capture_in_map_or_index)(input)?;
     let (input, _keys) = preceded(zero_or_more_ws_or_comment, keys)(input)?;
+    // The four comparators a key filter accepts. `MapKeyComparator` exists so this list and the
+    // evaluator cannot disagree: anything absent here is unrepresentable downstream rather than an
+    // unreachable match arm.
     let (input, cmp) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
-            eq,
-            value((CmpOperator::In, false), in_keyword),
-            map(tuple((not, in_keyword)), |_m| (CmpOperator::In, true)),
+            value(MapKeyComparator::Eq, tag("==")),
+            value(MapKeyComparator::NotEq, tag("!=")),
+            value(MapKeyComparator::In, in_keyword),
+            map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
     ))(input)?;
     let (input, with) = cut(preceded(

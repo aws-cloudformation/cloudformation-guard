@@ -1130,21 +1130,24 @@ fn binary_operation<'value, 'loc: 'value>(
     }
 }
 
+/// Compares the keys of a map against a right-hand side, for `[ keys <op> ... ]` filters.
+///
+/// The narrowed `MapKeyComparator` rather than a `(CmpOperator, bool)` pair: this function's only
+/// caller is `QueryPart::MapKeyFilter`, the parser admits four comparators there, and the wider
+/// type left four arms here that nothing could reach. See the type's own comment for why that
+/// mattered.
 pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     lhs: &[QueryResult],
     rhs: &[QueryResult],
-    cmp: (CmpOperator, bool),
+    cmp: MapKeyComparator,
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
 
-    let cmp = if cmp.0 == CmpOperator::Eq && rhs.len() > 1 {
-        (CmpOperator::In, cmp.1)
-    } else {
-        cmp
-    };
+    let cmp = cmp.widened_for(rhs.len());
+    let recorded_cmp = cmp.as_cmp_operator();
 
     for each in lhs.iter() {
         match each {
@@ -1156,7 +1159,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         status: Status::FAIL,
                         message: None,
                         custom_message: custom_message.clone(),
-                        comparison: cmp,
+                        comparison: recorded_cmp,
                         from: each.clone(),
                         to: None,
                     })),
@@ -1166,58 +1169,36 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 
             QueryResult::Literal(l) | QueryResult::Resolved(l) => {
                 let r = match cmp {
-                    (CmpOperator::Eq, is_not) => each_lhs_compare(
-                        not_compare(crate::rules::path_value::compare_eq, is_not),
+                    MapKeyComparator::Eq | MapKeyComparator::NotEq => each_lhs_compare(
+                        not_compare(
+                            crate::rules::path_value::compare_eq,
+                            cmp == MapKeyComparator::NotEq,
+                        ),
                         Rc::clone(l),
                         rhs,
                     )?,
 
-                    (CmpOperator::Ge, is_not) => each_lhs_compare(
-                        not_compare(crate::rules::path_value::compare_ge, is_not),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-
-                    (CmpOperator::Gt, is_not) => each_lhs_compare(
-                        not_compare(crate::rules::path_value::compare_gt, is_not),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-
-                    (CmpOperator::Lt, is_not) => each_lhs_compare(
-                        not_compare(crate::rules::path_value::compare_lt, is_not),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-
-                    (CmpOperator::Le, is_not) => each_lhs_compare(
-                        not_compare(crate::rules::path_value::compare_le, is_not),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-
-                    (CmpOperator::In, is_not) => {
-                        each_lhs_compare(in_cmp(is_not), Rc::clone(l), rhs)?
+                    MapKeyComparator::In | MapKeyComparator::NotIn => {
+                        each_lhs_compare(in_cmp(cmp == MapKeyComparator::NotIn), Rc::clone(l), rhs)?
                     }
-
-                    _ => unreachable!(),
                 };
 
-                match cmp.0 {
-                    CmpOperator::In => {
+                match cmp {
+                    // Membership is satisfied by one match, so the report folds that way.
+                    MapKeyComparator::In | MapKeyComparator::NotIn => {
                         statues.extend(report_at_least_one(
                             r,
-                            cmp,
+                            recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
                             eval_context,
                         )?);
                     }
 
-                    _ => {
+                    MapKeyComparator::Eq | MapKeyComparator::NotEq => {
                         let status = report_all_values(
                             r,
-                            cmp,
+                            recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
                             eval_context,

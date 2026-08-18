@@ -1349,7 +1349,7 @@ fn test_keys_keyword() {
             QueryPart::MapKeyFilter(
                 None,
                 MapKeyFilterClause {
-                    comparator: (CmpOperator::In, false),
+                    comparator: MapKeyComparator::In,
                     compare_with: LetValue::AccessClause(AccessQuery {
                         match_all: true,
                         query: vec![QueryPart::Key("%var".to_string())],
@@ -1363,7 +1363,7 @@ fn test_keys_keyword() {
             QueryPart::MapKeyFilter(
                 None,
                 MapKeyFilterClause {
-                    comparator: (CmpOperator::In, true),
+                    comparator: MapKeyComparator::NotIn,
                     compare_with: LetValue::AccessClause(AccessQuery {
                         match_all: true,
                         query: vec![QueryPart::Key("%var".to_string())],
@@ -1378,7 +1378,7 @@ fn test_keys_keyword() {
             QueryPart::MapKeyFilter(
                 None,
                 MapKeyFilterClause {
-                    comparator: (CmpOperator::Eq, false),
+                    comparator: MapKeyComparator::Eq,
                     compare_with: LetValue::Value(
                         PathAwareValue::try_from(Value::Regex("aws:S".to_string())).unwrap(),
                     ),
@@ -1392,7 +1392,7 @@ fn test_keys_keyword() {
             QueryPart::MapKeyFilter(
                 None,
                 MapKeyFilterClause {
-                    comparator: (CmpOperator::Eq, true),
+                    comparator: MapKeyComparator::NotEq,
                     compare_with: LetValue::Value(
                         PathAwareValue::try_from(Value::String("aws:IsSecure".to_string()))
                             .unwrap(),
@@ -1406,7 +1406,7 @@ fn test_keys_keyword() {
             QueryPart::MapKeyFilter(
                 None,
                 MapKeyFilterClause {
-                    comparator: (CmpOperator::In, true),
+                    comparator: MapKeyComparator::NotIn,
                     compare_with: LetValue::AccessClause(AccessQuery {
                         match_all: true,
                         query: vec![QueryPart::Key("%var".to_string())],
@@ -3826,7 +3826,7 @@ fn some_clause_parse() -> Result<(), Error> {
                     QueryPart::MapKeyFilter(
                         None,
                         MapKeyFilterClause {
-                            comparator: (CmpOperator::Eq, false),
+                            comparator: MapKeyComparator::Eq,
                             compare_with: LetValue::Value(
                                 PathAwareValue::try_from(Value::Regex(
                                     "aws:[sS]ource(Vpc|VPC|Vpce|VPCE)".to_string(),
