@@ -187,7 +187,7 @@ A value literal can be from any of the following supported categories,
 
 - arrays of primitive/associative array types
 
-Comparisons are between values of the same kind, with one exception: `integer` and `float` compare against each other as numbers. `Size > 10` holds for a `Size` of `50.5`, and `Size == 50` holds for a `Size` of `50.0`. Earlier versions treated the two as different types and reported that they could not be compared, which failed the clause. Comparing across kinds that are not both numeric — a `string` against an `integer`, say — still cannot be decided, and the clause fails rather than guessing.
+Comparisons are between values of the same kind, with one exception: `integer` and `float` compare against each other as numbers. `Size > 10` holds for a `Size` of `50.5`, and `Size == 50` holds for a `Size` of `50.0`. Earlier versions treated the two as different types and reported that they could not be compared, which failed the clause. Comparing across kinds that are not both numeric, a `string` against an `integer`, say, still cannot be decided, and the clause fails rather than guessing.
 
 The distinction matters most inside a `when` condition. A condition that cannot be decided does not pass, and a rule whose condition does not pass is reported as not applicable, so the block it guards is never checked. A rule written as
 
@@ -199,15 +199,17 @@ rule large_volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].
 
 now applies to a template whose `Size` is `50.5` as it always did to one whose `Size` is `50`.
 
-A comparison across kinds that are not both numeric is a sharper problem in the same place, and one to be aware of when writing conditions. CloudFormation templates frequently carry numbers as strings — `Size: "50"` rather than `Size: 50` — and a string cannot be compared against `10`. The condition cannot be decided, so it does not pass, so the rule is reported as not applicable and the block it guards is never checked. The run exits `0`, exactly as it would for a rule that genuinely did not apply.
+A comparison across kinds that are not both numeric is a sharper problem in the same place, and one to be aware of when writing conditions. CloudFormation templates frequently carry numbers as strings, `Size: "50"` rather than `Size: 50`, and a string cannot be compared against `10`. The condition cannot be decided, so it does not pass, so the rule is reported as not applicable and the block it guards is never checked. The run exits `0`, exactly as it would for a rule that genuinely did not apply.
 
 Guard reports which of the two happened. A rule skipped because a condition could not be decided says so, naming the operand kinds:
 
 ```
-Rule [large_volumes_are_encrypted] is not applicable for template [...]
-  large_volumes_are_encrypted: the rule did not apply because one of its conditions could not
-  be decided: PathAwareValues are not comparable String, int
+SKIP rules
+large_volumes_encrypted_gate.guard/large_volumes_are_encrypted    SKIP
+  large_volumes_are_encrypted: the rule did not apply because one of its conditions could not be decided: PathAwareValues are not comparable String, int
 ```
+
+The same explanation appears under `not_applicable_reasons` in `--output-format json` and `yaml`.
 
 A rule skipped because its condition was decided and simply not met prints no such line, so the message appears only where something needs attention. If you see it, the fix is in the rule or the input rather than in Guard: compare against a value of the same kind, or guard the clause so the mismatch is explicit.
 

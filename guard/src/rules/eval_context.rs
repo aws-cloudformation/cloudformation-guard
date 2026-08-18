@@ -122,7 +122,13 @@ fn retrieve_index(
     elements: &Vec<PathAwareValue>,
     query: &[QueryPart<'_>],
 ) -> QueryResult {
-    let check = if index >= 0 { index } else { -index } as usize;
+    // `unsigned_abs`, not `-index`. Negating `i32::MIN` is not representable, so the old spelling
+    // panicked with "attempt to negate with overflow" in a debug build and wrapped in release,
+    // where the wrapped value fails the bounds check below with a nonsense diagnostic. It is
+    // reachable from an ordinary-looking rule: the parser parses index literals as `i64` and
+    // narrows with `as i32` (parser.rs `dotted_property` and `array_index`), so `Items[2147483648]`
+    // arrives here as `i32::MIN`. Pinned by `an_out_of_range_index_does_not_panic`.
+    let check = index.unsigned_abs() as usize;
     if check < elements.len() {
         QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
@@ -439,7 +445,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             match &query[query_index+1] {
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
-                                        let check = if *index >= 0 { *index } else { -*index } as usize;
+                                        // `unsigned_abs`: see `retrieve_index`. `-*index` panics on `i32::MIN`.
+                                        let check = index.unsigned_abs() as usize;
                                         if check < keys.len() {
                                             (vec![keys[check].clone()], query_index + 2)
                                         } else {
@@ -1652,17 +1659,31 @@ pub(crate) struct Messages {
 /// The first explanation found wins rather than all of them being concatenated. A rule that skips
 /// usually skips for one reason, and a reporter line that grows without bound with nesting depth is
 /// worse than a slightly incomplete one.
+///
+/// Children are searched before the record's own message, because the deeper message is the more
+/// specific one. Taking `own` first made the specific messages unreachable in the case that
+/// motivated them: a type block always attaches a summary to its own SKIP ("every X was exempted by
+/// the `when` condition"), so the recursion never ran and the undecidable-comparison explanation
+/// underneath it -- the one naming `Size: "50"` as a string that cannot be compared against an
+/// integer -- was built, recorded, and never read. Pinned by
+/// `a_specific_skip_reason_is_not_shadowed_by_the_block_summary`.
 pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
-    let own = match &record.container {
-        Some(RecordType::TypeCheck(TypeBlockCheck { block, .. })) => match block {
-            BlockCheck {
-                status: Status::SKIP,
-                message,
-                ..
-            } => message.clone(),
-            _ => None,
-        },
-        Some(RecordType::GuardClauseBlockCheck(block))
+    record
+        .children
+        .iter()
+        .find_map(find_skip_reason)
+        .or_else(|| own_skip_reason(record))
+}
+
+/// The explanation this record carries itself, ignoring its children.
+///
+/// Split out of [`find_skip_reason`] so the recursion order is one readable expression, and so the
+/// block-shaped variants share a single body -- they did not, and `clippy::collapsible_match` failed
+/// the `cargo clippy -- -D warnings` gate on the duplicate.
+fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+    match &record.container {
+        Some(RecordType::TypeCheck(TypeBlockCheck { block, .. }))
+        | Some(RecordType::GuardClauseBlockCheck(block))
         | Some(RecordType::WhenCheck(block))
         | Some(RecordType::BlockGuardCheck(block))
         | Some(RecordType::Disjunction(block)) => match block {
@@ -1701,9 +1722,7 @@ pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
         )),
 
         _ => None,
-    };
-
-    own.or_else(|| record.children.iter().find_map(find_skip_reason))
+    }
 }
 
 pub(crate) type Metadata = HashMap<String, String>;

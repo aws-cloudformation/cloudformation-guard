@@ -1384,10 +1384,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 ///
 /// `role` distinguishes the two contexts this is reached from:
 ///
-/// - [`ClauseRole::Assertion`] — the reference is in a rule body, so a SKIPped
+/// - [`ClauseRole::Assertion`] -- the reference is in a rule body, so a SKIPped
 ///   dependent rule must not satisfy it in either polarity. Failing closed here is
 ///   what stops `not <rule>` from reporting compliance for a check that never ran.
-/// - [`ClauseRole::Gate`] — the reference is a `when` condition, where gating on a
+/// - [`ClauseRole::Gate`] -- the reference is a `when` condition, where gating on a
 ///   rule that did not apply is deliberate and covered by existing tests.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
@@ -1439,9 +1439,13 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // 19. Pinned by
                 // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
                 //
-                // Negated references keep falling through: `not <rule>` where the rule
-                // did not apply must not report PASS on the strength of a check that
-                // never ran.
+                // Negated references keep falling through, and for a gate the PASS the `_` arm
+                // returns is the intended outcome, not an oversight: `rule r when not other { ... }`
+                // is how a ruleset says "apply this when that other rule did not apply", so the
+                // gate opens and the guarded body runs. Pinned by
+                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
+                // *assertion* never reaches that arm -- `role.is_strict()` above already failed it
+                // closed -- so failing the fallthrough closed would only break the gate idiom.
                 Status::SKIP if !gnc.negation => Status::SKIP,
 
                 _ => {
@@ -2024,14 +2028,19 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
 
     let mut fails = 0;
     let mut passes = 0;
-    // Tracked only so the SKIP below can name the right cause. A block that selected nothing and a
-    // block whose condition exempted everything both report SKIP, and telling a reader the wrong
-    // one of those is worse than telling them nothing -- which is the defect this branch spent most
-    // of its commits removing.
-    let mut unresolved = 0;
+    // Tracked only so the SKIP below can name the right cause. Three different things reach SKIP
+    // here and they call for three different sentences; telling a reader the wrong one of them is
+    // worse than telling them nothing, which is the defect this branch spent most of its commits
+    // removing. `selected` counts the slots that resolved to a resource, `exempted` the ones the
+    // block's own `when` condition declined, and `unresolved_reason` keeps the first retrieval
+    // failure so the "selected nothing" sentence can name it.
+    let mut selected = 0;
+    let mut exempted = 0;
+    let mut unresolved_reason: Option<String> = None;
     for (idx, each) in values.iter().enumerate() {
         match each {
             QueryResult::Literal(rv) | QueryResult::Resolved(rv) => {
+                selected += 1;
                 let block_context = format!("{}/{}", context, idx);
                 resolver.start_record(&block_context)?;
 
@@ -2073,6 +2082,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                                 // Not applicable to this resource, so it contributes to neither
                                 // count. If that holds for every resource the fold below answers
                                 // SKIP, which is the honest answer: the block applied to nothing.
+                                exempted += 1;
                                 val_resolver.end_record(
                                     &block_context,
                                     RecordType::TypeBlock(Status::SKIP),
@@ -2152,40 +2162,29 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
             //
             // The situation is the one the `values.is_empty()` branch above already answers with
             // SKIP -- the document does not contain the type being checked -- so it gets the same
-            // answer here, and `ur.reason` is carried onto the record rather than into an error, so
-            // the explanation still reaches the reader through `find_skip_reason`. Counting it as
-            // neither a pass nor a fail leaves the fold below to decide: if no slot resolved, the
-            // block applied to nothing and reports SKIP.
+            // answer here, and `ur.reason` is kept for the block's own message rather than turned
+            // into an error. Counting it as neither a pass nor a fail leaves the fold below to
+            // decide: if no slot resolved, the block applied to nothing and reports SKIP.
             //
             // Found by differential against the merge-base rather than by reading. Moving the type
             // block's conditions per-resource removed an early return that had been masking this
             // for the `when` form, so a latent abort became a reachable one. The plain form aborted
             // on the merge-base too, which is how the pre-existing half was confirmed. Pinned by
             // `an_unresolved_type_block_query_skips_without_aborting_the_file`.
+            //
+            // Recorded as `TypeBlock`, matching what every resolved slot in this loop emits. An
+            // earlier version recorded a second `TypeCheck` here, which broke the record shape
+            // display.rs documents and relies on -- "has one TypeBlock for the block associated" --
+            // so a `-v` run rendered one type block as two nested identical `Type(...)` nodes with
+            // the slot's own node missing. The reason travels in `unresolved_reason` instead, which
+            // is where it belongs: it explains the block's verdict, not one slot's.
             QueryResult::UnResolved(ur) => {
-                unresolved += 1;
+                if unresolved_reason.is_none() {
+                    unresolved_reason = ur.reason.clone();
+                }
                 let block_context = format!("{}/{}", context, idx);
                 resolver.start_record(&block_context)?;
-                resolver.end_record(
-                    &block_context,
-                    RecordType::TypeCheck(TypeBlockCheck {
-                        type_name: &type_block.type_name,
-                        block: BlockCheck {
-                            at_least_one_matches: false,
-                            status: Status::SKIP,
-                            message: Some(match &ur.reason {
-                                Some(reason) => format!(
-                                    "no {} could be selected from the input: {}",
-                                    type_block.type_name, reason
-                                ),
-                                None => format!(
-                                    "no {} could be selected from the input",
-                                    type_block.type_name
-                                ),
-                            }),
-                        },
-                    }),
-                )?;
+                resolver.end_record(&block_context, RecordType::TypeBlock(Status::SKIP))?;
             }
         }
     }
@@ -2204,21 +2203,46 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
             type_name: &type_block.type_name,
             block: BlockCheck {
                 status,
-                // Only the SKIP needs explaining. Reaching here with neither a pass nor a fail
-                // means the input did contain resources of this type and not one of them was
-                // checked -- every one was exempted by the block's own `when` condition. That is
-                // a legitimate outcome and also the shape of a rule that silently never fires, and
-                // the reader cannot tell which from a bare "not applicable".
+                // Only the SKIP needs explaining, and it has three causes that call for three
+                // different sentences. A rule that never fires looks exactly like a rule that
+                // passes, so the reader needs to know which one happened -- and naming the wrong
+                // cause sends them to the wrong place.
+                //
+                // The `when` sentence is guarded on `exempted == selected` rather than being the
+                // default. It used to be the default, so a block with no `when` condition at all
+                // reported that its `when` condition had exempted every resource -- reachable
+                // whenever the body's own clauses are inapplicable, which a filter selecting
+                // nothing or an inner `when` that does not fire both do.
+                //
+                // The last arm covers the mixed case, where some resources were exempted and the
+                // rest had nothing applicable to check. It names both possibilities rather than
+                // picking one, because at block level they are indistinguishable and the specific
+                // account lives on the slot records that `find_skip_reason` now reaches first.
+                // Pinned by `a_type_block_skip_names_the_cause_it_can_support`.
                 message: match status {
-                    // Two ways to reach SKIP with resources in hand, and they mean different
-                    // things to whoever is reading the output: the query selected nothing, or it
-                    // selected resources and the condition exempted all of them.
-                    Status::SKIP if unresolved > 0 => Some(format!(
-                        "no {} could be selected from the input, so the type block had nothing to check",
+                    Status::SKIP if selected == 0 => Some(match &unresolved_reason {
+                        Some(reason) => format!(
+                            "no {} could be selected from the input: {}",
+                            type_block.type_name, reason
+                        ),
+                        None => format!(
+                            "no {} could be selected from the input, so the type block had nothing to check",
+                            type_block.type_name
+                        ),
+                    }),
+                    Status::SKIP if exempted == selected => Some(format!(
+                        "every {} in the input was exempted by the type block's `when` condition, so none was checked",
+                        type_block.type_name
+                    )),
+                    // A block with no `when` of its own cannot have exempted anything, so naming
+                    // one would send the reader to look for a condition the rule does not contain
+                    // -- the mistake this arm was added to fix, in a narrower form.
+                    Status::SKIP if type_block.conditions.is_none() => Some(format!(
+                        "no {} in the input was checked: no clause in the type block applied to any of them",
                         type_block.type_name
                     )),
                     Status::SKIP => Some(format!(
-                        "every {} in the input was exempted by the type block's `when` condition, so none was checked",
+                        "no {} in the input was checked: every one was either exempted by the type block's `when` condition or had no clause that applied to it",
                         type_block.type_name
                     )),
                     _ => None,

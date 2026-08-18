@@ -279,9 +279,9 @@ rule large_volumes_are_encrypted {
 
 The condition is evaluated against the same resource as the clauses it guards, so `Properties.Size` here refers to the volume under consideration. A volume of 5 GiB is exempt and contributes nothing to the outcome; a volume of 50 GiB is checked. A rule reports a failure if any resource the condition selected failed, passes if at least one was selected and none failed, and is reported as not applicable if the condition selected none of them.
 
-Being exempt is not the same as passing. A template whose volumes are all under the threshold produces "not applicable" for the rule above, and Guard says which of the two reasons applied — that no resource of the type was present, or that the condition exempted all of them. That distinction is worth reading, because a rule that never fires and a rule that passes both exit `0`.
+Being exempt is not the same as passing. A template whose volumes are all under the threshold produces "not applicable" for the rule above, and Guard says which of the two reasons applied: that no resource of the type was present, or that the condition exempted all of them. That distinction is worth reading, because a rule that never fires and a rule that passes both exit `0`.
 
-Earlier versions evaluated the condition once against the root of the document rather than per resource, which made the form above match nothing: `Properties` does not exist at the document root, so the condition could not be decided, and the rule was reported as not applicable for every input. Conditions written against the root — either as a variable, or as a full path such as `Resources.MyVolume.Properties.Size > 10` — should now be expressed relative to the resource, or moved to the enclosing rule:
+Earlier versions evaluated the condition once against the root of the document rather than per resource, which made the form above match nothing: `Properties` does not exist at the document root, so the condition could not be decided, and the rule was reported as not applicable for every input. Conditions written against the root, either as a variable or as a full path such as `Resources.MyVolume.Properties.Size > 10`, should now be expressed relative to the resource, or moved to the enclosing rule:
 
 ```
 let volumes = Resources.*[ Type == 'AWS::EC2::Volume' ]
