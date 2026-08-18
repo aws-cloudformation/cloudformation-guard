@@ -309,6 +309,68 @@ mod validate_tests {
         );
     }
 
+    /// A failure message comparing against many values shows a few and says how many there were.
+    ///
+    /// The reporter computed its cut-off as `max(values.len(), 5)`, which is never below the number
+    /// of values, so the loop that was meant to stop early never did and the branch reporting a
+    /// `Total` was unreachable. A rule comparing against a denylist of five hundred entries printed
+    /// all five hundred, in every failure message, for every resource. The dead branch is what gives
+    /// the intent away -- it exists to say how many there were when not all are shown.
+    ///
+    /// The right-hand side has to resolve to many *separate* values to reach this at all. A literal
+    /// list is one value however long it is, which is why the fixture compares against a variable
+    /// over nine resources rather than against `['a', 'b', ...]`. An earlier version of this test
+    /// used the literal and proved nothing.
+    #[test]
+    fn a_long_in_comparison_is_truncated_with_a_total() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["many-allowed-values-template.yaml"])
+            .rules(vec!["volume-type-in-allowed-names.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the volume type is not among the allowed names, so the rule must fail"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Total"),
+            "a truncated comparison should report how many values there were:\n{}",
+            output
+        );
+        // Scoped to the ComparedWith line rather than the whole output. The report echoes the
+        // offending template, and the fixture's nine topic names all appear there, so a search over
+        // everything would find the withheld values in the code snippet and prove nothing.
+        let compared_with = output
+            .lines()
+            .find(|line| line.contains("ComparedWith"))
+            .unwrap_or_else(|| panic!("no ComparedWith line in the report:\n{}", output));
+
+        // Five shown, four withheld. Both halves are asserted: a reporter that printed no values at
+        // all would satisfy the withheld check on its own.
+        for shown in ["n0", "n4"] {
+            assert!(
+                compared_with.contains(shown),
+                "expected {} among the values shown, got: {}",
+                shown,
+                compared_with
+            );
+        }
+        for withheld in ["n5", "n8"] {
+            assert!(
+                !compared_with.contains(withheld),
+                "{} should have been withheld by the cut-off, got: {}",
+                withheld,
+                compared_with
+            );
+        }
+    }
+
     /// A condition that could not be decided has to say so, and a condition that was merely false
     /// must not.
     ///

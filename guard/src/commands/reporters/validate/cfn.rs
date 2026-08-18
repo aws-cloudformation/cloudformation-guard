@@ -1,6 +1,6 @@
 use fancy_regex::Regex;
 use std::{
-    cmp::max,
+    cmp::min,
     collections::{BTreeSet, HashMap, HashSet},
     io::Write,
     rc::Rc,
@@ -333,14 +333,21 @@ fn single_line(
                         bc: &InComparison,
                         prefix: &str,
                     ) -> rules::Result<usize> {
-                        let cut_off = max(bc.to.len(), 5);
-                        let mut collected = Vec::with_capacity(10);
-                        for (idx, each) in bc.to.iter().enumerate() {
-                            collected.push(ValueOnlyDisplay(Rc::clone(each)));
-                            if idx >= cut_off {
-                                break;
-                            }
-                        }
+                        // `min`, not `max`. With `max(len, 5)` the cut-off was never below the
+                        // number of values, so the loop never broke early and the branch below
+                        // that reports a `Total` was unreachable -- a rule comparing against a
+                        // denylist of five hundred entries printed all five hundred, in every
+                        // failure message, for every resource. The dead branch is what gives the
+                        // intent away: it exists to say how many there were when not all are
+                        // shown. Pinned by
+                        // `a_long_in_comparison_is_truncated_with_a_total`.
+                        let cut_off = min(bc.to.len(), 5);
+                        let collected = bc
+                            .to
+                            .iter()
+                            .take(cut_off)
+                            .map(|each| ValueOnlyDisplay(Rc::clone(each)))
+                            .collect::<Vec<_>>();
                         let collected = format!("{:?}", collected);
                         let width = "PropertyPath".len() + 4;
                         if cut_off >= bc.to.len() {
