@@ -614,7 +614,7 @@ fn blocking_a_deployment_and_closing_a_gate_are_different_questions() {
         Outcome::NotApplicable,
         Outcome::Unevaluatable,
     ] {
-        assert!(o.closes_gate(), "{o:?} must close a gate");
+        assert!(o.closes_gate(), "{:?} must close a gate", o);
     }
 
     // The silent-drop set: closes the gate, reports nothing. Non-empty, which is the
@@ -718,13 +718,18 @@ fn folding_then_converting_is_covered_for_every_sequence_and_role() {
                                         o,
                                         Outcome::Satisfied | Outcome::NotApplicable
                                     )),
-                                "and-fold of {seq:?} reported PASS as {role:?} with an element that was neither satisfied nor inapplicable"
+                                "and-fold of {:?} reported PASS as {:?} with an element that was \
+                                 neither satisfied nor inapplicable",
+                                seq,
+                                role
                             );
                         }
                         if folded_any.to_status(role) == Status::PASS {
                             assert!(
                                 seq.contains(&Outcome::Satisfied),
-                                "or-fold of {seq:?} reported PASS as {role:?} with nothing satisfied"
+                                "or-fold of {:?} reported PASS as {:?} with nothing satisfied",
+                                seq,
+                                role
                             );
                         }
                     }
@@ -750,7 +755,10 @@ fn conjunction_never_launders_a_violation() {
                 if a == Outcome::Violated || b == Outcome::Violated {
                     assert!(
                         a.and(b).blocks(role),
-                        "and({a:?}, {b:?}) stopped blocking as {role:?}"
+                        "and({:?}, {:?}) stopped blocking as {:?}",
+                        a,
+                        b,
+                        role
                     );
                 }
             }
@@ -767,7 +775,9 @@ fn disjunction_only_excuses_a_violation_with_real_evidence() {
             if (a == Outcome::Violated || b == Outcome::Violated) && a.or(b) == Outcome::Satisfied {
                 assert!(
                     a == Outcome::Satisfied || b == Outcome::Satisfied,
-                    "or({a:?}, {b:?}) excused a violation without a satisfied branch"
+                    "or({:?}, {:?}) excused a violation without a satisfied branch",
+                    a,
+                    b
                 );
             }
         }

@@ -10123,7 +10123,7 @@ fn the_empty_collection_decision_surface_is_covered_exhaustively() -> Result<()>
             }
             "satisfying" => !negated,
             "violating" => negated,
-            other => unreachable!("unknown lhs state {other}"),
+            other => unreachable!("unknown lhs state {}", other),
         };
         if as_gate {
             if condition_holds {
@@ -10152,7 +10152,7 @@ fn the_empty_collection_decision_surface_is_covered_exhaustively() -> Result<()>
                         "empty" => "[]".to_string(),
                         "satisfying" => format!("[{satisfying}]"),
                         "violating" => format!("[{violating}]"),
-                        other => unreachable!("unknown lhs state {other}"),
+                        other => unreachable!("unknown lhs state {}", other),
                     };
                     let clause = format!("{}{query} {tail}", if negated { "not " } else { "" });
 
