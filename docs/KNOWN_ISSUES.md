@@ -32,6 +32,8 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
 ```
 
 2. When performing `!=` comparison, if the values are incompatible like comparing a `string` to `int`, an error is thrown internally but currently suppressed and converted to `false` to satisfy the requirements of Rust’s [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html). We are tracking to release a fix for this issue soon.
+
+   `integer` and `float` are no longer among the incompatible pairs: they compare against each other as numbers, so `Size > 10` holds for a `Size` of `50.5` and `Size == 50` holds for a `Size` of `50.0`. See [Guard: Clauses](CLAUSES.md) for the details, including why it mattered inside a `when` condition.
 3. `exists` and `empty` checks do not display the JSON pointer path inside the document in the error messages. Both these clauses often have retrieval errors which does not maintain this traversal information today. We are tracking to resolve this issue.
 4. <a name="function-limitation"></a> **No support for calling functions inline on the LHS of an operator**
 
