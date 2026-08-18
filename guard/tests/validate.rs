@@ -309,6 +309,65 @@ mod validate_tests {
         );
     }
 
+    /// The report lists failing rules in a fixed order.
+    ///
+    /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
+    /// emitted the findings in whatever order the hasher produced. Twenty runs of the merge-base
+    /// binary over this fixture produced five distinct reports, and `--show-summary all` produced
+    /// six. Structured output was already stable, since it is built from ordered collections.
+    ///
+    /// That makes report diffing across runs useless and any golden file covering two or more
+    /// failing rules flaky. It is pre-existing rather than introduced here -- confirmed by running
+    /// the merge-base binary -- but it also had to be fixed before a differential over output could
+    /// mean anything, since there was no stable baseline to compare against.
+    ///
+    /// Asserting sortedness rather than looping. A loop inside one process is close to vacuous: the
+    /// report is built once, so re-reading it re-reads the same map in the same order, and whether
+    /// two `HashMap`s in one process disagree depends on how `RandomState` seeds each instance.
+    /// Sortedness is the property that makes the order stable, and it is checkable in a single run.
+    /// The count is asserted too, so an extraction that silently found nothing cannot pass.
+    #[test]
+    fn the_report_orders_failing_rules_deterministically() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["three-failing-rules.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // The fixture names its rules out of alphabetical order on purpose, so declaration order and
+        // sorted order differ and the assertion cannot pass by coincidence.
+        let reported = output
+            .lines()
+            .filter_map(|line| {
+                line.split("is not compliant with [")
+                    .nth(1)
+                    .and_then(|rest| rest.split(']').next())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            reported.len(),
+            3,
+            "expected all three failing rules in the report, got {:?} from:\n{}",
+            reported,
+            output
+        );
+        let mut sorted = reported.clone();
+        sorted.sort();
+        assert_eq!(
+            reported, sorted,
+            "failing rules were reported in an unsorted order, which means the order came from a \
+             HashMap and varies between runs"
+        );
+    }
+
     /// A failure message comparing against many values shows a few and says how many there were.
     ///
     /// The reporter computed its cut-off as `max(values.len(), 5)`, which is never below the number

@@ -4838,11 +4838,18 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // Evaluator-generated explanations, by the record variant each lands on:
     //
     //   ClauseValueCheck        3   leaf value checks; rendered by the clause arms already
-    //   GuardClauseBlockCheck   4   rendered: falls back to the message when no children report
+    //   GuardClauseBlockCheck   5   rendered: falls back to the message when no children report
     //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
     //   TypeCheck               6   four failures, plus the two skips below
     //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
+    //
+    // The fifth GuardClauseBlockCheck is the newest: a `when` condition that references a rule
+    // which did not apply. That gate now answers SKIP instead of FAIL, so the conjunction absorbs
+    // it rather than dropping the guarded body, and the resulting rule-level SKIP needs to say
+    // which condition declined. It reaches the reader through `find_skip_reason`, the same route
+    // as the two TypeCheck skips below, and is asserted end to end by
+    // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
     //
     // The two TypeCheck skips are the newest and were the hardest to render. A skipped rule used
     // to reach the reporters as a bare name, so a message on a skip record was recorded and
@@ -4852,7 +4859,14 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 17;
+    //
+    // Eighteen since the unresolvable-slot arm: a type block whose query cannot select
+    // anything records a SKIP with its reason instead of returning an Err that aborted the
+    // whole rules file. Checked rather than assumed -- against a document with no Resources
+    // at its root the console prints `no AWS::EC2::Volume could be selected from the input`,
+    // carried through by find_skip_reason, and
+    // an_unresolved_type_block_query_skips_without_aborting_the_file pins the behaviour.
+    const SITES_EXPECTED: usize = 18;
 
     assert_eq!(
         sites, SITES_EXPECTED,

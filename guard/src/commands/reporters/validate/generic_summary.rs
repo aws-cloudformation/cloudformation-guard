@@ -315,6 +315,17 @@ impl GenericReporter for SingleLineSummary {
             if !failed.is_empty() {
                 writeln!(writer, "--")?;
             }
+            // Sorted by rule name. `failed` is a HashMap, so iterating it directly emitted the
+            // failing rules in whatever order the hasher produced -- two runs of the same binary
+            // over the same input printed the same findings in different orders. Verified before
+            // and after: twelve identical runs produced two distinct outputs on the merge-base as
+            // well as here, so this is pre-existing rather than introduced, but it makes report
+            // diffing useless and any golden file covering two failing rules flaky.
+            //
+            // Sorting here rather than changing the map type, because the ordering is a property of
+            // the report and every other reporter is free to choose its own.
+            let mut failed = failed.into_iter().collect::<Vec<_>>();
+            failed.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (_rule, clauses) in failed {
                 super::common::print_name_info(
                     writer,

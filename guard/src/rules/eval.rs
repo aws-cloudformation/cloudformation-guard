@@ -1423,6 +1423,27 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // compliance claim, so it keeps the existing behavior.
                 Status::SKIP if role.is_strict() => Status::FAIL,
 
+                // A gate whose dependent rule did not apply stays SKIP rather than
+                // falling into the `_` arm below, which turns a non-negated reference
+                // into FAIL. `eval_conjunction_clauses` counts a FAIL and absorbs a
+                // SKIP, and answers FAIL before PASS, so one inapplicable gate
+                // condition returning FAIL outranks the sibling conditions that passed
+                // and drops a body those siblings would have enforced -- at exit 0,
+                // which is precisely what `ClauseRole::Gate` exists to prevent.
+                //
+                // `eval_parameterized_rule_call` already does this and its comment
+                // claims to mirror this function, but the two spellings of the same
+                // gate disagreed: `when skipper` plus a passing sibling condition
+                // reported SKIP for the whole file and enforced nothing, while
+                // `when skipper(...)` plus the same sibling reported FAIL and exited
+                // 19. Pinned by
+                // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
+                //
+                // Negated references keep falling through: `not <rule>` where the rule
+                // did not apply must not report PASS on the strength of a check that
+                // never ran.
+                Status::SKIP if !gnc.negation => Status::SKIP,
+
                 _ => {
                     if gnc.negation {
                         Status::PASS
@@ -1450,7 +1471,26 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     )?;
                 }
 
-                _ => unreachable!(),
+                // Recorded as a childless block check, which is the shape a gate
+                // comparison already uses when it SKIPs. That matters twice over: the
+                // report walkers collect block checks only at `Status::FAIL`, so this
+                // contributes nothing to the failure report, and `find_skip_reason`
+                // reads the message off it, so the rule-level SKIP it produces is
+                // explained rather than bare. A `DependentRule` record would have been
+                // reported as a failing clause -- that arm has no status guard.
+                Status::SKIP => {
+                    resolver.end_record(
+                        &context,
+                        RecordType::GuardClauseBlockCheck(BlockCheck {
+                            status: Status::SKIP,
+                            at_least_one_matches: false,
+                            message: Some(format!(
+                                "the rule did not apply because a condition referenced rule [{}], which did not apply to this input",
+                                gnc.dependent_rule
+                            )),
+                        }),
+                    )?;
+                }
             }
             Ok(status)
         }
