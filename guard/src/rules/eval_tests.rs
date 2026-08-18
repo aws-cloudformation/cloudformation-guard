@@ -5613,3 +5613,102 @@ fn the_disjunction_context_is_stable_across_compilers() {
         );
     }
 }
+
+/// An index after an interpolated key selects the key; it must not then be applied to the value.
+///
+/// `query_retrieval_with_converter` resolves a variable used where a map key is expected, and peeks
+/// at the following query part: an index there says *which* of the resolved keys to use. Having
+/// consumed it, the recursion advanced by one anyway, so the index was applied a second time -- to
+/// the value the key had just selected. `Resources.%names[0].Type` picked `BucketA` and then tried
+/// to index into it, the query resolved to nothing, and every part after `[0]` was discarded.
+///
+/// It survived because the form without an index always worked, so a reader comparing
+/// `Resources.%names.Type` against `Resources.%names[0].Type` would see one work and assume the
+/// other was a rule-authoring mistake. The failure is also quiet in the wrong way: an unresolved
+/// query is reported as a retrieval failure on the input, not as a query the evaluator could not
+/// walk, so it reads as a problem with the template.
+///
+/// The gate case is asserted last because that is where it costs enforcement rather than just a
+/// wrong verdict: an unresolved condition does not pass, a rule whose condition does not pass is
+/// reported not applicable, and its body never runs. Same shape as the mixed-numeric defect,
+/// reached through the query resolver instead of the comparison.
+#[test]
+fn an_index_after_an_interpolated_key_is_not_applied_twice() -> Result<()> {
+    // `Pointer` names two other resources, so `%names` resolves to the keys "BucketA" and "BucketB".
+    const RESOURCES: &str = r#"{
+        "Resources": {
+            "Pointer": {
+                "Type": "AWS::CloudFormation::Stack",
+                "Properties": { "Targets": ["BucketA", "BucketB"] }
+            },
+            "BucketA": { "Type": "AWS::S3::Bucket", "Properties": { "Name": "a" } },
+            "BucketB": { "Type": "AWS::S3::Bucket", "Properties": { "Name": "b" } }
+        }
+    }"#;
+
+    const PREAMBLE: &str = "let names = Resources.Pointer.Properties.Targets[*]\n";
+
+    let cases: [(&str, &str, Status); 7] = [
+        // Selecting a key by index, then continuing the traversal. All of these resolved to
+        // nothing before the fix, so all of them failed.
+        (
+            "index then a key",
+            r#"rule r { Resources.%names[0].Type == "AWS::S3::Bucket" }"#,
+            Status::PASS,
+        ),
+        (
+            "index then two more keys",
+            r#"rule r { Resources.%names[0].Properties.Name == "a" }"#,
+            Status::PASS,
+        ),
+        (
+            "the second key",
+            r#"rule r { Resources.%names[1].Properties.Name == "b" }"#,
+            Status::PASS,
+        ),
+        // Still able to fail: the fix must not make the query resolve to something that passes
+        // regardless of the value.
+        (
+            "index then a key, wrong value",
+            r#"rule r { Resources.%names[0].Properties.Name == "b" }"#,
+            Status::FAIL,
+        ),
+        // Without an index every resolved key is used, so BucketB's "b" fails the check.
+        (
+            "no index, all keys",
+            r#"rule r { Resources.%names.Properties.Name == "a" }"#,
+            Status::FAIL,
+        ),
+        // An index past the resolved keys is still out of bounds, and still fails closed.
+        (
+            "index out of bounds",
+            r#"rule r { Resources.%names[5].Type == "AWS::S3::Bucket" }"#,
+            Status::FAIL,
+        ),
+        // The same query as a condition. Before the fix this was SKIP: the gate could not be
+        // resolved, so the rule was reported not applicable and the violation below went
+        // unreported at exit 0.
+        (
+            "the same query as a gate",
+            r#"rule r when Resources.%names[0].Type == "AWS::S3::Bucket" {
+                   Resources.BucketA.Properties.Name == "nonsense"
+               }"#,
+            Status::FAIL,
+        ),
+    ];
+
+    for (label, rule, expected) in cases {
+        let rules = format!("{}{}", PREAMBLE, rule);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let resources = PathAwareValue::try_from(RESOURCES)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            expected,
+            "{}",
+            label
+        );
+    }
+
+    Ok(())
+}

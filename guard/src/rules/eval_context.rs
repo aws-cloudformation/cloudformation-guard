@@ -422,13 +422,26 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     if query[query_index].is_variable() {
                         let var = query[query_index].variable().unwrap();
                         let keys = resolver.resolve_variable(var)?;
-                        let keys = if query.len() > query_index + 1 {
+                        // `next_query_index` rather than `query_index + 1` at the recursions
+                        // below, because the `Index` arm *consumes* the part after the variable:
+                        // there it selects which resolved key to use, so the traversal has to
+                        // resume after it.
+                        //
+                        // Advancing by one applied the index a second time, to the value the key
+                        // had just selected. `Resources.%names[0].Type` picked `BucketA` and then
+                        // tried to index into it, so the query resolved to nothing and every part
+                        // after `[0]` was discarded -- silently, since an unresolved query is
+                        // reported as a retrieval failure rather than as a malformed rule. The
+                        // form without an index, `Resources.%names.Type`, always worked, which is
+                        // why this survived. Pinned by
+                        // `an_index_after_an_interpolated_key_is_not_applied_twice`.
+                        let (keys, next_query_index) = if query.len() > query_index + 1 {
                             match &query[query_index+1] {
-                                    QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
+                                    QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
                                         let check = if *index >= 0 { *index } else { -*index } as usize;
                                         if check < keys.len() {
-                                            vec![keys[check].clone()]
+                                            (vec![keys[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
                                                 current,
@@ -444,7 +457,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                                 query[1], current.type_info(), SliceDisplay(query))))
                                 }
                         } else {
-                            keys
+                            (keys, query_index + 1)
                         };
 
                         let mut acc = Vec::with_capacity(keys.len());
@@ -465,7 +478,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                     if let PathAwareValue::String((_, k)) = &*key {
                                         if let Some(next) = map.values.get(k) {
                                             acc.extend(query_retrieval_with_converter(
-                                                query_index + 1,
+                                                next_query_index,
                                                 query,
                                                 Rc::new(next.clone()),
                                                 resolver,
@@ -485,7 +498,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                             match &each_key {
                                                     PathAwareValue::String((path, key_to_match)) => {
                                                         if let Some(next) = map.values.get(key_to_match) {
-                                                            acc.extend(query_retrieval_with_converter(query_index + 1, query, Rc::new(next.clone()), resolver, converter)?);
+                                                            acc.extend(query_retrieval_with_converter(next_query_index, query, Rc::new(next.clone()), resolver, converter)?);
                                                         } else {
                                                             acc.extend(
                                                                 to_unresolved_result(
