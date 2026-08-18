@@ -199,6 +199,18 @@ rule large_volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].
 
 now applies to a template whose `Size` is `50.5` as it always did to one whose `Size` is `50`.
 
+A comparison across kinds that are not both numeric is a sharper problem in the same place, and one to be aware of when writing conditions. CloudFormation templates frequently carry numbers as strings — `Size: "50"` rather than `Size: 50` — and a string cannot be compared against `10`. The condition cannot be decided, so it does not pass, so the rule is reported as not applicable and the block it guards is never checked. The run exits `0`, exactly as it would for a rule that genuinely did not apply.
+
+Guard reports which of the two happened. A rule skipped because a condition could not be decided says so, naming the operand kinds:
+
+```
+Rule [large_volumes_are_encrypted] is not applicable for template [...]
+  large_volumes_are_encrypted: the rule did not apply because one of its conditions could not
+  be decided: PathAwareValues are not comparable String, int
+```
+
+A rule skipped because its condition was decided and simply not met prints no such line, so the message appears only where something needs attention. If you see it, the fix is in the rule or the input rather than in Guard: compare against a value of the same kind, or guard the clause so the mismatch is explicit.
+
 Below are a couple of examples of clauses using binary operators:
 
 - Based on the Template-1 example template:

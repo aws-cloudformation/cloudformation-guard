@@ -309,6 +309,75 @@ mod validate_tests {
         );
     }
 
+    /// A condition that could not be decided has to say so, and a condition that was merely false
+    /// must not.
+    ///
+    /// This is the quietest wrong answer left in the evaluator, and the reason the discrimination
+    /// matters. `when ... Size > 10` against a template carrying `Size: "50"` cannot be decided, so
+    /// the condition does not pass, so the rule is reported as not applicable and its unencrypted
+    /// volume is never checked. Exit 0. A template with `Size: 50` fails the same rule.
+    ///
+    /// The rule still does not enforce, and it cannot be made to from here: on a condition, both
+    /// FAIL and SKIP drop the block being guarded, so telling "could not decide" from "decided
+    /// false" at the point it matters needs a status meaning "could not tell", which `Status` does
+    /// not have. What is available is saying so, which turns a silent non-check into a visible one.
+    /// When that third state exists, this test is where the stronger behaviour gets asserted.
+    ///
+    /// The false-condition case is asserted alongside because the discriminator is the whole
+    /// mechanism: only an undecidable comparison records an explanation, so a rule that legitimately
+    /// does not apply stays quiet. Without that, every inapplicable rule in a large ruleset would
+    /// grow a line of output and the signal would be worthless.
+    #[rstest::rstest]
+    #[case(None, "volume-size-as-string-template.yaml", true)]
+    #[case(Some("json"), "volume-size-as-string-template.yaml", true)]
+    #[case(None, "volume-under-gate-threshold-template.yaml", false)]
+    #[case(Some("json"), "volume-under-gate-threshold-template.yaml", false)]
+    fn an_undecidable_condition_says_so_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] expect_explanation: bool,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec![data_file])
+            .rules(vec!["large_volumes_encrypted_gate.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        // Both templates exit 0, which is the point: the exit code cannot tell them apart.
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "an inapplicable rule exits 0 whichever reason applied"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let explained = output.contains("could not be decided");
+        assert_eq!(
+            explained,
+            expect_explanation,
+            "the {} output for {} {} an explanation; got:\n{}",
+            output_format.unwrap_or("console"),
+            data_file,
+            if expect_explanation {
+                "should have carried"
+            } else {
+                "should not have carried"
+            },
+            output
+        );
+    }
+
     /// A rule that skipped has to say why, in both the console and the structured output.
     ///
     /// This is the case `every_recorded_explanation_has_a_rendering_path` refused earlier in this

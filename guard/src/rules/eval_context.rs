@@ -1660,6 +1660,33 @@ pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
             } => message.clone(),
             _ => None,
         },
+
+        // A clause that failed *and* explained itself, reached while walking a rule that skipped.
+        //
+        // Only two things record an explanation on a comparison: a reference that resolved to no
+        // values, and operands that cannot be compared. Both mean the clause could not be decided,
+        // as opposed to being decided false -- the ordinary failure arm records `message: None`. So
+        // finding one here says the rule did not apply because a condition was undecidable, which
+        // is a different situation from a condition that was simply not met, and the only one worth
+        // interrupting an operator over.
+        //
+        // This is the quietest wrong answer left in the evaluator. `when ... Size > 10` against a
+        // template carrying `Size: "50"` -- a string, which CloudFormation templates produce
+        // routinely -- cannot be decided, so the condition does not pass, so the rule is reported
+        // as not applicable and its body never runs. Exit 0, nothing named. The rule still does not
+        // enforce, and it cannot be made to from here: both FAIL and SKIP on a condition drop the
+        // block it guards, so telling them apart needs a status that means "could not tell", which
+        // `Status` does not have. Saying so is what is available, and it turns a silent non-check
+        // into a visible one.
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
+            status: Status::FAIL,
+            message: Some(explanation),
+            ..
+        }))) => Some(format!(
+            "the rule did not apply because one of its conditions could not be decided: {}",
+            explanation
+        )),
+
         _ => None,
     };
 

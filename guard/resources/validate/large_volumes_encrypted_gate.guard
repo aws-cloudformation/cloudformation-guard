@@ -1,0 +1,10 @@
+# A gate comparing a numeric property against a literal.
+#
+# Fixture for an_undecidable_condition_says_so_in_the_output. Against a template whose Size is a
+# number this rule enforces encryption. Against one whose Size is the string "50" -- which
+# CloudFormation templates produce routinely -- the comparison cannot be decided, so the condition
+# does not pass and the body never runs. The rule reports "not applicable" and exits 0 either way,
+# which is why the explanation matters.
+rule large_volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size > 10 {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Encrypted == true
+}
