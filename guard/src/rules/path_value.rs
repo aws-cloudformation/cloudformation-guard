@@ -201,7 +201,18 @@ impl Hash for PathAwareValue {
                 "NULL".hash(state);
             }
             PathAwareValue::Float((_, f)) => {
-                (*f as u64).hash(state);
+                // A float that is exactly an integer hashes as that integer, because `eq` says the
+                // two are equal: `compare_values` compares an integer against a float numerically,
+                // so `Int(-1) == Float(-1.0)`. Every other float hashes its bit pattern.
+                //
+                // `*f as u64` did neither of those things. That cast saturates, so every negative
+                // float hashed as 0 while its integer twin hashed as itself, and it truncates, so
+                // 1.1 and 1.9 both hashed as 1. Colliding is legal for a hash. Disagreeing with
+                // `eq` is not, and `PathAwareValue` asserts `Eq`.
+                match float_as_exact_i64(*f) {
+                    Some(i) => i.hash(state),
+                    None => f.to_bits().hash(state),
+                }
             }
 
             PathAwareValue::RangeChar((_, r)) => {
@@ -267,21 +278,6 @@ impl PartialEq for PathAwareValue {
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
 
-            //
-            // Range checks
-            //
-            (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
-                value.is_within(r)
-            }
-
-            (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
-                value.is_within(r)
-            }
-
-            (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
-                value.is_within(r)
-            }
-
             (rest, rest2) => match compare_values(rest, rest2) {
                 Ok(ordering) => matches!(ordering, Ordering::Equal),
                 Err(_) => false,
@@ -290,6 +286,27 @@ impl PartialEq for PathAwareValue {
     }
 }
 
+/// `eq` above is a match relation, and `Eq` claims more than it delivers.
+///
+/// A string equals a regex it matches, and that arm is load-bearing rather than decorative: map key
+/// filters such as `Condition[ keys == /aws:[Ss]ource.*/ ]` are decided through it, and five
+/// evaluator tests fail if it is made to panic. It also puts a ceiling on how honest `Hash` can be,
+/// because a regex and every string matching it would have to share one hash. So `eq` is not
+/// transitive, and `PathAwareValue` must not key a hashed collection that can hold a `Regex`.
+///
+/// One hashed collection does key on it: the grouping of comparison results by their left-hand value
+/// in `report_at_least_one`. That is safe for a reason rather than by luck -- its keys come from the
+/// document under validation, and a `Regex` only ever arrives as a rule literal on the right-hand
+/// side of a comparison.
+///
+/// Range membership used to be answered here too, which broke symmetry outright:
+/// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
+/// arms were unreachable and were removed rather than mirrored. Nothing is lost, because every
+/// clause is decided by `compare_eq`, which keeps its own range table and recurses through itself
+/// for lists and maps, so a range nested in a list literal never arrives here either.
+///
+/// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
+/// equivalence relation on the values it relates, and `Hash` agrees with it.
 impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
@@ -1121,6 +1138,25 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
         Ordering::Equal if f > truncated => Ordering::Less,
         ordering => ordering,
     })
+}
+
+/// The `i64` a float is exactly equal to, if there is one.
+///
+/// Only `Hash` needs this, so that `Int(n)` and `Float(n as f64)` hash alike -- `compare_values`
+/// makes them equal, and a `Hash` that disagreed with `eq` would be unsound. The bound is 2^63
+/// rather than `i64::MAX as f64` for the reason given on [`compare_int_to_float`].
+///
+/// `-0.0` reports `Some(0)`, which is wanted: it compares equal to `0.0`, so the two must hash
+/// alike, and their bit patterns differ.
+fn float_as_exact_i64(f: f64) -> Option<i64> {
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    // The NaN test is kept separate even though the range check would also reject it, so that the
+    // three reasons to have no exact integer stay legible: not a number, out of range, has a
+    // fraction.
+    if f.is_nan() || !(-TWO_POW_63..TWO_POW_63).contains(&f) || f.floor() != f {
+        return None;
+    }
+    Some(f as i64)
 }
 
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {

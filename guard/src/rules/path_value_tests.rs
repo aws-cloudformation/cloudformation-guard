@@ -626,3 +626,99 @@ fn mixed_numeric_range_membership_is_decided() {
         );
     }
 }
+
+/// Values that compare equal hash equally, which is what `Eq` promises and what a `HashMap` keyed on
+/// `PathAwareValue` relies on -- `report_at_least_one` keys one.
+///
+/// The break was narrow and easy to miss: `Float` hashed via `*f as u64`. That cast saturates, so
+/// every negative float hashed as 0 while `Int(-1)` hashed as -1, and the two are equal since
+/// integers and floats compare numerically. Nothing in the evaluator noticed, because the one live
+/// consumer keys on map keys, which are strings. It was a latent unsoundness, not a wrong verdict --
+/// worth pinning precisely because a future `HashSet<PathAwareValue>` would inherit it silently.
+///
+/// Asserted as the implication `eq => same hash`, not as specific hash values, since the hasher's
+/// output is not part of the contract.
+#[test]
+fn equal_values_hash_equally() {
+    fn hash_of(v: &PathAwareValue) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn flt(f: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::root(), f))
+    }
+
+    let equal_pairs = [
+        (
+            "negative, the case the saturating cast lost",
+            int(-1),
+            flt(-1.0),
+        ),
+        ("positive", int(1), flt(1.0)),
+        ("zero", int(0), flt(0.0)),
+        ("signed zero against its integer", int(0), flt(-0.0)),
+        (
+            "large but exactly representable",
+            int(1 << 53),
+            flt(9_007_199_254_740_992.0),
+        ),
+        (
+            "most negative i64",
+            int(i64::MIN),
+            flt(-9_223_372_036_854_775_808.0),
+        ),
+    ];
+    for (label, a, b) in equal_pairs {
+        assert_eq!(a, b, "precondition, these must be equal: {}", label);
+        assert_eq!(
+            hash_of(&a),
+            hash_of(&b),
+            "equal but hashed differently: {}",
+            label
+        );
+    }
+
+    // The two spellings of zero are equal to each other, not only to the integer.
+    assert_eq!(flt(0.0), flt(-0.0));
+    assert_eq!(hash_of(&flt(0.0)), hash_of(&flt(-0.0)));
+
+    // A float with a fraction is not equal to any integer, and must not be folded onto one by the
+    // truncation the old cast performed.
+    assert_ne!(flt(1.5), int(1));
+    assert_ne!(hash_of(&flt(1.5)), hash_of(&int(1)));
+
+    // Out of i64 range on both ends: no exact integer exists, so these hash their bits. Distinct
+    // values must not collapse the way saturation collapsed them.
+    assert_ne!(
+        hash_of(&flt(f64::INFINITY)),
+        hash_of(&flt(f64::NEG_INFINITY))
+    );
+    assert_ne!(hash_of(&flt(1.0e300)), hash_of(&flt(-1.0e300)));
+}
+
+/// `eq` is symmetric, which `Eq` requires and range membership violated.
+///
+/// `Int(50) == RangeInt(5..100)` answered "is it inside", while the reverse pairing had no arm and
+/// answered false. Membership is `compare_eq`'s job; this asserts it is no longer also `eq`'s.
+#[test]
+fn equality_is_symmetric_for_ranges() {
+    let value = PathAwareValue::Int((Path::root(), 50));
+    let range = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: 5,
+            upper: 100,
+            inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
+        },
+    ));
+
+    assert_eq!(value == range, range == value, "eq must be symmetric");
+    assert!(!(value == range), "a scalar is not equal to a range");
+
+    // The membership answer still exists, in the table the evaluator consults.
+    assert!(compare_eq(&value, &range).unwrap());
+}
