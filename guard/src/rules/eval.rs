@@ -1321,7 +1321,13 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     RecordType::GuardClauseBlockCheck(BlockCheck {
                         status,
                         message,
-                        at_least_one_matches: all,
+                        // `!all`, matching the other five sites that build this record in this
+                        // function: the field records whether the block was satisfied by any one
+                        // value rather than by all of them, so it is the negation of `all`. This
+                        // arm alone had `all`. Nothing outside the tests reads the field today, so
+                        // the disagreement was invisible; it would become a wrong branch the first
+                        // time a reporter consumed it.
+                        at_least_one_matches: !all,
                     }),
                 )?;
                 Ok(status)
@@ -1885,9 +1891,16 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // `not r(...)` behaved identically to `r(...)`.
     //
     // Mirrors eval_guard_named_clause so both spellings agree: PASS inverts to FAIL
-    // under negation, a SKIPped rule fails closed where the reference is an assertion
-    // (a rule that never ran is not evidence for a negated claim), and otherwise the
-    // negation flips the outcome.
+    // under negation, a SKIPped rule fails closed wherever the reference is an
+    // assertion, and otherwise the negation flips the outcome.
+    //
+    // The fail-closed arm has no negation guard, so it covers both polarities, and for a
+    // plain `r(...)` that is a change in outcome rather than a fix to the negation: main
+    // returned the invoked rule's SKIP and exited 0, this returns FAIL and exits 19. That
+    // is deliberate -- a rule body asserting `r(...)` claims that `r` holds, and a rule
+    // that never ran is not evidence that it does -- but it is the arm to look at first if
+    // a ruleset starts failing on a rule it used to skip. Gate references are unaffected;
+    // they take the SKIP arm below.
     Ok(match status {
         Status::PASS => {
             if call_rule.named_rule.negation {

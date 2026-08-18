@@ -368,6 +368,60 @@ mod validate_tests {
         );
     }
 
+    /// The report lists compliant rules in a fixed order too.
+    ///
+    /// Companion to the test above, and the same defect one section further down the same function:
+    /// the failing and skipped sections were sorted, but `print_rules_output` still iterated the
+    /// compliant set, a `HashSet`, directly. Twenty runs over this fixture produced nineteen
+    /// distinct orderings of the compliant lines while the failing lines produced exactly one, so
+    /// the invariant the sibling test establishes did not hold for a report that had any passing
+    /// rules at all -- which is most of them.
+    ///
+    /// `--show-summary pass` rather than `all`: with `all` the console section is suppressed
+    /// entirely for this input, so the compliant lines never reach the writer and the assertion
+    /// would pass vacuously.
+    #[test]
+    fn the_report_orders_compliant_rules_deterministically() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["seven-compliant-rules.guard"])
+            .show_summary(vec!["pass"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // The fixture declares its rules out of alphabetical order (g, c, f, a, e, b, d), so neither
+        // declaration order nor sorted order can be reached by coincidence.
+        let reported = output
+            .lines()
+            .filter_map(|line| {
+                line.split("Rule [")
+                    .nth(1)
+                    .and_then(|rest| rest.split(']').next())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            reported.len(),
+            7,
+            "expected all seven compliant rules in the report, got {:?} from:\n{}",
+            reported,
+            output
+        );
+        let mut sorted = reported.clone();
+        sorted.sort();
+        assert_eq!(
+            reported, sorted,
+            "compliant rules were reported in an unsorted order, which means the order came from a \
+             HashSet and varies between runs"
+        );
+    }
+
     /// A failure message comparing against many values shows a few and says how many there were.
     ///
     /// The reporter computed its cut-off as `max(values.len(), 5)`, which is never below the number
