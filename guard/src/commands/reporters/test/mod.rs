@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::rules::{NamedStatus, RecordType, Status};
 use crate::utils::writer::Writer;
@@ -6,41 +6,53 @@ use crate::utils::writer::Writer;
 pub mod generic;
 pub mod structured;
 
-/// Write the deprecation notices a rule file produced while its test cases ran.
+/// Messages a test run writes to stderr instead of into the report.
 ///
-/// `validate` already does this, and leaving `test` silent had it backwards: a notice about a
-/// comparison whose answer changes in a future release is addressed to whoever wrote the rule, and
-/// `test` is the command they run. An operator running `validate` in a pipeline is usually not the
-/// person who can act on it.
+/// Two kinds so far -- deprecation notices from the evaluator, and expectations that match no rule
+/// -- and one set for both, because they are the same thing from a consumer's point of view: a
+/// problem with the rules or the test file rather than a result of running them. Stderr keeps stdout
+/// parseable, which matters because `--output-format json` is.
 ///
-/// Stderr, for the same reason as in `validate`: stdout is the report, and with `--output-format
-/// json` it has to stay parseable.
+/// A set, because a rule file is evaluated once per test case, so every message it produces is
+/// produced again for each case. Six identical lines from three cases is how a warning is trained to
+/// be ignored.
+pub(crate) type Diagnostics = BTreeSet<String>;
+
+/// Messages for expectations that name a rule the file does not contain.
 ///
-/// Collapsed into a set by the caller before it gets here, because a rule file is evaluated once per
-/// test case and would otherwise repeat the same notice for every case in the file.
-pub(crate) fn write_deprecations(
-    notices: &BTreeSet<String>,
+/// An expectation for `S3_BUCKET_ENCRYPTED` in a file whose rule is `S3_BUCKET_ENCRYPTION` was
+/// silently ignored: expectations are read per evaluated rule, so one with no rule to attach to is
+/// never consulted, and the run exits 0. A test asserting FAIL on a misspelled name passed while
+/// asserting nothing -- the same shape as the evaluator defects this branch fixes, one layer out.
+///
+/// A message, not a failure. Making it a failure would break suites that pass today, and the useful
+/// half is knowing; the reporters already print the mirror case, `No Test expectation was set for
+/// Rule`, when a rule has no expectation.
+pub(crate) fn unmatched_expectations(
+    expectations: &HashMap<String, String>,
+    evaluated: &BTreeSet<&str>,
+) -> Vec<String> {
+    expectations
+        .keys()
+        .filter(|name| !evaluated.contains(name.as_str()))
+        .map(|name| {
+            format!("No rule named {name} is in this file, so its expectation was not checked")
+        })
+        .collect()
+}
+
+/// Write what a run collected. Sorted by the set, so two runs over the same input agree.
+pub(crate) fn write_diagnostics(
+    diagnostics: &Diagnostics,
     writer: &mut Writer,
 ) -> crate::rules::Result<()> {
-    for notice in notices {
-        writer.write_err(notice.clone())?;
+    for line in diagnostics {
+        writer.write_err(line.clone())?;
     }
 
     Ok(())
 }
 
-/// Rules a test case evaluated, keyed by name.
-///
-/// `BTreeMap` rather than `HashMap` because both test reporters iterate this map to build their
-/// output, so its key order is the order rule names appear in the report. With a `HashMap` that
-/// order came from `RandomState`, which is seeded per process: the same command over the same files
-/// printed the same rules in a different sequence on consecutive runs. Anything diffing two reports
-/// saw churn that was not there, and a golden-file test over more than one rule in a result group
-/// could not be written at all.
-///
-/// The generic reporter already sorted the PASS/FAIL headings for this reason. This is the layer
-/// underneath, which was missed because every fixture in `resources/test-command` has exactly one
-/// rule per group, where hash order and sorted order cannot differ.
 pub(crate) fn get_by_rules<'top>(
     top: &'top crate::rules::eval_context::EventRecord<'_>,
 ) -> BTreeMap<&'top str, Vec<&'top Option<RecordType<'top>>>> {

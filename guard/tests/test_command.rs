@@ -364,6 +364,76 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
+    /// An expectation that names no rule in the file says so.
+    ///
+    /// It used to be dropped in silence. Expectations are read per evaluated rule, so one whose name
+    /// matches nothing is never consulted, and the run exits 0 having checked less than the file
+    /// asked for. The fixture asserts FAIL twice on names that do not exist and the run still
+    /// succeeds, which is the whole defect: a misspelled rule name turns an assertion into nothing
+    /// without ever saying so.
+    ///
+    /// Still exit 0 here. Failing the run would break suites that pass today, so this reports rather
+    /// than enforces; the reporters already print the mirror case for a rule with no expectation.
+    ///
+    /// Two cases in the fixture and two lines expected, not four.
+    #[rstest]
+    #[case("")]
+    #[case("json")]
+    fn an_expectation_naming_no_rule_is_reported(#[case] output: &str) {
+        const DATA: &str =
+            "resources/test-command/data-dir/expectation_for_a_rule_that_does_not_exist.yaml";
+        const RULES: &str =
+            "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard";
+
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = match output {
+            "" => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .run(&mut writer, &mut reader),
+            _ => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .output_format(output)
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "reporting an unchecked expectation must not change the verdict"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let reported: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("is in this file"))
+            .collect();
+
+        assert_eq!(
+            reported.len(),
+            2,
+            "expected one line per unmatched name across both cases, got {:?} from stderr {:?}",
+            reported,
+            stderr
+        );
+        assert!(
+            reported
+                .iter()
+                .any(|l| l.contains("S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE ")),
+            "the name with a dropped final letter should be reported, got {:?}",
+            reported
+        );
+        assert!(
+            reported.iter().any(|l| l.contains("S3_BUCKET_ENCRYPTED")),
+            "the plausible-but-wrong name should be reported, got {:?}",
+            reported
+        );
+    }
+
     /// The deprecation notices reach the command rule authors run.
     ///
     /// `validate` printed them and `test` did not, which is backwards. A notice saying a clause's

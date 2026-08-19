@@ -2,14 +2,14 @@ use crate::commands::reporters::test::generic::GenericReporter;
 use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
-use crate::commands::reporters::test::write_deprecations;
+use crate::commands::reporters::test::{write_diagnostics, Diagnostics};
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
     Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -334,7 +334,7 @@ pub(crate) fn handle_structured_single_report(
     let mut exit_code = SUCCESS_STATUS_CODE;
     let now = Instant::now();
 
-    let mut deprecations = BTreeSet::new();
+    let mut diagnostics = Diagnostics::new();
     let result = match read_file_content(rule_file) {
         Err(e) => TestResult::Err(Err {
             rule_file: path.to_str().unwrap_or("").to_string(),
@@ -358,14 +358,14 @@ pub(crate) fn handle_structured_single_report(
                             rule,
                             name: path.to_str().unwrap_or("").to_string(),
                         },
-                        deprecations: BTreeSet::new(),
+                        diagnostics: Diagnostics::new(),
                     };
 
                     let test = reporter.evaluate()?;
                     let test_code = test.get_exit_code();
                     exit_code = get_exit_code(exit_code, test_code);
 
-                    deprecations.append(&mut reporter.deprecations);
+                    diagnostics.append(&mut reporter.diagnostics);
                     test
                 }
                 Ok(None) => return Ok(exit_code),
@@ -374,7 +374,7 @@ pub(crate) fn handle_structured_single_report(
     };
 
     // Before the report, as in `validate`, and on stderr so that stdout stays parseable.
-    write_deprecations(&deprecations, writer)?;
+    write_diagnostics(&diagnostics, writer)?;
 
     match output {
         OutputFormatType::YAML => serde_yaml::to_writer(writer, &result)?,
@@ -394,7 +394,7 @@ fn handle_structured_directory_report(
 ) -> Result<i32> {
     let mut test_results = vec![];
     let mut exit_code = SUCCESS_STATUS_CODE;
-    let mut deprecations = BTreeSet::new();
+    let mut diagnostics = Diagnostics::new();
 
     for (_, guard_files) in directory {
         for each_rule_file in guard_files {
@@ -439,14 +439,14 @@ fn handle_structured_directory_report(
                             rule: rules,
                             name: path.to_str().unwrap().to_string(),
                         },
-                        deprecations: BTreeSet::new(),
+                        diagnostics: Diagnostics::new(),
                     };
 
                     let test = reporter.evaluate()?;
                     let test_code = test.get_exit_code();
                     exit_code = get_exit_code(exit_code, test_code);
 
-                    deprecations.append(&mut reporter.deprecations);
+                    diagnostics.append(&mut reporter.diagnostics);
                     test_results.push(test);
                 }
                 Ok(None) => {}
@@ -455,7 +455,7 @@ fn handle_structured_directory_report(
     }
 
     // One set for the whole directory: two rule files with the same hazard say it once.
-    write_deprecations(&deprecations, writer)?;
+    write_diagnostics(&diagnostics, writer)?;
 
     match output {
         OutputFormatType::YAML => serde_yaml::to_writer(writer, &test_results)?,

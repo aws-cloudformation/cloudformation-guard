@@ -8,7 +8,9 @@ use std::{
 use crate::{
     commands::{
         files::iterate_over,
-        reporters::test::{get_by_rules, get_status_result, write_deprecations},
+        reporters::test::{
+            get_by_rules, get_status_result, unmatched_expectations, write_diagnostics, Diagnostics,
+        },
         test::TestSpec,
         validate, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
     },
@@ -29,9 +31,9 @@ impl<'report> GenericReporter<'report> {
     pub fn report(&mut self) -> crate::rules::Result<i32> {
         let mut exit_code = SUCCESS_STATUS_CODE;
         let mut test_counter = 1;
-        // Accumulated across cases and written once at the end. Per case would repeat one notice
-        // for every case in the file, and the notice is about the rule, not about the case.
-        let mut deprecations = BTreeSet::new();
+        // Accumulated across cases and written once at the end: these describe the rules or the
+        // test file, not a case, so a per-case write repeats each line for every case.
+        let mut diagnostics = Diagnostics::new();
 
         for specs in iterate_over(self.test_data, |data, path| {
             match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
@@ -59,7 +61,7 @@ impl<'report> GenericReporter<'report> {
                             writeln!(self.writer, "Name: {name}")?;
                         }
 
-                        let by_result = self.get_by_result(each, &mut deprecations)?;
+                        let by_result = self.get_by_result(each, &mut diagnostics)?;
 
                         if by_result.get("FAIL").is_some() {
                             exit_code = TEST_FAILURE_STATUS_CODE;
@@ -72,7 +74,7 @@ impl<'report> GenericReporter<'report> {
             }
         }
 
-        write_deprecations(&deprecations, self.writer)?;
+        write_diagnostics(&diagnostics, self.writer)?;
 
         Ok(exit_code)
     }
@@ -80,7 +82,7 @@ impl<'report> GenericReporter<'report> {
     fn get_by_result(
         &mut self,
         spec: TestSpec,
-        deprecations: &mut BTreeSet<String>,
+        diagnostics: &mut Diagnostics,
     ) -> crate::rules::Result<HashMap<String, indexmap::IndexSet<String>>> {
         let mut by_result = HashMap::new();
 
@@ -89,11 +91,12 @@ impl<'report> GenericReporter<'report> {
         eval_rules_file(&self.rules, &mut root_scope, None)?;
 
         // Read before `reset_recorder` consumes the scope, as in `validate`.
-        deprecations.extend(root_scope.deprecations().cloned());
+        diagnostics.extend(root_scope.deprecations().cloned());
 
         let top = root_scope.reset_recorder().extract();
 
         let by_rules = get_by_rules(&top);
+        let evaluated = by_rules.keys().copied().collect::<BTreeSet<&str>>();
 
         for (rule_name, rule) in by_rules {
             let expected = match spec.expectations.rules.get(rule_name) {
@@ -127,6 +130,8 @@ impl<'report> GenericReporter<'report> {
                 }
             }
         }
+
+        diagnostics.extend(unmatched_expectations(&spec.expectations.rules, &evaluated));
 
         if self.verbose {
             validate::print_verbose_tree(&top, self.writer);
