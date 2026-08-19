@@ -722,3 +722,108 @@ fn equality_is_symmetric_for_ranges() {
     // The membership answer still exists, in the table the evaluator consults.
     assert!(compare_eq(&value, &range).unwrap());
 }
+
+/// A range equals itself, which `impl Eq for PathAwareValue` promises and none of the three range
+/// variants delivered.
+///
+/// `PartialEq` had no range-against-range arm at all, so the fall-through asked `compare_values`,
+/// which reports two ranges as incomparable -- and a value was therefore not equal to itself. The
+/// commit that removed the scalar-against-range membership arms closed a symmetry hole and left this
+/// reflexivity one open; a reviewer found it by writing exactly this assertion.
+///
+/// All three variants, because the defect was in the missing arm rather than in any one type: the
+/// report named two of them and the third was broken identically.
+#[test]
+fn a_range_is_equal_to_itself() {
+    fn hash_of(v: &PathAwareValue) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut hasher);
+        hasher.finish()
+    }
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+
+    let ranges = [
+        (
+            "RangeInt",
+            PathAwareValue::RangeInt((
+                Path::root(),
+                RangeType {
+                    lower: 5i64,
+                    upper: 100i64,
+                    inclusive: BOTH,
+                },
+            )),
+        ),
+        (
+            "RangeFloat",
+            PathAwareValue::RangeFloat((
+                Path::root(),
+                RangeType {
+                    lower: 5.0f64,
+                    upper: 100.0f64,
+                    inclusive: BOTH,
+                },
+            )),
+        ),
+        (
+            "RangeFloat with negative bounds",
+            PathAwareValue::RangeFloat((
+                Path::root(),
+                RangeType {
+                    lower: -100.5f64,
+                    upper: -5.5f64,
+                    inclusive: BOTH,
+                },
+            )),
+        ),
+        (
+            "RangeChar",
+            PathAwareValue::RangeChar((
+                Path::root(),
+                RangeType {
+                    lower: 'a',
+                    upper: 'z',
+                    inclusive: BOTH,
+                },
+            )),
+        ),
+    ];
+
+    for (label, range) in &ranges {
+        assert_eq!(range, &range.clone(), "{} is not equal to itself", label);
+        assert_eq!(
+            hash_of(range),
+            hash_of(&range.clone()),
+            "{} hashes differently from itself",
+            label
+        );
+    }
+
+    // Different ranges of the same kind stay unequal, so reflexivity was not bought by making every
+    // range equal to every other.
+    let five_to_100 = &ranges[0].1;
+    let six_to_100 = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: 6i64,
+            upper: 100i64,
+            inclusive: BOTH,
+        },
+    ));
+    assert_ne!(five_to_100, &six_to_100);
+
+    // Inclusivity is part of the range, not decoration: two ranges over the same bounds that differ
+    // only in whether an endpoint is included are different ranges.
+    let five_to_100_exclusive = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: 5i64,
+            upper: 100i64,
+            inclusive: LOWER_INCLUSIVE,
+        },
+    ));
+    assert_ne!(five_to_100, &five_to_100_exclusive);
+
+    // Ranges of different kinds are not equal, and must not error either.
+    assert_ne!(&ranges[0].1, &ranges[1].1);
+}

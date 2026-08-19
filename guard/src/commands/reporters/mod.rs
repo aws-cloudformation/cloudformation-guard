@@ -424,9 +424,12 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                 }
             }
             EventType::Skipped(reasons) => {
-                for reason in *reasons {
-                    writer.write_event(Event::Text(BytesText::new(reason)))?;
-                }
+                // One text event with explicit separators, not one event per reason. Adjacent text
+                // events are concatenated with nothing between them, so two rules came out as
+                // `...nothing to checkb: no AWS::S3::Bucket...` and the second reason was unreadable.
+                // Some reasons happen to end in whitespace, which hid this in the fixtures that had
+                // only one rule to explain.
+                writer.write_event(Event::Text(BytesText::new(&reasons.join("\n"))))?;
             }
             EventType::Error(err) => {
                 writer.write_event(Event::Text(BytesText::new(err)))?;

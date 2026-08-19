@@ -437,6 +437,57 @@ mod validate_tests {
         );
     }
 
+    /// Two skip reasons in one junit report stay two reasons.
+    ///
+    /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text
+    /// events, so the output was `...nothing to checkbucket_named: no AWS::S3::Bucket...`. A reviewer
+    /// found it with a direct serializer probe and noted why the CLI fixtures had not: some evaluator
+    /// reasons happen to end in whitespace, which supplies an accidental separator, and every existing
+    /// fixture had only one rule to explain.
+    ///
+    /// Asserted by splitting the element body on the delimiter, so the test fails if the separator is
+    /// dropped again rather than merely checking that both rule names appear somewhere.
+    #[test]
+    fn junit_keeps_multiple_skip_reasons_separate() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["two_type_blocks_that_do_not_apply.guard"])
+            .output_format(Some("junit"))
+            .show_summary(vec!["none"])
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let body = output
+            .split("<skipped>")
+            .nth(1)
+            .and_then(|rest| rest.split("</skipped>").next())
+            .expect("junit emitted no <skipped> element");
+
+        let reasons: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert_eq!(
+            reasons.len(),
+            2,
+            "expected one line per inapplicable rule, got {:?} from body {:?}",
+            reasons,
+            body
+        );
+        assert!(
+            reasons.iter().all(|r| r.contains(": ")),
+            "each line should name its rule and its reason, got {:?}",
+            reasons
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly

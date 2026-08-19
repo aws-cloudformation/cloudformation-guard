@@ -228,8 +228,20 @@ impl Hash for PathAwareValue {
             }
 
             PathAwareValue::RangeFloat((_, r)) => {
-                (r.lower as u64).hash(state);
-                (r.upper as u64).hash(state);
+                // Canonicalised the same way as a scalar float, and for the same reason: `as u64`
+                // saturates, so every range with a negative bound hashed that bound as 0, and it
+                // truncates, so `r[1.1, 2.9]` and `r[1.9, 2.1]` hashed alike. This is also what keeps
+                // the hash agreeing with the equality arm added below for two ranges, where `-0.0` and
+                // `0.0` are equal bounds and have different bit patterns.
+                //
+                // Missed when the scalar arm above was fixed: the cast appeared twice and only one
+                // copy was corrected.
+                for bound in [r.lower, r.upper] {
+                    match float_as_exact_i64(bound) {
+                        Some(i) => i.hash(state),
+                        None => bound.to_bits().hash(state),
+                    }
+                }
                 r.inclusive.hash(state);
             }
 
@@ -277,6 +289,23 @@ impl PartialEq for PathAwareValue {
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
+
+            // Two ranges are equal when they describe the same range. Structural, so it is reflexive,
+            // symmetric and transitive -- unlike the membership arms that used to live here, which
+            // answered "is this scalar inside that range" and made `eq` neither reflexive nor
+            // symmetric. Membership is `compare_eq`'s job and stays there.
+            //
+            // Without these arms a range was not equal to *itself*: the fall-through asks
+            // `compare_values`, which reports two ranges as incomparable, and `impl Eq` below then
+            // promises a reflexivity the type did not have. Found by review of the commit that removed
+            // the membership arms, which closed the symmetry hole and left this one open.
+            //
+            // A NaN bound would break reflexivity again, since `f64::NaN != f64::NaN`. Ranges are only
+            // built from parsed numeric literals, and NaN is not one, so it is unreachable rather than
+            // handled.
+            (PathAwareValue::RangeInt((_, r)), PathAwareValue::RangeInt((_, r2))) => r == r2,
+            (PathAwareValue::RangeFloat((_, r)), PathAwareValue::RangeFloat((_, r2))) => r == r2,
+            (PathAwareValue::RangeChar((_, r)), PathAwareValue::RangeChar((_, r2))) => r == r2,
 
             (rest, rest2) => match compare_values(rest, rest2) {
                 Ok(ordering) => matches!(ordering, Ordering::Equal),
