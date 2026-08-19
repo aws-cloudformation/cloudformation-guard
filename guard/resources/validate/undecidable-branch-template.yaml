@@ -1,0 +1,6 @@
+# Not a CloudFormation template. `Enabled` is a boolean so that `!EMPTY` on it cannot be answered,
+# `Name` makes the second branch of the gate hold, and `MustBeTrue` is false so the guarded body has
+# a real violation to report once the gate opens.
+Name: keep
+Enabled: true
+MustBeTrue: false

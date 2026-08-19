@@ -861,6 +861,51 @@ mod validate_tests {
         );
     }
 
+    /// A gate with one undecidable branch and one that decides is decided by the second.
+    ///
+    /// `when Enabled !EMPTY or Name == "keep"`: the first branch has no answer on a boolean, the
+    /// second holds. The gate opens and the guarded violation is reported.
+    ///
+    /// Before the clause path carried `Outcome`, the undecidable branch left the evaluator as an
+    /// error and returned from the conjunction on the spot, so the second branch never ran and the
+    /// rule failed closed on its condition. The exit code was 19 either way, which is the point of
+    /// asserting the output: what changed is that the violation inside the body is reported instead
+    /// of being replaced by "the rule's condition could not be evaluated".
+    ///
+    /// This is not a relaxation of failing closed. `Outcome::or` absorbs only `Satisfied`, so a
+    /// disjunction with nothing satisfied and something undecidable is still undecidable, and
+    /// `an_unevaluatable_gate_fails_the_rule_closed` holds that line for the single-condition case.
+    #[test]
+    fn a_gate_is_decided_by_the_branch_that_can_be() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecidable-branch-template.yaml"])
+            .rules(vec!["gate_with_one_undecidable_branch.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the guarded body violates, so the file must fail"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("MustBeTrue"),
+            "the violation inside the guarded body is the finding this shape used to lose:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("condition could not be evaluated"),
+            "the gate was decided by its second branch, so the rule did not fail on its \
+             condition:\n{}",
+            output
+        );
+    }
+
     /// Two skip reasons in one junit report stay two reasons.
     ///
     /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text

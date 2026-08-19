@@ -27,6 +27,7 @@ use std::convert::TryFrom;
 use std::rc::Rc;
 use std::vec::Vec;
 
+use super::eval::{ClauseRole, Outcome};
 use super::functions::date_time::{now, parse_epoch};
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
@@ -423,23 +424,44 @@ fn check_and_delegate<'value, 'loc: 'value>(
             // Filter predicate: a selection test, not an assertion.
             |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
         ) {
-            Ok(status) => {
+            // A predicate that could not be answered still errors the query, which is the one place
+            // the error channel is kept deliberately rather than replaced by the lattice.
+            //
+            // Selecting nothing would be the alternative, and it is the wrong one here: a filter
+            // that quietly drops the resources it could not judge selects fewer of them, and a rule
+            // written to catch violations then catches fewer. That is the exact mechanism by which
+            // an earlier attempt to fail closed inside a filter turned five registry security rules
+            // from FAIL to PASS, so this site keeps the behaviour it has and says why.
+            //
+            // `Unevaluatable` cannot reach here through a decidable branch: `Outcome::or` absorbs
+            // `Satisfied`, so a predicate with one answerable branch that holds is `Satisfied`.
+            Ok(Outcome::Unevaluatable) => {
+                eval_context.end_record(&context, RecordType::Filter(Status::FAIL))?;
+                Err(Error::IncompatibleError(format!(
+                    "Filter predicate could not be evaluated for value at {}",
+                    value.self_path()
+                )))
+            }
+
+            Ok(outcome) => {
+                let status = outcome.to_status(ClauseRole::Gate);
                 eval_context.end_record(&context, RecordType::Filter(status))?;
+                let selected = !outcome.closes_gate();
                 if let Some(key_name) = name {
-                    if status == Status::PASS {
+                    if selected {
                         eval_context
                             .add_variable_capture_key(key_name.as_ref(), Rc::clone(&key))?;
                     }
                 }
-                match status {
-                    Status::PASS => query_retrieval_with_converter(
+                match selected {
+                    true => query_retrieval_with_converter(
                         index,
                         query,
                         Rc::clone(&value),
                         eval_context,
                         converter,
                     ),
-                    _ => Ok(vec![]),
+                    false => Ok(vec![]),
                 }
             }
 
@@ -1069,23 +1091,40 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         conjunctions,
                         &mut val_resolver,
                         // A filter predicate selects values; it is a test, not an
-                        // assertion, so an unevaluatable clause makes the filter
-                        // select nothing rather than fail.
+                        // assertion, so a predicate that does not hold selects nothing
+                        // rather than failing the enclosing clause.
+                        //
+                        // A predicate that could not be *answered* is different, and this
+                        // comment used to claim it selected nothing too. It errors, and
+                        // deliberately: a filter that quietly drops the resources it could
+                        // not judge selects fewer of them, and a rule written to catch
+                        // violations then catches fewer.
                         |gc, r| {
                             super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
                         },
                     ) {
-                        Ok(status) => {
-                            resolver.end_record(&context, RecordType::Filter(status))?;
-                            match status {
-                                Status::PASS => query_retrieval_with_converter(
+                        Ok(Outcome::Unevaluatable) => {
+                            resolver.end_record(&context, RecordType::Filter(Status::FAIL))?;
+                            return Err(Error::IncompatibleError(format!(
+                                "Filter predicate could not be evaluated for value at {}",
+                                each.self_path()
+                            )));
+                        }
+
+                        Ok(outcome) => {
+                            resolver.end_record(
+                                &context,
+                                RecordType::Filter(outcome.to_status(ClauseRole::Gate)),
+                            )?;
+                            match outcome.closes_gate() {
+                                false => query_retrieval_with_converter(
                                     query_index + 1,
                                     query,
                                     Rc::new(each.clone()),
                                     resolver,
                                     converter,
                                 )?,
-                                _ => vec![],
+                                true => vec![],
                             }
                         }
 
@@ -1109,21 +1148,31 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         conjunctions,
                         &mut val_resolver,
                         // A filter predicate selects values; it is a test, not an
-                        // assertion, so an unevaluatable clause makes the filter
-                        // select nothing rather than fail.
+                        // assertion, so a predicate that does not hold selects nothing
+                        // rather than failing the enclosing clause.
+                        //
+                        // A predicate that could not be *answered* is different, and this
+                        // comment used to claim it selected nothing too. It errors, and
+                        // deliberately: a filter that quietly drops the resources it could
+                        // not judge selects fewer of them, and a rule written to catch
+                        // violations then catches fewer.
                         |gc, r| {
                             super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
                         },
                     ) {
-                        Ok(status) => match status {
-                            Status::PASS => query_retrieval_with_converter(
+                        Ok(Outcome::Unevaluatable) => Err(Error::IncompatibleError(format!(
+                            "Filter predicate could not be evaluated for value at {}",
+                            current.self_path()
+                        ))),
+                        Ok(outcome) => match outcome.closes_gate() {
+                            false => query_retrieval_with_converter(
                                 query_index + 1,
                                 query,
                                 Rc::clone(&current),
                                 resolver,
                                 converter,
                             ),
-                            _ => Ok(vec![]),
+                            true => Ok(vec![]),
                         },
                         Err(e) => Err(e),
                     }
@@ -1474,7 +1523,10 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 // strictness the *reference* deserves: a failure when the reference is an
                 // assertion, inapplicable when it is a gate. That is exactly the
                 // Unevaluatable split `Outcome::to_status` describes.
-                let status = super::eval::eval_rule(each_rule, self, role)?;
+                // The cache stores a status, so the role is applied here. That is the same
+                // answer the rule itself would give a caller in this role, and it keeps the
+                // conversion at one place rather than at every reader of the cache.
+                let status = super::eval::eval_rule(each_rule, self, role)?.to_status(role);
                 if status != SKIP {
                     break 'done status;
                 }

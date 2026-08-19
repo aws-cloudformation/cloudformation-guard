@@ -363,6 +363,13 @@ pub(crate) enum ClauseRole {
 /// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
 /// propagated because the two are answered differently: an unevaluatable clause is a verdict about
 /// that clause, while a genuine failure of the machinery should still stop the run.
+/// Whether an error from the comparator layer means "could not be answered" rather than "went
+/// wrong".
+///
+/// One caller left, and it is the boundary rather than a leftover. The comparators in
+/// `operators.rs` still signal an unsupported operand by returning an error, so something has to
+/// translate that into the lattice; every consumer above that point now asks an [`Outcome`] instead
+/// of asking an error what kind it is.
 fn is_unevaluatable(e: &Error) -> bool {
     matches!(e, Error::IncompatibleError(_))
 }
@@ -382,7 +389,6 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'l, 'loc>,
-    role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
 
@@ -436,41 +442,25 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                     let empty = match empty_of(&each, lone_variable) {
                         Ok(empty) => empty,
 
-                        // A type that cannot be empty. Treated exactly as the non-variable path
-                        // treats it, role split included: an assertion fails closed here, and a gate
-                        // keeps the error so the enclosing condition fails its own rule closed
-                        // rather than reading this as a condition that did not match.
-                        Err(e) if is_unevaluatable(&e) => {
-                            // The record is closed on both paths. `start_record` ran at the top of
-                            // this loop, and returning without ending it leaves the recorder
-                            // unbalanced -- `extract` then fails with "context start and end does
-                            // not match" and takes the whole run with it. Caught by
-                            // `an_unanswerable_clause_never_silences_the_rule_it_guards`, which
-                            // exercises this arm as a gate; the strict path alone never returned
-                            // early, so the imbalance arrived with this arm.
+                        // A type that cannot be empty is undecided, not failed, and says so as a
+                        // value. No role split here: on this branch the consumers ask, so the leaf
+                        // answers the same way however it was reached.
+                        Err(ref e) if is_unevaluatable(e) => {
                             eval_context.end_record(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::Unary(UnaryValueCheck {
                                     comparison: cmp,
                                     value: ValueCheck {
-                                        status: Status::FAIL,
+                                        status: Outcome::Unevaluatable
+                                            .to_status(ClauseRole::Assertion),
                                         message: Some(e.to_string()),
                                         custom_message: custom_message.clone(),
                                         from: each.clone(),
                                     },
                                 })),
                             )?;
-
-                            // An assertion fails closed here; a gate keeps the error so the
-                            // enclosing condition fails its own rule closed rather than reading this
-                            // as a condition that did not match.
-                            match role.is_strict() {
-                                true => {
-                                    results.push((each, Status::FAIL));
-                                    continue;
-                                }
-                                false => return Err(e),
-                            }
+                            results.push((each, Outcome::Unevaluatable));
+                            continue;
                         }
 
                         Err(e) => return Err(e),
@@ -679,31 +669,26 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             // aborted the whole rules file, discarding every other rule's verdict; one unanswerable
             // clause is a verdict about that clause, not about the file.
             //
-            // Split by role, and the split is load-bearing rather than a leftover from before the
-            // lattice existed. `Outcome::Unevaluatable` describes this exactly -- "a reference resolved
-            // to no values, or a type did not support the operation" -- so an assertion is expressed as
-            // that value and `to_status` applies the role once.
+            // Uniform across roles, which it was not until the condition sites learned to ask.
             //
-            // A gate cannot be, and taking the lattice for both was measured to reintroduce the defect
-            // it was meant to remove. `to_status(Gate)` maps `Unevaluatable` to SKIP, `eval_rule` maps
-            // every non-PASS condition to a rule-level SKIP, and the guarded body is therefore never
-            // evaluated -- so `rule r when Enabled !EMPTY { MustBeTrue == true }` exits 0 with the
-            // violation inside it unreported. That is the case a reviewer found against #717, fixed
-            // there by `4c8c650`, and it came straight back when this branch's version of this arm was
-            // taken wholesale during a rebase.
+            // The split version pushed `Unevaluatable` for an assertion and returned the error for a
+            // gate, and the error was doing real work: `to_status(Gate)` maps `Unevaluatable` to
+            // SKIP, and every non-PASS condition became a rule-level SKIP, so answering a gate with
+            // the lattice value silently dropped the guarded body. `rule r when Enabled !EMPTY {
+            // MustBeTrue == true }` exited 0 with the violation inside it unreported. That is the
+            // case a reviewer found against #717, and it returned once when this arm was made
+            // uniform on its own.
             //
-            // So the error stays the channel for a condition. The three condition sites catch it and
-            // fail their own rule or block, which is what makes an unevaluatable gate fail closed.
-            // Wiring `Outcome::closes_gate` into those sites would let this arm be uniform, and it is
-            // the obvious next step for this branch -- the vocabulary is already here and only the
-            // tests use it.
+            // What made the split unnecessary is that `eval_rule` and `eval_when_condition_block`
+            // now distinguish `Unevaluatable` from a condition that merely did not match, so the
+            // undecided answer travels as a value and is failed closed where it is consumed. The
+            // regression test for that shape is
+            // `an_unevaluatable_gate_fails_the_rule_closed`, which is why this can be uniform now
+            // and could not be before.
             //
             // `record_unary_clause` has already recorded this value with the matching status and the
             // message naming the offending path, so nothing is lost by not propagating.
-            Err(e) if is_unevaluatable(&e) => match role.is_strict() {
-                true => status.push((each, Outcome::Unevaluatable)),
-                false => return Err(e),
-            },
+            Err(ref e) if is_unevaluatable(e) => status.push((each, Outcome::Unevaluatable)),
 
             Err(e) => return Err(e),
         }
@@ -1807,12 +1792,16 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let all = gac.access_clause.query.match_all;
     let blk_context = format!("GuardAccessClause#block{}", gac);
     resolver.start_record(&blk_context)?;
 
     let statues = if gac.access_clause.comparator.0.is_unary() {
+        // No role. A unary clause's *answer* does not depend on whether it was reached as an
+        // assertion or as a gate; only the status that answer maps to does, and that mapping now
+        // happens at the consumer. The parameter was threaded here to choose between a value and an
+        // error for the same undecided answer, and there is one representation of it now.
         unary_operation(
             &gac.access_clause.query.query,
             gac.access_clause.comparator,
@@ -1820,7 +1809,6 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
             resolver,
-            role,
         )
     } else {
         let (rhs, _) = match &gac.access_clause.compare_with {
@@ -1905,6 +1893,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
     match statues {
         Ok(statues) => match statues {
             EvaluationResult::EmptyQueryResult(status, message) => {
+                // The empty-collection arms decide by polarity rather than by role, so the status
+                // they chose is lifted rather than re-derived: FAIL is a violation and SKIP is
+                // inapplicable. `from_status` is exact for those two.
+                let outcome = Outcome::from_status(status);
                 resolver.end_record(
                     &blk_context,
                     RecordType::GuardClauseBlockCheck(BlockCheck {
@@ -1919,7 +1911,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         at_least_one_matches: !all,
                     }),
                 )?;
-                Ok(status)
+                Ok(outcome)
             }
             EvaluationResult::QueryValueResult(result) => {
                 // Folded through `Outcome` rather than by counting passes and fails.
@@ -1958,18 +1950,19 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 // rather than a special case each fold has to remember.
                 let outcome = {
                     let outcomes = result.into_iter().map(|(_value, outcome)| outcome);
-                    let folded = if all {
-                        Outcome::all(outcomes)
-                    } else {
-                        Outcome::any(outcomes)
-                    };
-                    folded.to_status(role)
+                    match all {
+                        true => Outcome::all(outcomes),
+                        false => Outcome::any(outcomes),
+                    }
                 };
                 resolver.end_record(
                     &blk_context,
                     RecordType::GuardClauseBlockCheck(BlockCheck {
                         message: None,
-                        status: outcome,
+                        // The record keeps a status, because that is what a reporter reads. The role
+                        // is applied here and only here, so the clause itself can still be handed
+                        // to its caller undecided.
+                        status: outcome.to_status(role),
                         at_least_one_matches: !all,
                     }),
                 )?;
@@ -1995,12 +1988,16 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             // the incompatible-type abort fixed earlier on this branch, reached through a function
             // instead of an operator.
             //
-            // Only for an assertion. A gate keeps the error so the enclosing condition site fails its
-            // own rule closed rather than reading this as a condition that did not match, which is
-            // the same split the per-value arm and `eval_when_condition_block` use.
-            match (is_unevaluatable(&e), role.is_strict()) {
-                (true, true) => Ok(Status::FAIL),
-                _ => Err(e),
+            // Role-free, like the per-value arm above. An unevaluatable clause answers
+            // `Unevaluatable` and the consumer decides what that means for it.
+            //
+            // This arm used to split on `role.is_strict()` and hand a gate the error instead, so the
+            // enclosing condition site could tell "could not be answered" apart from "did not match".
+            // That is the job the lattice now does with a value, and `to_status` and `closes_gate` at
+            // the consumer are where the role is applied.
+            match is_unevaluatable(&e) {
+                true => Ok(Outcome::Unevaluatable),
+                false => Err(e),
             }
         }
     }
@@ -2019,7 +2016,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
 
@@ -2122,7 +2119,11 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     )?;
                 }
             }
-            Ok(status)
+            // The arms above already applied the role, so this status is the decision rather than a
+            // value awaiting one, and `from_status` lifts it exactly: PASS is satisfied, FAIL is
+            // violated, SKIP is inapplicable. The rule-status cache this reads is still keyed on
+            // `Status`, which is why the lift happens here and not further in.
+            Ok(Outcome::from_status(status))
         }
 
         Err(e) => {
@@ -2144,9 +2145,9 @@ pub(in crate::rules) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
     block: &'value Block<'loc, T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     eval_fn: E,
-) -> Result<Status>
+) -> Result<Outcome>
 where
-    E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
+    E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Outcome>,
     T: CaptureNames<'value>,
 {
     let mut block_scope = block_scope(block, resolver.root(), resolver);
@@ -2163,7 +2164,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     block_clause: &'value BlockGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let context = format!("BlockGuardClause#{}", block_clause.location);
     let match_all = block_clause.query.match_all;
     resolver.start_record(&context)?;
@@ -2182,27 +2183,34 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
         }
     };
     if block_values.is_empty() {
-        let status = if block_clause.not_empty {
-            Status::FAIL
-        } else {
-            Status::SKIP
+        // An empty selection is a violation when the block asked for one and inapplicable otherwise,
+        // which is the same pair of answers as before rather than a new reading of emptiness.
+        let outcome = match block_clause.not_empty {
+            true => Outcome::Violated,
+            false => Outcome::NotApplicable,
         };
         resolver.end_record(
             &context,
             RecordType::BlockGuardCheck(BlockCheck {
-                status,
+                status: outcome.to_status(role),
                 at_least_one_matches: !match_all,
                 message: None,
             }),
         )?;
-        return Ok(status);
+        return Ok(outcome);
     }
-    let mut fails = 0;
-    let mut passes = 0;
+    // `match_all` conjoins and its absence disjoins, which is what the two counter orderings said:
+    // the all-form answered FAIL before PASS and the any-form PASS before FAIL, and `Outcome::and`
+    // absorbs `Violated` while `Outcome::or` absorbs `Satisfied`.
+    let combine = match match_all {
+        true => Outcome::and,
+        false => Outcome::or,
+    };
+    let mut combined = Outcome::identity();
     for each in block_values {
         match each {
             QueryResult::UnResolved(ur) => {
-                fails += 1;
+                combined = combine(combined, Outcome::Violated);
                 let guard_cxt = format!("GuardBlockAccessClause#{}", block_clause.location);
                 resolver.start_record(&guard_cxt)?;
                 resolver.end_record(
@@ -2228,15 +2236,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                 match eval_general_block_clause(&block_clause.block, &mut val_resolver, |gc, r| {
                     eval_guard_clause(gc, r, role)
                 }) {
-                    Ok(status) => match status {
-                        Status::PASS => {
-                            passes += 1;
-                        }
-                        Status::FAIL => {
-                            fails += 1;
-                        }
-                        Status::SKIP => {}
-                    },
+                    Ok(outcome) => combined = combine(combined, outcome),
 
                     Err(e) => {
                         resolver.end_record(
@@ -2257,30 +2257,15 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
         }
     }
 
-    let status = if match_all {
-        if fails > 0 {
-            Status::FAIL
-        } else if passes > 0 {
-            Status::PASS
-        } else {
-            Status::SKIP
-        }
-    } else if passes > 0 {
-        Status::PASS
-    } else if fails > 0 {
-        Status::FAIL
-    } else {
-        Status::SKIP
-    };
     resolver.end_record(
         &context,
         RecordType::BlockGuardCheck(BlockCheck {
-            status,
+            status: combined.to_status(role),
             at_least_one_matches: !match_all,
             message: None,
         }),
     )?;
-    Ok(status)
+    Ok(combined)
 }
 
 /// `role` is the role of the context this `when` block appears in, and it is inherited by the
@@ -2310,22 +2295,54 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
     block: &'value Block<'loc, GuardClause<'loc>>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     resolver.start_record(&context)?;
     let when_context = format!("{}/When", context);
     resolver.start_record(&when_context)?;
     let block = match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
-        Ok(status) => {
-            // `closes_gate`, not `status != PASS`. Identical in behaviour --
-            // `from_status` maps PASS to Satisfied and both FAIL and SKIP to variants
-            // that close -- but it names the decision. This is the branch that makes a
-            // rule inapplicable and drops every check in its body, so "did the gate
-            // close" is the question being asked, and it is deliberately not
-            // `Outcome::blocks`: a gate that closes blocks nothing and still silences
-            // everything it guarded, which is the hazard the two predicates exist to
-            // keep apart.
-            if Outcome::from_status(status).closes_gate() {
-                resolver.end_record(&when_context, RecordType::WhenCondition(status))?;
+        // A condition that could not be answered is not a condition that did not match. This is the
+        // distinction the error channel used to carry: skipping here disarms every check inside the
+        // block, which is the direction that turns a violation into exit 0, so the block is answered
+        // `Unevaluatable` and whoever asked applies the role once.
+        //
+        // Not `Violated`, which is what the error channel produced. A violation says the input is
+        // wrong; this says nothing was established about the input. The two differ where it matters:
+        // a rule reached as a gate sees `Unevaluatable` and fails closed, where `Violated` would
+        // read as an ordinary non-matching condition and make the rule inapplicable.
+        Ok(Outcome::Unevaluatable) => {
+            resolver.end_record(
+                &when_context,
+                RecordType::WhenCondition(Outcome::Unevaluatable.to_status(role)),
+            )?;
+            resolver.end_record(
+                &context,
+                RecordType::WhenCheck(BlockCheck {
+                    status: Outcome::Unevaluatable.to_status(role),
+                    // No message. Verified rather than assumed: a rule whose inner `when` condition
+                    // cannot be evaluated prints the clause's own explanation -- "Attempting EMPTY
+                    // operation on type bool ... at /Enabled" -- and nothing on this record reaches
+                    // the output. `every_recorded_explanation_has_a_rendering_path` refused the
+                    // sentence that was here first, which is what that test is for: a message
+                    // recorded and discarded reads like a diagnostic in the source and is invisible
+                    // to the person the diagnostic was for.
+                    message: None,
+                    at_least_one_matches: false,
+                }),
+            )?;
+            return Ok(Outcome::Unevaluatable);
+        }
+
+        Ok(outcome) => {
+            // `closes_gate`, not `status != PASS`. This is the branch that makes a block
+            // inapplicable and drops every check inside it, so "did the gate close" is the
+            // question being asked, and it is deliberately not `Outcome::blocks`: a gate that
+            // closes blocks nothing and still silences everything it guarded, which is the hazard
+            // the two predicates exist to keep apart.
+            if outcome.closes_gate() {
+                resolver.end_record(
+                    &when_context,
+                    RecordType::WhenCondition(outcome.to_status(role)),
+                )?;
                 resolver.end_record(
                     &context,
                     RecordType::WhenCheck(BlockCheck {
@@ -2334,7 +2351,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
                         message: None,
                     }),
                 )?;
-                return Ok(Status::SKIP);
+                return Ok(Outcome::NotApplicable);
             }
             resolver.end_record(&when_context, RecordType::WhenCondition(Status::PASS))?;
             block
@@ -2342,50 +2359,15 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
 
         Err(e) => {
             resolver.end_record(&when_context, RecordType::WhenCondition(Status::FAIL))?;
-            let unevaluatable = is_unevaluatable(&e);
             resolver.end_record(
                 &context,
                 RecordType::WhenCheck(BlockCheck {
                     status: Status::FAIL,
-                    message: Some(match unevaluatable {
-                        true => format!("The condition could not be evaluated, so the block it guards is not checked: {}", e),
-                        false => format!("Error {} during type condition evaluation, bailing", e),
-                    }),
+                    message: Some(format!("Error {} during condition evaluation, bailing", e)),
                     at_least_one_matches: false,
                 }),
             )?;
-            // A condition that cannot be evaluated fails the block it guards rather than aborting
-            // the file. Skipping it would disarm every check inside, which is the direction that
-            // turns a violation into exit 0.
-            //
-            // Split by role, and the split is the whole fix. Answering FAIL is right for an
-            // assertion: the block fails, the rule fails, and the rest of the file still reports.
-            // It is wrong for a gate, because one level out a FAIL on a condition is
-            // indistinguishable from a condition that was decided and did not match, and `eval_rule`
-            // maps that to a rule-level SKIP. So
-            //
-            //     rule inner_gate(unused) {
-            //         when Resources.Vol.Properties.Enabled !EMPTY { ... }
-            //     }
-            //     rule guarded when inner_gate("x") { Encrypted == true }
-            //
-            // exited 0 with the `Encrypted` violation unreported, where the merge-base exited 19.
-            // Reported by a reviewer, and the diagnosis was exact: converting the undecidable answer
-            // to a status here loses the information the outer rule needs to fail closed. Keeping
-            // the error for a gate carries it to the enclosing condition site, which fails its own
-            // rule closed instead of deciding the rule does not apply.
-            //
-            // `an_undecidable_nested_gate_does_not_silence_the_outer_rule` is the regression test,
-            // and it asserts the reported violation rather than only the exit code, because the
-            // merge-base and the fix agree on 19 and disagree on what they say.
-            return match (unevaluatable, role.is_strict()) {
-                // A gate: keep the error, so the enclosing condition site fails its own rule closed
-                // rather than reading this as a condition that did not match.
-                (true, false) => Err(e),
-                // An assertion: the block fails and every other rule in the file still reports.
-                (true, true) => Ok(Status::FAIL),
-                (false, _) => Err(e),
-            };
+            return Err(e);
         }
     };
 
@@ -2396,16 +2378,16 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
         // when the enclosing context is one. See this function's doc comment for what assuming
         // otherwise cost.
         match eval_general_block_clause(block, resolver, |gc, r| eval_guard_clause(gc, r, role)) {
-            Ok(status) => {
+            Ok(outcome) => {
                 resolver.end_record(
                     &context,
                     RecordType::WhenCheck(BlockCheck {
-                        status,
+                        status: outcome.to_status(role),
                         message: None,
                         at_least_one_matches: false,
                     }),
                 )?;
-                status
+                outcome
             }
 
             Err(e) => {
@@ -2504,7 +2486,7 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     call_rule: &'value ParameterizedNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let param_rule = resolver.find_parameterized_rule(&call_rule.named_rule.dependent_rule)?;
 
     if param_rule.parameter_names.len() != call_rule.parameters.len() {
@@ -2583,7 +2565,7 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // Propagate the call site's role: a parameterized rule used as a `when` gate
     // must evaluate its body with gate semantics, or an unevaluatable clause inside
     // it fails the gate and silently disarms the block it guards.
-    let status = eval_rule(&param_rule.rule, &mut eval, role)?;
+    let outcome = eval_rule(&param_rule.rule, &mut eval, role)?;
 
     // Apply the clause-level negation of the *call*. The parser accepts and stores a
     // leading `not` on a parameterized invocation (`not is_relevant("x")`) exactly as
@@ -2602,43 +2584,38 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // that never ran is not evidence that it does -- but it is the arm to look at first if
     // a ruleset starts failing on a rule it used to skip. Gate references are unaffected;
     // they take the SKIP arm below.
-    Ok(match status {
-        Status::PASS => {
-            if call_rule.named_rule.negation {
-                Status::FAIL
-            } else {
-                Status::PASS
-            }
-        }
+    Ok(match (outcome, call_rule.named_rule.negation) {
+        (Outcome::Satisfied, false) => Outcome::Satisfied,
+        (Outcome::Satisfied, true) => Outcome::Violated,
 
-        Status::SKIP if role.is_strict() => Status::FAIL,
+        // An invoked rule that could not be evaluated stays undecided, and the call site's role
+        // settles it: `to_status` fails an assertion closed and leaves a gate inapplicable, which
+        // is what the two SKIP arms below used to do by hand.
+        //
+        // This is also a change of outcome for `not r(...)`. Before the lattice, an unevaluatable
+        // rule arrived here as FAIL, indistinguishable from a rule the input violated, so the
+        // negation inverted it and `not r(...)` reported PASS for a rule that never decided
+        // anything. Negating an undecided answer does not produce a decided one.
+        (Outcome::Unevaluatable, _) => Outcome::Unevaluatable,
 
-        // A gate whose invoked rule did not apply stays SKIP rather than falling into the
-        // `_` arm below, which would turn a non-negated call into FAIL.
-        //
-        // Both are non-PASS, so with a single condition the two are indistinguishable --
-        // `eval_rule` drops the guarded body either way. The difference shows up with more
-        // than one condition: `eval_conjunction_clauses` absorbs SKIP (`Status::SKIP => {}`)
-        // but counts a FAIL, so one inapplicable gate condition returning FAIL poisons the
-        // whole `when` and drops a body that the remaining conditions would have enforced.
-        //
-        // That is exactly what `ClauseRole::Gate` is documented to prevent -- "the block it
-        // guards is still decided by the remaining conditions" -- so returning FAIL here
-        // defeated the role propagation this branch added for parameterized calls.
-        //
-        // Negated calls keep falling through, and for a gate the PASS the `_` arm returns is the
-        // intended outcome: `when not r(...)` opens the gate when `r` did not apply. A negated
-        // assertion never reaches that arm, because the `role.is_strict()` arm above already failed
-        // it closed. Same reasoning, and the same arm order, as `eval_guard_named_clause`.
-        Status::SKIP if !call_rule.named_rule.negation => Status::SKIP,
+        // A rule that did not apply is not evidence that it holds, so an assertion on it fails
+        // closed. Deliberate, and the arm to look at first if a ruleset starts failing on a rule it
+        // used to skip: `rule main { r(...) }` claims `r` holds, and `r` never ran.
+        (Outcome::NotApplicable, _) if role.is_strict() => Outcome::Violated,
 
-        _ => {
-            if call_rule.named_rule.negation {
-                Status::PASS
-            } else {
-                Status::FAIL
-            }
-        }
+        // A gate whose invoked rule did not apply stays inapplicable rather than becoming a
+        // violation. With one condition the two are indistinguishable, since either way the guarded
+        // body is dropped; with more than one, `Outcome::and` absorbs `Violated` but treats
+        // `NotApplicable` as the identity, so one inapplicable gate condition would otherwise
+        // poison a `when` that its siblings would have decided.
+        (Outcome::NotApplicable, false) => Outcome::NotApplicable,
+
+        // `when not r(...)` opens the gate when `r` did not apply. A negated assertion never
+        // reaches here, because the fail-closed arm above already took it.
+        (Outcome::NotApplicable, true) => Outcome::Satisfied,
+
+        (Outcome::Violated, false) => Outcome::Violated,
+        (Outcome::Violated, true) => Outcome::Satisfied,
     })
 }
 
@@ -2649,7 +2626,7 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
     gc: &'value GuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     match gc {
         GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, role),
         GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, role),
@@ -2670,7 +2647,7 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
 pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
     when_clause: &'value WhenGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
+) -> Result<Outcome> {
     match when_clause {
         // Every arm is a gate. A clause whose reference did not resolve, or a
         // reference to a rule that did not apply, must not disarm the block being
@@ -2696,7 +2673,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     type_block: &'value TypeBlock<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let context = format!("TypeBlock#{}", type_block.type_name);
     resolver.start_record(&context)?;
     let block = &type_block.block;
@@ -2738,11 +2715,16 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 },
             }),
         )?;
-        return Ok(Status::SKIP);
+        return Ok(Outcome::NotApplicable);
     }
 
+    // A type block conjoins over its resources: every one of them must satisfy it. The counters are
+    // that conjunction written out, and `undecided` is the value the pair could not hold -- a
+    // resource whose condition could not be answered is neither a pass nor a failure, and treating
+    // it as either is what the error channel was doing.
     let mut fails = 0;
     let mut passes = 0;
+    let mut undecided = 0;
     // Tracked only so the SKIP below can name the right cause. Three different things reach SKIP
     // here and they call for three different sentences; telling a reader the wrong one of them is
     // worse than telling them nothing, which is the defect this branch spent most of its commits
@@ -2790,7 +2772,27 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     val_resolver.start_record(&when_context)?;
                     match eval_conjunction_clauses(conditions, &mut val_resolver, eval_when_clause)
                     {
-                        Ok(status) => {
+                        // A condition this resource cannot answer leaves the resource undecided,
+                        // rather than exempting it or aborting the file. Exempting is the dangerous
+                        // direction: the block's clauses would never run and the rule could report
+                        // compliance for a resource nothing checked. It arrived as an error before
+                        // the lattice and was counted as a failure, which said the resource was
+                        // non-compliant when what was true is that nothing was established about it.
+                        Ok(Outcome::Unevaluatable) => {
+                            val_resolver.end_record(
+                                &when_context,
+                                RecordType::TypeCondition(
+                                    Outcome::Unevaluatable.to_status(ClauseRole::Assertion),
+                                ),
+                            )?;
+                            val_resolver
+                                .end_record(&block_context, RecordType::TypeBlock(Status::FAIL))?;
+                            undecided += 1;
+                            continue;
+                        }
+
+                        Ok(outcome) => {
+                            let status = outcome.to_status(ClauseRole::Gate);
                             val_resolver
                                 .end_record(&when_context, RecordType::TypeCondition(status))?;
                             // `closes_gate`, not `status != PASS`. Identical in behaviour --
@@ -2800,7 +2802,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             // and it is deliberately not `Outcome::blocks`: a gate that closes
                             // blocks nothing and still silences everything it guarded, which is
                             // the hazard the two predicates exist to keep apart.
-                            if Outcome::from_status(status).closes_gate() {
+                            if outcome.closes_gate() {
                                 // Not applicable to this resource, so it contributes to neither
                                 // count. If that holds for every resource the fold below answers
                                 // SKIP, which is the honest answer: the block applied to nothing.
@@ -2817,61 +2819,6 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                         // rather than aborting the file or exempting the resource. Exempting it is the
                         // dangerous direction: the block's clauses would never run and the rule could
                         // report compliance for a resource nothing checked.
-                        Err(e) if is_unevaluatable(&e) => {
-                            val_resolver.end_record(
-                                &when_context,
-                                RecordType::TypeCondition(Status::FAIL),
-                            )?;
-                            val_resolver
-                                .end_record(&block_context, RecordType::TypeBlock(Status::FAIL))?;
-
-                            // Split by role, like the other two condition sites. Counting this as a
-                            // failure is right for an assertion; for a gate it makes the type block
-                            // FAIL, and one level out a FAIL on a condition is a condition that was
-                            // decided and did not match, which `eval_rule` maps to a rule-level SKIP.
-                            // So an undecidable type-block condition behind a gate dropped the rule it
-                            // guarded at exit 0:
-                            //
-                            //     rule inner_gate(unused) {
-                            //         AWS::EC2::Volume when Properties.Encrypted !EMPTY {
-                            //             Properties.Size > 10
-                            //         }
-                            //     }
-                            //     rule guarded when inner_gate("x") { Vol.Properties.Size == 100 }
-                            //
-                            // exited 0 against `Size: 5` with the violation unreported. Keeping the
-                            // error for a gate carries it to the enclosing condition, which fails its
-                            // own rule closed.
-                            if !role.is_strict() {
-                                // The type block's own record has to be closed before returning, or
-                                // `extract` fails with "context start and end does not match" and
-                                // takes the run down at exit 255 instead of reporting anything. Same
-                                // trap as the lone-variable arm in `unary_operation`: `start_record`
-                                // ran above, and an early return has to end it.
-                                val_resolver.end_record(
-                                    &context,
-                                    RecordType::TypeCheck(TypeBlockCheck {
-                                        type_name: &type_block.type_name,
-                                        block: BlockCheck {
-                                            status: Status::FAIL,
-                                            // No message. Measured: the enclosing rule's own
-                                            // explanation is what reaches the console for this shape,
-                                            // naming the operation and the path, and nothing on this
-                                            // record is rendered. A sentence here would be recorded
-                                            // and discarded, which is what
-                                            // `every_recorded_explanation_has_a_rendering_path`
-                                            // exists to refuse -- it caught this one.
-                                            message: None,
-                                            at_least_one_matches: false,
-                                        },
-                                    }),
-                                )?;
-                                return Err(e);
-                            }
-                            fails += 1;
-                            continue;
-                        }
-
                         Err(e) => {
                             val_resolver.end_record(
                                 &when_context,
@@ -2901,17 +2848,17 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 match eval_general_block_clause(block, &mut val_resolver, |gc, r| {
                     eval_guard_clause(gc, r, role)
                 }) {
-                    Ok(status) => {
-                        match status {
-                            Status::PASS => {
-                                passes += 1;
-                            }
-                            Status::FAIL => {
-                                fails += 1;
-                            }
-                            Status::SKIP => {}
+                    Ok(outcome) => {
+                        match outcome {
+                            Outcome::Satisfied => passes += 1,
+                            Outcome::Violated => fails += 1,
+                            Outcome::Unevaluatable => undecided += 1,
+                            Outcome::NotApplicable => {}
                         }
-                        resolver.end_record(&block_context, RecordType::TypeBlock(status))?;
+                        resolver.end_record(
+                            &block_context,
+                            RecordType::TypeBlock(outcome.to_status(role)),
+                        )?;
                     }
 
                     Err(e) => {
@@ -2970,13 +2917,18 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
         }
     }
 
-    let status = if fails > 0 {
-        Status::FAIL
+    // The conjunction, in the order `Outcome::and` gives: a violation anywhere absorbs, an
+    // undecided resource then dominates a satisfied one, and no resource at all is the identity.
+    let outcome = if fails > 0 {
+        Outcome::Violated
+    } else if undecided > 0 {
+        Outcome::Unevaluatable
     } else if passes > 0 {
-        Status::PASS
+        Outcome::Satisfied
     } else {
-        Status::SKIP
+        Outcome::NotApplicable
     };
+    let status = outcome.to_status(role);
 
     resolver.end_record(
         &context,
@@ -3032,7 +2984,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
             },
         }),
     )?;
-    Ok(status)
+    Ok(outcome)
 }
 
 /// `role` is inherited by the clauses of this rule clause.
@@ -3040,7 +2992,7 @@ pub(in crate::rules) fn eval_rule_clause<'value, 'loc: 'value>(
     rule_clause: &'value RuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     match rule_clause {
         RuleClause::Clause(gc) => eval_guard_clause(gc, resolver, role),
         RuleClause::TypeBlock(tb) => eval_type_block_clause(tb, resolver, role),
@@ -3065,14 +3017,42 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
-) -> Result<Status> {
+) -> Result<Outcome> {
     let context = rule.rule_name.to_string();
     resolver.start_record(&context)?;
     let block = if let Some(conditions) = &rule.conditions {
         let when_context = format!("Rule#{}/When", context);
         resolver.start_record(&when_context)?;
         match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
-            Ok(status) => {
+            // The distinction this PR exists to make. A condition that could not be answered is not
+            // a condition that did not match, and only one of the two may leave the guarded body
+            // unevaluated at exit 0.
+            //
+            // Before the lattice these were the same value: every non-PASS condition became a
+            // rule-level SKIP, so an undecidable gate silenced its body exactly as a non-matching
+            // one does. The fix was to route the undecidable case through the error channel and
+            // catch it here, which worked and cost a channel. Now the condition says which it is.
+            Ok(Outcome::Unevaluatable) => {
+                resolver.end_record(
+                    &when_context,
+                    RecordType::RuleCondition(Outcome::Unevaluatable.to_status(role)),
+                )?;
+                resolver.end_record(
+                    &context,
+                    RecordType::RuleCheck(NamedStatus {
+                        status: Outcome::Unevaluatable.to_status(role),
+                        name: &rule.rule_name,
+                        message: Some(String::from(
+                            "The rule's condition could not be evaluated, so the rule fails rather \
+                             than being treated as not applicable",
+                        )),
+                    }),
+                )?;
+                return Ok(Outcome::Unevaluatable);
+            }
+
+            Ok(outcome) => {
+                let status = outcome.to_status(role);
                 // `closes_gate`, not `status != PASS`. Identical in behaviour --
                 // `from_status` maps PASS to Satisfied and both FAIL and SKIP to variants
                 // that close -- but it names the decision. This is the branch that makes a
@@ -3081,7 +3061,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // `Outcome::blocks`: a gate that closes blocks nothing and still silences
                 // everything it guarded, which is the hazard the two predicates exist to
                 // keep apart.
-                if Outcome::from_status(status).closes_gate() {
+                if outcome.closes_gate() {
                     resolver.end_record(&when_context, RecordType::RuleCondition(status))?;
                     resolver.end_record(
                         &context,
@@ -3091,7 +3071,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                             ..Default::default()
                         }),
                     )?;
-                    return Ok(Status::SKIP);
+                    return Ok(Outcome::NotApplicable);
                 }
                 resolver.end_record(&when_context, RecordType::RuleCondition(Status::PASS))?;
                 &rule.block
@@ -3104,35 +3084,13 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                     RecordType::RuleCheck(NamedStatus {
                         status: Status::FAIL,
                         name: &rule.rule_name,
-                        message: match is_unevaluatable(&e) {
-                            true => Some(format!(
-                                "The rule's condition could not be evaluated, so the rule fails \
-                                 rather than being treated as not applicable: {}",
-                                e
-                            )),
-                            false => None,
-                        },
+                        ..Default::default()
                     }),
                 )?;
-                // The rule fails closed. Returning SKIP -- which is what every *status* on a condition
-                // collapses to a few lines above -- would leave the body unevaluated and the file at
-                // exit 0, so an unevaluatable condition cannot be expressed as a status here.
-                //
-                // Split by role for the same reason as the other two condition sites. FAIL is right
-                // when this rule is the assertion; when the rule is itself a gate, that FAIL becomes
-                // a condition that was decided and did not match one level out, and the rule it gates
-                // is dropped. Three spellings of one condition disagreed until this split:
-                //
-                //     rule guarded when Enabled !EMPTY { ... }              inline    FAIL
-                //     rule inner { when Enabled !EMPTY { ... } } + gate     block     FAIL
-                //     rule inner when Enabled !EMPTY { ... }    + gate      rule      SKIP
-                //
-                // and the third also misattributed itself, reporting that the referenced rule "did not
-                // apply to this input" for a rule whose condition could not be evaluated at all.
-                return match (is_unevaluatable(&e), role.is_strict()) {
-                    (true, true) => Ok(Status::FAIL),
-                    _ => Err(e),
-                };
+                // Only real errors reach here now. The undecidable case used to arrive as one and be
+                // sorted out by `is_unevaluatable`, which meant the channel carried two unrelated
+                // things and every consumer had to ask which it was holding.
+                return Err(e);
             }
         }
     } else {
@@ -3140,16 +3098,20 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     };
 
     match eval_general_block_clause(block, resolver, |rc, r| eval_rule_clause(rc, r, role)) {
-        Ok(status) => {
+        Ok(outcome) => {
             resolver.end_record(
                 &context,
                 RecordType::RuleCheck(NamedStatus {
-                    status,
+                    // The role is applied for the record and for whoever asked the rule's status,
+                    // and the rule keeps its own answer. That is what lets a caller reached as a
+                    // gate see "could not tell" where a caller reached as an assertion sees FAIL,
+                    // without either of them inspecting an error.
+                    status: outcome.to_status(role),
                     name: &rule.rule_name,
                     ..Default::default()
                 }),
             )?;
-            Ok(status)
+            Ok(outcome)
         }
 
         Err(e) => {
@@ -3195,7 +3157,10 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
         resolver.reset_captures();
         // Top-level rule in a rules file: its clauses are assertions.
         match eval_rule(each_rule, resolver, ClauseRole::Assertion) {
-            Ok(status) => match status {
+            // The file is the boundary where the lattice becomes an exit code, so the role is
+            // applied here: a top-level rule is an assertion, and an undecided one is a failure
+            // rather than a rule that did not apply.
+            Ok(outcome) => match outcome.to_status(ClauseRole::Assertion) {
                 Status::PASS => {
                     passes += 1;
                 }
@@ -3271,125 +3236,91 @@ fn disjunction_type_name<T>() -> &'static str {
 }
 
 #[allow(clippy::never_loop)]
+/// Conjunctions of disjunctions, folded through [`Outcome`] rather than counted.
+///
+/// The counting version could not express one of the four answers. It tallied passes and fails, read
+/// `Status::SKIP` as "no information" and dropped it, and answered FAIL, then PASS, then SKIP. That is
+/// [`Outcome::and`] over [`Outcome::or`] for three of the four values, and for the fourth it had no
+/// representation at all: a clause that could not be evaluated arrived here as `Err` and left as
+/// `Err`, which is why the error channel existed.
+///
+/// Two consequences of the fold that the counters did not have:
+///
+/// One is that `A or B` is now evaluated to the end when `A` cannot be answered. The counting version
+/// returned the error from the first unevaluatable disjunct, so `B` never ran even when `B` would
+/// have satisfied the disjunction outright. `Outcome::or` absorbs only `Satisfied`, so a decidable
+/// branch decides and an undecidable one only survives when nothing else answered. For a gate that
+/// narrows failing closed to the cases that genuinely cannot be decided, rather than to the cases
+/// where the first branch could not be.
+///
+/// The other is that a disjunction of undecidable branches is `Unevaluatable` rather than `FAIL`.
+/// Reporting a violation there blames the input for a reference that never resolved.
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     eval_fn: E,
-) -> Result<Status>
+) -> Result<Outcome>
 where
-    E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
+    E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Outcome>,
 {
-    Ok(loop {
-        let mut num_passes = 0;
-        let mut num_fails = 0;
-        let context = format!("{}#disjunction", disjunction_type_name::<T>());
-        'conjunction: for conjunction in conjunctions {
-            let mut num_of_disjunction_fails = 0;
-            // Held rather than returned. A disjunct with no answer must not stop a later disjunct
-            // that has one -- see the `Err` arm below and the check after the loop.
-            let mut undecided: Option<Error> = None;
-            let multiple_ors_present = conjunction.len() > 1;
-            if multiple_ors_present {
-                resolver.start_record(&context)?;
-            }
-            for disjunction in conjunction {
-                match eval_fn(disjunction, resolver) {
-                    Ok(status) => match status {
-                        Status::PASS => {
-                            num_passes += 1;
-                            if multiple_ors_present {
-                                resolver.end_record(
-                                    &context,
-                                    RecordType::Disjunction(BlockCheck {
-                                        message: None,
-                                        at_least_one_matches: true,
-                                        status: Status::PASS,
-                                    }),
-                                )?;
-                            }
-                            continue 'conjunction;
-                        }
-                        Status::SKIP => {}
-                        Status::FAIL => {
-                            num_of_disjunction_fails += 1;
-                        }
-                    },
+    let context = format!("{}#disjunction", disjunction_type_name::<T>());
+    let mut conjoined = Outcome::identity();
 
-                    // An `or` is decided by whichever disjunct can decide it. Returning here
-                    // instead meant the first disjunct with no answer ended the whole disjunction,
-                    // so `A or B` and `B or A` were not the same clause: with `A` undecidable and
-                    // `B` true, the second spelling opened its gate and evaluated the body, and the
-                    // first reported that the condition could not be evaluated and dropped the body.
-                    // Both exited 19 on a failing document -- the rule fails either way -- so the
-                    // exit code hid it, and only the reported reason differed.
-                    //
-                    // So the error waits until every disjunct has had its turn. If a later one
-                    // passes, the `continue 'conjunction` above leaves this behind, which is what
-                    // "undecidable or true is true" means. If none does, it is returned below and
-                    // the caller decides: an assertion fails closed, a gate keeps the error and
-                    // fails its own rule closed. Only the first is kept, because that is the one
-                    // whose path the reporter names, and reporting one reason is what the console
-                    // does for a clause anyway.
-                    Err(e) => {
-                        if undecided.is_none() {
-                            undecided = Some(e);
-                        }
+    for conjunction in conjunctions {
+        let multiple_ors_present = conjunction.len() > 1;
+        if multiple_ors_present {
+            resolver.start_record(&context)?;
+        }
+
+        let mut disjoined = Outcome::identity();
+        for disjunction in conjunction {
+            match eval_fn(disjunction, resolver) {
+                Ok(outcome) => {
+                    disjoined = disjoined.or(outcome);
+                    // Satisfied absorbs, so the remaining branches cannot change the answer. The
+                    // counting version stopped here too, and stopping keeps the records to the
+                    // branches that were actually consulted.
+                    if let Outcome::Satisfied = disjoined {
+                        break;
                     }
                 }
-            }
 
-            if let Some(e) = undecided {
-                if multiple_ors_present {
-                    resolver.end_record(
-                        &context,
-                        RecordType::Disjunction(BlockCheck {
-                            message: Some(format!(
-                                "Disjunction could not be decided: no disjunct answered, and one \
-                                 could not be evaluated: {}",
-                                e
-                            )),
-                            status: Status::FAIL,
-                            at_least_one_matches: true,
-                        }),
-                    )?;
-                }
-                return Err(e);
-            }
-
-            if num_of_disjunction_fails > 0 {
-                num_fails += 1;
-            }
-
-            if multiple_ors_present {
-                if num_of_disjunction_fails > 0 {
-                    resolver.end_record(
-                        &context,
-                        RecordType::Disjunction(BlockCheck {
-                            message: None,
-                            status: Status::FAIL,
-                            at_least_one_matches: true,
-                        }),
-                    )?;
-                } else {
-                    resolver.end_record(
-                        &context,
-                        RecordType::Disjunction(BlockCheck {
-                            message: None,
-                            status: Status::SKIP,
-                            at_least_one_matches: true,
-                        }),
-                    )?;
+                Err(e) => {
+                    if multiple_ors_present {
+                        resolver.end_record(
+                            &context,
+                            RecordType::Disjunction(BlockCheck {
+                                message: Some(format!(
+                                    "Disjunction failed due to error {}, bailing",
+                                    e
+                                )),
+                                status: Status::FAIL,
+                                at_least_one_matches: true,
+                            }),
+                        )?;
+                    }
+                    return Err(e);
                 }
             }
         }
-        if num_fails > 0 {
-            break Status::FAIL;
+
+        if multiple_ors_present {
+            // The record keeps its three statuses, because a reporter reads them and an
+            // undecidable disjunction is reported the way an assertion would see it.
+            resolver.end_record(
+                &context,
+                RecordType::Disjunction(BlockCheck {
+                    message: None,
+                    status: disjoined.to_status(ClauseRole::Assertion),
+                    at_least_one_matches: true,
+                }),
+            )?;
         }
-        if num_passes > 0 {
-            break Status::PASS;
-        }
-        break Status::SKIP;
-    })
+
+        conjoined = conjoined.and(disjoined);
+    }
+
+    Ok(conjoined)
 }
 
 #[cfg(test)]

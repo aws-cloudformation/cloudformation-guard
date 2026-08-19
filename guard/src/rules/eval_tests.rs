@@ -318,7 +318,6 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
-        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(expected) => {
@@ -343,7 +342,6 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
-        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
@@ -964,7 +962,7 @@ fn block_guard_pass() -> Result<()> {
         recorder: Some(&mut tracker),
     };
     let status = eval_guard_clause(&block_clauses, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
     let top = tracker.extract();
     match top.container.as_ref() {
         Some(record) => {
@@ -1093,12 +1091,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     let clause_str = r#"Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_str = r#"SOME Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value_str = r###"
     Statement:
@@ -1114,7 +1112,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -1154,7 +1152,7 @@ fn block_evaluation() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
     Ok(())
 }
 
@@ -1201,7 +1199,7 @@ fn block_evaluation_fail() -> Result<()> {
     "#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
     Ok(())
 }
 
@@ -1985,7 +1983,7 @@ fn test_field_type_array_or_single() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let statements = r#"{
         Statement: {
@@ -2001,24 +1999,24 @@ fn test_field_type_array_or_single() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(r#"Statement[*].Action[*] != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     // Test old format
     let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action == '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -2047,19 +2045,19 @@ fn test_for_in_and_not_in() -> Result<()> {
         r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"some mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -2087,7 +2085,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value_str = r#"
     InputParameter:
@@ -2103,7 +2101,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -2154,7 +2152,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let value_str = r#"
     Resources:
@@ -2176,7 +2174,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     let value_str = r#"
     Resources: {}
@@ -2187,7 +2185,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
@@ -2196,7 +2194,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -2288,7 +2286,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
         recorder: Some(&mut asserter),
     };
     let status = eval_rule(&rules, &mut root, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let rule = r###"
     let resources = Resources.*
@@ -2643,10 +2641,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     };
 
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let values_str = r#"{ Tags: [] }"#;
     let values = PathAwareValue::try_from(values_str)?;
@@ -2655,10 +2653,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
@@ -2667,10 +2665,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     //
     // Trying out the selection filters
@@ -2776,7 +2774,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*].Key == /Name/"#)?;
     let mut eval = BasicQueryTesting {
@@ -2784,7 +2782,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
@@ -2792,7 +2790,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
@@ -2800,7 +2798,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags !empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2808,7 +2806,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2816,7 +2814,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] !empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2824,7 +2822,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2832,7 +2830,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -2848,15 +2846,15 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.*.Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.* { Properties exists }"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     //
     // Resources is empty, hence FAIL
@@ -2864,7 +2862,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let clause_failure_spec =
         GuardClause::try_from(r#"Resources[ Type == /Bucket/ ].Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     //
     // Resource present filter did not select, SKIP
@@ -2882,7 +2880,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     //
     // No resources present
@@ -2895,7 +2893,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     };
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -3601,20 +3599,20 @@ fn test_iam_statement_clauses() -> Result<()> {
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
     let parsed = GuardClause::try_from(clause)?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let clause = r#"Statement[ Condition EXISTS
                                      Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
     "#;
     let parsed = GuardClause::try_from(clause)?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let parsed = GuardClause::try_from(
         r#"SOME Statement[*].Condition.*[ THIS IS_STRUCT ][ KEYS ==  /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#,
     )?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let sample = r#"
     {
@@ -3632,7 +3630,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let sample = r#"
     {
@@ -3653,7 +3651,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let sample = r#"
     {
@@ -3675,7 +3673,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value = PathAwareValue::try_from(SAMPLE)?;
     let parsed = GuardClause::try_from(clause)?;
@@ -3684,7 +3682,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::FAIL, status);
+    assert_eq!(Status::FAIL, status.to_status(ClauseRole::Assertion));
 
     Ok(())
 }
@@ -3747,7 +3745,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -3812,7 +3810,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let resources = r#"
     {
@@ -3856,7 +3854,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -4251,7 +4249,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let clause = r#"algorithms == ["KMS", "SSE"]"#;
     let value = r#"algorithms: KMS"#;
@@ -4262,7 +4260,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -7254,6 +7252,11 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `Attempting EMPTY operation on type bool that does not support it at
     // /Resources/Vol/Properties/Enabled` in the console reporter.
     //
+    // Twenty rather than the parent branch's nineteen: this branch's `eval_rule` records its own
+    // sentence for a condition it could not evaluate, where the parent carries that text inside the
+    // error it re-raises. Both reach the console through the rule-level explanation the parent added
+    // to `collect_unattributed_explanations`, which this branch inherits.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
     //
@@ -7261,7 +7264,7 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `Some(nc.reason)` on a ClauseValueCheck, a variant that already had a rendering path.
     // Checked rather than assumed -- `Properties.Size > 'not-a-number'` against an integer Size
     // prints `Error = [... not comparable int, String]` in the console reporter.
-    const SITES_EXPECTED: usize = 19;
+    const SITES_EXPECTED: usize = 20;
 
     assert_eq!(
         sites, SITES_EXPECTED,
