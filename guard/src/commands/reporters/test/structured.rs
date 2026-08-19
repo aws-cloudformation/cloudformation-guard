@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{get_by_rules, get_status_result};
 use crate::commands::reporters::{
@@ -28,6 +28,9 @@ pub struct StructuredTestReporter<'reporter> {
     pub data_test_files: &'reporter [PathBuf],
     pub output: OutputFormatType,
     pub rules: ContextAwareRule<'reporter>,
+    /// Filled while the cases run, and read by the caller, which owns the writer. A set because a
+    /// rule file is evaluated once per case and each case reproduces the same notice.
+    pub deprecations: BTreeSet<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -211,6 +214,9 @@ impl<'reporter> StructuredTestReporter<'reporter> {
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let now = Instant::now();
+        // Local rather than `self.deprecations` directly: `rule` and `file` borrow `self` for the
+        // body of this loop, so the field is filled once at the end instead.
+        let mut deprecations = BTreeSet::new();
         let mut result = TestResult::Ok(Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
@@ -248,6 +254,9 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                             eval_context::root_scope(rule, Rc::clone(&each.path_value));
 
                         eval_rules_file(rule, &mut root_scope, None)?;
+
+                        // Read before `reset_recorder` consumes the scope, as in `validate`.
+                        deprecations.extend(root_scope.deprecations().cloned());
 
                         let top = root_scope.reset_recorder().extract();
 
@@ -297,6 +306,8 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                 }
             }
         }
+
+        self.deprecations = deprecations;
 
         Ok(result)
     }

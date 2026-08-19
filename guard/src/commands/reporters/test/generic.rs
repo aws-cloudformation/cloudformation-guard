@@ -1,9 +1,14 @@
-use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    convert::TryFrom,
+    path::PathBuf,
+    rc::Rc,
+};
 
 use crate::{
     commands::{
         files::iterate_over,
-        reporters::test::{get_by_rules, get_status_result},
+        reporters::test::{get_by_rules, get_status_result, write_deprecations},
         test::TestSpec,
         validate, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
     },
@@ -24,6 +29,9 @@ impl<'report> GenericReporter<'report> {
     pub fn report(&mut self) -> crate::rules::Result<i32> {
         let mut exit_code = SUCCESS_STATUS_CODE;
         let mut test_counter = 1;
+        // Accumulated across cases and written once at the end. Per case would repeat one notice
+        // for every case in the file, and the notice is about the rule, not about the case.
+        let mut deprecations = BTreeSet::new();
 
         for specs in iterate_over(self.test_data, |data, path| {
             match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
@@ -51,7 +59,7 @@ impl<'report> GenericReporter<'report> {
                             writeln!(self.writer, "Name: {name}")?;
                         }
 
-                        let by_result = self.get_by_result(each)?;
+                        let by_result = self.get_by_result(each, &mut deprecations)?;
 
                         if by_result.get("FAIL").is_some() {
                             exit_code = TEST_FAILURE_STATUS_CODE;
@@ -64,18 +72,25 @@ impl<'report> GenericReporter<'report> {
             }
         }
 
+        write_deprecations(&deprecations, self.writer)?;
+
         Ok(exit_code)
     }
 
     fn get_by_result(
         &mut self,
         spec: TestSpec,
+        deprecations: &mut BTreeSet<String>,
     ) -> crate::rules::Result<HashMap<String, indexmap::IndexSet<String>>> {
         let mut by_result = HashMap::new();
 
         let root = PathAwareValue::try_from(spec.input)?;
         let mut root_scope = crate::rules::eval_context::root_scope(&self.rules, Rc::new(root));
         eval_rules_file(&self.rules, &mut root_scope, None)?;
+
+        // Read before `reset_recorder` consumes the scope, as in `validate`.
+        deprecations.extend(root_scope.deprecations().cloned());
+
         let top = root_scope.reset_recorder().extract();
 
         let by_rules = get_by_rules(&top);

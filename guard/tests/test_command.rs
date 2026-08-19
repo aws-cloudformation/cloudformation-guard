@@ -364,6 +364,99 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
+    /// The deprecation notices reach the command rule authors run.
+    ///
+    /// `validate` printed them and `test` did not, which is backwards. A notice saying a clause's
+    /// answer changes in a later release is addressed to whoever wrote the clause, and they run
+    /// `test`; the operator running `validate` in a pipeline usually cannot act on it. So the whole
+    /// warn-a-release-ahead approach was invisible to its audience.
+    ///
+    /// Both assertions matter. Stderr must carry the notices, and stdout must not, because
+    /// `--output-format json` is parsed -- which is also why the JSON case asserts the report still
+    /// deserializes with the notice present.
+    ///
+    /// Two notices from three cases, not six: a rule file is evaluated once per case, so the same
+    /// notice is produced again for every case, and they are collapsed before being written.
+    #[rstest]
+    #[case("")]
+    #[case("json")]
+    fn a_deprecation_notice_reaches_the_test_command(#[case] output: &str) {
+        const DATA: &str = "resources/test-command/data-dir/vacuous_and_incomparable_cases.yaml";
+        const RULES: &str = "resources/validate/vacuous_and_incomparable_clauses.guard";
+
+        // `stripped` and `err_to_stripped` both consume the writer, so a single run cannot be read
+        // for both streams. The command is deterministic over these inputs, so running it once per
+        // stream reads the same output twice rather than two different outputs.
+        let run = |output: &str| {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = match output {
+                "" => TestCommandTestRunner::default()
+                    .test_data(Option::from(DATA))
+                    .rules(Some(RULES))
+                    .run(&mut writer, &mut reader),
+                _ => TestCommandTestRunner::default()
+                    .test_data(Option::from(DATA))
+                    .rules(Some(RULES))
+                    .output_format(output)
+                    .run(&mut writer, &mut reader),
+            };
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run(output);
+        let (_, err_writer) = run(output);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a notice must not change the verdict; both clauses still pass in this release"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("DEPRECATION"),
+            "a notice on stdout would land inside the report that consumers parse, got {:?}",
+            stdout
+        );
+
+        if output == "json" {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .expect("the report on stdout must still parse with a notice on stderr");
+        }
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "expected one notice per clause across all three cases, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("without comparing anything")),
+            "the empty-collection clause should say it compared nothing, got {:?}",
+            notices
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("could not be compared with any element")),
+            "the membership clause should say nothing in the list was comparable, got {:?}",
+            notices
+        );
+    }
+
     /// Two runs of the same command over the same files must produce the same report.
     ///
     /// They did not. Both test reporters iterate the map built by `get_by_rules`, which was a
