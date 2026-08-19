@@ -6371,13 +6371,12 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     // No `empty_on_scalar` cell appears here, which is the point of the list: that clause used to
     // disarm its body in every one of these shapes, and it is what a reviewer found by hand.
     //
-    // The two `in_list/*/string_size` entries joined the set rather than leaving it, which is worth
-    // understanding before trusting the count. `IN` against a type it cannot compare used to answer
-    // FAIL while `NOT IN` answered PASS, so the pair was not recognised as undecidable and the
-    // invariant skipped those cells. Making both polarities fail closed made them undecidable by this
-    // test's own definition, which exposed that they disarm their body as a gate -- the same thing the
-    // other entries do. Fixing one defect made a second one visible rather than creating it.
-    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 24] = [
+    // `in_list` has no `string_size` entry, and the reason is worth knowing: `IN` against a type it
+    // cannot compare answers FAIL while `NOT IN` answers PASS, so the pair is not recognised as
+    // undecidable and the invariant skips those cells. That disagreement between the two operators is
+    // itself a defect -- `every_operator_and_operand_shape_agrees_with_a_stated_oracle` records it --
+    // and closing it would add two entries here rather than remove any.
+    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 22] = [
         "eq_int/gate/absent_property",
         "eq_int/gate/absent_root",
         "eq_int/gate/string_size",
@@ -6392,10 +6391,8 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
         "gt_int/nested_when/string_size",
         "in_list/gate/absent_property",
         "in_list/gate/absent_root",
-        "in_list/gate/string_size",
         "in_list/nested_when/absent_property",
         "in_list/nested_when/absent_root",
-        "in_list/nested_when/string_size",
         "le_float/gate/absent_property",
         "le_float/gate/absent_root",
         "le_float/gate/string_size",
@@ -6735,19 +6732,19 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         "gt_10/string_50/plain/gate",
         "in_list/absent/not/gate",
         "in_list/absent/plain/gate",
-        "in_list/bool_true/not/gate",
+        "in_list/bool_true/not/assert",
         "in_list/bool_true/plain/gate",
         "in_list/empty_list/not/gate",
         "in_list/empty_list/plain/assert",
-        "in_list/empty_map/not/gate",
+        "in_list/empty_map/not/assert",
         "in_list/empty_map/plain/gate",
-        "in_list/empty_string/not/gate",
+        "in_list/empty_string/not/assert",
         "in_list/empty_string/plain/gate",
-        "in_list/map/not/gate",
+        "in_list/map/not/assert",
         "in_list/map/plain/gate",
-        "in_list/null/not/gate",
+        "in_list/null/not/assert",
         "in_list/null/plain/gate",
-        "in_list/string_50/not/gate",
+        "in_list/string_50/not/assert",
         "in_list/string_50/plain/gate",
     ];
 
