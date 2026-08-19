@@ -37,8 +37,8 @@
 //! [`Outcome::and`] and [`Outcome::or`] are each commutative, associative and
 //! idempotent, and share [`Outcome::NotApplicable`] as their identity:
 //!
-//! - `and` — identity [`Outcome::NotApplicable`], absorbing [`Outcome::Violated`]
-//! - `or`  — identity [`Outcome::NotApplicable`], absorbing [`Outcome::Satisfied`]
+//! - `and` -- identity [`Outcome::NotApplicable`], absorbing [`Outcome::Violated`]
+//! - `or`  -- identity [`Outcome::NotApplicable`], absorbing [`Outcome::Satisfied`]
 //!
 //! This is **not** a bounded lattice, and the distinction matters. Absorption
 //! (`a.and(a.or(b)) == a`) fails at exactly `a == NotApplicable`, because the shared
@@ -48,14 +48,14 @@
 //! chain as the identity of both.
 //!
 //! Distributivity also fails, and must. `Satisfied.and(Violated.or(NotApplicable))` is
-//! `Violated`, while the distributed form is `Satisfied` — so a test asserting
+//! `Violated`, while the distributed form is `Satisfied` -- so a test asserting
 //! distributivity would assert a violation being laundered into a pass. The property to
 //! rely on instead is monotonicity in the evidence order, which does hold: no
 //! combination reports more evidence than its strongest operand.
 //!
 //! `outcome_tests` asserts all of this exhaustively over every pair and triple rather
 //! than by sampling, and pins the exact set of absorption failures so that nobody
-//! "fixes" it by making the identity absorbing — that would let an inapplicable rule
+//! "fixes" it by making the identity absorbing -- that would let an inapplicable rule
 //! satisfy a disjunction, which is the defect this module exists to prevent.
 //!
 //! The rule that closes the empty-input defects: **a fold over zero elements returns
@@ -100,7 +100,7 @@ pub(crate) enum Outcome {
     /// gating condition excluded it.
     ///
     /// Not evidence in either direction, so it is the identity element of both folds.
-    /// It must never satisfy a disjunction — a rule that did not apply cannot stand
+    /// It must never satisfy a disjunction -- a rule that did not apply cannot stand
     /// in for one that passed.
     NotApplicable,
 
@@ -109,7 +109,7 @@ pub(crate) enum Outcome {
     ///
     /// Distinct from [`Outcome::NotApplicable`] because the correct reported status
     /// depends on the role the clause played. An assertion that cannot be evaluated
-    /// is a failure — the rule claimed something it could not establish. A *gate*
+    /// is a failure -- the rule claimed something it could not establish. A *gate*
     /// that cannot be evaluated is merely inapplicable, because failing a gate makes
     /// its rule inapplicable and silently drops every check inside it.
     Unevaluatable,
@@ -192,7 +192,7 @@ impl Outcome {
     /// does so only as an assertion.
     ///
     /// This is **not** the question to ask about a gate. A gate that does not fail can
-    /// still close, silently dropping every check it guards — see
+    /// still close, silently dropping every check it guards -- see
     /// [`Outcome::closes_gate`]. Conflating the two is what makes a "the gate never
     /// failed" test look like a safety property when it is a tautology.
     pub(crate) fn blocks(self, role: ClauseRole) -> bool {
@@ -209,7 +209,7 @@ impl Outcome {
     ///
     /// Deliberately takes no [`ClauseRole`]: the gate *is* the role, and closure does
     /// not depend on how the condition would have been reported. It is also why
-    /// [`Outcome::blocks`] is the wrong predicate for gate safety —
+    /// [`Outcome::blocks`] is the wrong predicate for gate safety --
     /// [`Outcome::NotApplicable`] and [`Outcome::Unevaluatable`] both close a gate
     /// while blocking nothing, and that gap is the silent-drop hazard.
     pub(crate) fn closes_gate(self) -> bool {
@@ -255,7 +255,7 @@ impl Outcome {
     /// unchanged.
     ///
     /// Negating "did not apply" or "could not be evaluated" must not manufacture
-    /// affirmative evidence — that is the defect where `not <skipped rule>` reported
+    /// affirmative evidence -- that is the defect where `not <skipped rule>` reported
     /// compliance for a check that never ran.
     ///
     /// Not called by the evaluator, and not for want of finishing the migration: this
@@ -263,8 +263,8 @@ impl Outcome {
     /// comparison happens (`comparator.1 ^ gac.negation` in `eval_guard_access_clause`), and
     /// to *evidence payloads* afterwards (the `(CmpOperator, bool)` wrapper in `operators.rs`
     /// rebuilds `Compare` values with reversed diffs so the report names the right values).
-    /// Neither is an `Outcome` being inverted. The two places that do invert a verdict —
-    /// `eval_guard_named_clause` and `eval_parameterized_rule_call` — deliberately fail closed
+    /// Neither is an `Outcome` being inverted. The two places that do invert a verdict --
+    /// `eval_guard_named_clause` and `eval_parameterized_rule_call` -- deliberately fail closed
     /// on SKIP rather than leaving it unchanged, which is the opposite of what this does, so
     /// routing them through it would be wrong rather than merely verbose.
     ///

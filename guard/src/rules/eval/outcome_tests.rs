@@ -55,7 +55,7 @@ fn all_covers_every_variant() {
 }
 
 // ---------------------------------------------------------------------------
-// `and` — conjunction. Identity NotApplicable, absorbing Violated.
+// `and` -- conjunction. Identity NotApplicable, absorbing Violated.
 // ---------------------------------------------------------------------------
 
 /// All 16 pairs, written out as an explicit truth table rather than derived from the
@@ -141,7 +141,7 @@ fn and_is_idempotent() {
 }
 
 // ---------------------------------------------------------------------------
-// `or` — disjunction. Identity NotApplicable, absorbing Satisfied.
+// `or` -- disjunction. Identity NotApplicable, absorbing Satisfied.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -296,7 +296,7 @@ fn folds_agree_with_binary_operators() {
 }
 
 // ---------------------------------------------------------------------------
-// `to_status` — the reporting boundary.
+// `to_status` -- the reporting boundary.
 // ---------------------------------------------------------------------------
 
 /// All 8 variant/role combinations.
@@ -383,7 +383,7 @@ fn from_status_round_trips_for_every_status() {
     }
 }
 
-/// `from_status` cannot recover `Unevaluatable` — that is the information `Status`
+/// `from_status` cannot recover `Unevaluatable` -- that is the information `Status`
 /// discards, and the reason the evaluator should not round-trip through it.
 #[test]
 fn from_status_never_produces_unevaluatable() {
@@ -430,7 +430,7 @@ fn negate_is_an_involution() {
     }
 }
 
-/// De Morgan, over the whole domain — all 16 pairs, both directions.
+/// De Morgan, over the whole domain -- all 16 pairs, both directions.
 ///
 /// An earlier version of this test restricted itself to the evidence-bearing variants,
 /// on the stated grounds that negation is not an inversion for `NotApplicable` and
@@ -507,7 +507,7 @@ fn both_operations_are_monotone_in_the_evidence_order() {
 
 /// Absorption fails, and it must. Pinning the exact failure set stops anyone "fixing" it
 /// by making the shared identity absorbing, which would let an inapplicable rule satisfy
-/// a disjunction — the defect this module exists to prevent.
+/// a disjunction -- the defect this module exists to prevent.
 ///
 /// The law holds except when `a` is `NotApplicable` and `b` is anything else, because
 /// `NotApplicable` is the identity of both operations rather than a bound of either.
@@ -581,14 +581,14 @@ fn negate_distributes_over_both_folds() {
 /// An earlier version of this file asserted `!blocks(Gate)` over every non-violating
 /// sequence and called that "gate safety at the fold level". That assertion cannot fail:
 /// for `Gate`, `to_status` maps both non-evidence variants to `SKIP`, so nothing except
-/// `Violated` can ever make `blocks` true — and `Violated` was excluded from the input
+/// `Violated` can ever make `blocks` true -- and `Violated` was excluded from the input
 /// set by construction. The test passed for a reason unrelated to its name.
 ///
 /// The real hazard is that a gate does not need to FAIL to be unsafe. `eval_rule` returns
 /// `SKIP` for the entire rule when its condition is anything other than `PASS`
 /// (the `if status != Status::PASS` branch in `eval_rule`), so a condition that merely did
 /// not apply drops every check in the
-/// guarded body just as thoroughly as one that failed — while reporting nothing. That is
+/// guarded body just as thoroughly as one that failed -- while reporting nothing. That is
 /// the wrong-PASS shape: exit 0 with the check silently unenforced.
 ///
 /// So the honest statement is that these two predicates disagree, and the disagreement is
@@ -618,7 +618,7 @@ fn blocking_a_deployment_and_closing_a_gate_are_different_questions() {
     }
 
     // The silent-drop set: closes the gate, reports nothing. Non-empty, which is the
-    // whole finding — if this were ever empty, `blocks` would be a sufficient check.
+    // whole finding -- if this were ever empty, `blocks` would be a sufficient check.
     let silent: Vec<Outcome> = ALL
         .iter()
         .copied()
@@ -638,7 +638,7 @@ fn blocking_a_deployment_and_closing_a_gate_are_different_questions() {
 /// not whether it can fail.
 ///
 /// The load-bearing case is the empty fold: `identity()` is `NotApplicable`, which closes
-/// the gate. A gate with nothing to evaluate therefore drops its body — which is precisely
+/// the gate. A gate with nothing to evaluate therefore drops its body -- which is precisely
 /// the mechanism behind the reverted empty-collection fix. Asserting it here means the
 /// behaviour is documented as a known consequence rather than rediscovered by a
 /// differential test.
@@ -675,7 +675,7 @@ fn a_gate_opens_only_when_the_fold_is_actually_satisfied() {
 
                     let or_opens = !Outcome::any(seq.iter().copied()).closes_gate();
                     // An or-fold opens the gate exactly when something is satisfied.
-                    // Nothing else may stand in — that is the absorption property.
+                    // Nothing else may stand in -- that is the absorption property.
                     assert_eq!(
                         or_opens,
                         seq.iter().any(|o| *o == Outcome::Satisfied),
@@ -767,7 +767,7 @@ fn conjunction_never_launders_a_violation() {
 }
 
 /// Under disjunction a violation *may* be excused, but only by an actually-satisfied
-/// branch — never by one that did not run.
+/// branch -- never by one that did not run.
 #[test]
 fn disjunction_only_excuses_a_violation_with_real_evidence() {
     for a in ALL {

@@ -5169,20 +5169,20 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
 /// gates on it. `eval_rule` treats any non-PASS condition as "rule does not apply", so
 /// `body` is dropped even though its own check would pass:
 ///
-/// - v3.2.0: exit 0, both rules compliant — but see below, that PASS is itself the defect.
+/// - v3.2.0: exit 0, both rules compliant -- but see below, that PASS is itself the defect.
 /// - this branch: exit 19, `not_compliant: [vac_eq]`, `not_applicable: [body]`.
 ///
 /// The regression is the `not_applicable: [body]`, not the exit code, and the distinction is
 /// the point: exit 19 cannot tell "gate opened, body failed" from "gate closed, body dropped".
 /// v3.2.0's exit 0 is not the target to restore, because it comes from `Tags == 'Owner'`
-/// reporting *compliant* against `Tags: []` — the empty-collection wrong PASS this branch
+/// reporting *compliant* against `Tags: []` -- the empty-collection wrong PASS this branch
 /// removes. Asserting that status would make this test green exactly when the defect is
 /// reintroduced.
 ///
 /// Cause was the named-rule boundary: `rule_status` evaluated a named rule's body with
 /// `ClauseRole::Assertion` whatever the reference site was, so the `role.is_strict()` guard
 /// on the empty-collection arm could not see that the rule was being used as a gate. At a
-/// *syntactic* `when` the guard already worked and the gate opened — verified separately —
+/// *syntactic* `when` the guard already worked and the gate opened -- verified separately --
 /// so the defect was specific to the named-rule spelling.
 ///
 /// Fixed by carrying the reference site's role through `rule_status` into `eval_rule`, and
@@ -5212,7 +5212,7 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // The named-rule spelling is the subject, so it has to stay, and `vac_eq` is therefore
     // also a top-level rule subject to the file-level fold.
     //
-    // Not because the language makes that unavoidable — an earlier version of this comment
+    // Not because the language makes that unavoidable -- an earlier version of this comment
     // claimed "every named rule in Guard is also top-level" and that is false. A
     // *parameterized* rule lands in a separate `parameterized_rules` vec (`exprs.rs:283`)
     // which the fold never iterates (the `for each_rule in &rule.guard_rules` loop in
@@ -5222,7 +5222,7 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // It escapes the defect too, which is the actual reason not to use it here: measured, that
     // shape reports the gated rule as compliant with nothing dropped. The parameterized
     // boundary threads the reference-site role correctly, so a fixture built on it pins the
-    // *working* path — the same tell as the inline `when` spelling, and already covered by
+    // *working* path -- the same tell as the inline `when` spelling, and already covered by
     // `parameterized_rule_used_as_a_gate_does_not_disarm_the_block` above.
     let named_gate = r###"
     rule vac_eq {
@@ -5246,7 +5246,7 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // And the file status that *would* make this file PASS is itself the defect: on v3.2.0
     // `Tags == 'Owner'` reports `compliant` against `Tags: []`, which is the empty-collection
     // wrong PASS this branch removes. An earlier version of this test asserted exactly that
-    // PASS as its target — so it would have gone green precisely when the defect was
+    // PASS as its target -- so it would have gone green precisely when the defect was
     // reintroduced, with a green suite certifying the opposite.
     //
     // What is both reachable and wrong-PASS-free is narrower: `body` is satisfiable, so it
@@ -5289,14 +5289,14 @@ fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
     // dropped. Not "nothing called `body`".
     //
     // An earlier version asserted `!dropped.iter().any(|name| name == "body")`, which is
-    // vacuously true the moment the gated rule is renamed — measured: rename it and the test
+    // vacuously true the moment the gated rule is renamed -- measured: rename it and the test
     // goes green with the defect fully live, the renamed rule sitting in `not_applicable`
     // where nothing looks for it. The liveness row above cannot catch that, because
     // `live.is_empty()` is itself name-independent and holds under any renaming.
     //
     // Worth being precise about what liveness does buy here, since it is not this. Rotting the
     // query makes `body` not-applicable, which *violates* an absence claim rather than
-    // satisfying it — so for the rot mutation liveness gives a clearer diagnostic, not
+    // satisfying it -- so for the rot mutation liveness gives a clearer diagnostic, not
     // false-green protection. The mutation that passes blind is the rename. The general form:
     // an absence claim needs a mutation probe on its own matching key, and liveness guards the
     // query rather than the key.
@@ -5483,7 +5483,7 @@ fn the_same_named_rule_answers_both_roles_independently() -> Result<()> {
 /// `IN` must not certify an empty collection as compliant. Was pre-existing in v3.2.0.
 ///
 /// `Tags IN ['Owner']` against `Tags: []` used to exit 0 and report `"compliant"` with
-/// `not_applicable: []` — an affirmative certification that the policy held. The mechanism
+/// `not_applicable: []` -- an affirmative certification that the policy held. The mechanism
 /// was in `contained_in`: `diff` is "elements of the left side absent from the right", so an
 /// empty left side produced an empty `diff` and an affirmative `Success`. That made it a
 /// wrong Success to suppress rather than a missing entry to supply, so it needed a
@@ -5529,7 +5529,7 @@ fn in_does_not_certify_an_empty_collection() -> Result<()> {
     let mut root = root_scope(&rules_file, Rc::new(resources));
 
     // FAIL, matching what the same rule spelled with `==` already does. SKIP would also be
-    // arguable — "no tags, so nothing to check" — but PASS is not: it affirmatively
+    // arguable -- "no tags, so nothing to check" -- but PASS is not: it affirmatively
     // certifies a bucket that carries none of the required tags.
     assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
 
@@ -5538,8 +5538,8 @@ fn in_does_not_certify_an_empty_collection() -> Result<()> {
 
 /// The ordering operators must not certify an empty collection. Was pre-existing in v3.2.0.
 ///
-/// Same class as `in_does_not_certify_an_empty_collection` but a *different impl* —
-/// `CommonOperator`, not `contained_in` — so a fix for `IN` alone would not have touched it.
+/// Same class as `in_does_not_certify_an_empty_collection` but a *different impl* --
+/// `CommonOperator`, not `contained_in` -- so a fix for `IN` alone would not have touched it.
 /// Worth its own test for that reason, and both now route through the one shared guard in
 /// `elements_or_record_empty`.
 ///
@@ -5547,13 +5547,13 @@ fn in_does_not_certify_an_empty_collection() -> Result<()> {
 /// than for `IN`. `Ports <= 100` and `Ports > 100` are exact logical negations, and **both**
 /// returned PASS on the same `Ports: []`. Universal quantification over an empty set defends
 /// "every element satisfies P" for both P and not-P; it cannot defend certifying `x <= 100`
-/// and `x > 100` for the same x. `<` and `>=` behaved identically — all four route through
+/// and `x > 100` for the same x. `<` and `>=` behaved identically -- all four route through
 /// the same impl.
 ///
 /// The gate hazard that blocked two earlier attempts is measured rather than inferred:
 /// `rule r when ...Ports <= 100 { ...Name == 'safe' }` exits 19 on `Ports: []` *because* the
 /// vacuous PASS opens the gate and the body then catches a violating name. Deciding the
-/// empty comparison inside the comparator turns that into exit 0 with the body dropped — one
+/// empty comparison inside the comparator turns that into exit 0 with the body dropped -- one
 /// unenforced clause traded for a disarmed block. Avoided by leaving the decision to
 /// `binary_operation`, which contributes nothing for a gate.
 #[test]
@@ -5584,18 +5584,18 @@ fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
     // - Rename one character in the Type filter and both rules SKIP. SKIP is not PASS, so
     //   `passes == 0` satisfied `<= 1` and the test went green while blind.
     // - Add one resource that genuinely violates `<= 100`. The rule aggregates across
-    //   resources, so `> 100` becomes FAIL overall and `passes` drops to 1 — green, with the
+    //   resources, so `> 100` becomes FAIL overall and `passes` drops to 1 -- green, with the
     //   rule text unchanged and the empty resource still certified under both negations.
     //   Verified from the blame paths that the empty resource is never named.
     //
     // Going absolute per operator kills the second but not the first: rot yields SKIP and
     // `SKIP != PASS`, so an `assert_ne!(PASS)` claim alone still passes blind. The liveness
-    // rows are what close that — under rot they fail before the claim is reached.
+    // rows are what close that -- under rot they fail before the claim is reached.
     //
     // `[9]` rather than `[80]` for the liveness row on purpose: `"9" <= "100"` is false
     // lexicographically and true numerically, so this row also pins numeric comparison. That
     // matters because an earlier measurement of this operator class was confounded by string
-    // ordering, and `[8080]` discriminates nothing — it is false under both readings.
+    // ordering, and `[8080]` discriminates nothing -- it is false under both readings.
     let live_low = r#"
     { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
     "#;
@@ -5613,7 +5613,7 @@ fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
     assert_eq!(
         status_of_pair(le, live_low)?,
         Status::PASS,
-        "liveness: `Ports <= 100` must pass on [9] — numerically true, lexicographically \
+        "liveness: `Ports <= 100` must pass on [9] -- numerically true, lexicographically \
          false, so this also pins numeric semantics. A SKIP here means the query stopped \
          selecting and every other row in this test is meaningless."
     );
@@ -5653,13 +5653,13 @@ fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
 ///
 /// Both polarities on populated collections, so a future fix for the empty case cannot
 /// quietly break ordinary numeric comparison. These are the rows that make the empty row
-/// above interpretable — without them, a wrong answer on `[]` could just mean the rule or
+/// above interpretable -- without them, a wrong answer on `[]` could just mean the rule or
 /// the query was malformed.
 ///
 /// It also pins **numeric** rather than lexicographic comparison, which is a stronger
 /// guarantee than it looks and is load-bearing here: an earlier measurement of this operator
 /// class was discarded as confounded by string ordering. Note which fixtures carry that
-/// weight. `[8080]` discriminates nothing — `8080 <= 100` and `"8080" <= "100"` are both
+/// weight. `[8080]` discriminates nothing -- `8080 <= 100` and `"8080" <= "100"` are both
 /// false. `[80]` and `[9]` are the discriminating ones: `"80" <= "100"` and `"9" <= "100"` are
 /// both false lexicographically (`'8'`/`'9'` > `'1'` at index 0) and true numerically, so a
 /// PASS on either can only be numeric.
@@ -5718,8 +5718,8 @@ fn ordering_operators_still_decide_populated_collections_correctly() -> Result<(
 /// The control for the above, which must keep passing: `IN` on a populated collection.
 ///
 /// Pinned separately so that a future fix for the empty case cannot quietly break the
-/// ordinary one. Both polarities are exercised — a satisfying list passes, a violating list
-/// fails — which is what establishes that the rule and query are well formed and that only
+/// ordinary one. Both polarities are exercised -- a satisfying list passes, a violating list
+/// fails -- which is what establishes that the rule and query are well formed and that only
 /// the empty case is wrong.
 #[test]
 fn in_still_decides_populated_collections_correctly() -> Result<()> {
@@ -5759,7 +5759,7 @@ fn in_still_decides_populated_collections_correctly() -> Result<()> {
 /// It now routes through `EmptyLhsCollection`, where a negated clause contributes no entry
 /// because `role.is_strict() && !cmp.1` is false, so the fold sees no failures and reports
 /// PASS. Same path `!=` already took, so this inherits that path's known
-/// disjunction-absorption hazard rather than introducing one — see
+/// disjunction-absorption hazard rather than introducing one -- see
 /// `a_vacuous_negated_clause_does_not_absorb_a_disjunction`, still ignored.
 #[test]
 fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
@@ -5813,7 +5813,7 @@ fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
 ///
 /// `%limit >= ...Ports` and `...Ports <= %limit` mean the same thing, so certifying
 /// `Ports: []` under one and not the other leaves the defect reachable by writing the clause
-/// backwards — legal Guard, and a rule author has no reason to think the two differ. This is
+/// backwards -- legal Guard, and a rule author has no reason to think the two differ. This is
 /// why `CommonOperator::compare` routes *both* sides through `elements_or_record_empty`; a
 /// left-side-only fix satisfies `ordering_operators_do_not_certify_an_empty_collection` while
 /// leaving this shape wrong. Same argument `EqOperation` makes for its mirrored empty-RHS
@@ -5867,7 +5867,7 @@ fn a_mirrored_empty_collection_fails_an_ordering_comparison() -> Result<()> {
 /// the guarded block.
 ///
 /// This is the measured hazard that reverted two earlier attempts, and it is specific to
-/// `CommonOperator` — the existing coverage
+/// `CommonOperator` -- the existing coverage
 /// (`an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block`) exercises
 /// `==` and so goes through `EqOperation`. Here the gate contributes no entry rather than a
 /// FAIL, so it stays open, the body runs, and the violating Name is caught. Deciding the
@@ -5903,14 +5903,14 @@ fn an_empty_collection_in_an_ordering_gate_does_not_disarm_the_block() -> Result
 ///
 /// The gap this closes: no test in the repository asserted anything about a report's
 /// `checks`, so a FAIL that produced an empty report was green in all 355 of them. The
-/// empty-collection FAIL added by `2224cb1` did exactly that — `eval_context.rs`'s
+/// empty-collection FAIL added by `2224cb1` did exactly that -- `eval_context.rs`'s
 /// `QueryResult::Resolved` arm wrapped its whole body in `if let Some(to) = to` with no
 /// `else`, and that FAIL is the one construction site pairing a resolved `from` with
 /// `to: None`, so it pushed no `ClauseReport` at all.
 ///
 /// The visible result was exit 19 with `checks: []` in JSON and YAML, `results: []` in
 /// SARIF, an empty `<failure/>` in JUnit, and "Number of non-compliant resources 0" on the
-/// console — a blocked deployment with nothing to act on, and the message built at the
+/// console -- a blocked deployment with nothing to act on, and the message built at the
 /// construction site never reaching any output.
 ///
 /// Written against the general property rather than the one operator that exposed it: any
@@ -6726,7 +6726,7 @@ fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
 /// named `vacuous_ne_absorbs_or`, so the signal to a reader editing the template is at least
 /// present. Left as-is because tightening it would need the same liveness-plus-absolute shape
 /// as `ordering_operators_do_not_certify_an_empty_collection`, and the fixture here has only
-/// one meaningful data shape to vary — the empty list is the whole point of it.
+/// one meaningful data shape to vary -- the empty list is the whole point of it.
 ///
 /// Note for anyone running `--ignored`: exactly one test is ignored in this crate now, and it
 /// is not ours. `test_string_in_comparison` is an upstream failure parked in 2023 (commit
