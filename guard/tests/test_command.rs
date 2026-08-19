@@ -864,8 +864,12 @@ mod test_command_tests {
     /// `--output-format json` is parsed -- which is also why the JSON case asserts the report still
     /// deserializes with the notice present.
     ///
-    /// Two notices from three cases, not six: a rule file is evaluated once per case, so the same
+    /// One notice from three cases, not three: a rule file is evaluated once per case, so the same
     /// notice is produced again for every case, and they are collapsed before being written.
+    ///
+    /// One rather than the parent branch's two because this branch removed the other clause's
+    /// reason to exist: an empty-collection comparison reports a failure here, so the notice that
+    /// warned about it was deleted with the behaviour it described.
     #[rstest]
     #[case("")]
     #[case("json")]
@@ -925,16 +929,17 @@ mod test_command_tests {
 
         assert_eq!(
             notices.len(),
-            2,
-            "expected one notice per clause across all three cases, got {:?} from stderr {:?}",
+            1,
+            "expected one notice for the one clause across all three cases, got {:?} from stderr \
+             {:?}",
             notices,
             stderr
         );
         assert!(
-            notices
+            !notices
                 .iter()
                 .any(|n| n.contains("without comparing anything")),
-            "the empty-collection clause should say it compared nothing, got {:?}",
+            "the empty-collection notice must be gone on this branch, which fixes that clause: {:?}",
             notices
         );
         assert!(

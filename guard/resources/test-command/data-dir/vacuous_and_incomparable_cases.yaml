@@ -1,35 +1,38 @@
 ###
-# Three cases over the same two clauses, all passing. The rules file is
+# Three cases over one clause, all passing. The rules file is
 # `resources/validate/vacuous_and_incomparable_clauses.guard`, shared with the validate-side notice
 # test so one fixture describes the hazard.
 #
-# Three rather than one on purpose: a rule file is evaluated once per case, so a reporter that wrote
-# each notice as it was produced would print the same two notices six times. The test asserts two.
+# One clause here rather than the two the parent branch has: this branch is the release that makes an
+# empty-collection comparison report a failure, so that notice and the clause demonstrating it were
+# both deleted. The expectations went with them -- an expectation naming a rule that no longer exists
+# is not checked, and since `Say when a test expectation matched no rule` it also prints a line
+# saying so on every run.
+#
+# Three cases rather than one on purpose: a rule file is evaluated once per case, so a reporter that
+# wrote each notice as it was produced would print the same notice three times. The test asserts one.
 ###
 ---
-- name: Empty list and a string, first case
+- name: A string against a list of integers, first case
   input:
     Sizes: []
     Name: "50"
   expectations:
     rules:
-      vacuous_comparison: PASS
       incomparable_membership: PASS
 
-- name: Empty list and a string, second case
+- name: A string against a list of integers, second case
   input:
     Sizes: []
     Name: "50"
   expectations:
     rules:
-      vacuous_comparison: PASS
       incomparable_membership: PASS
 
-- name: Empty list and a different string, third case
+- name: A different string, third case
   input:
     Sizes: []
     Name: "not-a-number"
   expectations:
     rules:
-      vacuous_comparison: PASS
       incomparable_membership: PASS
