@@ -93,7 +93,7 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
-On a value that cannot be empty — a number or a boolean — `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
+On a value that cannot be empty -- a number or a boolean -- `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
 
 `exists` - Checks if each occurrence of the query exists.
 
@@ -108,7 +108,7 @@ The above clause will `PASS` for the example template as `BucketEncryption` is d
 
 #### Array indexes
 
-An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element — past the end in either direction, or too large to be an offset at all — does not resolve, and the clause reports that rather than selecting a different element.
+An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element -- past the end in either direction, or too large to be an offset at all -- does not resolve, and the clause reports that rather than selecting a different element.
 
 ```
 # the last tag, whatever the length of the list
@@ -223,6 +223,20 @@ large_volumes_encrypted_gate.guard/large_volumes_are_encrypted    SKIP
 The same explanation appears under `not_applicable_reasons` in `--output-format json` and `yaml`.
 
 A rule skipped because its condition was decided and simply not met prints no such line, so the message appears only where something needs attention. If you see it, the fix is in the rule or the input rather than in Guard: compare against a value of the same kind, or guard the clause so the mismatch is explicit.
+
+There is a second, narrower case that behaves differently, and the difference is worth knowing because the two read alike. Everything above is about a condition Guard *decided* and found not to hold. A condition Guard cannot evaluate at all is not the same thing: `EMPTY` on a number or a boolean, or a clause whose reference resolved to no values, has no answer in either polarity, and there is nothing for the rule to be applicable or inapplicable to.
+
+Those conditions fail their rule rather than making it inapplicable:
+
+```
+rule volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Enabled !EMPTY {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Encrypted == true
+}
+```
+
+Against a template whose `Enabled` is `true`, this reports `FAIL` and exits `19`, naming the operation and the path that could not support it. Reporting the rule as not applicable would exit `0` and take the guarded check down with it, and a rule that never fires looks exactly like a rule that holds.
+
+So a condition Guard could not answer fails; a condition Guard answered in the negative, including the cross-kind comparison above, leaves the rule not applicable. If a rule starts failing on a condition where it used to be skipped, that is the case to look for: the fix is to compare against an operand the operator supports, or to make the condition express what should happen when the value is absent.
 
 Below are a couple of examples of clauses using binary operators:
 
