@@ -6504,168 +6504,190 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         ("in_list", "IN [10, 50, 100]"),
     ];
 
-    // `Some(answer)` when the clause can be answered, `None` when it cannot and must fail closed.
-    // Columns follow SHAPES.
+    // What the clause is able to say about an operand shape. Columns follow SHAPES.
+    //
+    // Three answers, not two, and the third arrived from a reviewer's argument rather than from first
+    // principles. An empty collection is not undecidable -- emptiness is a fact -- and `no element ==
+    // 50` over zero elements is vacuously true, which is why failing it "rejected a compliant
+    // template". But vacuous truth is not an affirmative pass either, because the clause examined
+    // nothing, so the honest reading is that the negated form asserts nothing and reports neither.
+    //
+    // `Unanswerable` and `Vacuous` have to stay apart: a type mismatch has no answer in either
+    // polarity, while an empty collection has a different answer in each. This is the one row where
+    // the fail-closed rule does not apply uniformly.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum Answer {
+        /// The clause has this answer for this operand.
+        Says(bool),
+        /// The clause cannot be answered at all, so it fails closed in both polarities.
+        Unanswerable,
+        /// An empty collection: the positive form claims something over nothing, which
+        /// `docs/QUERY_AND_FILTERING.md` calls a retrieval error and therefore a failure, and the
+        /// negated form is vacuously true and claims nothing.
+        Vacuous,
+    }
+    use Answer::{Says, Unanswerable, Vacuous};
+
     #[allow(clippy::type_complexity)]
-    const ORACLE: [(&str, [Option<bool>; 11]); 10] = [
+    const ORACLE: [(&str, [Answer; 11]); 10] = [
         (
             "EXISTS",
             [
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(true),
-                Some(false),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(true),
+                Says(false),
             ],
         ),
         (
             "EMPTY",
             [
-                None,
-                None,
-                Some(false),
-                Some(true),
-                Some(false),
-                Some(true),
-                Some(false),
-                Some(true),
-                None,
-                None,
-                Some(true),
+                Unanswerable,
+                Unanswerable,
+                Says(false),
+                Says(true),
+                Says(false),
+                Says(true),
+                Says(false),
+                Says(true),
+                Unanswerable,
+                Unanswerable,
+                Says(true),
             ],
         ),
         (
             "IS_STRING",
             [
-                Some(false),
-                Some(false),
-                Some(true),
-                Some(true),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
+                Says(false),
+                Says(false),
+                Says(true),
+                Says(true),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
             ],
         ),
         (
             "IS_INT",
             [
-                Some(true),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
+                Says(true),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
             ],
         ),
         (
             "IS_LIST",
             [
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(true),
-                Some(true),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(true),
+                Says(true),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
             ],
         ),
         (
             "IS_STRUCT",
             [
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(true),
-                Some(true),
-                Some(false),
-                Some(false),
-                Some(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(true),
+                Says(true),
+                Says(false),
+                Says(false),
+                Says(false),
             ],
         ),
         (
             "IS_BOOL",
             [
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(false),
-                Some(true),
-                Some(false),
-                Some(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(false),
+                Says(true),
+                Says(false),
+                Says(false),
             ],
         ),
         (
             "eq_50",
             [
-                Some(true),
-                Some(false),
-                None,
-                None,
-                Some(false),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                Says(true),
+                Says(false),
+                Unanswerable,
+                Unanswerable,
+                Says(false),
+                Vacuous,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
             ],
         ),
         (
             "gt_10",
             [
-                Some(true),
-                Some(true),
-                None,
-                None,
-                Some(false),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                Says(true),
+                Says(true),
+                Unanswerable,
+                Unanswerable,
+                Says(false),
+                Vacuous,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
             ],
         ),
         (
             "in_list",
             [
-                Some(true),
-                Some(false),
-                None,
-                None,
-                Some(false),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                Says(true),
+                Says(false),
+                Unanswerable,
+                Unanswerable,
+                Says(false),
+                Vacuous,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
+                Unanswerable,
             ],
         ),
     ];
@@ -6681,10 +6703,23 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     ///    violation inside it unreported.
     /// 4. A gate that can be answered either opens, and the body decides -- always FAIL here, since
     ///    the body is always violated -- or does not match, and the rule does not apply.
-    fn expected(answer: Option<bool>, negated: bool, gate: bool) -> Status {
+    fn expected(answer: Answer, negated: bool, gate: bool) -> Status {
         match answer {
-            None => Status::FAIL,
-            Some(answer) => {
+            Unanswerable => Status::FAIL,
+            Vacuous => match (gate, negated) {
+                // A claim over nothing, which the specification calls a retrieval error.
+                (false, false) => Status::FAIL,
+                // Vacuously true, and it asserts nothing, so neither pass nor fail.
+                (false, true) => Status::SKIP,
+                // In a gate the two readings converge, so this cell is weak evidence either way.
+                // Vacuous truth opens the gate and the body decides, which is FAIL here because the
+                // body is always violated; the retrieval-error reading fails the gate closed, also
+                // FAIL. SKIP is the one answer that is wrong, because that is the outcome which
+                // drops the guarded body and exits 0. Measured on both branches: the reported
+                // failure is the body clause, not the condition, so the gate does open.
+                (true, _) => Status::FAIL,
+            },
+            Says(answer) => {
                 let holds = if negated { !answer } else { answer };
                 match (gate, holds) {
                     (false, true) => Status::PASS,
@@ -6712,12 +6747,13 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     // conversion to `false` as a tracked defect. `!=` honours that; `NOT IN` does not. Fixing it needs
     // five registry rules to change first -- see the revert in `9a9600d` -- so both classes now emit a
     // deprecation notice a release ahead of the change.
-    const VIOLATES_THE_SPEC: [&str; 11] = [
+    const VIOLATES_THE_SPEC: [&str; 12] = [
         "eq_50/empty_list/not/assert",
         "eq_50/empty_list/plain/assert",
         "gt_10/empty_list/not/assert",
         "gt_10/empty_list/plain/assert",
         "in_list/bool_true/not/assert",
+        "in_list/empty_list/not/assert",
         "in_list/empty_list/plain/assert",
         "in_list/empty_map/not/assert",
         "in_list/empty_string/not/assert",
