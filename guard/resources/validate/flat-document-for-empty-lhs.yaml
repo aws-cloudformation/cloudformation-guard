@@ -1,0 +1,7 @@
+# Not a CloudFormation template. `Items` exists and holds an entry, so a filter over it resolves to
+# zero values rather than failing to resolve -- the distinction that makes this an empty selection and
+# not a retrieval error. `Name` gives the unrelated rule something to fail on.
+Name: anything
+Items:
+  - Kind: other
+    Value: v1

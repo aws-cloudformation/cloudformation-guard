@@ -106,6 +106,17 @@ The above clause will `PASS` for the example template as `BucketEncryption` is d
 
 > **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true.
 
+An `IN` comparison follows the same rule as `==`: if the value cannot be compared with any element of the list, neither `IN` nor `NOT IN` has an answer and both fail. A value that *can* be compared and is simply absent from the list is a plain `NOT IN`, so a denylist over values of the expected type behaves as before.
+
+```
+# Size is the string "50", and the list holds integers
+Size IN [10, 50, 100]       # FAIL -- nothing in the list is comparable
+Size NOT IN [10, 50, 100]   # FAIL -- and neither is its negation
+
+# Size is the integer 7
+Size NOT IN [10, 50, 100]   # PASS -- comparable, and absent
+```
+
 #### Array indexes
 
 An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element — past the end in either direction, or too large to be an offset at all — does not resolve, and the clause reports that rather than selecting a different element.

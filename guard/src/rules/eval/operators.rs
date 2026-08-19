@@ -315,14 +315,46 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
 
         rest => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
-                if rhsl.contains(rest) {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::ValueIn(
-                        LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
-                    )))
-                } else {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
-                        LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
-                    )))
+                // Three answers, not two. `rhsl.contains(rest)` is `Vec::contains`, which folds "no
+                // element compared equal" together with "no element could be compared at all" into a
+                // single `false`. The not-flag then inverts that `false`, so `NOT IN` reported success
+                // for a value it never managed to compare:
+                //
+                //     Size: "50"
+                //     "50" != 50                -> FAIL   (fails closed)
+                //     "50" NOT IN [10, 50, 100] -> PASS   (the same undecidability, opposite answer)
+                //
+                // Reporting the incomparable case as `NotComparable` keeps it out of the inversion --
+                // the not-flag passes that variant through unchanged -- so both spellings now fail
+                // closed on an operand they cannot compare.
+                let mut compared_any = false;
+                let mut found = false;
+                for each in rhsl {
+                    match compare_eq(rest, each) {
+                        Ok(true) => {
+                            found = true;
+                            break;
+                        }
+                        Ok(false) => compared_any = true,
+                        Err(_) => {}
+                    }
+                }
+                match (found, compared_any) {
+                    (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                        Compare::ValueIn(LhsRhsPair::new(
+                            Rc::new(rest.clone()),
+                            Rc::clone(&rhs_value),
+                        )),
+                    )),
+                    // At least one element was comparable and none matched: a real "not in".
+                    (false, true) => {
+                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
+                            LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
+                        )))
+                    }
+                    // Nothing in the list could be compared with the value, so membership has no
+                    // answer in either polarity.
+                    (false, false) => not_comparable(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
                 }
             }
 

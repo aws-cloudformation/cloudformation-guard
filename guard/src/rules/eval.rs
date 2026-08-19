@@ -208,6 +208,19 @@ fn empty_reference_message(negated: bool) -> String {
     )
 }
 
+/// Explanation attached to a clause whose left-hand variable resolved to no values.
+///
+/// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
+/// thing about enforcement -- nothing was compared -- but the remedy differs: the author has to decide
+/// whether an empty selection is expected, and if it is, guard the clause rather than rely on it
+/// silently passing.
+fn empty_lhs_message() -> String {
+    "The comparison could not be performed: the variable on the left-hand side resolved to no \
+     values, so there was nothing to compare. If an empty selection is expected here, guard the \
+     clause with `when <variable> !empty { ... }` so it is skipped rather than failed."
+        .to_string()
+}
+
 /// Why a clause is being evaluated, which decides what an unevaluatable clause
 /// should report.
 ///
@@ -884,7 +897,36 @@ fn binary_operation<'value, 'loc: 'value>(
     let lhs = eval_context.query(lhs_query)?;
     let results = cmp.compare(&lhs, rhs)?;
     match results {
-        operators::EvalResult::Skip => Ok(EvaluationResult::EmptyQueryResult(Status::SKIP, None)),
+        // The left-hand query selected nothing, so there was nothing to compare. Which answer that
+        // deserves depends on the shape of the query, and the two cases are not alike.
+        //
+        // A filtered query that matched nothing -- `Resources.*[ Type == 'AWS::S3::Bucket' ]` against a
+        // template with no buckets -- is the idiom that lets one ruleset run over templates that do not
+        // all contain the resource being checked. It is documented in `docs/QUERY_AND_FILTERING.md` and
+        // has to stay a SKIP; failing it would fail every template that omits the resource type.
+        //
+        // A lone variable that resolved to nothing is the mirror of the empty *right*-hand reference
+        // that `3f8466e` closed. `%x == 'abc'`, `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held
+        // no values, so a rule whose only check was one of those reported compliance having compared
+        // nothing -- the same bypass, on the other operand. It fails closed as an assertion, and stays
+        // a SKIP as a gate for the reason given on the `EmptyRhsUnsatisfiable` arm below: a FAIL on a
+        // condition is counted by the fold and outranks siblings that passed.
+        //
+        // The distinction is drawn the same way `unary_operation` already draws it for `EMPTY`, so
+        // there is one definition of "the query is just a variable" rather than two.
+        operators::EvalResult::Skip => {
+            let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
+            Ok(match lone_variable {
+                true => EvaluationResult::EmptyQueryResult(
+                    match role.is_strict() {
+                        true => Status::FAIL,
+                        false => Status::SKIP,
+                    },
+                    Some(empty_lhs_message()),
+                ),
+                false => EvaluationResult::EmptyQueryResult(Status::SKIP, None),
+            })
+        }
 
         // Positive comparison against a reference that resolved to nothing. No value
         // can be one of zero references, so the clause is unsatisfiable and every

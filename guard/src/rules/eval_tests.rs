@@ -6370,7 +6370,14 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     //
     // No `empty_on_scalar` cell appears here, which is the point of the list: that clause used to
     // disarm its body in every one of these shapes, and it is what a reviewer found by hand.
-    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 22] = [
+    //
+    // The two `in_list/*/string_size` entries joined the set rather than leaving it, which is worth
+    // understanding before trusting the count. `IN` against a type it cannot compare used to answer
+    // FAIL while `NOT IN` answered PASS, so the pair was not recognised as undecidable and the
+    // invariant skipped those cells. Making both polarities fail closed made them undecidable by this
+    // test's own definition, which exposed that they disarm their body as a gate -- the same thing the
+    // other entries do. Fixing one defect made a second one visible rather than creating it.
+    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 24] = [
         "eq_int/gate/absent_property",
         "eq_int/gate/absent_root",
         "eq_int/gate/string_size",
@@ -6385,8 +6392,10 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
         "gt_int/nested_when/string_size",
         "in_list/gate/absent_property",
         "in_list/gate/absent_root",
+        "in_list/gate/string_size",
         "in_list/nested_when/absent_property",
         "in_list/nested_when/absent_root",
+        "in_list/nested_when/string_size",
         "le_float/gate/absent_property",
         "le_float/gate/absent_root",
         "le_float/gate/string_size",
@@ -6435,6 +6444,375 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     assert_eq!(
         disarmed, DISARMED_BY_AN_UNDECIDABLE_COMPARISON,
         "the set of gate shapes that disarm their guarded body changed"
+    );
+
+    Ok(())
+}
+
+/// Every operator against every operand shape, in both polarities and in both positions, checked
+/// against a stated expectation rather than against itself.
+///
+/// This exists because `generated_rule_shapes_hold_the_evaluator_invariants` cannot catch a wrong
+/// answer. Its invariants -- canary isolation, determinism, and that a clause and its negation never
+/// both pass -- are all satisfiable by a verdict that is wrong but self-consistent, and that is exactly
+/// what a boolean `!EMPTY` used as a gate was: 252 cells passed and a reviewer found it by reading the
+/// code. Coverage without an oracle measures how much code ran, not whether it was right.
+///
+/// So `ORACLE` states, for each operator and operand shape, whether the clause can be answered at all
+/// and what the answer is when it can. Those 110 judgments come from the language semantics, and all
+/// 440 cells derive from them by the four rules on `expected`. A cell that disagrees is either a defect
+/// or a wrong judgment, and both are worth knowing.
+///
+/// Two judgments are worth stating because they are easy to get backwards, and one of them was:
+///
+/// - A comparison against a list is applied to the list's *elements*, because a query expands a list.
+///   `Size == 50` against `[1, 2, 3]` records three separate checks at `/Size/0`, `/Size/1` and
+///   `/Size/2`, so the answer is a definite false rather than "no answer". The first version of this
+///   table called it undecidable and reported three defects that were not defects.
+/// - A unary operator does *not* expand. `Tags !empty` is documented as a check on the list itself, so
+///   `EMPTY` against a list answers about the list.
+///
+/// The remaining disagreements are listed by name in `KNOWN`. All of them are #720's scope: an
+/// undecidable comparison used as a gate still disarms the body it guards, and a comparison against an
+/// empty collection still passes vacuously. Both need a status meaning "could not tell", which is the
+/// `Outcome` lattice. Listing them by name rather than counting them means a new one identifies itself,
+/// and fixing one fails this test and asks for its own removal from the list.
+#[test]
+fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> {
+    // Order is load-bearing: `ORACLE`'s rows are indexed by it.
+    const SHAPES: [(&str, &str); 11] = [
+        ("int_50", r#""Size": 50"#),
+        ("float_50_5", r#""Size": 50.5"#),
+        ("string_50", r#""Size": "50""#),
+        ("empty_string", r#""Size": """#),
+        ("list", r#""Size": [1, 2, 3]"#),
+        ("empty_list", r#""Size": []"#),
+        ("map", r#""Size": {"a": 1}"#),
+        ("empty_map", r#""Size": {}"#),
+        ("bool_true", r#""Size": true"#),
+        ("null", r#""Size": null"#),
+        ("absent", ""),
+    ];
+
+    const OPERATORS: [(&str, &str); 10] = [
+        ("EXISTS", "EXISTS"),
+        ("EMPTY", "EMPTY"),
+        ("IS_STRING", "IS_STRING"),
+        ("IS_INT", "IS_INT"),
+        ("IS_LIST", "IS_LIST"),
+        ("IS_STRUCT", "IS_STRUCT"),
+        ("IS_BOOL", "IS_BOOL"),
+        ("eq_50", "== 50"),
+        ("gt_10", "> 10"),
+        ("in_list", "IN [10, 50, 100]"),
+    ];
+
+    // `Some(answer)` when the clause can be answered, `None` when it cannot and must fail closed.
+    // Columns follow SHAPES.
+    #[allow(clippy::type_complexity)]
+    const ORACLE: [(&str, [Option<bool>; 11]); 10] = [
+        (
+            "EXISTS",
+            [
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(false),
+            ],
+        ),
+        (
+            "EMPTY",
+            [
+                None,
+                None,
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(true),
+                None,
+                None,
+                Some(true),
+            ],
+        ),
+        (
+            "IS_STRING",
+            [
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ],
+        ),
+        (
+            "IS_INT",
+            [
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ],
+        ),
+        (
+            "IS_LIST",
+            [
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ],
+        ),
+        (
+            "IS_STRUCT",
+            [
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+            ],
+        ),
+        (
+            "IS_BOOL",
+            [
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(false),
+            ],
+        ),
+        (
+            "eq_50",
+            [
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        ),
+        (
+            "gt_10",
+            [
+                Some(true),
+                Some(true),
+                None,
+                None,
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        ),
+        (
+            "in_list",
+            [
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        ),
+    ];
+
+    /// The verdict a cell must produce, from the oracle, by four rules.
+    ///
+    /// 1. An assertion that cannot be answered fails closed. PASS would certify a check that never
+    ///    ran; SKIP exits 0, which is the same thing one level out.
+    /// 2. An assertion that can be answered passes when the answer holds, and `not` inverts the
+    ///    answer and nothing else.
+    /// 3. A gate that cannot be answered fails the rule. Not SKIP: `eval_rule` maps every non-PASS
+    ///    condition to a rule-level SKIP, so SKIP drops the guarded body and exits 0 with the
+    ///    violation inside it unreported.
+    /// 4. A gate that can be answered either opens, and the body decides -- always FAIL here, since
+    ///    the body is always violated -- or does not match, and the rule does not apply.
+    fn expected(answer: Option<bool>, negated: bool, gate: bool) -> Status {
+        match answer {
+            None => Status::FAIL,
+            Some(answer) => {
+                let holds = if negated { !answer } else { answer };
+                match (gate, holds) {
+                    (false, true) => Status::PASS,
+                    (false, false) => Status::FAIL,
+                    (true, true) => Status::FAIL,
+                    (true, false) => Status::SKIP,
+                }
+            }
+        }
+    }
+
+    // Cells that do not agree yet, each one #720's scope. See the note above.
+    const KNOWN: [&str; 48] = [
+        "eq_50/absent/not/gate",
+        "eq_50/absent/plain/gate",
+        "eq_50/bool_true/not/gate",
+        "eq_50/bool_true/plain/gate",
+        "eq_50/empty_list/not/assert",
+        "eq_50/empty_list/plain/assert",
+        "eq_50/empty_map/not/gate",
+        "eq_50/empty_map/plain/gate",
+        "eq_50/empty_string/not/gate",
+        "eq_50/empty_string/plain/gate",
+        "eq_50/map/not/gate",
+        "eq_50/map/plain/gate",
+        "eq_50/null/not/gate",
+        "eq_50/null/plain/gate",
+        "eq_50/string_50/not/gate",
+        "eq_50/string_50/plain/gate",
+        "gt_10/absent/not/gate",
+        "gt_10/absent/plain/gate",
+        "gt_10/bool_true/not/gate",
+        "gt_10/bool_true/plain/gate",
+        "gt_10/empty_list/not/assert",
+        "gt_10/empty_list/plain/assert",
+        "gt_10/empty_map/not/gate",
+        "gt_10/empty_map/plain/gate",
+        "gt_10/empty_string/not/gate",
+        "gt_10/empty_string/plain/gate",
+        "gt_10/map/not/gate",
+        "gt_10/map/plain/gate",
+        "gt_10/null/not/gate",
+        "gt_10/null/plain/gate",
+        "gt_10/string_50/not/gate",
+        "gt_10/string_50/plain/gate",
+        "in_list/absent/not/gate",
+        "in_list/absent/plain/gate",
+        "in_list/bool_true/not/gate",
+        "in_list/bool_true/plain/gate",
+        "in_list/empty_list/not/gate",
+        "in_list/empty_list/plain/assert",
+        "in_list/empty_map/not/gate",
+        "in_list/empty_map/plain/gate",
+        "in_list/empty_string/not/gate",
+        "in_list/empty_string/plain/gate",
+        "in_list/map/not/gate",
+        "in_list/map/plain/gate",
+        "in_list/null/not/gate",
+        "in_list/null/plain/gate",
+        "in_list/string_50/not/gate",
+        "in_list/string_50/plain/gate",
+    ];
+
+    const FILTER: &str = "Resources.*[ Type == 'AWS::EC2::Volume' ]";
+    let body = format!("{FILTER}.Properties.MustFail == true");
+
+    let mut disagreements: Vec<String> = Vec::new();
+    let mut cells = 0;
+    for (op_label, op) in OPERATORS {
+        let answers = ORACLE
+            .iter()
+            .find(|(label, _)| *label == op_label)
+            .map(|(_, answers)| answers)
+            .expect("every operator needs an oracle row");
+        for (shape_index, (shape_label, props)) in SHAPES.iter().enumerate() {
+            // `MustFail` is false in every shape, so a guarded body always has a violation to report.
+            // That is what makes a wrong SKIP visible as a lost verdict rather than as a bare exit 0.
+            let properties = match props.is_empty() {
+                true => r#""MustFail": false"#.to_string(),
+                false => format!(r#"{}, "MustFail": false"#, props),
+            };
+            let data = format!(
+                r#"{{ "Resources": {{ "V": {{ "Type": "AWS::EC2::Volume", "Properties": {{ {} }} }} }} }}"#,
+                properties
+            );
+            for negated in [false, true] {
+                let clause = format!(
+                    "{}{FILTER}.Properties.Size {}",
+                    if negated { "not " } else { "" },
+                    op
+                );
+                for gate in [false, true] {
+                    let rule = match gate {
+                        false => format!("rule r {{\n    {clause}\n}}\n"),
+                        true => format!("rule r when {clause} {{\n    {body}\n}}\n"),
+                    };
+                    let rules_file = RulesFile::try_from(rule.as_str())?;
+                    let values = PathAwareValue::try_from(data.as_str())?;
+                    let mut root = root_scope(&rules_file, Rc::new(values));
+                    let actual = eval_rules_file(&rules_file, &mut root, None)?;
+                    let want = expected(answers[shape_index], negated, gate);
+                    cells += 1;
+                    if actual != want {
+                        disagreements.push(format!(
+                            "{}/{}/{}/{}",
+                            op_label,
+                            shape_label,
+                            if negated { "not" } else { "plain" },
+                            if gate { "gate" } else { "assert" }
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // The space cannot shrink without saying so: 10 operators x 11 shapes x 2 polarities x 2 positions.
+    assert_eq!(cells, 10 * 11 * 2 * 2, "the generated space changed size");
+
+    disagreements.sort();
+    assert_eq!(
+        disagreements, KNOWN,
+        "the set of cells disagreeing with the oracle changed. A new entry is a wrong verdict or a \
+         wrong judgment; a missing entry means something was fixed, and then it should come off the \
+         list."
     );
 
     Ok(())

@@ -1130,3 +1130,109 @@ fn test_operator_not_eq() -> crate::rules::Result<()> {
 
     Ok(())
 }
+
+/// `IN` and `NOT IN` agree with `==` and `!=` about what "cannot be compared" means.
+///
+/// They did not. `contained_in` asked `Vec::contains`, which folds "no element compared equal"
+/// together with "no element could be compared at all" into a single `false`, and the not-flag then
+/// inverted that `false` into a pass:
+///
+///     Size: "50"
+///     "50" != 50                 ->  FAIL   fails closed, as docs/CLAUSES.md states
+///     "50" NOT IN [10, 50, 100]  ->  PASS   same undecidability, opposite answer
+///
+/// The two operators contradicting each other on identical input is the defect, independently of
+/// which answer is preferred. Both fail closed now.
+///
+/// The rows that matter most are the last two: a denylist over a value the list *can* be compared
+/// with still behaves as before. Failing closed only applies when nothing in the list is comparable,
+/// so `Size: 7 NOT IN [10, 50, 100]` still passes and existing denylists keep working.
+#[test]
+fn membership_and_equality_agree_about_incomparable_values() {
+    fn resolved(v: PathAwareValue) -> Vec<QueryResult> {
+        vec![QueryResult::Resolved(Rc::new(v))]
+    }
+    fn literal_list(items: Vec<PathAwareValue>) -> Vec<QueryResult> {
+        vec![QueryResult::Literal(Rc::new(PathAwareValue::List((
+            Path::root(),
+            items,
+        ))))]
+    }
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn string(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
+
+    // (label, lhs, rhs list, IN passes, NOT IN passes)
+    let cases: [(&str, PathAwareValue, Vec<PathAwareValue>, bool, bool); 5] = [
+        // Nothing in the list is comparable with the value, so neither polarity has an answer.
+        (
+            "string against integers",
+            string("50"),
+            vec![int(10), int(50)],
+            false,
+            false,
+        ),
+        // One element is comparable and matches.
+        (
+            "string against a mixed list, matching",
+            string("50"),
+            vec![int(10), string("50")],
+            true,
+            false,
+        ),
+        // One element is comparable and none match, which is a real "not in".
+        (
+            "string against a mixed list, no match",
+            string("99"),
+            vec![int(10), string("50")],
+            false,
+            true,
+        ),
+        // Same type, present.
+        (
+            "integer present",
+            int(50),
+            vec![int(10), int(50)],
+            true,
+            false,
+        ),
+        // Same type, absent: the ordinary denylist case, which must keep passing.
+        (
+            "integer absent",
+            int(7),
+            vec![int(10), int(50)],
+            false,
+            true,
+        ),
+    ];
+
+    for (label, lhs, rhs, in_passes, not_in_passes) in cases {
+        let lhs = resolved(lhs);
+        let rhs = literal_list(rhs);
+        for (negated, want) in [(false, in_passes), (true, not_in_passes)] {
+            let result = (CmpOperator::In, negated)
+                .compare(&lhs, &rhs)
+                .expect("comparison should not error");
+            let passed = match result {
+                EvalResult::Result(ref rs) => rs.iter().any(|r| {
+                    matches!(
+                        r,
+                        ValueEvalResult::ComparisonResult(ComparisonResult::Success(_))
+                    )
+                }),
+                _ => panic!("{}: unexpected {:?}", label, result),
+            };
+            assert_eq!(
+                passed,
+                want,
+                "{}: {} should {}",
+                label,
+                if negated { "NOT IN" } else { "IN" },
+                if want { "pass" } else { "not pass" }
+            );
+        }
+    }
+}

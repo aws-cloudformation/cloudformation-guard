@@ -488,6 +488,77 @@ mod validate_tests {
         );
     }
 
+    /// A comparison whose left-hand variable resolved to nothing fails closed.
+    ///
+    /// `3f8466e` closed this on the right-hand side and left the left open, so `%x == 'abc'`,
+    /// `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held no values. A rule whose only check is one
+    /// of those reported compliance having compared nothing, which is the same bypass the right-hand
+    /// fix removed.
+    ///
+    /// Scoped to a lone variable on purpose, and the negative half of that is asserted by
+    /// `an_empty_filtered_query_still_skips`: a filtered query that matches nothing must stay a SKIP,
+    /// because that is what lets one ruleset run against templates that do not all contain the
+    /// resource being checked.
+    #[test]
+    fn an_empty_variable_on_the_left_fails_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["flat-document-for-empty-lhs.yaml"])
+            .rules(vec!["empty_variable_on_the_left.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "a comparison that compared nothing must not report success"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("left_side_is_empty"),
+            "the clause with the empty left-hand side should be reported:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing closed must not discard the rest of the file:\n{}",
+            output
+        );
+        assert!(
+            output.contains("resolved to no values"),
+            "the report should say the left-hand side resolved to no values:\n{}",
+            output
+        );
+    }
+
+    /// The counterpart, and the reason the fix above is scoped to a lone variable: a filtered query
+    /// that matches nothing is not applicable, not a failure.
+    ///
+    /// This is the idiom that lets one ruleset run over templates that do not all contain the resource
+    /// type being checked, documented in `docs/QUERY_AND_FILTERING.md`. Failing it would fail every
+    /// template that omits the type, which is why the empty-left-hand-side fix distinguishes the two
+    /// shapes instead of treating every empty selection alike.
+    #[test]
+    fn an_empty_filtered_query_still_skips() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a filtered query that matched nothing must not fail the rule"
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
