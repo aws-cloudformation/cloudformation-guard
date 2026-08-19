@@ -6696,14 +6696,51 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         }
     }
 
-    // Cells that do not agree yet, each one #720's scope. See the note above.
-    const KNOWN: [&str; 48] = [
+    // The cells that do not agree, split by whether the current answer contradicts the specification
+    // or merely contradicts this oracle. Conflating the two was misleading: 37 of the 48 are behaviour
+    // the documentation describes on purpose, and reading a single count of 48 as "48 defects"
+    // overstates the position by a factor of four.
+
+    // Contradicts the specification. Each of these passes while comparing nothing.
+    //
+    // `docs/QUERY_AND_FILTERING.md` lists `Tags: []` beside a missing key and an empty map as retrieval
+    // errors and states that all retrieval errors are failures. Measured, the other two do fail, so the
+    // empty-collection rows are the outlier rather than a design choice. #720's `e9b143c` fixes them.
+    //
+    // `docs/CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be decided,
+    // and the clause fails rather than guessing", and `docs/KNOWN_ISSUES.md` records the silent
+    // conversion to `false` as a tracked defect. `!=` honours that; `NOT IN` does not. Fixing it needs
+    // five registry rules to change first -- see the revert in `9a9600d` -- so both classes now emit a
+    // deprecation notice a release ahead of the change.
+    const VIOLATES_THE_SPEC: [&str; 11] = [
+        "eq_50/empty_list/not/assert",
+        "eq_50/empty_list/plain/assert",
+        "gt_10/empty_list/not/assert",
+        "gt_10/empty_list/plain/assert",
+        "in_list/bool_true/not/assert",
+        "in_list/empty_list/plain/assert",
+        "in_list/empty_map/not/assert",
+        "in_list/empty_string/not/assert",
+        "in_list/map/not/assert",
+        "in_list/null/not/assert",
+        "in_list/string_50/not/assert",
+    ];
+
+    // Conforms to the specification, which documents the hazard rather than the fix.
+    //
+    // `docs/CLAUSES.md:203-225` states that a condition which cannot be decided does not pass, that the
+    // rule is therefore reported as not applicable, that the run exits 0, and that "the fix is in the
+    // rule or the input rather than in Guard". It says so with a worked example. So these are not
+    // defects against the current specification, and the oracle is stricter than the document.
+    //
+    // They are still the wrong answer, and #720 changes it: `Outcome::Unevaluatable` lets a gate say
+    // "could not tell" instead of collapsing into "did not match". That PR owns the rewrite of those
+    // lines, so that no merged state has the document disagreeing with the code.
+    const CONFORMS_TO_THE_SPEC: [&str; 37] = [
         "eq_50/absent/not/gate",
         "eq_50/absent/plain/gate",
         "eq_50/bool_true/not/gate",
         "eq_50/bool_true/plain/gate",
-        "eq_50/empty_list/not/assert",
-        "eq_50/empty_list/plain/assert",
         "eq_50/empty_map/not/gate",
         "eq_50/empty_map/plain/gate",
         "eq_50/empty_string/not/gate",
@@ -6718,8 +6755,6 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         "gt_10/absent/plain/gate",
         "gt_10/bool_true/not/gate",
         "gt_10/bool_true/plain/gate",
-        "gt_10/empty_list/not/assert",
-        "gt_10/empty_list/plain/assert",
         "gt_10/empty_map/not/gate",
         "gt_10/empty_map/plain/gate",
         "gt_10/empty_string/not/gate",
@@ -6732,19 +6767,12 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         "gt_10/string_50/plain/gate",
         "in_list/absent/not/gate",
         "in_list/absent/plain/gate",
-        "in_list/bool_true/not/assert",
         "in_list/bool_true/plain/gate",
         "in_list/empty_list/not/gate",
-        "in_list/empty_list/plain/assert",
-        "in_list/empty_map/not/assert",
         "in_list/empty_map/plain/gate",
-        "in_list/empty_string/not/assert",
         "in_list/empty_string/plain/gate",
-        "in_list/map/not/assert",
         "in_list/map/plain/gate",
-        "in_list/null/not/assert",
         "in_list/null/plain/gate",
-        "in_list/string_50/not/assert",
         "in_list/string_50/plain/gate",
     ];
 
@@ -6805,11 +6833,17 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     assert_eq!(cells, 10 * 11 * 2 * 2, "the generated space changed size");
 
     disagreements.sort();
+    let mut expected: Vec<String> = VIOLATES_THE_SPEC
+        .iter()
+        .chain(CONFORMS_TO_THE_SPEC.iter())
+        .map(|s| (*s).to_string())
+        .collect();
+    expected.sort();
     assert_eq!(
-        disagreements, KNOWN,
+        disagreements, expected,
         "the set of cells disagreeing with the oracle changed. A new entry is a wrong verdict or a \
-         wrong judgment; a missing entry means something was fixed, and then it should come off the \
-         list."
+         wrong judgment; a missing entry means something was fixed, and then it should come off \
+         whichever of the two lists holds it."
     );
 
     Ok(())
