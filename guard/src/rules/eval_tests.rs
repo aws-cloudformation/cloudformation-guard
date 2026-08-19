@@ -4845,6 +4845,18 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
     //   TypeCheck               5   four failures, plus the one skip site below
     //   Disjunction             1   rendered: reported as a block when no disjunct recorded anything
+    //   RuleCheck               1   rendered: printed as the rule's Reason -- see below
+    //
+    // The `RuleCheck` site is the newest. A rule whose `when` condition cannot be evaluated now fails
+    // closed instead of being treated as not applicable, and the reader needs to be told that the rule
+    // failed for that reason rather than on one of its own clauses. Verified by running it: the console
+    // prints `Parameterized Rule <name> failed for <file>. Reason The rule's condition could not be
+    // evaluated ...`, and `an_unevaluatable_gate_fails_the_rule_closed` asserts it end to end.
+    //
+    // The `WhenCheck` count is unchanged, and one of its two messages is worth a note: its text was
+    // corrected in the same commit, because it said "bailing" for a case that no longer bails. It is
+    // still not the rendering path for that case -- the clause's own `ClauseValueCheck` record is, and
+    // that is what names the offending path and operation in the output.
     //
     // The fifth GuardClauseBlockCheck is the newest: a `when` condition that references a rule
     // which did not apply. That gate now answers SKIP instead of FAIL, so the conjunction absorbs
@@ -4867,7 +4879,7 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 17;
+    const SITES_EXPECTED: usize = 18;
 
     assert_eq!(
         sites, SITES_EXPECTED,
@@ -6143,6 +6155,10 @@ fn a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block() -> Result<()>
 /// 3. **Negation discriminates.** For a clause both polarities can decide, `not X` and `X` must not
 ///    agree. A clause that answers the same either way has stopped checking anything, which is the
 ///    defect `a54e4ca` and `0e140b3` fixed.
+/// 4. **An unanswerable gate does not disarm its body.** Where the body fails on its own, wrapping it
+///    in a gate the evaluator cannot answer must not turn the verdict into success. Added after a
+///    reviewer found that exact loss by hand; the 252 cells here all guarded a body and none of them
+///    caught it, because canary isolation only detects a lost verdict belonging to another rule.
 ///
 /// Invariant 1 held an exception until recently: an incompatible-type error propagated out and
 /// aborted the rules file, so a canary in the same file lost its finding, and the test asserted the
@@ -6330,6 +6346,96 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
             }
         }
     }
+
+    // 5. A gate that cannot be answered must not report success while a violation sits inside it.
+    //
+    // This is the invariant the corpus was missing, and a reviewer found the gap by hand: the shapes
+    // below all guard a body, and the body violates on the templates named here, but nothing asserted
+    // that the guarded form still fails. The first version of the unevaluatable-clause fix answered
+    // SKIP for a gate, so every one of these cells returned success with the violation unreported --
+    // 252 cells and not one of them noticed, because canary isolation only catches a lost verdict when
+    // the lost verdict belongs to a *different* rule.
+    //
+    // Oracle-free: rather than asserting a known-correct status, it asserts a relationship. Take the
+    // body on its own; if that FAILs, then wrapping it in a gate the evaluator cannot answer must not
+    // turn it into PASS or SKIP, whatever the right answer for the gate is.
+    const GATE_SHAPES: [&str; 2] = ["gate", "nested_when"];
+    // The cells that still disarm their body, listed rather than counted so a new one names itself.
+    //
+    // All of them are an undecidable *comparison* used as a gate -- a query that does not resolve, or
+    // a type mismatch -- which is the case `f3c919f` records as needing a status meaning "could not
+    // tell". That is #720's `Outcome` lattice, where `Unevaluatable` is a value a gate can return
+    // instead of collapsing into "did not match". Unchanged from the merge-base, so none of these is a
+    // regression from this branch.
+    //
+    // No `empty_on_scalar` cell appears here, which is the point of the list: that clause used to
+    // disarm its body in every one of these shapes, and it is what a reviewer found by hand.
+    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 22] = [
+        "eq_int/gate/absent_property",
+        "eq_int/gate/absent_root",
+        "eq_int/gate/string_size",
+        "eq_int/nested_when/absent_property",
+        "eq_int/nested_when/absent_root",
+        "eq_int/nested_when/string_size",
+        "gt_int/gate/absent_property",
+        "gt_int/gate/absent_root",
+        "gt_int/gate/string_size",
+        "gt_int/nested_when/absent_property",
+        "gt_int/nested_when/absent_root",
+        "gt_int/nested_when/string_size",
+        "in_list/gate/absent_property",
+        "in_list/gate/absent_root",
+        "in_list/nested_when/absent_property",
+        "in_list/nested_when/absent_root",
+        "le_float/gate/absent_property",
+        "le_float/gate/absent_root",
+        "le_float/gate/string_size",
+        "le_float/nested_when/absent_property",
+        "le_float/nested_when/absent_root",
+        "le_float/nested_when/string_size",
+    ];
+    let mut disarmed: Vec<String> = Vec::new();
+    for (clause_label, clause) in &clauses {
+        for (tmpl_label, data) in templates {
+            let body_alone = evaluate(&format!("rule r {{\n    {body}\n}}\n"), data)?;
+            if body_alone != Status::FAIL {
+                continue;
+            }
+            // Whether a clause can be answered depends on the value it meets, not on the clause alone:
+            // `Size EMPTY` is unanswerable against an integer and perfectly answerable against a
+            // string, where "not empty" is the right answer and skipping the rule is the correct gating
+            // idiom. An earlier version of this loop keyed off a clause-level list and failed on
+            // exactly that case.
+            //
+            // Both polarities failing is the fail-closed signature of a clause that could not be
+            // decided, and invariant 3 above independently asserts that a *decidable* clause and its
+            // negation differ -- so the two together make this a sound marker rather than a guess.
+            let plain = evaluate(&format!("rule r {{\n    {clause}\n}}\n"), data)?;
+            let negated = evaluate(&format!("rule r {{\n    not {clause}\n}}\n"), data)?;
+            if !(plain == Status::FAIL && negated == Status::FAIL) {
+                continue;
+            }
+            for shape_label in GATE_SHAPES {
+                let rule = shapes(clause, &body)
+                    .into_iter()
+                    .find(|(label, _)| *label == shape_label)
+                    .map(|(_, text)| text)
+                    .expect("the shape table no longer has this shape");
+                let cell = format!("{}/{}/{}", clause_label, shape_label, tmpl_label);
+                if evaluate(&rule, data)? != Status::FAIL {
+                    disarmed.push(cell);
+                }
+            }
+        }
+    }
+
+    // Exactly the documented set, no more and no less. A new entry is a new way to lose a verdict; a
+    // missing entry means something fixed it, and then this list and the paragraph above it should go.
+    disarmed.sort();
+    assert_eq!(
+        disarmed, DISARMED_BY_AN_UNDECIDABLE_COMPARISON,
+        "the set of gate shapes that disarm their guarded body changed"
+    );
 
     Ok(())
 }

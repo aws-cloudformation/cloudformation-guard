@@ -1,0 +1,6 @@
+# Not a CloudFormation template. `Enabled` is a boolean so that `!EMPTY` on it cannot be answered,
+# and `MustBeTrue` is false so the guarded body has a real violation to report if it is ever reached.
+# `Region` gives the unrelated rule something to fail on.
+Region: us-east-1
+Enabled: true
+MustBeTrue: false

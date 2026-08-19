@@ -107,7 +107,6 @@ fn record_unary_clause<'eval, 'value, 'loc: 'value, O>(
     context: String,
     custom_message: Option<String>,
     eval_context: &'eval mut dyn EvalContext<'value, 'loc>,
-    role: ClauseRole,
 ) -> Box<dyn FnMut(&QueryResult) -> Result<bool> + 'eval>
 where
     O: Fn(&QueryResult) -> Result<bool> + 'eval,
@@ -139,19 +138,11 @@ where
             }
 
             Err(e) => {
-                // An incompatible type means this value cannot answer the clause, which is the same
-                // situation as an empty reference and gets the same treatment: a failure as an
-                // assertion, not applicable as a gate. Recording the role-derived status keeps the
-                // record and the verdict the driver loop pushes in agreement; recording FAIL for a
-                // clause the rule then treats as inapplicable is how a report ends up contradicting
-                // its own exit code.
-                //
-                // Other errors keep FAIL because they still abort the run, so the record is only ever
-                // read if something later decides not to propagate them.
-                check.status = match (&e, role.is_strict()) {
-                    (Error::IncompatibleError(_), false) => Status::SKIP,
-                    _ => Status::FAIL,
-                };
+                // FAIL in both roles, because an unevaluatable clause now fails closed in both: as an
+                // assertion the clause itself fails, and as a gate the enclosing rule does. An earlier
+                // version recorded SKIP for the gate case to match the status it returned, which was
+                // the bug -- the record agreed with a verdict that let a guarded violation through.
+                check.status = Status::FAIL;
                 check.message = Some(format!("{}", e));
                 eval_context.end_record(
                     &context,
@@ -167,7 +158,7 @@ where
 }
 
 macro_rules! box_create_func {
-    ($name: ident, $not: expr, $inverse: expr, $cmp: ident, $eval: ident, $cxt: ident, $msg: ident, $role: ident) => {{
+    ($name: ident, $not: expr, $inverse: expr, $cmp: ident, $eval: ident, $cxt: ident, $msg: ident) => {{
         {
             match $not {
                 true => record_unary_clause(
@@ -176,17 +167,11 @@ macro_rules! box_create_func {
                     $cxt,
                     $msg,
                     $eval,
-                    $role,
                 ),
 
-                false => record_unary_clause(
-                    inverse_operation($name, $inverse),
-                    $cmp,
-                    $cxt,
-                    $msg,
-                    $eval,
-                    $role,
-                ),
+                false => {
+                    record_unary_clause(inverse_operation($name, $inverse), $cmp, $cxt, $msg, $eval)
+                }
             }
         }
     }};
@@ -248,6 +233,16 @@ pub(super) enum ClauseRole {
     /// not applicable, never a failure, so the block it guards is still decided by
     /// the remaining conditions.
     Gate,
+}
+
+/// An error meaning the clause could not be evaluated at all, as opposed to the evaluation
+/// machinery having gone wrong.
+///
+/// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
+/// propagated because the two are answered differently: an unevaluatable clause is a verdict about
+/// that clause, while a genuine failure of the machinery should still stop the run.
+fn is_unevaluatable(e: &Error) -> bool {
+    matches!(e, Error::IncompatibleError(_))
 }
 
 impl ClauseRole {
@@ -407,8 +402,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::Empty, not_empty) => box_create_func!(
             element_empty_operation,
@@ -417,8 +411,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsString, is_not_string) => box_create_func!(
             is_string_operation,
@@ -427,8 +420,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsMap, is_not_map) => box_create_func!(
             is_struct_operation,
@@ -437,8 +429,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsList, is_not_list) => box_create_func!(
             is_list_operation,
@@ -447,8 +438,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsBool, is_not_bool) => box_create_func!(
             is_bool_operation,
@@ -457,8 +447,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsInt, is_not_int) => box_create_func!(
             is_int_operation,
@@ -467,8 +456,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsNull, is_not_null) => box_create_func!(
             is_null_operation,
@@ -477,8 +465,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (CmpOperator::IsFloat, is_not_float) => box_create_func!(
             is_float_operation,
@@ -487,8 +474,7 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             cmp,
             eval_context,
             context,
-            custom_message,
-            role
+            custom_message
         ),
         (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
     };
@@ -503,23 +489,21 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                 status.push((each, Status::FAIL));
             }
 
-            // `EMPTY` against a type that cannot be empty used to return this error, and returning it
-            // from here aborted the whole rules file: every other rule's verdict was discarded and the
-            // run exited 255 rather than reporting what it had already found. One unanswerable clause
-            // is a verdict about that clause, not about the file.
+            // `EMPTY` against a type that cannot be empty. Returning this error unconditionally
+            // aborted the whole rules file, discarding every other rule's verdict; one unanswerable
+            // clause is a verdict about that clause, not about the file.
             //
-            // The status is the same fail-closed rule the rest of the evaluator uses. `record_unary_clause`
-            // has already recorded this value with the matching status and the message naming the
-            // offending path, so nothing is lost by not propagating.
-            Err(Error::IncompatibleError(_)) => {
-                status.push((
-                    each,
-                    match role.is_strict() {
-                        true => Status::FAIL,
-                        false => Status::SKIP,
-                    },
-                ));
-            }
+            // An assertion is answered here, as a fail-closed per-value verdict. A *gate* cannot be,
+            // and the reason is worth stating because the obvious fix is wrong: `eval_rule` collapses
+            // both FAIL and SKIP on a condition to a rule-level SKIP, so neither status makes an
+            // unevaluatable gate fail closed -- returning either one silently disarms the block it
+            // guards and the file exits 0. `Status` has no third value to say "could not tell", so the
+            // error is the channel, and the three condition sites catch it and fail their own rule or
+            // block rather than letting it escape. #720's `Outcome` lattice replaces this with a value.
+            Err(e) if is_unevaluatable(&e) => match role.is_strict() {
+                true => status.push((each, Status::FAIL)),
+                false => return Err(e),
+            },
 
             Err(e) => return Err(e),
         }
@@ -1776,18 +1760,25 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
 
         Err(e) => {
             resolver.end_record(&when_context, RecordType::WhenCondition(Status::FAIL))?;
+            let unevaluatable = is_unevaluatable(&e);
             resolver.end_record(
                 &context,
                 RecordType::WhenCheck(BlockCheck {
                     status: Status::FAIL,
-                    message: Some(format!(
-                        "Error {} during type condition evaluation, bailing",
-                        e
-                    )),
+                    message: Some(match unevaluatable {
+                        true => format!("The condition could not be evaluated, so the block it guards is not checked and fails closed: {}", e),
+                        false => format!("Error {} during type condition evaluation, bailing", e),
+                    }),
                     at_least_one_matches: false,
                 }),
             )?;
-            return Err(e);
+            // A condition that cannot be evaluated fails the block it guards rather than aborting the
+            // file. Skipping it would disarm every check inside, which is the direction that turns a
+            // violation into exit 0.
+            return match unevaluatable {
+                true => Ok(Status::FAIL),
+                false => Err(e),
+            };
         }
     };
 
@@ -2172,6 +2163,21 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             }
                         }
 
+                        // A condition this resource cannot answer fails closed for that resource,
+                        // rather than aborting the file or exempting the resource. Exempting it is the
+                        // dangerous direction: the block's clauses would never run and the rule could
+                        // report compliance for a resource nothing checked.
+                        Err(e) if is_unevaluatable(&e) => {
+                            val_resolver.end_record(
+                                &when_context,
+                                RecordType::TypeCondition(Status::FAIL),
+                            )?;
+                            val_resolver
+                                .end_record(&block_context, RecordType::TypeBlock(Status::FAIL))?;
+                            fails += 1;
+                            continue;
+                        }
+
                         Err(e) => {
                             val_resolver.end_record(
                                 &when_context,
@@ -2396,10 +2402,23 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                     RecordType::RuleCheck(NamedStatus {
                         status: Status::FAIL,
                         name: &rule.rule_name,
-                        ..Default::default()
+                        message: match is_unevaluatable(&e) {
+                            true => Some(format!(
+                                "The rule's condition could not be evaluated, so the rule fails \
+                                 rather than being treated as not applicable: {}",
+                                e
+                            )),
+                            false => None,
+                        },
                     }),
                 )?;
-                return Err(e);
+                // The rule fails closed. Returning SKIP -- which is what every *status* on a condition
+                // collapses to a few lines above -- would leave the body unevaluated and the file at
+                // exit 0, so an unevaluatable condition cannot be expressed as a status here.
+                return match is_unevaluatable(&e) {
+                    true => Ok(Status::FAIL),
+                    false => Err(e),
+                };
             }
         }
     } else {

@@ -385,6 +385,58 @@ mod validate_tests {
         );
     }
 
+    /// A gate that cannot be evaluated fails its rule instead of disarming the body.
+    ///
+    /// This is the shape a reviewer found against the first version of the incompatible-type fix, and
+    /// it is the failure mode this whole branch exists to remove: `!EMPTY` on a boolean has no answer,
+    /// the rule was therefore treated as not applicable, and the violation inside it went unreported
+    /// with exit 0. On the merge-base the same file exits 19, because `!EMPTY` on a boolean was
+    /// unconditionally true there -- so the gate opened and the body ran. Fixing the boolean clause
+    /// without fixing the gate turned a bug that over-reported into one that under-reported.
+    ///
+    /// Why a status could not express this: `eval_rule` collapses both FAIL and SKIP on a condition to
+    /// a rule-level SKIP, since "the condition did not match" is the ordinary gating idiom and must
+    /// stay a skip. So an unevaluatable condition travels as an error and is caught at the rule
+    /// boundary, which is what makes the rule fail rather than the file abort.
+    ///
+    /// Asserted on the output as well as the exit code, and on the unrelated rule too: failing closed
+    /// is only correct if it does not also take the rest of the file down.
+    #[test]
+    fn an_unevaluatable_gate_fails_the_rule_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["unevaluatable_gate_guarding_a_violation.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "an unevaluatable gate must not report success; exit 0 here means the guarded body was \
+             silently skipped"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("guarded"),
+            "the rule with the unevaluatable gate should be reported as failing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing the rule closed must not discard the rest of the file:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the report should say the rule failed because its condition could not be evaluated, \
+             rather than leaving the reader to guess:\n{}",
+            output
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
