@@ -603,9 +603,16 @@ where
                 let (cmp, not) = match &each.comparison {
                     Some(cmp) => (cmp.operator, cmp.not_operator_exists),
                     None => {
+                        // "Rule", not "Parameterized Rule". This is the arm for a failure carried on
+                        // the rule rather than on a clause comparison, and at the merge-base only a
+                        // parameterized rule reached it, so the wording was accurate. This branch
+                        // gives ordinary rules a rule-level message -- a condition that could not be
+                        // evaluated -- so an ordinary rule now arrives here and was being announced
+                        // as something it is not. A parameterized rule is still a rule, so dropping
+                        // the word is correct for both rather than a trade between them.
                         writeln!(
                             writer,
-                            "Parameterized Rule {rule_name} failed for {data}. Reason {msg}",
+                            "Rule {rule_name} failed for {data}. Reason {msg}",
                             data = data_file_name,
                             rule_name = each.rule,
                             msg = each.message.replace('\n', "; ")

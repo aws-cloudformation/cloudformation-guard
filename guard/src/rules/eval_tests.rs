@@ -4850,7 +4850,7 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // The `RuleCheck` site is the newest. A rule whose `when` condition cannot be evaluated now fails
     // closed instead of being treated as not applicable, and the reader needs to be told that the rule
     // failed for that reason rather than on one of its own clauses. Verified by running it: the console
-    // prints `Parameterized Rule <name> failed for <file>. Reason The rule's condition could not be
+    // prints `Rule <name> failed for <file>. Reason The rule's condition could not be
     // evaluated ...`, and `an_unevaluatable_gate_fails_the_rule_closed` asserts it end to end.
     //
     // The `WhenCheck` count is unchanged, and one of its two messages is worth a note: its text was

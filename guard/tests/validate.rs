@@ -435,6 +435,13 @@ mod validate_tests {
              rather than leaving the reader to guess:\n{}",
             output
         );
+        assert!(
+            !output.contains("Parameterized Rule"),
+            "this rule takes no parameters; the rule-level failure line used to announce every such \
+             failure as a parameterized rule, which was true only of the callers that reached it \
+             before this branch:\n{}",
+            output
+        );
     }
 
     /// Two skip reasons in one junit report stay two reasons.
