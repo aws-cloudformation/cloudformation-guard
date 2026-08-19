@@ -737,7 +737,7 @@ fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
             alt((
                 map(parse_int_value, |idx| {
                     let idx = match idx {
-                        Value::Int(i) => i as i32,
+                        Value::Int(i) => i,
                         _ => unreachable!(),
                     };
                     QueryPart::Index(idx)
@@ -776,7 +776,7 @@ fn array_index(input: Span) -> IResult<Span, QueryPart> {
         delimited(open_array, parse_int_value, cut(close_array)),
         |idx| {
             let idx = match idx {
-                Value::Int(i) => i as i32,
+                Value::Int(i) => i,
                 _ => unreachable!(),
             };
             QueryPart::Index(idx)

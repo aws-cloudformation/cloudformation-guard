@@ -827,3 +827,54 @@ fn a_range_is_equal_to_itself() {
     // Ranges of different kinds are not equal, and must not error either.
     assert_ne!(&ranges[0].1, &ranges[1].1);
 }
+
+/// An index refers to one element or to none, and never silently to the wrong one.
+///
+/// Two defects met in `index_offset`, both of which ran without complaint and answered wrongly.
+///
+/// The parser narrowed an index literal with `as i32` at both parse sites, so an out-of-range index
+/// wrapped onto a valid element: on `["safe", "other"]`, `Items[4294967296]` became `Items[0]` and a
+/// clause comparing it against `"safe"` passed. Reported by a reviewer with five worked cases, all
+/// covered below.
+///
+/// And a negative index was taken as its own magnitude rather than counted from the end, so on
+/// `[a, b, c]`, `Items[-1]` was `b` and `Items[-3]` was out of bounds. Undocumented and unasserted in
+/// either direction, which is how it survived; `docs/CLAUSES.md` now states the behaviour.
+#[test]
+fn an_index_names_one_element_or_none() {
+    // (index, len, expected offset)
+    let cases: [(i64, usize, Option<usize>); 16] = [
+        // Ordinary positive indexing.
+        (0, 3, Some(0)),
+        (1, 3, Some(1)),
+        (2, 3, Some(2)),
+        (3, 3, None),
+        // Negative counts back from the end, so -1 is the last element and -len is the first.
+        (-1, 3, Some(2)),
+        (-2, 3, Some(1)),
+        (-3, 3, Some(0)),
+        (-4, 3, None),
+        // The reviewer's cases. Each of these used to wrap onto a real element through `as i32`.
+        (4_294_967_295, 2, None),
+        (4_294_967_296, 2, None),
+        (4_294_967_297, 2, None),
+        (i64::MAX, 2, None),
+        (-4_294_967_296, 2, None),
+        // `i64::MIN` has no positive counterpart, which is why the magnitude is taken with
+        // `unsigned_abs` rather than by negating.
+        (i64::MIN, 2, None),
+        // An empty collection has no offsets at all, in either direction.
+        (0, 0, None),
+        (-1, 0, None),
+    ];
+
+    for (index, len, expected) in cases {
+        assert_eq!(
+            index_offset(index, len),
+            expected,
+            "index {} into {} elements",
+            index,
+            len
+        );
+    }
+}

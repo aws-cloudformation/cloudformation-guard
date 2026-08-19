@@ -68,7 +68,13 @@ pub(crate) enum QueryPart<'loc> {
     MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
     AllValues(Option<String>),
     AllIndices(Option<String>),
-    Index(i32),
+    /// An array index as written in the rule, kept at the width the parser reads.
+    ///
+    /// `i32` before, narrowed with `as i32` at both parse sites, which wrapped instead of rejecting:
+    /// `Items[4294967296]` became `Items[0]` and the clause then compared the wrong element and
+    /// passed. Retrieval already reports an out-of-range index as unresolved, so widening is all that
+    /// is needed -- the bounds check does the rejecting.
+    Index(i64),
     Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 

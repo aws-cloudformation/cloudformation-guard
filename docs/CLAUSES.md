@@ -106,6 +106,15 @@ The above clause will `PASS` for the example template as `BucketEncryption` is d
 
 > **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true.
 
+#### Array indexes
+
+An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element — past the end in either direction, or too large to be an offset at all — does not resolve, and the clause reports that rather than selecting a different element.
+
+```
+# the last tag, whatever the length of the list
+Resources.MyBucket.Properties.Tags[-1].Key == "Owner"
+```
+
 #### `is_string`, `is_list`, `is_bool`, `is_int`, `is_float` and `is_struct` operators
 
 `is_string` - Checks if each occurrence of the query is of `string` type.

@@ -657,7 +657,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i32>() {
+                match key.parse::<i64>() {
                     Ok(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
@@ -682,13 +682,9 @@ impl QueryResolver for PathAwareValue {
                                     match query[1] {
                                         QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
-                                            // `unsigned_abs`: see `eval_context::retrieve_index`.
-                                            // `-index` panics on `i32::MIN`.
-                                            let check = index.unsigned_abs() as usize;
-                                            if check < keys.len() {
-                                                vec![keys[check]]
-                                            } else {
-                                                self.map_some_or_error_all(all, query)?
+                                            match index_offset(index, keys.len()) {
+                                                Some(check) => vec![keys[check]],
+                                                None => self.map_some_or_error_all(all, query)?,
                                             }
                                         },
 
@@ -1049,13 +1045,11 @@ impl PathAwareValue {
 
     pub(crate) fn retrieve_index<'v>(
         parent: &PathAwareValue,
-        index: i32,
+        index: i64,
         list: &'v Vec<PathAwareValue>,
         query: &[QueryPart<'_>],
     ) -> Result<&'v PathAwareValue, Error> {
-        // `unsigned_abs`: see `eval_context::retrieve_index`. `-index` panics on `i32::MIN`.
-        let check = index.unsigned_abs() as usize;
-        if check < list.len() {
+        if let Some(check) = index_offset(index, list.len()) {
             Ok(&list[check])
         } else {
             Err(Error::
@@ -1167,6 +1161,30 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
         Ordering::Equal if f > truncated => Ordering::Less,
         ordering => ordering,
     })
+}
+
+/// The offset an array index refers to in a collection of `len` elements, or `None` when it refers to
+/// none of them.
+///
+/// A negative index counts back from the end, which is what the syntax implies and what `[-1]` means
+/// in every other tool that spells it that way. It used to be the magnitude: on `[a, b, c]`,
+/// `Items[-1]` returned `b` and `Items[-3]` was reported out of bounds, so the offset was inverted and
+/// off by one at the same time. Nothing asserted it in either direction, and the behaviour is
+/// undocumented, which is how it survived -- `docs/CLAUSES.md` now describes it.
+///
+/// `try_from` rather than `as usize`, because the index is an `i64`: on a 32-bit target the cast would
+/// truncate and could land back inside the collection, turning an out-of-range index into a wrong
+/// element rather than a rejection.
+pub(crate) fn index_offset(index: i64, len: usize) -> Option<usize> {
+    let magnitude = usize::try_from(index.unsigned_abs()).ok()?;
+    let offset = match index < 0 {
+        true => len.checked_sub(magnitude)?,
+        false => magnitude,
+    };
+    match offset < len {
+        true => Some(offset),
+        false => None,
+    }
 }
 
 /// The `i64` a float is exactly equal to, if there is one.

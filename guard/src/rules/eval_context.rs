@@ -10,7 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::{Location, MapValue, PathAwareValue};
+use crate::rules::path_value::{index_offset, Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -118,18 +118,15 @@ fn extract_variables<'value, 'loc: 'value>(
 
 fn retrieve_index(
     parent: Rc<PathAwareValue>,
-    index: i32,
+    index: i64,
     elements: &Vec<PathAwareValue>,
     query: &[QueryPart<'_>],
 ) -> QueryResult {
-    // `unsigned_abs`, not `-index`. Negating `i32::MIN` is not representable, so the old spelling
-    // panicked with "attempt to negate with overflow" in a debug build and wrapped in release,
-    // where the wrapped value fails the bounds check below with a nonsense diagnostic. It is
-    // reachable from an ordinary-looking rule: the parser parses index literals as `i64` and
-    // narrows with `as i32` (parser.rs `dotted_property` and `array_index`), so `Items[2147483648]`
-    // arrives here as `i32::MIN`. Pinned by `an_out_of_range_index_does_not_panic`.
-    let check = index.unsigned_abs() as usize;
-    if check < elements.len() {
+    // `index_offset` rather than arithmetic here, for two reasons it records: negating `i64::MIN` is
+    // not representable, which used to panic in a debug build and wrap in release, and a negative index
+    // counts from the end rather than being its own magnitude. Pinned by
+    // `an_out_of_range_index_does_not_panic` and `a_negative_index_counts_back_from_the_end`.
+    if let Some(check) = index_offset(index, elements.len()) {
         QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
         QueryResult::UnResolved(
@@ -396,7 +393,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
         }
 
-        QueryPart::Key(key) => match key.parse::<i32>() {
+        QueryPart::Key(key) => match key.parse::<i64>() {
             Ok(idx) => match &*current {
                 PathAwareValue::List((_, list)) => map_resolved(
                     &current,
@@ -445,15 +442,14 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             match &query[query_index+1] {
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
-                                        // `unsigned_abs`: see `retrieve_index`. `-*index` panics on `i32::MIN`.
-                                        let check = index.unsigned_abs() as usize;
-                                        if check < keys.len() {
+                                        // See `index_offset` for why this is not arithmetic.
+                                        if let Some(check) = index_offset(*index, keys.len()) {
                                             (vec![keys[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
                                                 current,
                                                 format!("Index {} on the set of values returned for variable {} on the join, is out of bounds. Length {}, Values = {:?}",
-                                                        check, var, keys.len(), keys),
+                                                        index, var, keys.len(), keys),
                                                 &query[query_index..]
                                             )
                                         }
@@ -1412,21 +1408,40 @@ impl Callable for SubstringFunction {
             format!("substring function requires the {arg} argument to be a number")
         };
 
+        // Rejected rather than narrowed. Both bounds went through `usize::from(n as u16)`, which
+        // wraps: `substring(s, 65536, 65539)` became `substring(s, 0, 3)` and returned the first
+        // three characters, reporting success for a rule that asked about something else entirely.
+        // A negative bound wrapped the other way, so `substring(s, -1, 3)` also answered rather
+        // than complaining. A bound that cannot be an offset is an error, not another offset.
+        let offset = |index: usize, value: &PathAwareValue| -> Result<usize> {
+            let n = match value {
+                PathAwareValue::Int((_, n)) => *n,
+                // A float bound truncates toward zero, which is what the previous cast did for the
+                // values it did not mangle, so this keeps `substring(s, 1.9, 3)` reading from 1.
+                PathAwareValue::Float((_, n)) if n.is_finite() => *n as i64,
+                _ => return Err(Error::ParseError(substring_err_msg(index))),
+            };
+            usize::try_from(n).map_err(|_| {
+                Error::ParseError(format!(
+                    "substring function requires the {} argument to be an offset into the string, \
+                     which {} is not",
+                    match index {
+                        2 => "second",
+                        3 => "third",
+                        _ => unreachable!(),
+                    },
+                    n
+                ))
+            })
+        };
+
         let from = match &args[1][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            },
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(2, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(2))),
         };
 
         let to = match &args[2][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            },
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(3, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(3))),
         };
 
