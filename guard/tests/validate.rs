@@ -1028,17 +1028,12 @@ mod validate_tests {
             .collect();
         assert_eq!(
             notices.len(),
-            2,
-            "expected one notice per clause, got {:?} from stderr {:?}",
+            1,
+            "one notice, not two: this branch makes the empty-collection comparison report a failure, \
+             so the notice that warned about it went with the behaviour it described. Got {:?} from \
+             stderr {:?}",
             notices,
             stderr
-        );
-        assert!(
-            notices
-                .iter()
-                .any(|n| n.contains("without comparing anything")),
-            "the empty-collection clause should say it compared nothing, got {:?}",
-            notices
         );
         assert!(
             notices

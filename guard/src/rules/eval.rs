@@ -246,14 +246,6 @@ fn empty_reference_message(negated: bool) -> String {
     )
 }
 
-/// Notice for a comparison that passed without comparing anything, because the value it selected was
-/// an empty collection.
-///
-/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
-/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
-/// which makes it the odd one out rather than a design choice. It is not changed in this release
-/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
-/// that before a pipeline does.
 /// A notice when no left-hand value can be compared with any element of the right-hand list.
 ///
 /// Returns `None` the moment one pair is comparable, so a mixed list that contains anything of the
@@ -296,15 +288,6 @@ fn incomparable_membership(
         }
     }
     Some(incomparable_membership_notice(context))
-}
-
-fn vacuous_comparison_notice(context: &str) -> String {
-    format!(
-        "DEPRECATION: {} passed without comparing anything, because the query selected an empty \
-         collection. From the next release this reports a failure, matching a missing key and an empty \
-         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected.",
-        context
-    )
 }
 
 /// Notice for `NOT IN` against a list holding nothing the value can be compared with.
@@ -692,20 +675,35 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                 status.push((each, Outcome::Violated));
             }
 
-            // `EMPTY` against a type that cannot be empty. Returning this error from here aborted the
-            // whole rules file, discarding every other rule's verdict; one unanswerable clause is a
-            // verdict about that clause, not about the file.
+            // `EMPTY` against a type that cannot be empty. Returning this error unconditionally
+            // aborted the whole rules file, discarding every other rule's verdict; one unanswerable
+            // clause is a verdict about that clause, not about the file.
             //
-            // `Outcome::Unevaluatable` is what its own documentation describes -- "a reference
-            // resolved to no values, or a type did not support the operation" -- so the role is
-            // applied once, by `to_status`, rather than here. The version of this fix on
-            // #717 predates the lattice and had to choose the status itself.
+            // Split by role, and the split is load-bearing rather than a leftover from before the
+            // lattice existed. `Outcome::Unevaluatable` describes this exactly -- "a reference resolved
+            // to no values, or a type did not support the operation" -- so an assertion is expressed as
+            // that value and `to_status` applies the role once.
+            //
+            // A gate cannot be, and taking the lattice for both was measured to reintroduce the defect
+            // it was meant to remove. `to_status(Gate)` maps `Unevaluatable` to SKIP, `eval_rule` maps
+            // every non-PASS condition to a rule-level SKIP, and the guarded body is therefore never
+            // evaluated -- so `rule r when Enabled !EMPTY { MustBeTrue == true }` exits 0 with the
+            // violation inside it unreported. That is the case a reviewer found against #717, fixed
+            // there by `4c8c650`, and it came straight back when this branch's version of this arm was
+            // taken wholesale during a rebase.
+            //
+            // So the error stays the channel for a condition. The three condition sites catch it and
+            // fail their own rule or block, which is what makes an unevaluatable gate fail closed.
+            // Wiring `Outcome::closes_gate` into those sites would let this arm be uniform, and it is
+            // the obvious next step for this branch -- the vocabulary is already here and only the
+            // tests use it.
             //
             // `record_unary_clause` has already recorded this value with the matching status and the
             // message naming the offending path, so nothing is lost by not propagating.
-            Err(Error::IncompatibleError(_)) => {
-                status.push((each, Outcome::Unevaluatable));
-            }
+            Err(e) if is_unevaluatable(&e) => match role.is_strict() {
+                true => status.push((each, Outcome::Unevaluatable)),
+                false => return Err(e),
+            },
 
             Err(e) => return Err(e),
         }
@@ -1924,19 +1922,6 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 Ok(status)
             }
             EvaluationResult::QueryValueResult(result) => {
-                // Taken before the fold consumes the vector. #717 warns here that a comparison which
-                // produced no per-value result at all is about to answer on the strength of nothing.
-                //
-                // This PR is what the notice points at, and it changes the answer rather than only the
-                // wording: an empty fold returns `Outcome::identity()`, which is `NotApplicable`, so the
-                // clause reports "did not apply" where it used to report PASS. The notice says "reports
-                // a failure" -- accurate for the empty-collection fix in `e9b143c`, not for this arm --
-                // so reconciling the two texts belongs to this PR, on the same principle that puts the
-                // `docs/CLAUSES.md` rewrite here: whoever changes the behaviour changes the sentence.
-                let compared_nothing = result.is_empty();
-                if compared_nothing && all {
-                    resolver.record_deprecation(vacuous_comparison_notice(&blk_context));
-                }
                 // Folded through `Outcome` rather than by counting passes and fails.
                 //
                 // The counting version could not represent a third answer. It matched

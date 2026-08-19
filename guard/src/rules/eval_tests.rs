@@ -7256,6 +7256,11 @@ fn every_recorded_explanation_has_a_rendering_path() {
     //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
+    //
+    // Nineteen rather than eighteen on the parent branch: the NotComparable arm records
+    // `Some(nc.reason)` on a ClauseValueCheck, a variant that already had a rendering path.
+    // Checked rather than assumed -- `Properties.Size > 'not-a-number'` against an integer Size
+    // prints `Error = [... not comparable int, String]` in the console reporter.
     const SITES_EXPECTED: usize = 19;
 
     assert_eq!(
@@ -9116,29 +9121,32 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     }
 
     // The cells that do not agree, split by whether the current answer contradicts the specification
-    // or merely contradicts this oracle. Conflating the two was misleading: 37 of the 48 are behaviour
-    // the documentation describes on purpose, and reading a single count of 48 as "48 defects"
-    // overstates the position by a factor of four.
+    // or merely contradicts this oracle. Conflating the two was misleading: 36 of the 42 are behaviour
+    // the documentation describes on purpose, and reading a single count as that many defects
+    // overstates the position by a factor of seven.
 
-    // Contradicts the specification. Each of these passes while comparing nothing.
+    // Seven cells left these lists on this branch and none joined, which is worth reading before
+    // trusting the counts. `e9b143c` is why: a comparison against an empty collection now fails in its
+    // plain polarity and answers SKIP in its negated one, because an empty fold returns
+    // `Outcome::identity()`, which is `NotApplicable`. Both are what the oracle asks for -- the plain
+    // form is a claim over nothing, and the negated form is vacuously true and asserts nothing -- so
+    // the six empty-collection assertion cells the parent branch violates are gone here.
     //
-    // `docs/QUERY_AND_FILTERING.md` lists `Tags: []` beside a missing key and an empty map as retrieval
-    // errors and states that all retrieval errors are failures. Measured, the other two do fail, so the
-    // empty-collection rows are the outlier rather than a design choice. #720 fixes them.
+    // The seventh is `in_list/empty_list/not/gate`, which the parent answers SKIP and this branch
+    // answers FAIL. The parent's SKIP is the collapse this PR exists to remove: its condition
+    // resolved to FAIL, `eval_rule` mapped that to a rule-level SKIP, and the guarded violation went
+    // unreported at exit 0.
     //
-    // `docs/CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be decided,
-    // and the clause fails rather than guessing", and `docs/KNOWN_ISSUES.md` records the silent
-    // conversion to `false` as a tracked defect. `!=` honours that; `NOT IN` does not. Fixing it needs
-    // five registry rules to change first -- see the revert in `9a9600d` -- so both classes now emit a
-    // deprecation notice a release ahead of the change.
-    const VIOLATES_THE_SPEC: [&str; 12] = [
-        "eq_50/empty_list/not/assert",
-        "eq_50/empty_list/plain/assert",
-        "gt_10/empty_list/not/assert",
-        "gt_10/empty_list/plain/assert",
+    // What remains contradicts the specification: `docs/CLAUSES.md` says a comparison across kinds
+    // that are not both numeric "cannot be decided, and the clause fails rather than guessing", and
+    // `docs/KNOWN_ISSUES.md` records the silent conversion to `false` as a tracked defect. `!=`
+    // honours that; `NOT IN` does not, so a negated membership test against a string, a map, a
+    // boolean or null passes while comparing incomparable kinds. Fixing it changes five registry
+    // rules from FAIL to PASS -- see the revert in `9a9600d` -- so it emits a deprecation notice a
+    // release ahead of the change rather than breaking those rules here.
+    //
+    const VIOLATES_THE_SPEC: [&str; 6] = [
         "in_list/bool_true/not/assert",
-        "in_list/empty_list/not/assert",
-        "in_list/empty_list/plain/assert",
         "in_list/empty_map/not/assert",
         "in_list/empty_string/not/assert",
         "in_list/map/not/assert",
@@ -9156,7 +9164,7 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     // They are still the wrong answer, and #720 changes it: `Outcome::Unevaluatable` lets a gate say
     // "could not tell" instead of collapsing into "did not match". That PR owns the rewrite of those
     // lines, so that no merged state has the document disagreeing with the code.
-    const CONFORMS_TO_THE_SPEC: [&str; 37] = [
+    const CONFORMS_TO_THE_SPEC: [&str; 36] = [
         "eq_50/absent/not/gate",
         "eq_50/absent/plain/gate",
         "eq_50/bool_true/not/gate",
@@ -9188,7 +9196,6 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         "in_list/absent/not/gate",
         "in_list/absent/plain/gate",
         "in_list/bool_true/plain/gate",
-        "in_list/empty_list/not/gate",
         "in_list/empty_map/plain/gate",
         "in_list/empty_string/plain/gate",
         "in_list/map/plain/gate",
