@@ -6154,7 +6154,8 @@ fn a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block() -> Result<()>
 /// 2. **Determinism.** The same input evaluated twice gives the same status.
 /// 3. **Negation discriminates.** For a clause both polarities can decide, `not X` and `X` must not
 ///    agree. A clause that answers the same either way has stopped checking anything, which is the
-///    defect `a54e4ca` and `0e140b3` fixed.
+///    defect the two clause-level negation commits fixed, for binary comparisons and for
+///    parameterized rule calls.
 /// 4. **An unanswerable gate does not disarm its body.** Where the body fails on its own, wrapping it
 ///    in a gate the evaluator cannot answer must not turn the verdict into success. Added after a
 ///    reviewer found that exact loss by hand; the 252 cells here all guarded a body and none of them
@@ -6305,7 +6306,7 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     //
     // The stronger form is asserted where decidability is known: over the two templates whose
     // properties are present and of the expected type, every clause here can be decided, so a `not`
-    // that changed nothing is the defect `a54e4ca` and `0e140b3` fixed -- and that defect made the
+    // that changed nothing is the dropped-negation defect -- and that defect made the
     // pair identical, which the both-PASS rule alone would miss whenever the answer was FAIL.
     const DECIDABLE: [&str; 2] = ["resolvable", "violating"];
     // Decidability is a property of the clause as well as the template. `EMPTY` on an integer cannot
@@ -6740,7 +6741,7 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     //
     // `docs/QUERY_AND_FILTERING.md` lists `Tags: []` beside a missing key and an empty map as retrieval
     // errors and states that all retrieval errors are failures. Measured, the other two do fail, so the
-    // empty-collection rows are the outlier rather than a design choice. #720's `e9b143c` fixes them.
+    // empty-collection rows are the outlier rather than a design choice. #720 fixes them.
     //
     // `docs/CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be decided,
     // and the clause fails rather than guessing", and `docs/KNOWN_ISSUES.md` records the silent

@@ -490,7 +490,8 @@ mod validate_tests {
 
     /// A comparison whose left-hand variable resolved to nothing fails closed.
     ///
-    /// `3f8466e` closed this on the right-hand side and left the left open, so `%x == 'abc'`,
+    /// An earlier commit on this branch closed this on the right-hand side and left the left open,
+    /// so `%x == 'abc'`,
     /// `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held no values. A rule whose only check is one
     /// of those reported compliance having compared nothing, which is the same bypass the right-hand
     /// fix removed.

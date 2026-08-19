@@ -995,7 +995,7 @@ fn binary_operation<'value, 'loc: 'value>(
         // has to stay a SKIP; failing it would fail every template that omits the resource type.
         //
         // A lone variable that resolved to nothing is the mirror of the empty *right*-hand reference
-        // that `3f8466e` closed. `%x == 'abc'`, `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held
+        // closed earlier on this branch. `%x == 'abc'`, `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held
         // no values, so a rule whose only check was one of those reported compliance having compared
         // nothing -- the same bypass, on the other operand. It fails closed as an assertion, and stays
         // a SKIP as a gate for the reason given on the `EmptyRhsUnsatisfiable` arm below: a FAIL on a
