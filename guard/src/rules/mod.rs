@@ -377,6 +377,14 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }
+
+    /// Note that a clause took a path whose answer is going to change, without changing this run's
+    /// answer.
+    ///
+    /// Deliberately returns nothing, so a notice cannot influence a verdict: the evaluator can only
+    /// deposit a string, and no evaluation path reads one back. Defaulted to a no-op because the
+    /// nested scopes forward it and the test doubles do not care.
+    fn record_deprecation(&mut self, _notice: String) {}
 }
 
 pub(crate) trait EvaluationContext {

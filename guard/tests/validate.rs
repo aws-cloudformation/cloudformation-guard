@@ -559,6 +559,111 @@ mod validate_tests {
         );
     }
 
+    /// Two clauses that pass today, and will not in a later release, say so on stderr without changing
+    /// this run's answer.
+    ///
+    /// Both are spec violations rather than judgment calls. `QUERY_AND_FILTERING.md` lists `Tags: []`
+    /// beside a missing key and an empty map as retrieval errors and states that all retrieval errors
+    /// are failures; the other two do fail, so a comparison against an empty collection passing is the
+    /// outlier. And `CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be
+    /// decided, and the clause fails rather than guessing", which `!=` honours and `NOT IN` does not.
+    ///
+    /// Neither is changed yet, for different reasons: the empty-collection answer is #720's to change,
+    /// and `NOT IN` cannot change until five rules in aws-guard-rules-registry stop relying on the
+    /// current reading -- failing closed there makes a filter select fewer resources and turns a
+    /// reported violation into a pass. So the notice goes out a release ahead of the change.
+    ///
+    /// On stderr, not in the report: the report on stdout is what pipelines parse, and a notice about a
+    /// future release is not part of this run's result. This also keeps every golden file untouched.
+    ///
+    /// The assertion covers the verdict as well as the notices, because a deprecation notice that moves
+    /// a verdict is not a notice.
+    #[test]
+    fn clauses_whose_answer_changes_later_warn_now() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["vacuous-and-incomparable-template.yaml"])
+            .rules(vec!["vacuous_and_incomparable_clauses.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the notices must not change the verdict; both clauses still pass in this release"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+        assert_eq!(
+            notices.len(),
+            2,
+            "expected one notice per clause, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("without comparing anything")),
+            "the empty-collection clause should say it compared nothing, got {:?}",
+            notices
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("could not be compared with any element")),
+            "the membership clause should say nothing in the list was comparable, got {:?}",
+            notices
+        );
+    }
+
+    /// The counterpart: clauses that are not changing stay silent.
+    ///
+    /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be
+    /// mistaken for the ones above -- a filtered query that matched nothing, a `some` clause over the
+    /// same empty collection whose answer is already FAIL and is not changing, and ordinary comparisons
+    /// that decide normally.
+    #[test]
+    fn clauses_whose_answer_is_unchanged_stay_quiet() {
+        for (label, rules_file, data_file) in [
+            (
+                "a filtered query that matched nothing",
+                "large_volumes_encrypted_type_block.guard",
+                "no-volumes-template.yaml",
+            ),
+            (
+                "ordinary comparisons that decide",
+                "denied_names_guarded_by_not_empty.guard",
+                "bucket-with-no-kms-keys-template.yaml",
+            ),
+        ] {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            ValidateTestRunner::default()
+                .data(vec![data_file])
+                .rules(vec![rules_file])
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader);
+
+            let stderr = writer.err_to_stripped().expect("failed to read stderr");
+            assert!(
+                !stderr.contains("DEPRECATION"),
+                "{} should emit no notice, got: {}",
+                label,
+                stderr
+            );
+        }
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly

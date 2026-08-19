@@ -50,6 +50,11 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     rules_status: HashMap<&'value str, Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     recorder: RecordTracker<'value>,
+    /// Notices about behaviour that changes in a later release, collected during evaluation.
+    ///
+    /// A set rather than a list: a clause inside a type block is evaluated once per matched resource,
+    /// and ten identical lines about the same rule tell the reader nothing the first one did not.
+    deprecations: BTreeSet<String>,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -1001,6 +1006,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
             final_event: None,
             events: vec![],
         },
+        deprecations: BTreeSet::new(),
     }
 }
 
@@ -1086,7 +1092,21 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     }
 }
 
+impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
+    /// The deprecation notices collected while evaluating, in a stable order.
+    ///
+    /// Read by the commands after evaluation so the notices can be written to stderr, which keeps them
+    /// out of the report on stdout that pipelines parse.
+    pub(crate) fn deprecations(&self) -> impl Iterator<Item = &String> {
+        self.deprecations.iter()
+    }
+}
+
 impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.deprecations.insert(notice);
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         let root = self.root();
         query_retrieval(0, query, root, self)
@@ -1530,6 +1550,10 @@ impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         query_retrieval(0, query, self.root(), self.parent)
     }
@@ -1573,6 +1597,10 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'e
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'value, 'loc, 'eval> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         query_retrieval(0, query, self.root(), self)
     }

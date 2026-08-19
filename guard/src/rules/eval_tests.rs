@@ -6814,3 +6814,51 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
 
     Ok(())
 }
+
+#[test]
+fn probe_vacuous_pass_record_shape() -> Result<()> {
+    fn dump(r: &EventRecord<'_>, depth: usize) {
+        let kind = match &r.container {
+            Some(RecordType::FileCheck(n)) => format!("FileCheck {:?}", n.status),
+            Some(RecordType::RuleCheck(n)) => format!("RuleCheck {:?}", n.status),
+            Some(RecordType::GuardClauseBlockCheck(b)) => {
+                format!("GuardClauseBlockCheck {:?}", b.status)
+            }
+            Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => {
+                "ClauseValueCheck Success".to_string()
+            }
+            Some(RecordType::ClauseValueCheck(_)) => "ClauseValueCheck other".to_string(),
+            Some(other) => format!("{:?}", std::mem::discriminant(other)),
+            None => "none".to_string(),
+        };
+        println!(
+            "PROBE {}{} children={}",
+            "  ".repeat(depth),
+            kind,
+            r.children.len()
+        );
+        for c in &r.children {
+            dump(c, depth + 1);
+        }
+    }
+    for (label, data) in [
+        (
+            "empty list  Size: []",
+            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": [] } } } }"#,
+        ),
+        (
+            "normal pass Size: 50",
+            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50 } } } }"#,
+        ),
+    ] {
+        let rules =
+            "rule r {\n    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size == 50\n}\n";
+        let rules_file = RulesFile::try_from(rules)?;
+        let values = PathAwareValue::try_from(data)?;
+        let mut root = root_scope(&rules_file, Rc::new(values));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        println!("PROBE === {} -> {:?}", label, status);
+        dump(&root.reset_recorder().extract(), 0);
+    }
+    Ok(())
+}

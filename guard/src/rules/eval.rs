@@ -208,6 +208,86 @@ fn empty_reference_message(negated: bool) -> String {
     )
 }
 
+/// Notice for a comparison that passed without comparing anything, because the value it selected was
+/// an empty collection.
+///
+/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
+/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
+/// which makes it the odd one out rather than a design choice. It is not changed in this release
+/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
+/// that before a pipeline does.
+/// A notice when no left-hand value can be compared with any element of the right-hand list.
+///
+/// Returns `None` the moment one pair is comparable, so a mixed list that contains anything of the
+/// right kind is left alone -- that case decides on the comparable element and is not changing.
+fn incomparable_membership(
+    lhs: &[QueryResult],
+    rhs: &[QueryResult],
+    context: &str,
+) -> Option<String> {
+    let values = |results: &[QueryResult]| -> Vec<Rc<PathAwareValue>> {
+        results
+            .iter()
+            .filter_map(|r| match r {
+                QueryResult::Resolved(v) | QueryResult::Literal(v) => Some(Rc::clone(v)),
+                QueryResult::UnResolved(_) => None,
+            })
+            .collect()
+    };
+    let lhs_values = values(lhs);
+    if lhs_values.is_empty() {
+        return None;
+    }
+    let mut elements = Vec::new();
+    for each in values(rhs) {
+        match &*each {
+            PathAwareValue::List((_, list)) => {
+                elements.extend(list.iter().cloned().map(Rc::new));
+            }
+            _ => elements.push(Rc::clone(&each)),
+        }
+    }
+    if elements.is_empty() {
+        return None;
+    }
+    for value in &lhs_values {
+        for element in &elements {
+            if compare_eq(value, element).is_ok() {
+                return None;
+            }
+        }
+    }
+    Some(incomparable_membership_notice(context))
+}
+
+fn vacuous_comparison_notice(context: &str) -> String {
+    format!(
+        "DEPRECATION: {} passed without comparing anything, because the query selected an empty \
+         collection. From the next release this reports a failure, matching a missing key and an empty \
+         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected.",
+        context
+    )
+}
+
+/// Notice for `NOT IN` against a list holding nothing the value can be compared with.
+///
+/// `docs/CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be decided, and
+/// the clause fails rather than guessing", and `docs/KNOWN_ISSUES.md` records the silent conversion to
+/// `false` as a tracked defect. `!=` already fails closed on the same operands; `NOT IN` does not.
+///
+/// Not changed in this release, and the reason is specific rather than caution: five rules in
+/// aws-guard-rules-registry use `NOT IN` inside a filter predicate to catch a `!Ref`-shaped value, and
+/// failing closed makes the filter select fewer resources, which turns a reported violation into a
+/// pass. Those rules have to change first.
+fn incomparable_membership_notice(context: &str) -> String {
+    format!(
+        "DEPRECATION: {} passed because the value could not be compared with any element of the list, \
+         which is currently read as \"not a member\". A future release fails closed here, as `!=` \
+         already does. Compare against values of the same kind, or use `!=` if that is the intent.",
+        context
+    )
+}
+
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
 /// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
@@ -895,6 +975,15 @@ fn binary_operation<'value, 'loc: 'value>(
     role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
+    // Checked before the comparison rather than after, because the answer is not recoverable from the
+    // result: the not-flag has already turned "no element matched" into a success by then, and a
+    // success from an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this,
+    // so the extra comparisons cost nothing on any other clause.
+    if cmp.1 && cmp.0 == CmpOperator::In {
+        if let Some(notice) = incomparable_membership(&lhs, rhs, &context) {
+            eval_context.record_deprecation(notice);
+        }
+    }
     let results = cmp.compare(&lhs, rhs)?;
     match results {
         // The left-hand query selected nothing, so there was nothing to compare. Which answer that
@@ -1409,6 +1498,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 Ok(status)
             }
             EvaluationResult::QueryValueResult(result) => {
+                // Taken before the fold below consumes the vector.
+                let compared_nothing = result.is_empty();
                 let outcome = loop {
                     let mut fails = 0;
                     let mut pass = 0;
@@ -1439,6 +1530,17 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     // whatever the two branches below already gave it.
                     if pass == 0 && fails == 0 && skips > 0 {
                         break Status::SKIP;
+                    }
+                    // A comparison that produced no per-value result at all, and is about to answer
+                    // PASS on the strength of it. An empty *query* does not reach here -- that returns
+                    // SKIP earlier -- so this is specifically a query that resolved to a collection
+                    // which then expanded to nothing.
+                    //
+                    // Gated on the answer being PASS, not merely on the vector being empty: under
+                    // `some` the same emptiness already answers FAIL, and that answer is not changing,
+                    // so warning there would train the reader to ignore the notice.
+                    if compared_nothing && all {
+                        resolver.record_deprecation(vacuous_comparison_notice(&blk_context));
                     }
                     if all {
                         if fails > 0 {
