@@ -1,0 +1,59 @@
+{
+  "rule_file": "resources/test-command/rule-dir/five_rules_one_result_group.guard",
+  "test_cases": [
+    {
+      "name": "All five properties set, every rule passes",
+      "passed_rules": [
+        {
+          "name": "S3_BUCKET_NAME_SET",
+          "evaluated": "PASS"
+        },
+        {
+          "name": "S3_ENCRYPTION_SET",
+          "evaluated": "PASS"
+        },
+        {
+          "name": "S3_LOGGING_ENABLED",
+          "evaluated": "PASS"
+        },
+        {
+          "name": "S3_PUBLIC_ACCESS_BLOCKED",
+          "evaluated": "PASS"
+        },
+        {
+          "name": "S3_VERSIONING_ENABLED",
+          "evaluated": "PASS"
+        }
+      ],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "No bucket, every rule skips",
+      "passed_rules": [
+        {
+          "name": "S3_BUCKET_NAME_SET",
+          "evaluated": "SKIP"
+        },
+        {
+          "name": "S3_ENCRYPTION_SET",
+          "evaluated": "SKIP"
+        },
+        {
+          "name": "S3_LOGGING_ENABLED",
+          "evaluated": "SKIP"
+        },
+        {
+          "name": "S3_PUBLIC_ACCESS_BLOCKED",
+          "evaluated": "SKIP"
+        },
+        {
+          "name": "S3_VERSIONING_ENABLED",
+          "evaluated": "SKIP"
+        }
+      ],
+      "failed_rules": [],
+      "skipped_rules": []
+    }
+  ]
+}

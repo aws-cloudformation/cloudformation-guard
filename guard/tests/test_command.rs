@@ -364,6 +364,57 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
+    /// Two runs of the same command over the same files must produce the same report.
+    ///
+    /// They did not. Both test reporters iterate the map built by `get_by_rules`, which was a
+    /// `HashMap`, so the sequence of rule names inside a result group came from `RandomState` and
+    /// was reseeded every process. Ten consecutive runs of this fixture produced ten different
+    /// outputs before the fix.
+    ///
+    /// Nothing in this file could see that, because every other fixture has one rule per result
+    /// group, and with one entry hash order and sorted order are the same. So the fixture is the
+    /// substance of the test: five rules whose declared order is not alphabetical, listed in a
+    /// single group. A golden file over that shape is a live detector -- reverting `get_by_rules`
+    /// to a `HashMap` fails it on all but roughly one run in a hundred and twenty per case, and
+    /// there are two cases.
+    ///
+    /// Both reporters are covered because both read the same map: the generic one prints the group
+    /// directly, and the structured one fills `passed_rules` in iteration order, which JSON, YAML
+    /// and JUnit consumers then see.
+    #[rstest]
+    #[case("", "five_rules_one_result_group.out")]
+    #[case("json", "five_rules_one_result_group_json.out")]
+    fn rules_within_a_result_group_are_listed_in_a_fixed_order(
+        #[case] output: &str,
+        #[case] expected: &str,
+    ) {
+        const DATA: &str = "resources/test-command/data-dir/five_rules_one_result_group.yaml";
+        const RULES: &str = "resources/test-command/rule-dir/five_rules_one_result_group.guard";
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        // The builder ties its borrow to the whole chain, so the default format cannot be expressed
+        // by skipping a setter mid-chain; each case builds its own.
+        let status_code = match output {
+            "" => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .run(&mut writer, &mut reader),
+            _ => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .output_format(output)
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/{expected}").as_str(),
+            writer
+        );
+    }
+
     #[test]
     fn test_sarif_output_with_expected_failures() {
         let mut reader = Reader::default();

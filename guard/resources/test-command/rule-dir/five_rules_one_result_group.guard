@@ -1,0 +1,30 @@
+#
+# Five rules whose source order is deliberately not alphabetical, so that a report listing them in
+# insertion order differs from one listing them sorted. Every other fixture under
+# `resources/test-command` has one rule per result group, where the two orders cannot differ, which
+# is why nothing here caught the test reporters emitting rule names in hash order.
+#
+# Sorted, the names run BUCKET_NAME, ENCRYPTION, LOGGING, PUBLIC_ACCESS, VERSIONING. Declared, they
+# run in the order below. All five pass on the accompanying template so they land in one group.
+#
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule S3_VERSIONING_ENABLED when %buckets !empty {
+  %buckets.Properties.VersioningConfiguration.Status == 'Enabled'
+}
+
+rule S3_BUCKET_NAME_SET when %buckets !empty {
+  %buckets.Properties.BucketName exists
+}
+
+rule S3_PUBLIC_ACCESS_BLOCKED when %buckets !empty {
+  %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+}
+
+rule S3_LOGGING_ENABLED when %buckets !empty {
+  %buckets.Properties.LoggingConfiguration exists
+}
+
+rule S3_ENCRYPTION_SET when %buckets !empty {
+  %buckets.Properties.BucketEncryption exists
+}
