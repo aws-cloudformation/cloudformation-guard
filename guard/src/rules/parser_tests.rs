@@ -125,9 +125,40 @@ fn test_parse_bool() {
             context: "".to_string()
         }))
     );
-    let s = "true1234";
-    let cmp = unsafe { Span::new_from_raw_offset(4, 1, "1234", "") };
-    assert_eq!(parse_bool(from_str2(s)), Ok((cmp, Value::Bool(true))));
+    // All three spellings, because `TRUE` was missing and fell through to a property access. In a
+    // `when` gate that made the condition compare a property against a property named `TRUE`, which no
+    // document has, so the gate never fired and the rule it guarded never ran.
+    for spelling in ["true", "True", "TRUE"] {
+        let cmp = unsafe { Span::new_from_raw_offset(spelling.len(), 1, "", "") };
+        assert_eq!(
+            parse_bool(from_str2(spelling)),
+            Ok((cmp, Value::Bool(true))),
+            "{} is a boolean",
+            spelling
+        );
+    }
+    for spelling in ["false", "False", "FALSE"] {
+        let cmp = unsafe { Span::new_from_raw_offset(spelling.len(), 1, "", "") };
+        assert_eq!(
+            parse_bool(from_str2(spelling)),
+            Ok((cmp, Value::Bool(false))),
+            "{} is a boolean",
+            spelling
+        );
+    }
+
+    // A keyword may not run into an identifier. This used to return `Bool(true)` and leave the rest
+    // behind, and the caller then read the remainder as a separate clause: `Public == falseFlag` became
+    // `Public == false` AND a reference to a rule named `Flag`, reporting PASS where the author asked
+    // whether one property equalled another. Failing here is what lets the alternation fall through to
+    // `property_name`, which is the reading that was written.
+    for not_a_bool in ["true1234", "trueFlag", "false_flag", "nullable"] {
+        assert!(
+            parse_bool(from_str2(not_a_bool)).is_err(),
+            "{} is a property name, not a boolean followed by something else",
+            not_a_bool
+        );
+    }
 }
 
 #[rstest::rstest]

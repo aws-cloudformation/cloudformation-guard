@@ -192,6 +192,25 @@ fn reject_trailing_identifier<'a>(
     }
 }
 
+/// A keyword, which may not run straight into an identifier.
+///
+/// `tag` matches a prefix, so `tag("true")` matches the first four characters of `trueFlag` and leaves
+/// `Flag` behind. A bare identifier is a valid clause -- a reference to a rule by that name -- so
+/// `Public == falseFlag` became `Public == false` AND a reference to a rule called `Flag`, and with such
+/// a rule present it reported PASS where the author asked whether one property equalled another.
+///
+/// Rejecting the trailing identifier makes the keyword parser fail, and the alternation then falls
+/// through to `property_name`, which is the reading the author wrote: `falseFlag` is a property.
+/// `this.foo`, `keys ==` and `EXISTS` at end of line are unaffected, because none of them is followed by
+/// an identifier character.
+fn keyword<'a>(word: &'static str) -> impl Fn(Span<'a>) -> IResult<'a, Span<'a>, ()> {
+    move |input: Span<'a>| {
+        let (remaining, matched) = tag(word)(input)?;
+        let (remaining, _) = reject_trailing_identifier(remaining, matched)?;
+        Ok((remaining, ()))
+    }
+}
+
 pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-i))
@@ -251,9 +270,26 @@ pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
     //    )(input)
 }
 
+/// `true`, `True` and `TRUE`, and the three matching spellings of false.
+///
+/// `TRUE` was missing, and the cost was not a parse error. It fell past every value parser into the
+/// property-access branch, so `when Properties.Audited == TRUE { ... }` compared a property against
+/// another property named `TRUE`, which no document has. The gate never fired, the body never ran, and
+/// a rule written to reject public buckets reported them clean at exit 0. Changing one character to
+/// `True` made the same file exit 19.
+///
+/// Nothing chose lower-plus-Title here and lower-plus-UPPER for null; that is two people adding one
+/// spelling each. All three are standard, and a gate that can never fire is indistinguishable in the
+/// output from a gate that correctly did not apply, so there was no signal to notice it by.
 fn parse_bool(input: Span) -> IResult<Span, Value> {
-    let true_parser = value(Value::Bool(true), alt((tag("true"), tag("True"))));
-    let false_parser = value(Value::Bool(false), alt((tag("false"), tag("False"))));
+    let true_parser = value(
+        Value::Bool(true),
+        alt((keyword("true"), keyword("True"), keyword("TRUE"))),
+    );
+    let false_parser = value(
+        Value::Bool(false),
+        alt((keyword("false"), keyword("False"), keyword("FALSE"))),
+    );
     alt((true_parser, false_parser))(input)
 }
 
@@ -451,8 +487,12 @@ fn parse_map(input: Span) -> IResult<Span, Value> {
     ))
 }
 
+/// `null`, `NULL` and `Null`. See `parse_bool` for why the missing spelling mattered.
 fn parse_null(input: Span) -> IResult<Span, Value> {
-    value(Value::Null, alt((tag("null"), tag("NULL"))))(input)
+    value(
+        Value::Null,
+        alt((keyword("null"), keyword("NULL"), keyword("Null"))),
+    )(input)
 }
 
 pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
@@ -644,15 +684,21 @@ fn eq(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 }
 
 fn keys(input: Span) -> IResult<Span, ()> {
-    value((), alt((tag("KEYS"), tag("keys"))))(input)
+    value((), alt((keyword("KEYS"), keyword("keys"))))(input)
 }
 
 fn exists(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::Exists, alt((tag("EXISTS"), tag("exists"))))(input)
+    value(
+        CmpOperator::Exists,
+        alt((keyword("EXISTS"), keyword("exists"))),
+    )(input)
 }
 
 fn empty(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::Empty, alt((tag("EMPTY"), tag("empty"))))(input)
+    value(
+        CmpOperator::Empty,
+        alt((keyword("EMPTY"), keyword("empty"))),
+    )(input)
 }
 
 fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
@@ -945,12 +991,18 @@ fn some_keyword(input: Span) -> IResult<Span, bool> {
     )(input)
 }
 
+/// `this`, with the word boundary `some_keyword` has and this one did not.
+///
+/// `this_keyword` is the first branch of `access`, so it beat `property_name`: a property named
+/// `thisThing` could not be written at all on the left of a clause, and on the right it split into
+/// `this` plus a reference to a rule named `Thing`. `something == 1` has always parsed, because
+/// `some_keyword` requires trailing whitespace; the asymmetry was an omission, not a policy.
 fn this_keyword(input: Span) -> IResult<Span, QueryPart> {
     preceded(
         zero_or_more_ws_or_comment,
         alt((
-            value(QueryPart::This, tag("this")),
-            value(QueryPart::This, tag("THIS")),
+            value(QueryPart::This, keyword("this")),
+            value(QueryPart::This, keyword("THIS")),
         )),
     )(input)
 }
