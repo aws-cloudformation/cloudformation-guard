@@ -2447,6 +2447,50 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             )?;
                             val_resolver
                                 .end_record(&block_context, RecordType::TypeBlock(Status::FAIL))?;
+
+                            // Split by role, like the other two condition sites. Counting this as a
+                            // failure is right for an assertion; for a gate it makes the type block
+                            // FAIL, and one level out a FAIL on a condition is a condition that was
+                            // decided and did not match, which `eval_rule` maps to a rule-level SKIP.
+                            // So an undecidable type-block condition behind a gate dropped the rule it
+                            // guarded at exit 0:
+                            //
+                            //     rule inner_gate(unused) {
+                            //         AWS::EC2::Volume when Properties.Encrypted !EMPTY {
+                            //             Properties.Size > 10
+                            //         }
+                            //     }
+                            //     rule guarded when inner_gate("x") { Vol.Properties.Size == 100 }
+                            //
+                            // exited 0 against `Size: 5` with the violation unreported. Keeping the
+                            // error for a gate carries it to the enclosing condition, which fails its
+                            // own rule closed.
+                            if !role.is_strict() {
+                                // The type block's own record has to be closed before returning, or
+                                // `extract` fails with "context start and end does not match" and
+                                // takes the run down at exit 255 instead of reporting anything. Same
+                                // trap as the lone-variable arm in `unary_operation`: `start_record`
+                                // ran above, and an early return has to end it.
+                                val_resolver.end_record(
+                                    &context,
+                                    RecordType::TypeCheck(TypeBlockCheck {
+                                        type_name: &type_block.type_name,
+                                        block: BlockCheck {
+                                            status: Status::FAIL,
+                                            // No message. Measured: the enclosing rule's own
+                                            // explanation is what reaches the console for this shape,
+                                            // naming the operation and the path, and nothing on this
+                                            // record is rendered. A sentence here would be recorded
+                                            // and discarded, which is what
+                                            // `every_recorded_explanation_has_a_rendering_path`
+                                            // exists to refuse -- it caught this one.
+                                            message: None,
+                                            at_least_one_matches: false,
+                                        },
+                                    }),
+                                )?;
+                                return Err(e);
+                            }
                             fails += 1;
                             continue;
                         }
@@ -2688,9 +2732,21 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // The rule fails closed. Returning SKIP -- which is what every *status* on a condition
                 // collapses to a few lines above -- would leave the body unevaluated and the file at
                 // exit 0, so an unevaluatable condition cannot be expressed as a status here.
-                return match is_unevaluatable(&e) {
-                    true => Ok(Status::FAIL),
-                    false => Err(e),
+                //
+                // Split by role for the same reason as the other two condition sites. FAIL is right
+                // when this rule is the assertion; when the rule is itself a gate, that FAIL becomes
+                // a condition that was decided and did not match one level out, and the rule it gates
+                // is dropped. Three spellings of one condition disagreed until this split:
+                //
+                //     rule guarded when Enabled !EMPTY { ... }              inline    FAIL
+                //     rule inner { when Enabled !EMPTY { ... } } + gate     block     FAIL
+                //     rule inner when Enabled !EMPTY { ... }    + gate      rule      SKIP
+                //
+                // and the third also misattributed itself, reporting that the referenced rule "did not
+                // apply to this input" for a rule whose condition could not be evaluated at all.
+                return match (is_unevaluatable(&e), role.is_strict()) {
+                    (true, true) => Ok(Status::FAIL),
+                    _ => Err(e),
                 };
             }
         }

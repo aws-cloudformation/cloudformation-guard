@@ -4446,6 +4446,26 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
             "param_gate_nested_when",
             "rule inner(u) { when GUARD { HOLDS } }\nrule guarded when inner(\"x\") { BODY }",
         ),
+        // The gate rule's own rule-level `when`, which is a different site from a `when` block in its
+        // body and was converting the undecidable answer to a status regardless of role. Three
+        // spellings of one condition disagreed: inline and block-level failed closed, this one
+        // reported the rule not applicable. No parameterized counterpart -- the parser rejects
+        // `rule r(p) when ... {}`.
+        (
+            "named_gate_rule_level_when",
+            "rule inner when GUARD { HOLDS }\nrule guarded when inner { BODY }",
+        ),
+    ];
+
+    // A type block's clauses and its `when` condition both resolve against each resource, so this
+    // shape needs resource-relative operands rather than the root-anchored ones above. `%flag` carries
+    // over unchanged, because `ValueScope::resolve_variable` delegates to the parent.
+    let type_block_shape =
+        "rule inner(u) { AWS::EC2::Volume when GUARD { THOLDS } }\nrule guarded when inner(\"x\") { BODY }";
+    let type_block_unanswerable = [
+        ("direct bool", "Properties.Enabled !EMPTY"),
+        ("direct int", "Properties.Size EMPTY"),
+        ("let-bound bool", "%flag !EMPTY"),
     ];
 
     let build = |shape: &str, guard: &str| {
@@ -4484,6 +4504,38 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
                 rules
             );
         }
+    }
+
+    // The type block, with its own operands. Same invariant, same control discipline.
+    let build_tb = |guard: &str| {
+        format!(
+            "let flag = Resources.Vol.Properties.Enabled\n{}",
+            type_block_shape
+                .replace("GUARD", guard)
+                .replace("THOLDS", "Properties.Size > 0")
+                .replace("BODY", BODY)
+        )
+    };
+
+    for (clause_name, clause) in type_block_unanswerable {
+        let control = build_tb("Properties.Size > 0");
+        assert_eq!(
+            rule_status_in(&control, INPUT, "guarded")?,
+            Status::FAIL,
+            "control for the type-block shape must let the body run and fail:\n{}",
+            control
+        );
+
+        let rules = build_tb(clause);
+        assert_ne!(
+            rule_status_in(&rules, INPUT, "guarded")?,
+            Status::SKIP,
+            "{} in a type block's `when`: an undecidable condition there used to make the type block \
+             FAIL, which one level out is a condition that did not match, so the rule it gates was \
+             dropped at exit 0:\n{}",
+            clause_name,
+            rules
+        );
     }
 
     Ok(())
