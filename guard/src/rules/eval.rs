@@ -1666,7 +1666,21 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 }),
             )?;
 
-            Err(e)
+            // A clause whose own value could not be produced fails, and the rest of the file still
+            // reports. Errors reach here from resolving the clause's query, which includes a `let`
+            // whose function call could not convert its input: `let n = parse_int(Properties.Name)`
+            // on a non-numeric name used to abort the run at exit 255 and discard every other rule's
+            // verdict, including real violations an unrelated rule had already found. Same shape as
+            // the incompatible-type abort fixed earlier on this branch, reached through a function
+            // instead of an operator.
+            //
+            // Only for an assertion. A gate keeps the error so the enclosing condition site fails its
+            // own rule closed rather than reading this as a condition that did not match, which is
+            // the same split the per-value arm and `eval_when_condition_block` use.
+            match (is_unevaluatable(&e), role.is_strict()) {
+                (true, true) => Ok(Status::FAIL),
+                _ => Err(e),
+            }
         }
     }
 }
