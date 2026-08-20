@@ -1128,6 +1128,57 @@ mod validate_tests {
         );
     }
 
+    /// The specific reason a rule did not apply survives the block's own summary.
+    ///
+    /// `find_skip_reason` searches a record's children before its own message, and names this test as
+    /// what pins that. The test did not exist -- the fixture pair did, built for it and left unused, so
+    /// the claim read as covered while nothing held the order in place.
+    ///
+    /// The order is what matters. A type block attaches a summary to its own SKIP, so taking `own`
+    /// first stops the recursion and the deeper explanation is built, recorded, and never read. Here
+    /// the deeper one is the useful one: `Size: "50"` is a string, so the gate's comparison against 10
+    /// cannot be decided, and "a condition could not be decided" is a different thing for an author to
+    /// read than "every volume was exempted".
+    ///
+    /// Asserting the absence of the block summary is what makes this a test of the ordering rather
+    /// than of the message: with `own` taken first, the summary is what would appear.
+    #[test]
+    fn a_specific_skip_reason_is_not_shadowed_by_the_block_summary() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["volume-size-as-string-template.yaml"])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS, status_code,
+            "an undecidable type-block condition still reports SKIP and exits 0; this test is about \
+             which explanation reaches the output"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("could not be decided"),
+            "the console must give the specific reason the condition failed:\n{}",
+            output
+        );
+        assert!(
+            output.contains("not comparable"),
+            "and it must name the mismatch, since that is what tells the author to look at the \
+             template rather than the rule:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("was exempted by the type block"),
+            "the block's own summary must not be what surfaces -- that is the shadowing this \
+             ordering exists to prevent:\n{}",
+            output
+        );
+    }
+
     /// A finding under `Resources` that names no CloudFormation resource is reported, not a panic.
     ///
     /// The console reporter organises findings by resource, and reached `unreachable!()` when a path

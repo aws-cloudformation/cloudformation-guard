@@ -6317,8 +6317,14 @@ fn an_out_of_range_index_does_not_panic() -> Result<()> {
     }
 
     // In-range indices still answer what they always did, in case `unsigned_abs` changed more than
-    // the overflow case. Guard treats a negative index as its absolute value rather than as an
-    // offset from the end, which is surprising but long-standing, so `[-1]` and `[1]` agree.
+    // the overflow case.
+    //
+    // This comment used to say the opposite of the code: that a negative index is its absolute value
+    // rather than an offset from the end, "so `[-1]` and `[1]` agree". `index_offset` counts back
+    // from the end, and `docs/CLAUSES.md` documents that. The claim survived because the two
+    // readings cannot be told apart on a two-element list -- index 1 is also the last element -- so
+    // the assertion below held either way. `a_negative_index_counts_back_from_the_end` uses three
+    // elements, where they disagree.
     for (query, expected) in [
         ("Items[0]", Status::PASS),
         ("Items[1]", Status::FAIL),
@@ -7466,6 +7472,85 @@ fn a_map_key_that_reads_as_an_integer_is_still_a_key(
         rule_status_in(&rules, INPUT, "keyed")?,
         "clause: {}",
         clause
+    );
+
+    Ok(())
+}
+
+/// A negative index counts back from the end, on a list long enough to prove it.
+///
+/// `eval_context.rs` names this test as what pins the behaviour, and it did not exist. The behaviour
+/// is real and documented -- `docs/CLAUSES.md` says `Items[-1]` is the last element and `Items[-2]` the
+/// one before it -- but the only test touching a negative index used a two-element list, where "the
+/// last element" and "the absolute value" are the same index. It held under either reading, and its
+/// comment asserted the reading the code does not use.
+///
+/// Three elements is the shortest list where `[-1]` and `[1]` disagree. `[-3]` is the first element
+/// under this reading and out of range under the other, and `[-4]` is out of range under both, so both
+/// ends of the range are pinned rather than just the near one.
+#[rstest::rstest]
+#[case::last_element("Items[-1]", "c", Status::PASS)]
+#[case::last_is_not_the_middle("Items[-1]", "b", Status::FAIL)]
+#[case::second_from_the_end("Items[-2]", "b", Status::PASS)]
+#[case::furthest_back_in_range("Items[-3]", "a", Status::PASS)]
+#[case::furthest_back_is_not_the_last("Items[-3]", "c", Status::FAIL)]
+#[case::one_past_the_start("Items[-4]", "a", Status::FAIL)]
+#[case::positive_index_control("Items[1]", "b", Status::PASS)]
+#[case::first_element_control("Items[0]", "a", Status::PASS)]
+fn a_negative_index_counts_back_from_the_end(
+    #[case] query: &str,
+    #[case] value_compared: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const DATA: &str = r#"{ "Items": [ "a", "b", "c" ] }"#;
+
+    let rules = "rule r { QUERY == \"VALUE\" }"
+        .replace("QUERY", query)
+        .replace("VALUE", value_compared);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(DATA)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        expected,
+        "{} == {:?} against {}",
+        query,
+        value_compared,
+        DATA
+    );
+
+    Ok(())
+}
+
+/// `EMPTY` on a boolean is an incompatible type, in both polarities and for both values.
+///
+/// `element_empty_operation` names this test as what covers all four combinations, and it did not
+/// exist. The behaviour it describes is the one that mattered: the old arm computed
+/// `(*boolean).to_string().is_empty()`, and neither "true" nor "false" is the empty string, so `EMPTY`
+/// on a boolean was unconditionally false and `!EMPTY` unconditionally true -- a clause that reads like
+/// a check and cannot fail for any input.
+///
+/// All four cells assert FAIL, which is what distinguishes the fix from the defect: under the old arm
+/// the two `!EMPTY` cells passed. The wording of the diagnostic is covered by
+/// `every_recorded_explanation_has_a_rendering_path`, which is what makes sure it reaches a reporter at
+/// all; this test is about the verdict.
+#[rstest::rstest]
+#[case::empty_on_true("EMPTY", "true")]
+#[case::not_empty_on_true("!EMPTY", "true")]
+#[case::empty_on_false("EMPTY", "false")]
+#[case::not_empty_on_false("!EMPTY", "false")]
+fn boolean_empty_is_an_incompatible_type(#[case] operator: &str, #[case] flag: &str) -> Result<()> {
+    let input = "{ Resources: { Vol: { Type: 'AWS::X::Y', Properties: { Flag: FLAG } } } }"
+        .replace("FLAG", flag);
+    let rules = "rule flagged { Resources.Vol.Properties.Flag OP }".replace("OP", operator);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, &input, "flagged")?,
+        "`Flag {}` on the boolean {} must fail rather than answer a question the operator cannot ask",
+        operator,
+        flag
     );
 
     Ok(())
