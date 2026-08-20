@@ -4817,3 +4817,38 @@ fn distinct_rule_names_still_parse(#[case] rules: &str) -> Result<(), Error> {
     );
     Ok(())
 }
+
+/// A parameter declared twice is rejected at the definition, not at every call.
+///
+/// The names were collected straight into an `IndexSet`, so the duplicate vanished and `rule r(a, a)`
+/// became a one-parameter rule. The definition parsed without complaint, and the arity check then
+/// failed at every call site -- blaming the caller for passing two arguments to a rule written to take
+/// two -- and ended the run at 255, an internal failure, for a rule-authoring mistake.
+#[rstest::rstest]
+#[case::two_of_two("rule r(a, a) { Resources.A == %a }\n")]
+#[case::two_of_three("rule r(a, b, a) { Resources.A == %a }\n")]
+#[case::spaced("rule r( a , a ) { Resources.A == %a }\n")]
+fn a_parameter_declared_twice_is_rejected(#[case] rules: &str) {
+    let err = rules_file(from_str2(rules)).expect_err("a duplicated parameter must not parse");
+    let rendered = format!("{}", err);
+    assert!(
+        rendered.contains("declared more than once"),
+        "the error must name the problem: {}",
+        rendered
+    );
+}
+
+/// The control, so the check above cannot pass by rejecting every parameter list.
+#[rstest::rstest]
+#[case::one("rule r(a) { Resources.A == %a }\n")]
+#[case::two_distinct("rule r(a, b) { Resources.A == %a }\n")]
+#[case::three_distinct("rule r(a, b, c) { Resources.A == %a }\n")]
+#[case::names_sharing_a_prefix("rule r(a, ab, abc) { Resources.A == %a }\n")]
+fn distinct_parameter_names_still_parse(#[case] rules: &str) -> Result<(), Error> {
+    assert!(
+        rules_file(from_str2(rules))?.is_some(),
+        "these parameter names are distinct and must parse: {}",
+        rules
+    );
+    Ok(())
+}

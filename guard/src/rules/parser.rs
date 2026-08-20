@@ -1854,18 +1854,50 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 //
 // parameter names
 //
+/// The parameter list of a parameterized rule, rejecting a name that appears twice.
+///
+/// Collecting straight into the `IndexSet` dropped the duplicate silently, so `rule r(a, a)` became a
+/// one-parameter rule. Nothing complained at the definition; the arity check then failed at every
+/// *call*, blaming the caller for passing two arguments to a rule written to take two -- `Arity
+/// mismatch for called parameter rule r, expected 1, got 2` -- and the run ended at 255, an internal
+/// failure, for a rule-authoring mistake the parser was holding in its hand.
+///
+/// `Failure` rather than `Error` because `(` and a name list have already been
+/// consumed here -- a recoverable error would send `alt` back to try the non-parameterized rule form
+/// and report something unrelated about the line.
 fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
-    delimited(
+    let (remaining, names) = delimited(
         char('('),
-        map(
-            separated_list1(
-                char(','),
-                cut(delimited(multispace0, var_name, multispace0)),
-            ),
-            |v| v.into_iter().collect::<indexmap::IndexSet<String>>(),
+        separated_list1(
+            char(','),
+            cut(delimited(multispace0, var_name, multispace0)),
         ),
         cut(char(')')),
-    )(input)
+    )(input)?;
+
+    let unique = names
+        .iter()
+        .cloned()
+        .collect::<indexmap::IndexSet<String>>();
+    if unique.len() != names.len() {
+        let repeated = names
+            .iter()
+            .enumerate()
+            .find(|(at, name)| names[..*at].contains(name))
+            .map(|(_, name)| name.as_str())
+            .unwrap_or("");
+        return Err(nom::Err::Failure(ParserError {
+            context: format!(
+                "Parameter {} is declared more than once. Each parameter needs its own name, or a \
+                 reference to it cannot say which argument it means.",
+                repeated
+            ),
+            kind: ErrorKind::SeparatedList,
+            span: input,
+        }));
+    }
+
+    Ok((remaining, unique))
 }
 
 //
