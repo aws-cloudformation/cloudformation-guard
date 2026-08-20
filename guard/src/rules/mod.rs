@@ -385,7 +385,16 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// assertion and merely inapplicable when it is a `when` condition. Implementations
     /// that cache must key on `(rule_name, role)`, since the same rule reached from a body
     /// and from a gate are two different questions.
-    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
+    /// The rule's own answer, not a status.
+    ///
+    /// A status here cost a verdict: the cache stored `to_status(role)`, which maps
+    /// `Outcome::Unevaluatable` to SKIP for a gate, so a reference could not tell a rule that could
+    /// not be evaluated from one that did not apply and the enclosing rule was reported inapplicable.
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: eval::ClauseRole,
+    ) -> Result<eval::Outcome>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
     fn add_variable_capture_key(
         &mut self,

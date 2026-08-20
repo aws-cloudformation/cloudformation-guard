@@ -2021,64 +2021,45 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     resolver.start_record(&context)?;
 
     match resolver.rule_status(&gnc.dependent_rule, role) {
-        Ok(status) => {
-            let status = match status {
-                Status::PASS => {
-                    if gnc.negation {
-                        Status::FAIL
-                    } else {
-                        Status::PASS
-                    }
-                }
+        Ok(outcome) => {
+            // The same table as `eval_parameterized_rule_call`, which is the point: the two
+            // spellings of one gate had drifted apart, and the comment there claimed to mirror this
+            // function while the arms disagreed.
+            let outcome = match (outcome, gnc.negation) {
+                (Outcome::Satisfied, false) => Outcome::Satisfied,
+                (Outcome::Satisfied, true) => Outcome::Violated,
 
-                // A dependent rule that SKIPped never ran, so it is not evidence in
-                // either direction. Where this reference is an assertion in a rule
-                // body, a negated reference to it must not report compliance on the
-                // strength of a check that was never performed: `not <rule>` used to
-                // fall into the `_` arm below and yield PASS, and because the
-                // enclosing rule then reported PASS rather than SKIP, nothing in the
-                // output hinted at the omission.
-                //
-                // In a `when` condition the same shape is deliberate and tested --
-                // `rule r when !other { ... }` is how a ruleset says "apply this
-                // when that other rule did not apply" (see
-                // cross_rule_clause_when_checks). Gating on a SKIP there is not a
-                // compliance claim, so it keeps the existing behavior.
-                Status::SKIP if role.is_strict() => Status::FAIL,
+                // A dependent rule that could not be evaluated leaves this reference undecided too.
+                // The reference cannot know more than the rule did, and this is exactly the
+                // distinction the cache used to lose: it stored `to_status(role)`, so a gate saw
+                // SKIP, read it as "the rule did not apply", and reported the enclosing rule
+                // inapplicable while a guarded check went unrun. Measured on
+                // `undecidable_nested_gate_named.guard`, where the merge-base fails the rule and
+                // this branch reported it skipped.
+                (Outcome::Unevaluatable, _) => Outcome::Unevaluatable,
 
-                // A gate whose dependent rule did not apply stays SKIP rather than
-                // falling into the `_` arm below, which turns a non-negated reference
-                // into FAIL. `eval_conjunction_clauses` counts a FAIL and absorbs a
-                // SKIP, and answers FAIL before PASS, so one inapplicable gate
-                // condition returning FAIL outranks the sibling conditions that passed
-                // and drops a body those siblings would have enforced -- at exit 0,
-                // which is precisely what `ClauseRole::Gate` exists to prevent.
-                //
-                // `eval_parameterized_rule_call` already does this and its comment
-                // claims to mirror this function, but the two spellings of the same
-                // gate disagreed: `when skipper` plus a passing sibling condition
-                // reported SKIP for the whole file and enforced nothing, while
-                // `when skipper(...)` plus the same sibling reported FAIL and exited
-                // 19. Pinned by
+                // A rule that did not apply never ran, so it is not evidence in either direction.
+                // Where the reference is an assertion in a rule body, a negated reference to it must
+                // not report compliance on the strength of a check that never happened.
+                (Outcome::NotApplicable, _) if role.is_strict() => Outcome::Violated,
+
+                // A gate whose dependent rule did not apply stays inapplicable rather than becoming
+                // a violation, which one inapplicable condition would otherwise spread to a `when`
+                // its siblings would have decided. Pinned by
                 // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
-                //
-                // Negated references keep falling through, and for a gate the PASS the `_` arm
-                // returns is the intended outcome, not an oversight: `rule r when not other { ... }`
-                // is how a ruleset says "apply this when that other rule did not apply", so the
-                // gate opens and the guarded body runs. Pinned by
-                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
-                // *assertion* never reaches that arm -- `role.is_strict()` above already failed it
-                // closed -- so failing the fallthrough closed would only break the gate idiom.
-                Status::SKIP if !gnc.negation => Status::SKIP,
+                (Outcome::NotApplicable, false) => Outcome::NotApplicable,
 
-                _ => {
-                    if gnc.negation {
-                        Status::PASS
-                    } else {
-                        Status::FAIL
-                    }
-                }
+                // `rule r when not other { ... }` is how a ruleset says "apply this when that other
+                // rule did not apply", so the gate opens. Pinned by
+                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
+                // assertion never reaches here, because the fail-closed arm above took it.
+                (Outcome::NotApplicable, true) => Outcome::Satisfied,
+
+                (Outcome::Violated, false) => Outcome::Violated,
+                (Outcome::Violated, true) => Outcome::Satisfied,
             };
+
+            let status = outcome.to_status(role);
             match status {
                 Status::PASS => {
                     resolver
@@ -2119,11 +2100,9 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     )?;
                 }
             }
-            // The arms above already applied the role, so this status is the decision rather than a
-            // value awaiting one, and `from_status` lifts it exactly: PASS is satisfied, FAIL is
-            // violated, SKIP is inapplicable. The rule-status cache this reads is still keyed on
-            // `Status`, which is why the lift happens here and not further in.
-            Ok(Outcome::from_status(status))
+            // The rule's answer, unflattened. `status` above exists only for the records a reporter
+            // reads; the caller gets the value and applies its own role.
+            Ok(outcome)
         }
 
         Err(e) => {
@@ -2432,7 +2411,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.root()
     }
 
-    fn rule_status(&mut self, rule_name: &'value str, role: ClauseRole) -> Result<Status> {
+    fn rule_status(&mut self, rule_name: &'value str, role: ClauseRole) -> Result<Outcome> {
         self.parent.rule_status(rule_name, role)
     }
 

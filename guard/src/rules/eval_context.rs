@@ -48,7 +48,7 @@ pub(crate) struct EventRecord<'value> {
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
     rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
-    rules_status: HashMap<(&'value str, super::eval::ClauseRole), Status>,
+    rules_status: HashMap<(&'value str, super::eval::ClauseRole), Outcome>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     recorder: RecordTracker<'value>,
     /// Notices about behaviour that changes in a later release, collected during evaluation.
@@ -1489,9 +1489,9 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
-    ) -> Result<Status> {
-        if let Some(status) = self.rules_status.get(&(rule_name, role)) {
-            return Ok(*status);
+    ) -> Result<Outcome> {
+        if let Some(outcome) = self.rules_status.get(&(rule_name, role)) {
+            return Ok(*outcome);
         }
 
         let rule = match self.rules.get(rule_name) {
@@ -1505,7 +1505,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             }
         };
 
-        let status = 'done: loop {
+        let outcome = 'done: loop {
             for each_rule in rule {
                 // The reference site's role is carried into the rule's own body rather
                 // than being fixed at Assertion.
@@ -1526,20 +1526,23 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 // The cache stores a status, so the role is applied here. That is the same
                 // answer the rule itself would give a caller in this role, and it keeps the
                 // conversion at one place rather than at every reader of the cache.
-                let status = super::eval::eval_rule(each_rule, self, role)?.to_status(role);
-                if status != SKIP {
-                    break 'done status;
+                // The rule's own answer, kept as one. Converting here with `to_status(role)` is
+                // what lost the distinction a gate needs: `Unevaluatable` became SKIP, and the
+                // reference then read "did not apply" for a rule that could not be evaluated.
+                let outcome = super::eval::eval_rule(each_rule, self, role)?;
+                if !matches!(outcome, Outcome::NotApplicable) {
+                    break 'done outcome;
                 }
             }
-            break SKIP;
+            break Outcome::NotApplicable;
         };
 
         // Keyed on `(rule, role)`, not the rule name. The same rule referenced from a body
         // and from a `when` condition are two different questions and must not share a
         // cache slot -- whichever reference ran first would otherwise decide the answer for
         // the other, making the outcome depend on evaluation order.
-        self.rules_status.insert((rule_name, role), status);
-        Ok(status)
+        self.rules_status.insert((rule_name, role), outcome);
+        Ok(outcome)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1965,7 +1968,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
-    ) -> Result<Status> {
+    ) -> Result<Outcome> {
         self.parent.rule_status(rule_name, role)
     }
 
@@ -2016,7 +2019,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
-    ) -> Result<Status> {
+    ) -> Result<Outcome> {
         self.parent.rule_status(rule_name, role)
     }
 

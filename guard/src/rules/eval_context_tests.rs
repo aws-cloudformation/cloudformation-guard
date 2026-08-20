@@ -58,7 +58,11 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn root(&mut self) -> Rc<PathAwareValue> {
         Rc::clone(&self.root)
     }
-    fn rule_status(&mut self, _: &str, _: crate::rules::eval::ClauseRole) -> Result<Status> {
+    fn rule_status(
+        &mut self,
+        _: &str,
+        _: crate::rules::eval::ClauseRole,
+    ) -> Result<crate::rules::eval::Outcome> {
         todo!()
     }
     fn resolve_variable(&mut self, _: &str) -> Result<Vec<QueryResult>> {
