@@ -4252,6 +4252,109 @@ fn negation_on_a_parameterized_rule_call_is_honored() -> Result<()> {
     Ok(())
 }
 
+/// `EMPTY` on a lone variable asks about the value, not about whether the query resolved.
+///
+/// The shortcut that answers `EMPTY` without projecting the query tested `res.is_null()`. Null is
+/// empty, but so are other things, and nothing else was consulted, so on a variable bound to a value:
+///
+///   - an empty list reported itself NOT empty, and `EMPTY` on it reported false
+///   - an empty string did the same
+///   - a number or a boolean could not fail either polarity for any input, which is the silent
+///     always-pass that `element_empty_operation` removed for the direct path and this arm kept
+///
+/// A `let` binding and a rule parameter both take this path, which is why the boolean fix looked
+/// complete while `%flag !EMPTY` still could not fail.
+///
+/// The shortcut itself has to stay, and the second half of this table is why: for `%vols !empty` an
+/// empty selection resolves to zero values and is answered before the per-value loop. Removing the
+/// arm sends that case to a SKIP further down, turning the most common gate in the registry from a
+/// failure into a silent skip. Only the question inside it was wrong.
+///
+/// A query ending in a filter keeps resolution semantics, and `block_evaluation` is the case that
+/// says so: `Condition[ keys == 'aws:IsSecure' ] !empty` means "that key is present", and the value
+/// it selects is a boolean, which has no emptiness of its own.
+#[test]
+fn empty_on_a_lone_variable_asks_about_the_value() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Tags: [], Name: "", Enabled: true, Size: 50 }
+            }
+        }
+    }
+    "#;
+
+    // (clause, expected, why)
+    let cases = [
+        (
+            "let x = Resources.Vol.Properties.Tags\nrule r { %x !EMPTY }",
+            Status::FAIL,
+            "the list is empty",
+        ),
+        (
+            "let x = Resources.Vol.Properties.Tags\nrule r { %x EMPTY }",
+            Status::PASS,
+            "the list is empty",
+        ),
+        (
+            "let x = Resources.Vol.Properties.Name\nrule r { %x !EMPTY }",
+            Status::FAIL,
+            "the string is empty",
+        ),
+        (
+            "let x = Resources.Vol.Properties.Name\nrule r { %x EMPTY }",
+            Status::PASS,
+            "the string is empty",
+        ),
+        (
+            "let x = Resources.Vol.Properties.Enabled\nrule r { %x !EMPTY }",
+            Status::FAIL,
+            "a boolean has no emptiness, so the clause fails closed",
+        ),
+        (
+            "let x = Resources.Vol.Properties.Size\nrule r { %x !EMPTY }",
+            Status::FAIL,
+            "a number has no emptiness, so the clause fails closed",
+        ),
+        (
+            "rule inner(p) { %p !EMPTY }\nrule r { inner(Resources.Vol.Properties.Enabled) }",
+            Status::FAIL,
+            "a parameter takes the same path as a let binding",
+        ),
+        // The selection idiom, which must not change.
+        (
+            "let x = Resources.*[ Type == 'AWS::EC2::Volume' ]\nrule r { %x !EMPTY }",
+            Status::PASS,
+            "the selection has a resource in it",
+        ),
+        (
+            "let x = Resources.*[ Type == 'AWS::Nonexistent::Type' ]\nrule r { %x !EMPTY }",
+            Status::FAIL,
+            "the selection is empty",
+        ),
+        (
+            "let x = Resources.*[ Type == 'AWS::Nonexistent::Type' ]\nrule r { %x EMPTY }",
+            Status::PASS,
+            "the selection is empty",
+        ),
+    ];
+
+    for (rules, expected, why) in cases {
+        assert_eq!(
+            status_of(rules, input)?,
+            expected,
+            "{}: expected {:?} because {}",
+            rules.replace('\n', "  "),
+            expected,
+            why
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     // Regression test for a wrong PASS found by review.
@@ -4877,9 +4980,15 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `find_skip_reason` reads it off the block's own record anyway, so the reason now travels in
     // a local instead of a record.
     //
+    // The newest `ClauseValueCheck` is the lone-variable `EMPTY` arm, which now answers the
+    // operator's question instead of `is_null` and therefore has an incompatible-type case to
+    // explain. Confirmed rendered before this number was raised: `%f !EMPTY` on a boolean prints
+    // `Attempting EMPTY operation on type bool that does not support it at
+    // /Resources/Vol/Properties/Enabled` in the console reporter.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 18;
+    const SITES_EXPECTED: usize = 19;
 
     assert_eq!(
         sites, SITES_EXPECTED,

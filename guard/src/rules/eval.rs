@@ -46,6 +46,27 @@ fn element_empty_operation(value: &QueryResult) -> Result<bool> {
     Ok(result)
 }
 
+/// Emptiness for the `EMPTY` shortcut, which is reached by two different questions.
+///
+/// `by_value` is true for a lone variable, where the clause asks about the value the variable is
+/// bound to, and `element_empty_operation` is the same function the non-shortcut path uses. It is
+/// false for a query ending in a filter, where the clause asks whether the selection produced
+/// anything and the selected value's own type is beside the point -- `Condition[ keys == 'x' ]
+/// !empty` means "the key is present", and the value behind it may be a boolean.
+///
+/// Both used to be answered by `is_null`, which is right for neither: it reported an empty list and
+/// an empty string as non-empty, and it could not fail at all on a number or a boolean.
+fn empty_of(value: &QueryResult, by_value: bool) -> Result<bool> {
+    match by_value {
+        true => element_empty_operation(value),
+        false => Ok(match value {
+            QueryResult::Literal(res) | QueryResult::Resolved(res) => res.is_null(),
+            // !EXISTS is the same as EMPTY.
+            QueryResult::UnResolved(_) => true,
+        }),
+    }
+}
+
 macro_rules! is_type_fn {
     ($name: ident, $type_: pat) => {
         fn $name(value: &QueryResult) -> Result<bool> {
@@ -366,10 +387,21 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     // For all the unresolved ones the individual clause associated will FAIL, this is the right
     // outcome. The earlier engine would suppress such a error and skip
     //
-    let empty_on_expr = match &lhs_query[lhs_query.len() - 1] {
-        QueryPart::Filter(_, _) | QueryPart::MapKeyFilter(_, _) => true,
-        rest => rest.is_variable() && lhs_query.len() == 1,
-    };
+    // Two different questions reach this shortcut, and they are not the same question.
+    //
+    // A query ending in a filter asks whether the *selection* produced anything:
+    // `Condition[ keys == 'aws:IsSecure' ] !empty` means "that key is present", and the value it
+    // selected may be a boolean, which has no emptiness of its own. Resolution is the right test.
+    //
+    // A lone variable asks about the *value* it is bound to. `docs/CLAUSES.md` says a unary operator
+    // does not expand a list, so `%tags !empty` is a question about the list, and answering it by
+    // resolution reports an empty list as non-empty.
+    let selection_empty = matches!(
+        &lhs_query[lhs_query.len() - 1],
+        QueryPart::Filter(_, _) | QueryPart::MapKeyFilter(_, _)
+    );
+    let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
+    let empty_on_expr = selection_empty || lone_variable;
 
     if empty_on_expr && cmp.0 == CmpOperator::Empty {
         return Ok({
@@ -377,35 +409,69 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                 let mut results = Vec::with_capacity(lhs.len());
                 for each in lhs {
                     eval_context.start_record(&context)?;
-                    let (result, status) = match each {
-                        QueryResult::Literal(res) | QueryResult::Resolved(res) => {
-                            //
-                            // NULL == EMPTY
-                            //
-                            let status = if cmp.1 {
-                                // Not empty
-                                !res.is_null()
-                            } else {
-                                res.is_null()
-                            };
-                            (
-                                QueryResult::Resolved(res),
-                                match status {
-                                    true => Status::PASS,  // not_empty
-                                    false => Status::FAIL, // fail not_empty
-                                },
-                            )
+                    // `element_empty_operation`, which is the question the operator asks. This arm
+                    // used to ask a different one: `res.is_null()`, on the reasoning that NULL is
+                    // EMPTY. Null is empty, but so are other things, and nothing else was consulted.
+                    //
+                    // So a lone variable bound to an empty list or an empty string reported itself
+                    // *not* empty, and `EMPTY` on it reported false -- both polarities wrong, on a
+                    // value whose emptiness is the whole question. A variable bound to a number or a
+                    // boolean could not fail either clause for any input, which is the same silent
+                    // always-pass that `element_empty_operation` removed for the direct path and
+                    // that this shortcut kept for `%variable`.
+                    //
+                    // The shortcut itself has to stay. It is what makes the selection idiom work:
+                    // for `%vols !empty` an empty selection resolves to zero values and is answered
+                    // by the branch below, and dropping this arm would send that to the SKIP further
+                    // down instead -- turning the most common gate in the registry from a failure
+                    // into a silent skip. Only the decision inside it was wrong.
+                    let empty = match empty_of(&each, lone_variable) {
+                        Ok(empty) => empty,
+
+                        // A type that cannot be empty. Treated exactly as the non-variable path
+                        // treats it, role split included: an assertion fails closed here, and a gate
+                        // keeps the error so the enclosing condition fails its own rule closed
+                        // rather than reading this as a condition that did not match.
+                        Err(e) if is_unevaluatable(&e) && role.is_strict() => {
+                            eval_context.end_record(
+                                &context,
+                                RecordType::ClauseValueCheck(ClauseCheck::Unary(UnaryValueCheck {
+                                    comparison: cmp,
+                                    value: ValueCheck {
+                                        status: Status::FAIL,
+                                        message: Some(e.to_string()),
+                                        custom_message: custom_message.clone(),
+                                        from: each.clone(),
+                                    },
+                                })),
+                            )?;
+                            results.push((each, Status::FAIL));
+                            continue;
                         }
 
-                        QueryResult::UnResolved(ur) => {
-                            (
-                                QueryResult::UnResolved(ur),
-                                match cmp.1 {
-                                    true => Status::FAIL,  // !EXISTS == EMPTY, so !EMPTY == FAIL
-                                    false => Status::PASS, // !EXISTS == EMPTY so PASS
-                                },
-                            )
-                        }
+                        Err(e) => return Err(e),
+                    };
+
+                    let (result, status) = {
+                        let holds = match cmp.1 {
+                            true => !empty, // not_empty
+                            false => empty,
+                        };
+                        let result = match each {
+                            // Rewrapped as `Resolved` exactly as before, so the record a reporter
+                            // reads is unchanged.
+                            QueryResult::Literal(res) | QueryResult::Resolved(res) => {
+                                QueryResult::Resolved(res)
+                            }
+                            QueryResult::UnResolved(ur) => QueryResult::UnResolved(ur),
+                        };
+                        (
+                            result,
+                            match holds {
+                                true => Status::PASS,
+                                false => Status::FAIL,
+                            },
+                        )
                     };
                     let status = if inverse {
                         match status {
