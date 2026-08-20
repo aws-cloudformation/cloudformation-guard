@@ -312,6 +312,18 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     let exponent = opt(tuple((one_of("eE"), opt(one_of("+-")), digit1)))(fraction.0)?;
     if (fraction.1).is_some() || (exponent.1).is_some() {
         let r = double(input)?;
+        // `double` saturates an out-of-range exponent to an infinity rather than failing, which
+        // turns a bound into one no value can cross: `Size < 1e999` cannot fail for any input and
+        // `Size > 1e999` cannot pass for any input. The comparison even reports `ComparedWith =
+        // inf`, so the clause reads as a bound while deciding nothing. Rejecting the literal names
+        // it at parse time instead. The loader draws the same line on the document side.
+        if !r.1.is_finite() {
+            return Err(nom::Err::Error(ParserError {
+                context: "Float literal is out of range for a 64 bit float".to_string(),
+                kind: ErrorKind::Float,
+                span: input,
+            }));
+        }
         let (remaining, _) = reject_trailing_identifier(r.0, input)?;
         return Ok((remaining, Value::Float(r.1)));
     }

@@ -185,6 +185,35 @@ fn test_parse_float_error() {
     );
 }
 
+/// `double` saturates an exponent it cannot represent to an infinity instead of failing, and an
+/// infinite bound is one no value can cross: `Size < 1e999` cannot fail for any input and
+/// `Size > 1e999` cannot pass for any input. The clause reads as a bound and decides nothing --
+/// the comparison reported `ComparedWith = inf`.
+///
+/// The largest finite `f64` is the control, so the boundary is asserted where it actually falls
+/// rather than somewhere safely inside it.
+#[rstest::rstest]
+#[case::just_past_the_exponent_range("1e309")]
+#[case::far_past_the_exponent_range("1e999")]
+#[case::negative_and_out_of_range("-1e999")]
+#[case::fraction_and_out_of_range("1.5e999")]
+fn a_float_literal_out_of_range_is_not_an_infinity(#[case] s: &str) {
+    assert!(
+        parse_float(from_str2(s)).is_err(),
+        "{} parses to an infinity, which is a bound no value can cross",
+        s
+    );
+}
+
+#[rstest::rstest]
+#[case::largest_finite("1.7976931348623157e308", f64::MAX)]
+#[case::smallest_positive_normal("2.2250738585072014e-308", f64::MIN_POSITIVE)]
+#[case::underflows_to_zero("1e-999", 0.0)]
+fn a_float_literal_in_range_is_still_parsed(#[case] s: &str, #[case] expected: f64) {
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(expected))));
+}
+
 #[test]
 fn test_parse_regex() {
     let s = "/.*PROD.*/";
