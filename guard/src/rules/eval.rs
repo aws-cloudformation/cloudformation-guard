@@ -440,7 +440,14 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                         // treats it, role split included: an assertion fails closed here, and a gate
                         // keeps the error so the enclosing condition fails its own rule closed
                         // rather than reading this as a condition that did not match.
-                        Err(e) if is_unevaluatable(&e) && role.is_strict() => {
+                        Err(e) if is_unevaluatable(&e) => {
+                            // The record is closed on both paths. `start_record` ran at the top of
+                            // this loop, and returning without ending it leaves the recorder
+                            // unbalanced -- `extract` then fails with "context start and end does
+                            // not match" and takes the whole run with it. Caught by
+                            // `an_unanswerable_clause_never_silences_the_rule_it_guards`, which
+                            // exercises this arm as a gate; the strict path alone never returned
+                            // early, so the imbalance arrived with this arm.
                             eval_context.end_record(
                                 &context,
                                 RecordType::ClauseValueCheck(ClauseCheck::Unary(UnaryValueCheck {
@@ -453,8 +460,17 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
                                     },
                                 })),
                             )?;
-                            results.push((each, Status::FAIL));
-                            continue;
+
+                            // An assertion fails closed here; a gate keeps the error so the
+                            // enclosing condition fails its own rule closed rather than reading this
+                            // as a condition that did not match.
+                            match role.is_strict() {
+                                true => {
+                                    results.push((each, Status::FAIL));
+                                    continue;
+                                }
+                                false => return Err(e),
+                            }
                         }
 
                         Err(e) => return Err(e),

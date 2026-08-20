@@ -4355,6 +4355,140 @@ fn empty_on_a_lone_variable_asks_about_the_value() -> Result<()> {
     Ok(())
 }
 
+/// The status a named rule reached, read off the record tree.
+///
+/// The file-level status is not enough for this class. A rule referenced as a gate is often also a
+/// top-level rule, so its own failure exits the file 19 whether or not the rule it gates ever ran --
+/// which is how a silenced verdict hides behind a passing exit-code assertion.
+fn rule_status_in(rules: &str, input: &str, rule_name: &str) -> Result<Status> {
+    let value = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let top = root.reset_recorder().extract();
+
+    for child in &top.children {
+        if let Some(RecordType::RuleCheck(NamedStatus { name, status, .. })) = &child.container {
+            if *name == rule_name {
+                return Ok(*status);
+            }
+        }
+    }
+    panic!("no rule named {} in the record tree", rule_name);
+}
+
+/// An unanswerable clause does not silence the rule it guards, at any composition depth.
+///
+/// This is the invariant the 252-cell corpus already asserts, swept over a second axis. That corpus
+/// varies the operator and the operand and wraps exactly one clause in exactly one gate. Every defect
+/// in this family that escaped it did so by composing: the undecidable answer crossed more than one
+/// site on its way out, and each site that converted it early lost what the next one needed.
+///
+/// Two axes here, and both were blind spots:
+///
+///   - SHAPE: where the clause sits relative to the guard. A gate's own condition, a nested `when`
+///     inside the gate rule, a named-rule reference, a parameterized call.
+///   - BINDING: how the value reaches the clause. A direct query, or a `let` variable -- which takes
+///     a different path through `unary_operation` and answered `is_null` there until recently.
+///
+/// The assertion is per rule, not per file, and the reason is in `rule_status_in`.
+///
+/// Only clauses that genuinely cannot be answered are swept. An empty reference used as a gate is a
+/// different thing: `when %vols !empty` means "no such resources, so this rule does not apply", which
+/// is the documented idiom and correctly SKIPs. Mixing the two would make this invariant assert that
+/// a legitimate non-match is a defect.
+#[test]
+fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Enabled: true, Size: 50, Encrypted: false }
+            }
+        }
+    }
+    "#;
+
+    // Violated by the template, so every shape below has a real finding to lose.
+    const BODY: &str = "Resources.Vol.Properties.Encrypted == true";
+    // Holds, for the control form and for inner bodies that must not fail on their own.
+    const HOLDS: &str = "Resources.Vol.Properties.Encrypted == false";
+
+    // Clauses with no answer in either polarity: the operand does not support the operator.
+    let unanswerable = [
+        ("direct bool", "Resources.Vol.Properties.Enabled !EMPTY"),
+        ("direct int", "Resources.Vol.Properties.Size EMPTY"),
+        ("let-bound bool", "%flag !EMPTY"),
+    ];
+
+    // Plain templates rather than `format!`, because every one of these is mostly braces and the
+    // escaping is harder to read than the rules they describe. GUARD is the clause under test.
+    let shapes = [
+        ("gate_direct", "rule guarded when GUARD { BODY }"),
+        (
+            "when_inside_gate",
+            "rule guarded when HOLDS { when GUARD { BODY } }",
+        ),
+        (
+            "named_gate_direct",
+            "rule inner { GUARD }\nrule guarded when inner { BODY }",
+        ),
+        (
+            "named_gate_nested_when",
+            "rule inner { when GUARD { HOLDS } }\nrule guarded when inner { BODY }",
+        ),
+        (
+            "param_gate_direct",
+            "rule inner(u) { GUARD }\nrule guarded when inner(\"x\") { BODY }",
+        ),
+        (
+            "param_gate_nested_when",
+            "rule inner(u) { when GUARD { HOLDS } }\nrule guarded when inner(\"x\") { BODY }",
+        ),
+    ];
+
+    let build = |shape: &str, guard: &str| {
+        format!(
+            "let flag = Resources.Vol.Properties.Enabled\n{}",
+            shape
+                .replace("GUARD", guard)
+                .replace("BODY", BODY)
+                .replace("HOLDS", HOLDS)
+        )
+    };
+
+    for (clause_name, clause) in unanswerable {
+        for (shape_name, shape) in shapes {
+            // The control proves the shape can reach and fail the body at all. Without it, a fixture
+            // that silences the body for an unrelated reason reads as a passing invariant.
+            let control = build(shape, HOLDS);
+            assert_eq!(
+                rule_status_in(&control, INPUT, "guarded")?,
+                Status::FAIL,
+                "control for {}: a decidable guard must let the body run and fail, otherwise this \
+                 shape cannot detect anything:\n{}",
+                shape_name,
+                control
+            );
+
+            let rules = build(shape, clause);
+            assert_ne!(
+                rule_status_in(&rules, INPUT, "guarded")?,
+                Status::SKIP,
+                "{} in {}: the guard cannot be answered, which is not the same as a guard that was \
+                 decided and did not match. Reporting the rule as not applicable exits 0 with the \
+                 violation inside it unreported:\n{}",
+                clause_name,
+                shape_name,
+                rules
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[test]
 fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     // Regression test for a wrong PASS found by review.
