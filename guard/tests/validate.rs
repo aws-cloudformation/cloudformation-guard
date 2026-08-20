@@ -1491,6 +1491,16 @@ mod validate_tests {
     ///
     /// The assertion is deliberately not `SUCCESS`. That would mean the fuzzed rule had been quietly
     /// accepted, which is the failure mode this whole branch exists to remove.
+    ///
+    /// It is now `PARSING_ERROR` rather than `VALIDATION_ERROR`, and the reason is in the payload:
+    /// the clause is `m<0m<03333333`, where the literal `0` runs straight into `m`. That used to
+    /// split into two clauses -- `m < 0` and `m < 03333333` -- because a bare identifier is a valid
+    /// clause, so the fuzzer's garbage parsed and then evaluated to a violation. A digit running into
+    /// a letter is never two clauses, and `reject_trailing_identifier` now says so, which is how
+    /// `Size == 1e5` stopped meaning `Size == 1` and a reference to a rule called `e5`.
+    ///
+    /// Rejecting garbage at parse time serves this test's intent better than evaluating it: both exit
+    /// non-zero, and only one of them pretends the rule was understood.
     #[test]
     fn test_with_payload_failing_type_block() {
         let payload = r#"{"data": [ "{}" ], "rules" : [ "d1z::Y\n\t\tm<0m<03333333" ]}"#;
@@ -1500,7 +1510,7 @@ mod validate_tests {
             .payload()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     #[test]

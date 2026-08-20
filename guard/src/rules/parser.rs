@@ -164,6 +164,34 @@ pub(in crate::rules) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, 
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A numeric literal must not run straight into an identifier.
+///
+/// Without this, a malformed number does not fail: it splits. `Properties.Size == 1e5` parsed as the
+/// integer `1` followed by `e5`, and a bare identifier is a valid clause -- a reference to a rule by
+/// that name. So the clause became `Size == 1` *and* a reference to a rule called `e5`. If no such
+/// rule exists the run dies with "Rule e5 by that name does not exist", which at least says
+/// something; if one does exist, the file evaluates cleanly and checks `== 1` where the author wrote
+/// `== 100000`. Measured on v3.2.0 and on this branch before the fix: a template with `Size: 1`
+/// reported PASS at exit 0 against a rule demanding 100000.
+///
+/// Whitespace still separates clauses, so `Size == 1 other_rule` is unaffected. What is rejected is a
+/// digit running into a letter with nothing between them, which is never two clauses.
+fn reject_trailing_identifier<'a>(
+    remaining: Span<'a>,
+    literal: Span<'a>,
+) -> IResult<'a, Span<'a>, ()> {
+    match remaining.fragment().chars().next() {
+        Some(ch) if ch.is_alphanumeric() || ch == '_' => Err(nom::Err::Error(ParserError {
+            context: String::from(
+                "a number cannot be followed directly by a letter, digit or underscore",
+            ),
+            kind: ErrorKind::Digit,
+            span: literal,
+        })),
+        _ => Ok((remaining, ())),
+    }
+}
+
 pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-i))
@@ -171,7 +199,9 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let positive = map_res(digit1, |s: Span| {
         s.fragment().parse::<i64>().map(Value::Int)
     });
-    alt((positive, negative))(input)
+    let (remaining, value) = alt((positive, negative))(input)?;
+    let (remaining, _) = reject_trailing_identifier(remaining, input)?;
+    Ok((remaining, value))
 }
 
 fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
@@ -227,13 +257,27 @@ fn parse_bool(input: Span) -> IResult<Span, Value> {
     alt((true_parser, false_parser))(input)
 }
 
+/// Decides whether the text is float-shaped, then lets `double` do the parsing.
+///
+/// The shape test is what makes a bare integer fall through to `parse_int_value`, so it has to accept
+/// exactly what a float can look like. It accepted less than that:
+///
+///   - no leading sign, so `-1.5` was not a float. `parse_int_value` then took the `-1` and left
+///     `.5` behind, and the clause failed to parse. Negative thresholds could not be written at all.
+///   - a mandatory exponent sign, so `1e5` was not a float either, and that one did not fail loudly.
+///     See `reject_trailing_identifier` for what it did instead.
+///
+/// `double` already handles the sign and the exponent; only this gate was narrower than the thing it
+/// was gating.
 fn parse_float(input: Span) -> IResult<Span, Value> {
-    let whole = digit1(input)?;
+    let signed = opt(char('-'))(input)?;
+    let whole = digit1(signed.0)?;
     let fraction = opt(preceded(char('.'), digit1))(whole.0)?;
-    let exponent = opt(tuple((one_of("eE"), one_of("+-"), digit1)))(fraction.0)?;
+    let exponent = opt(tuple((one_of("eE"), opt(one_of("+-")), digit1)))(fraction.0)?;
     if (fraction.1).is_some() || (exponent.1).is_some() {
         let r = double(input)?;
-        return Ok((r.0, Value::Float(r.1)));
+        let (remaining, _) = reject_trailing_identifier(r.0, input)?;
+        return Ok((remaining, Value::Float(r.1)));
     }
     Err(nom::Err::Error(ParserError {
         context: "Could not parse floating number".to_string(),

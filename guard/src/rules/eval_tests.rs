@@ -4489,6 +4489,73 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
     Ok(())
 }
 
+/// A number is one clause, not a number and a rule reference.
+///
+/// `Size == 1e5` did not fail to parse. It split: `1` became the integer, and the leftover `e5` became
+/// a bare identifier, which is a valid clause -- a reference to a rule by that name. So the rule was
+/// `Size == 1` *and* a reference to `e5`.
+///
+/// With no rule of that name the run dies with "Rule e5 by that name does not exist", which at least
+/// says something is wrong. With one, it evaluates cleanly and checks the wrong number. Measured on
+/// v3.2.0 and on this branch before the fix: `Size: 1` reported PASS at exit 0 against a rule
+/// demanding 100000, because `Size == 1` held and `e5` passed.
+///
+/// The exponent form is the realistic trigger, and the same split swallowed any digit running into a
+/// letter -- the fuzzed `m<0m<03333333` in `test_with_payload_failing_type_block` is the other shape,
+/// and it used to parse as two clauses.
+#[test]
+fn a_number_is_not_a_number_and_a_rule_reference() -> Result<()> {
+    // `Size: 1`, and a rule named after the exponent suffix so the split is silent rather than fatal.
+    let input = r#"
+    {
+        Resources: { R: { Type: 'T', Properties: { Size: 1 } } }
+    }
+    "#;
+    let rules = r###"
+    rule e5 {
+        Resources.R.Properties.Size EXISTS
+    }
+
+    rule threshold {
+        Resources.R.Properties.Size == 1e5
+    }
+    "###;
+
+    assert_eq!(
+        status_of(rules, input)?,
+        Status::FAIL,
+        "the rule demands 100000 and the template has 1, so this must fail. PASS here means `1e5` \
+         was read as `1` and a reference to the rule named `e5`"
+    );
+
+    // The literal forms, so the shape test in `parse_float` cannot narrow again. A float needs a
+    // fraction or an exponent, and either may carry a sign; a bare integer stays an integer.
+    for accepted in [
+        "1.5", "-1.5", "0.0", "-0.0", "40", "-40", "1e5", "1E5", "1e+5", "1e-5", "-1e5", "-1e+5",
+        "1.5e+3",
+    ] {
+        let rule = format!("rule r {{ Resources.R.Properties.Size == {} }}", accepted);
+        assert!(
+            RulesFile::try_from(rule.as_str()).is_ok(),
+            "{} is a number and must parse",
+            accepted
+        );
+    }
+
+    // Rejected, and loudly: a digit running into a letter is never two clauses, and a bare `.` on
+    // either side of the digits is not a number in this grammar.
+    for rejected in ["1x", "2abc", "1e5x", ".5", "1."] {
+        let rule = format!("rule r {{ Resources.R.Properties.Size == {} }}", rejected);
+        assert!(
+            RulesFile::try_from(rule.as_str()).is_err(),
+            "{} must be a parse error rather than a number followed by something else",
+            rejected
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     // Regression test for a wrong PASS found by review.
