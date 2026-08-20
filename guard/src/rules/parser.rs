@@ -2036,6 +2036,36 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
         named_rules.insert(0, default_rule);
     }
 
+    // A rule name is what a reference resolves through, so defining one twice makes every reference
+    // to it ambiguous -- and the file was accepted, with the reference binding to whichever
+    // definition came first. That is a verdict difference, not a stylistic one. Two definitions of
+    // `dup`, one holding and one not, and a `rule user when dup { ... }`:
+    //
+    //     order in the file            user
+    //     holding definition first     PASS
+    //     failing definition first     SKIP
+    //
+    // Both definitions still run and report, so the file exits 19 either way and the exit code
+    // cannot see it. The guarded rule silently changed from enforced to not-applicable on a
+    // reordering that no author would expect to matter.
+    //
+    // Parameterized rules share the namespace, so they are checked together: `rule r` and
+    // `rule r(x)` collide for the same reason.
+    let mut seen = std::collections::HashSet::new();
+    for name in named_rules.iter().map(|r| r.rule_name.as_str()).chain(
+        parameterized_rules
+            .iter()
+            .map(|p| p.rule.rule_name.as_str()),
+    ) {
+        if !seen.insert(name) {
+            return Err(Error::ParseError(format!(
+                "Rule {} is defined more than once. A reference to it would resolve to whichever \
+                 definition came first, so the file is rejected rather than guessed at.",
+                name
+            )));
+        }
+    }
+
     Ok(Some(RulesFile {
         assignments: global_assignments,
         guard_rules: named_rules,

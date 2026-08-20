@@ -4769,3 +4769,51 @@ fn test_get_rule_name() {
         rule_clause_name1
     );
 }
+
+/// A rule name defined twice is rejected rather than resolved to one of them.
+///
+/// A rule name is what a reference resolves through, so two definitions make every reference to it
+/// ambiguous. The file was accepted, and the reference bound to whichever definition appeared first:
+/// with one definition holding and one not, `rule user when dup { ... }` reported PASS when the
+/// holding definition came first and SKIP when it came second. Both definitions still run and report,
+/// so the file exits 19 either way and the exit code cannot see the difference -- the guarded rule
+/// silently went from enforced to not-applicable on a reordering.
+///
+/// Parameterized rules share the namespace, so `rule r` beside `rule r(x)` is the same collision.
+#[rstest::rstest]
+#[case::two_plain_rules("rule dup { Resources.A == 1 }\nrule dup { Resources.A == 2 }\n")]
+#[case::plain_beside_parameterized(
+    "rule r { Resources.A == 1 }\nrule r(x) { Resources.A == %x }\n"
+)]
+#[case::two_parameterized("rule r(x) { Resources.A == %x }\nrule r(y) { Resources.A == %y }\n")]
+#[case::three_definitions(
+    "rule d { Resources.A == 1 }\nrule d { Resources.A == 2 }\nrule d { Resources.A == 3 }\n"
+)]
+fn a_rule_defined_twice_is_rejected(#[case] rules: &str) {
+    let err = rules_file(from_str2(rules)).expect_err("a duplicated rule name must not parse");
+    let rendered = format!("{}", err);
+    assert!(
+        rendered.contains("defined more than once"),
+        "the error must name the problem, not merely fail: {}",
+        rendered
+    );
+}
+
+/// The control for the case above, so the check cannot pass by rejecting everything.
+#[rstest::rstest]
+#[case::distinct_names("rule one { Resources.A == 1 }\nrule two { Resources.A == 2 }\n")]
+#[case::distinct_parameterized(
+    "rule one(x) { Resources.A == %x }\nrule two(y) { Resources.A == %y }\n"
+)]
+#[case::a_reference_to_a_single_definition(
+    "rule inner { Resources.A == 1 }\nrule outer when inner { Resources.B == 2 }\n"
+)]
+#[case::default_clauses_beside_a_named_rule("Resources.A == 1\nrule named { Resources.B == 2 }\n")]
+fn distinct_rule_names_still_parse(#[case] rules: &str) -> Result<(), Error> {
+    assert!(
+        rules_file(from_str2(rules))?.is_some(),
+        "these names are distinct and must parse: {}",
+        rules
+    );
+    Ok(())
+}
