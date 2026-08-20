@@ -10,7 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::{index_offset, Location, MapValue, PathAwareValue};
+use crate::rules::path_value::{index_offset, list_index_of, Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -398,8 +398,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
         }
 
-        QueryPart::Key(key) => match key.parse::<i64>() {
-            Ok(idx) => match &*current {
+        // `list_index_of`, not `key.parse()`: a key that reads as an integer is an index only when
+        // the value at hand is a list. See that function for what naming one on a map used to do.
+        QueryPart::Key(key) => match list_index_of(&current, key) {
+            Some(idx) => match &*current {
                 PathAwareValue::List((_, list)) => map_resolved(
                     &current,
                     retrieve_index(Rc::clone(&current), idx, list, query),
@@ -425,7 +427,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 ),
             },
 
-            Err(_) => {
+            None => {
                 if let PathAwareValue::Map((path, map)) = &*current {
                     if query[query_index].is_variable() {
                         let var = query[query_index].variable().unwrap();

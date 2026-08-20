@@ -111,3 +111,11 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
         %root.Properties."some-key" == true
     }
    ```
+
+   Key names that read as integers need the same quoting, for a different reason: unquoted, `.80` is an
+   array index, because that is how a list element is addressed without brackets. Quoted, `."80"` is a
+   key name. So an account id under `Mappings` is written
+
+   ```
+    Mappings.AccountToEnv."123456789012".Env == "prod"
+   ```

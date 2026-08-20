@@ -663,8 +663,8 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i64>() {
-                    Ok(index) => match self {
+                match list_index_of(self, key) {
+                    Some(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
                                 |e| self.map_error_or_empty(all, e),
@@ -675,7 +675,7 @@ impl QueryResolver for PathAwareValue {
                         _ => self.map_some_or_error_all(all, query),
                     },
 
-                    Err(_) => match self {
+                    None => match self {
                         PathAwareValue::Map((path, map)) => {
                             //
                             // Variable interpolation support.
@@ -1167,6 +1167,28 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
         Ordering::Equal if f > truncated => Ordering::Less,
         ordering => ordering,
     })
+}
+
+/// The index a [`QueryPart::Key`] stands for, and `None` when it stands for a key name.
+///
+/// `Items.0` is index access written without brackets, which is why a key is read as a number at all.
+/// A map takes that same text as a key name, and deciding on the text alone made any key that reads
+/// as an integer unaddressable: `Mappings.AccountToEnv."123456789012".Env` resolved to nothing on a
+/// template that has exactly that key, and quoting it in the rule changed nothing, because the quotes
+/// are gone by the time retrieval sees a `Key`. Quoting is how the language says "this is a name" --
+/// it is what `docs/KNOWN_ISSUES.md` prescribes for a key containing a dash -- so there was no
+/// spelling that worked. `"1.5"` resolved and `"80"` did not, which is the shape of an `i64` parse
+/// rather than of anything to do with maps.
+///
+/// Account ids, ports and status codes are all real map keys that read as integers, and a rule that
+/// names one silently matched nothing.
+///
+/// Both engines ask this question, so they get the same answer from one place.
+pub(crate) fn list_index_of(current: &PathAwareValue, key: &str) -> Option<i64> {
+    match current {
+        PathAwareValue::List(_) => key.parse::<i64>().ok(),
+        _ => None,
+    }
 }
 
 /// The offset an array index refers to in a collection of `len` elements, or `None` when it refers to

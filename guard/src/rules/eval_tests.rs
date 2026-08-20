@@ -7413,3 +7413,60 @@ fn a_disjunction_is_decided_by_the_disjunct_that_can_decide_it(
 
     Ok(())
 }
+
+/// A map key that reads as an integer is still a key.
+///
+/// Retrieval decided between "index" and "key name" by asking whether the key text parses as an
+/// `i64`, without looking at what it was being applied to. `Items.0` is index access written without
+/// brackets, which is why a key is read as a number at all -- but a map takes the same text as a name,
+/// and so any map key that reads as an integer was unaddressable. Quoting it changed nothing: the
+/// quotes are gone by the time retrieval sees a `Key`, which is why `"1.5"` resolved and `"80"` did
+/// not.
+///
+/// The shape that made this worth fixing is `Mappings`, where account ids are keys:
+/// `Mappings.AccountToEnv."123456789012".Env` matched nothing on a template holding exactly that key.
+/// Ports and status codes are the same shape.
+///
+/// The list cells are the controls that matter -- bracketless index access is the reason the number
+/// parse exists, so a fix that simply stopped parsing would break it, and `L.0 == "second"` fails so
+/// the index is doing real work rather than resolving to the first thing it finds.
+#[rstest::rstest]
+#[case::zero_key("M.\"0\" == \"zero\"", Status::PASS)]
+#[case::negative_key("M.\"-1\" == \"neg\"", Status::PASS)]
+#[case::integer_key("M.\"80\" == \"eighty\"", Status::PASS)]
+#[case::integer_key_wrong_value("M.\"80\" == \"wrong\"", Status::FAIL)]
+#[case::float_shaped_key("M.\"1.5\" == \"float\"", Status::PASS)]
+#[case::absent_integer_key("M.\"99\" exists", Status::FAIL)]
+#[case::list_index_without_brackets("L.0 == \"first\"", Status::PASS)]
+#[case::second_list_index("L.1 == \"second\"", Status::PASS)]
+#[case::list_index_discriminates("L.0 == \"second\"", Status::FAIL)]
+#[case::list_index_out_of_range("L.5 exists", Status::FAIL)]
+fn a_map_key_that_reads_as_an_integer_is_still_a_key(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::X::Y',
+                Properties: {
+                    M: { "0": "zero", "-1": "neg", "80": "eighty", "1.5": "float" },
+                    L: ["first", "second"]
+                }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { Resources.Vol.Properties.CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
