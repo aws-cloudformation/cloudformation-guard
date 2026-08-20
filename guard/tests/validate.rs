@@ -444,6 +444,52 @@ mod validate_tests {
         );
     }
 
+    /// An undecidable condition one level in does not silence the rule it gates.
+    ///
+    /// The single-condition form is `an_unevaluatable_gate_fails_the_rule_closed`. This is the same
+    /// hazard reached across a parameterized-rule boundary, and that path was open while the direct
+    /// one was closed: the nested `when` converted the undecidable answer to `Status::FAIL`, one
+    /// level out a FAIL on a condition is indistinguishable from a condition that was decided and
+    /// did not match, and `eval_rule` maps that to a rule-level SKIP. Measured before the fix:
+    ///
+    ///     merge-base  exit 19   the gate opened, because `!EMPTY` on a boolean was always true
+    ///     this branch  exit  0  the rule was reported not applicable, `MustBeTrue` unchecked
+    ///
+    /// Reported by a reviewer, whose diagnosis named the mechanism exactly. The fix keeps the error
+    /// for a gate instead of converting it, so the enclosing condition site fails its own rule
+    /// closed; an assertion still answers FAIL, which is what stops one undecidable clause from
+    /// aborting the whole file.
+    #[test]
+    fn an_undecidable_nested_gate_does_not_silence_the_outer_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["undecidable_nested_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "exit 0 here means the guarded check was dropped because a condition two levels down \
+             could not be answered"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("guarded"),
+            "the rule whose gate could not be decided must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("SKIP rules"),
+            "the rule must not be reported as not applicable:\n{}",
+            output
+        );
+    }
+
     /// Two skip reasons in one junit report stay two reasons.
     ///
     /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text

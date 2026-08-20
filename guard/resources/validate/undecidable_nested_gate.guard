@@ -1,0 +1,27 @@
+#
+# An undecidable condition nested one level inside the rule that gates another rule.
+#
+# `Enabled` is a boolean, so `!EMPTY` on it has no answer. That clause sits inside a `when` block in
+# the body of `inner_gate`, and `inner_gate` is the condition of `guarded`. The question is what two
+# levels of conversion do to the violation `guarded` is supposed to catch.
+#
+# Reported by a reviewer against the first version of the incompatible-type fix, and the diagnosis
+# was exact: the undecidable answer was converted to `Status::FAIL` at the nested `when`, and one
+# level out a FAIL on a condition is indistinguishable from a condition that was decided and did not
+# match, so `eval_rule` reported the rule as not applicable and exited 0 with `MustBeTrue` unchecked.
+# The merge-base exited 19 here, for the wrong reason: `!EMPTY` on a boolean was unconditionally true
+# there, so the gate opened and the body ran.
+#
+# The single-level form of this is `unevaluatable_gate_guarding_a_violation.guard`. Both are needed:
+# that one fails closed through the rule's own condition, this one through a condition reached across
+# a parameterized-rule boundary, and the second path was open while the first was closed.
+#
+rule inner_gate(unused) {
+    when Enabled !EMPTY {
+        Enabled == true
+    }
+}
+
+rule guarded when inner_gate("x") {
+    MustBeTrue == true
+}

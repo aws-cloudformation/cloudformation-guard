@@ -1910,18 +1910,43 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
                 RecordType::WhenCheck(BlockCheck {
                     status: Status::FAIL,
                     message: Some(match unevaluatable {
-                        true => format!("The condition could not be evaluated, so the block it guards is not checked and fails closed: {}", e),
+                        true => format!("The condition could not be evaluated, so the block it guards is not checked: {}", e),
                         false => format!("Error {} during type condition evaluation, bailing", e),
                     }),
                     at_least_one_matches: false,
                 }),
             )?;
-            // A condition that cannot be evaluated fails the block it guards rather than aborting the
-            // file. Skipping it would disarm every check inside, which is the direction that turns a
-            // violation into exit 0.
-            return match unevaluatable {
-                true => Ok(Status::FAIL),
-                false => Err(e),
+            // A condition that cannot be evaluated fails the block it guards rather than aborting
+            // the file. Skipping it would disarm every check inside, which is the direction that
+            // turns a violation into exit 0.
+            //
+            // Split by role, and the split is the whole fix. Answering FAIL is right for an
+            // assertion: the block fails, the rule fails, and the rest of the file still reports.
+            // It is wrong for a gate, because one level out a FAIL on a condition is
+            // indistinguishable from a condition that was decided and did not match, and `eval_rule`
+            // maps that to a rule-level SKIP. So
+            //
+            //     rule inner_gate(unused) {
+            //         when Resources.Vol.Properties.Enabled !EMPTY { ... }
+            //     }
+            //     rule guarded when inner_gate("x") { Encrypted == true }
+            //
+            // exited 0 with the `Encrypted` violation unreported, where the merge-base exited 19.
+            // Reported by a reviewer, and the diagnosis was exact: converting the undecidable answer
+            // to a status here loses the information the outer rule needs to fail closed. Keeping
+            // the error for a gate carries it to the enclosing condition site, which fails its own
+            // rule closed instead of deciding the rule does not apply.
+            //
+            // `an_undecidable_nested_gate_does_not_silence_the_outer_rule` is the regression test,
+            // and it asserts the reported violation rather than only the exit code, because the
+            // merge-base and the fix agree on 19 and disagree on what they say.
+            return match (unevaluatable, role.is_strict()) {
+                // A gate: keep the error, so the enclosing condition site fails its own rule closed
+                // rather than reading this as a condition that did not match.
+                (true, false) => Err(e),
+                // An assertion: the block fails and every other rule in the file still reports.
+                (true, true) => Ok(Status::FAIL),
+                (false, _) => Err(e),
             };
         }
     };
