@@ -4556,6 +4556,60 @@ fn a_number_is_not_a_number_and_a_rule_reference() -> Result<()> {
     Ok(())
 }
 
+/// A conversion that cannot be made fails its clause, not the file.
+///
+/// `parse_int` on a value it cannot convert used to abort the run: exit 255, and every other rule's
+/// verdict discarded with it, including a real violation an unrelated rule had already found. Two
+/// causes -- the conversions reported `ParseError` for something that never parsed, and the error was
+/// raised while resolving a `let`, which propagates past the machinery that turns an incompatible type
+/// into a clause-level verdict.
+///
+/// The canary is the whole point: it fails on its own, so if the file still reports its failure then the
+/// conversion took only its own clause down.
+#[test]
+fn a_failed_conversion_does_not_discard_other_rules() -> Result<()> {
+    let input = r#"
+    {
+        Resources: { R: { Type: 'T', Properties: { Junk: "abc" } } }
+    }
+    "#;
+    let rules = r###"
+    rule CANARY {
+        Resources.R.Properties.Junk == "this-will-not-match"
+    }
+
+    rule USES_PARSE_INT {
+        let n = parse_int(Resources.R.Properties.Junk)
+        %n > 0
+    }
+    "###;
+
+    // FAIL, not an Err: an Err here is the abort, and it takes CANARY's verdict with it.
+    assert_eq!(
+        status_of(rules, input)?,
+        Status::FAIL,
+        "a value that cannot be converted must fail its own clause and leave the file reporting"
+    );
+
+    // And the same conversion inside a gate stays undecided rather than reading as a condition that
+    // did not match, so the rule it guards is not silently dropped.
+    // A function call belongs in a `let`, not directly in a `when`, so the gate reads the variable.
+    let gated = r###"
+    let n = parse_int(Resources.R.Properties.Junk)
+
+    rule guarded when %n > 0 {
+        Resources.R.Properties.Junk == "this-will-not-match"
+    }
+    "###;
+    assert_ne!(
+        rule_status_in(gated, input, "guarded")?,
+        Status::SKIP,
+        "an undecidable gate must not report the rule as not applicable"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     // Regression test for a wrong PASS found by review.
