@@ -2880,6 +2880,9 @@ where
         let context = format!("{}#disjunction", disjunction_type_name::<T>());
         'conjunction: for conjunction in conjunctions {
             let mut num_of_disjunction_fails = 0;
+            // Held rather than returned. A disjunct with no answer must not stop a later disjunct
+            // that has one -- see the `Err` arm below and the check after the loop.
+            let mut undecided: Option<Error> = None;
             let multiple_ors_present = conjunction.len() > 1;
             if multiple_ors_present {
                 resolver.start_record(&context)?;
@@ -2907,23 +2910,45 @@ where
                         }
                     },
 
+                    // An `or` is decided by whichever disjunct can decide it. Returning here
+                    // instead meant the first disjunct with no answer ended the whole disjunction,
+                    // so `A or B` and `B or A` were not the same clause: with `A` undecidable and
+                    // `B` true, the second spelling opened its gate and evaluated the body, and the
+                    // first reported that the condition could not be evaluated and dropped the body.
+                    // Both exited 19 on a failing document -- the rule fails either way -- so the
+                    // exit code hid it, and only the reported reason differed.
+                    //
+                    // So the error waits until every disjunct has had its turn. If a later one
+                    // passes, the `continue 'conjunction` above leaves this behind, which is what
+                    // "undecidable or true is true" means. If none does, it is returned below and
+                    // the caller decides: an assertion fails closed, a gate keeps the error and
+                    // fails its own rule closed. Only the first is kept, because that is the one
+                    // whose path the reporter names, and reporting one reason is what the console
+                    // does for a clause anyway.
                     Err(e) => {
-                        if multiple_ors_present {
-                            resolver.end_record(
-                                &context,
-                                RecordType::Disjunction(BlockCheck {
-                                    message: Some(format!(
-                                        "Disjunction failed due to error {}, bailing",
-                                        e
-                                    )),
-                                    status: Status::FAIL,
-                                    at_least_one_matches: true,
-                                }),
-                            )?;
+                        if undecided.is_none() {
+                            undecided = Some(e);
                         }
-                        return Err(e);
                     }
                 }
+            }
+
+            if let Some(e) = undecided {
+                if multiple_ors_present {
+                    resolver.end_record(
+                        &context,
+                        RecordType::Disjunction(BlockCheck {
+                            message: Some(format!(
+                                "Disjunction could not be decided: no disjunct answered, and one \
+                                 could not be evaluated: {}",
+                                e
+                            )),
+                            status: Status::FAIL,
+                            at_least_one_matches: true,
+                        }),
+                    )?;
+                }
+                return Err(e);
             }
 
             if num_of_disjunction_fails > 0 {

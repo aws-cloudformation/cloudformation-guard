@@ -7355,3 +7355,61 @@ fn a_range_inside_a_list_literal_is_a_range(
 
     Ok(())
 }
+
+/// `or` is decided by whichever disjunct can decide it, in either order.
+///
+/// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
+/// disjunction never ran. With one disjunct undecidable and another decided true, the two spellings
+/// of the same condition disagreed: `true or undecidable` opened its gate and evaluated the body,
+/// and `undecidable or true` reported that the condition could not be evaluated and dropped the body.
+///
+/// The exit code cannot see this. Both spellings exit 19 on a document the body fails, because the
+/// rule fails either way -- only the reason differs, and only one of them is the real finding. So the
+/// body here is a clause that *holds*, which makes the two outcomes different statuses: PASS if the
+/// gate opened and the body ran, FAIL if the condition was treated as undecidable.
+///
+/// The last four cells are the controls. Two of them pin the case where nothing can decide the
+/// disjunction, which must still fail closed rather than skip, and in both orders.
+#[rstest::rstest]
+#[case::undecidable_or_true("UNDECIDABLE or TRUE", Status::PASS)]
+#[case::true_or_undecidable("TRUE or UNDECIDABLE", Status::PASS)]
+#[case::undecidable_or_false("UNDECIDABLE or FALSE", Status::FAIL)]
+#[case::false_or_undecidable("FALSE or UNDECIDABLE", Status::FAIL)]
+#[case::control_true_gate("TRUE", Status::PASS)]
+#[case::control_false_gate("FALSE", Status::SKIP)]
+#[case::control_undecidable_gate("UNDECIDABLE", Status::FAIL)]
+#[case::control_true_or_false("TRUE or FALSE", Status::PASS)]
+fn a_disjunction_is_decided_by_the_disjunct_that_can_decide_it(
+    #[case] gate: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Enabled: true, Size: 50 }
+            }
+        }
+    }
+    "#;
+
+    // `Enabled` is a boolean, so `!EMPTY` on it is a question with no answer. The other two are
+    // ordinary decided clauses, and the body is one that holds, so the rule's status says whether
+    // the gate opened.
+    let rules = "rule guarded when GATE { Resources.Vol.Properties.Size == 50 }"
+        .replace("GATE", gate)
+        .replace("UNDECIDABLE", "Resources.Vol.Properties.Enabled !EMPTY")
+        .replace("TRUE", "Resources.Vol.Properties.Size == 50")
+        .replace("FALSE", "Resources.Vol.Properties.Size == 99");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "guarded")?,
+        "gate: {}\nrules:\n{}",
+        gate,
+        rules
+    );
+
+    Ok(())
+}
