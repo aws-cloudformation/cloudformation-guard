@@ -458,7 +458,7 @@ fn single_line(
         collect_unattributed_explanations(each_rule, &mut unattributed);
     }
     if !unattributed.is_empty() {
-        writeln!(writer, "Clauses that could not be evaluated:")?;
+        writeln!(writer, "Could not be evaluated:")?;
         for (context, message) in unattributed {
             writeln!(writer, "  {context}")?;
             writeln!(writer, "    {message}")?;
@@ -482,6 +482,22 @@ fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(S
         }
         ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
         ClauseReport::Rule(rule) => {
+            // A rule that failed on its own condition has no clause findings underneath it, so the
+            // per-resource output above has nothing to render and this message is the only account
+            // of why the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses
+            // produced findings has them rendered per resource already, and repeating the rule-level
+            // message there would duplicate rather than explain.
+            //
+            // Reached when a condition cannot be answered across a rule boundary -- a gate whose
+            // referenced or parameterized rule is undecidable. The evaluator records the explanation
+            // on the rule, the JSON reporter has always printed it, and the console reporter printed
+            // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
+            // not say why.
+            if rule.checks.is_empty() {
+                if let Some(explanation) = &rule.messages.custom_message {
+                    out.push((format!("rule {}", rule.name), explanation.clone()));
+                }
+            }
             for child in &rule.checks {
                 collect_unattributed_explanations(child, out);
             }

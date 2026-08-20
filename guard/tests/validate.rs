@@ -488,6 +488,13 @@ mod validate_tests {
             "the rule must not be reported as not applicable:\n{}",
             output
         );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the console must say why the rule failed. The evaluator recorded the explanation and \
+             the JSON reporter always printed it, while the console printed `Number of non-compliant \
+             resources 0` and nothing else -- exit 19 with no account of the reason:\n{}",
+            output
+        );
     }
 
     /// The named-rule spelling of the same gate, where the exit code cannot detect the defect.
@@ -526,6 +533,11 @@ mod validate_tests {
         assert!(
             output.contains("guarded"),
             "`guarded` must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the console must say why, not only that:\n{}",
             output
         );
     }
