@@ -312,14 +312,44 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     let exponent = opt(tuple((one_of("eE"), opt(one_of("+-")), digit1)))(fraction.0)?;
     if (fraction.1).is_some() || (exponent.1).is_some() {
         let r = double(input)?;
-        // `double` saturates an out-of-range exponent to an infinity rather than failing, which
-        // turns a bound into one no value can cross: `Size < 1e999` cannot fail for any input and
-        // `Size > 1e999` cannot pass for any input. The comparison even reports `ComparedWith =
-        // inf`, so the clause reads as a bound while deciding nothing. Rejecting the literal names
-        // it at parse time instead. The loader draws the same line on the document side.
-        if !r.1.is_finite() {
-            return Err(nom::Err::Error(ParserError {
-                context: "Float literal is out of range for a 64 bit float".to_string(),
+
+        // `double` never fails on an exponent it cannot represent: it saturates to an infinity, or
+        // rounds to zero. Either way the clause reads as one bound and means another. `Size < 1e999`
+        // cannot fail for any input and `Size > 1e999` cannot pass for any input -- the comparison
+        // even reports `ComparedWith = inf` -- and `Size == 1e-999` is satisfied by a `Size` of 0,
+        // because the literal rounded to zero on the way in.
+        //
+        // Underflow is only a problem when the author wrote a nonzero number, so the mantissa is what
+        // decides it: `0.0e5` is zero and means zero, while `1e-999` is not zero and does not.
+        //
+        // The document side does NOT draw this line, and the difference is deliberate rather than an
+        // oversight. A rule is authored, so refusing it tells the author something they can act on. A
+        // document is data, and rejecting an entire template over one field is out of proportion --
+        // there, `loader.rs` retypes the scalar to a string, which leaves every comparison against it
+        // incomparable and therefore failing closed, with the reporter naming the mismatch.
+        let consumed = input.fragment().len() - r.0.fragment().len();
+        let mantissa = input.fragment()[..consumed]
+            .split(|c| c == 'e' || c == 'E')
+            .next()
+            .unwrap_or_default();
+        let rounded_to_zero =
+            r.1 == 0.0 && mantissa.chars().any(|c| c.is_ascii_digit() && c != '0');
+
+        // `Failure`, not `Error`. A recoverable error sends `alt` back to try the other value
+        // productions, and `parse_int_value` then matches the leading digits and leaves the rest, so
+        // the reported problem was a stray fragment rather than the literal: `1.5e999` blamed
+        // `.5e999` with an empty context, and this message never reached the author at all. Same
+        // reasoning as `parse_range` below, which is `Failure` for the same reason.
+        if !r.1.is_finite() || rounded_to_zero {
+            return Err(nom::Err::Failure(ParserError {
+                context: match r.1.is_finite() {
+                    true => "Float literal is out of range for a 64 bit float: it rounds to zero"
+                        .to_string(),
+                    false => {
+                        "Float literal is out of range for a 64 bit float: it saturates to an infinity"
+                            .to_string()
+                    }
+                },
                 kind: ErrorKind::Float,
                 span: input,
             }));

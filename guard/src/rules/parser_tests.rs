@@ -185,30 +185,61 @@ fn test_parse_float_error() {
     );
 }
 
-/// `double` saturates an exponent it cannot represent to an infinity instead of failing, and an
-/// infinite bound is one no value can cross: `Size < 1e999` cannot fail for any input and
-/// `Size > 1e999` cannot pass for any input. The clause reads as a bound and decides nothing --
-/// the comparison reported `ComparedWith = inf`.
+/// `double` never fails on an exponent it cannot represent: it saturates to an infinity, or rounds to
+/// zero. Either way the clause reads as one bound and means another. `Size < 1e999` cannot fail for any
+/// input, `Size > 1e999` cannot pass for any input -- the comparison reported `ComparedWith = inf` --
+/// and `Size == 1e-999` is satisfied by a `Size` of 0.
 ///
-/// The largest finite `f64` is the control, so the boundary is asserted where it actually falls
-/// rather than somewhere safely inside it.
+/// `Failure`, not `Error`, is half the point. A recoverable error sent `alt` back to the other value
+/// productions, `parse_int_value` matched the leading digits and left the rest, and the author was told
+/// about a stray fragment instead: `1.5e999` blamed `.5e999` with an empty context, and the message
+/// below never appeared at all. So the kind of error is asserted, not just that there was one.
 #[rstest::rstest]
 #[case::just_past_the_exponent_range("1e309")]
 #[case::far_past_the_exponent_range("1e999")]
 #[case::negative_and_out_of_range("-1e999")]
 #[case::fraction_and_out_of_range("1.5e999")]
-fn a_float_literal_out_of_range_is_not_an_infinity(#[case] s: &str) {
+#[case::rounds_to_zero("1e-999")]
+#[case::rounds_to_zero_with_a_longer_mantissa("10e-999")]
+#[case::negative_and_rounds_to_zero("-1e-999")]
+fn a_float_literal_out_of_range_is_rejected(#[case] s: &str) {
+    let err = parse_float(from_str2(s)).expect_err("an unrepresentable literal must not parse");
+
     assert!(
-        parse_float(from_str2(s)).is_err(),
-        "{} parses to an infinity, which is a bound no value can cross",
-        s
+        matches!(err, nom::Err::Failure(_)),
+        "{} must fail unrecoverably, or `alt` backtracks and reports something else: {:?}",
+        s,
+        err
+    );
+
+    let context = match &err {
+        nom::Err::Failure(e) | nom::Err::Error(e) => e.context.clone(),
+        nom::Err::Incomplete(_) => String::new(),
+    };
+    assert!(
+        context.contains("out of range for a 64 bit float"),
+        "{} must be named as out of range, not merely rejected: {:?}",
+        s,
+        context
     );
 }
 
+/// The control. Rejecting the unrepresentable literals must not cost the representable ones, and the
+/// boundary is asserted where it actually falls rather than somewhere safely inside it.
+///
+/// `0.0e5` and `0e0` are zero and mean zero, so they are not underflow -- the mantissa is what
+/// separates them from `1e-999`. `2.2250738585072014e-308` is the smallest positive normal and
+/// `1e-320` is subnormal: both are representable, both must parse.
 #[rstest::rstest]
+#[case::simple_fraction("1.5", 1.5)]
+#[case::negative_fraction("-1.5", -1.5)]
+#[case::exponent("1e3", 1000.0)]
+#[case::negative_exponent("1e-3", 0.001)]
 #[case::largest_finite("1.7976931348623157e308", f64::MAX)]
 #[case::smallest_positive_normal("2.2250738585072014e-308", f64::MIN_POSITIVE)]
-#[case::underflows_to_zero("1e-999", 0.0)]
+#[case::subnormal("1e-320", 1e-320)]
+#[case::zero_with_an_exponent("0.0e5", 0.0)]
+#[case::plain_zero_exponent("0e0", 0.0)]
 fn a_float_literal_in_range_is_still_parsed(#[case] s: &str, #[case] expected: f64) {
     let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
     assert_eq!(parse_float(from_str2(s)), Ok((cmp, Value::Float(expected))));
