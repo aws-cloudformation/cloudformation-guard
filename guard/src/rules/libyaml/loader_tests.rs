@@ -379,3 +379,70 @@ fn test_handle_null() {
 
     assert!(matches!(val, MarkedValue::String(..)));
 }
+
+/// `f64::from_str` accepts `nan`, `inf` and `infinity`. YAML resolves none of those to a float --
+/// it spells the non-finite floats `.nan` and `.inf`, and both of those were already falling
+/// through to `String` here, so the two halves of the same question disagreed.
+///
+/// What the disagreement cost: `Float(NaN)` is not equal to itself, and `PathAwareValue` asserts
+/// `Eq` while hashing its own contents. Two identical scalars in one document compared unequal,
+/// and the negation of that comparison passed -- a clause asserting two fields *differ* was
+/// satisfied by two fields spelled the same way.
+#[rstest::rstest]
+#[case::bare_nan("nan")]
+#[case::capitalized_nan("NaN")]
+#[case::uppercase_nan("NAN")]
+#[case::yaml_nan(".nan")]
+#[case::bare_inf("inf")]
+#[case::negative_inf("-inf")]
+#[case::spelled_out_infinity("infinity")]
+#[case::yaml_inf(".inf")]
+#[case::overflowing_exponent("1e999")]
+fn a_non_finite_scalar_is_not_a_float(#[case] scalar: &str) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+        "{} loaded as {:?}, but YAML resolves it to a string",
+        scalar,
+        loaded
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: rejecting the non-finite spellings must not cost the finite
+/// floats, which is the entire reason the `f64` arm is there.
+#[rstest::rstest]
+#[case::simple_fraction("1.5", 1.5)]
+#[case::negative_fraction("-1.5", -1.5)]
+#[case::exponent("1e3", 1000.0)]
+#[case::negative_exponent("1e-3", 0.001)]
+#[case::largest_finite_f64("1.7976931348623157e308", f64::MAX)]
+fn a_finite_scalar_is_still_a_float(#[case] scalar: &str, #[case] expected: f64) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Float(f, ..) if *f == expected),
+        "{} loaded as {:?}, not the float {}",
+        scalar,
+        loaded,
+        expected
+    );
+
+    Ok(())
+}
