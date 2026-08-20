@@ -169,6 +169,20 @@ fn unary_err_msg(
     Ok(width)
 }
 
+/// The signal that this reporter cannot organise a finding by CloudFormation resource.
+///
+/// `report_eval` catches `InternalError` from `single_line` and delegates to the next reporter, so
+/// this is how the fallback is requested rather than an error in the ordinary sense.
+///
+/// The key is formatted in. The message used to be a `String::from` containing a literal `{key}`, so it
+/// promised to name the path it could not resolve and then printed the braces.
+fn unresolved_key(key: &str) -> crate::Error {
+    crate::Error::InternalError(UnresolvedKeyForReporter(format!(
+        "Unable to resolve key {key} for single line-summary when expecting a cloudformation \
+         template, falling back on next reporter"
+    )))
+}
+
 fn single_line(
     writer: &mut dyn Write,
     data_file: &str,
@@ -198,8 +212,17 @@ fn single_line(
 
         if matches > 2 {
             loop {
+                // Not `unreachable!()`. This reporter organises findings by CloudFormation resource,
+                // and a path under `/Resources` need not name one: guard validates plain YAML and JSON
+                // too, so `Resources.Nested.inner.key` is a perfectly good query against a document
+                // where `Nested` has no `Type`. Every candidate prefix failing to resolve is that
+                // case, not a broken invariant, and it panicked the process at exit 101 on a template
+                // whose only fault was not being CloudFormation.
+                //
+                // The arm below already had the answer: hand back an `InternalError` and let
+                // `report_eval` fall through to the next reporter, which does not assume the shape.
                 if matches - count == 0 {
-                    unreachable!()
+                    return Err(unresolved_key(key));
                 }
                 let resource_name = get_resource_name(key, count, matches);
 
@@ -211,15 +234,7 @@ fn single_line(
         } else {
             let resource_name = match CFN_RESOURCES.captures(key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
-                _ => {
-                    return Err(crate::Error::InternalError(
-                        UnresolvedKeyForReporter(
-                            String::from(
-                                "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
-                            )
-                        )
-                    ));
-                }
+                _ => return Err(unresolved_key(key)),
             };
 
             match handle_resource_aggr(
@@ -230,7 +245,9 @@ fn single_line(
                 value,
             ) {
                 Some(_) => {}
-                None => unreachable!(),
+                // Same reasoning as above: the key matched the shape of a resource path but names
+                // nothing this reporter can aggregate under.
+                None => return Err(unresolved_key(key)),
             }
         };
     }

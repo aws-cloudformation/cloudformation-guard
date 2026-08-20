@@ -1128,6 +1128,43 @@ mod validate_tests {
         );
     }
 
+    /// A finding under `Resources` that names no CloudFormation resource is reported, not a panic.
+    ///
+    /// The console reporter organises findings by resource, and reached `unreachable!()` when a path
+    /// under `/Resources` did not resolve to one. That is not a broken invariant -- guard validates
+    /// plain YAML and JSON as well as templates, so `Resources.Nested.inner.key` is an ordinary query
+    /// against a document where `Nested` has no `Type`. It took the process down at exit 101 on a
+    /// document whose only fault was not being CloudFormation, and the finding was lost with it.
+    ///
+    /// The fallback already existed for the sibling case: hand back an `InternalError` and let
+    /// `report_eval` delegate to the next reporter, which makes no assumption about the shape. Both
+    /// depths are covered, because the reporter takes a different branch either side of two path
+    /// separators.
+    #[test]
+    fn a_finding_outside_a_cloudformation_resource_is_reported_not_a_panic() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["non-resource-nesting-template.yaml"])
+            .rules(vec!["nested_non_resource_clause.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the clauses fail, so the run reports 19; 101 is the panic this test exists for"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("nested_values_are_right"),
+            "the failing rule must still be named once the reporter falls back:\n{}",
+            output
+        );
+    }
+
     /// The same explanation has to reach junit, which is the format a pipeline gates on.
     ///
     /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already
