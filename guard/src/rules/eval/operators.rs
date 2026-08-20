@@ -315,7 +315,23 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
 
         rest => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
-                if rhsl.contains(rest) {
+                // `Vec::contains` decides membership with `PartialEq`, which answers
+                // `element == rest` -- the direction that has no range arm and must not get one,
+                // because `eq` has to stay symmetric while membership does not. So a range nested in
+                // a list literal was never treated as a range: for a `Port` of 85,
+                // `Port in [r[80,90]]` failed and `Port not in [r[80,90]]` passed, which is a
+                // denylist of ranges that admits every value. Unwrapped, `Port in r[80,90]` was
+                // always right, because that spelling reaches `compare_eq` below, and `compare_eq`
+                // is where the range table lives.
+                //
+                // `eq` is still consulted first, and not for belt and braces: it is the only one of
+                // the two that relates a range to an equal range, so asking `compare_eq` alone would
+                // lose `%range_literal in [r[80,90]]`. Everything `eq` decides, it decides the same
+                // way as before; `compare_eq` can only add a match, never remove one.
+                if rhsl
+                    .iter()
+                    .any(|elem| elem == rest || compare_eq(rest, elem).unwrap_or(false))
+                {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::ValueIn(
                         LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
                     )))

@@ -330,9 +330,15 @@ impl PartialEq for PathAwareValue {
 ///
 /// Range membership used to be answered here too, which broke symmetry outright:
 /// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
-/// arms were unreachable and were removed rather than mirrored. Nothing is lost, because every
-/// clause is decided by `compare_eq`, which keeps its own range table and recurses through itself
-/// for lists and maps, so a range nested in a list literal never arrives here either.
+/// arms were removed rather than mirrored, because membership is `compare_eq`'s job and it keeps its
+/// own range table.
+///
+/// A range nested in a list literal does still arrive here, through `Vec::contains` in
+/// `contained_in`, and that is what the removed arms were not reaching: `contains` asks
+/// `element == value`, so it needed the reverse arm, the one that never existed. Membership through a
+/// list was therefore answered `false` for every range, in both polarities, until `contained_in`
+/// started asking `compare_eq` as well. The arms stay out; the caller asks the function that has the
+/// table.
 ///
 /// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
 /// equivalence relation on the values it relates, and `Hash` agrees with it.
