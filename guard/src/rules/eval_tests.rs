@@ -1243,6 +1243,155 @@ fn variable_projections() -> Result<()> {
     Ok(())
 }
 
+/// The rule used by the three capture-scoping tests below.
+///
+/// The `or` is what makes an iteration able to capture nothing while still reaching the clause that
+/// reads the capture: a bucket with no *enabled* config takes the second disjunct, so the filter never
+/// selects an entry and no key is captured, and `some %cfg` is evaluated anyway.
+const CONFIG_CAPTURE_RULE: &str = r#"
+rule configs_named_alpha {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.Config[ cfg | Enabled == true ] !empty or
+        Properties.Config[ cfg | Enabled == true ] empty
+        some %cfg == "alpha"
+    }
+}
+"#;
+
+/// `BucketA` has an enabled config named `alpha`; `BucketB` has one, but disabled.
+const COMPLIANT_BUCKET_FIRST: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: false
+"#;
+
+/// The same two resources as [`COMPLIANT_BUCKET_FIRST`], in the other order.
+const COMPLIANT_BUCKET_SECOND: &str = r#"
+Resources:
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: false
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+#[test]
+fn a_capture_does_not_leak_from_one_iteration_of_a_block_into_the_next() -> Result<()> {
+    let rules_file = RulesFile::try_from(CONFIG_CAPTURE_RULE)?;
+
+    // `BucketB` has a config but none that is enabled, so it captures no key and cannot satisfy
+    // `some %cfg == "alpha"`. It used to read the key `BucketA` captured and pass on it -- at exit 0,
+    // with the non-compliant bucket unnamed in the report.
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        COMPLIANT_BUCKET_FIRST,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL
+    );
+
+    // The same two resources the other way round. Whether a name is a capture is read from the rule
+    // text, so the verdict cannot depend on which resource the block iterated first: an earlier
+    // version of this fix learned the name at runtime and gave FAIL in one order and a file-fatal
+    // error in the other.
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        COMPLIANT_BUCKET_SECOND,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_declared_capture_that_selected_nothing_fails_its_clause_rather_than_the_file() -> Result<()> {
+    let rules_file = RulesFile::try_from(CONFIG_CAPTURE_RULE)?;
+    let no_enabled_config = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                beta:
+                  Enabled: false
+        "#,
+    )?)?;
+
+    // A name the rule text declares as a capture resolves to an empty selection when nothing matched,
+    // which fails the clause reading it. It used to be an unresolved-variable error, which takes the
+    // whole file down and loses the findings of every other rule in it.
+    //
+    // The split is deliberate: a name that appears *nowhere* as a capture -- a typo, or one belonging
+    // to another rule -- is still an error, because that is a broken ruleset rather than a
+    // non-compliant template.
+    let mut scope = root_scope(&rules_file, Rc::new(no_enabled_config));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_block_still_resolves_a_variable_it_does_not_declare_as_a_capture() -> Result<()> {
+    // The interception is limited to names the block's own clauses declare as filter captures, so a
+    // clause inside the block has to keep reaching past it to find a file-level assignment. Both
+    // channels are read by one clause here: `%cfg` from the filter, `%allowed` from outside.
+    let rules_file = RulesFile::try_from(
+        r#"
+    let allowed = "alpha"
+    rule configs_are_allowed {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == %allowed
+        }
+    }
+    "#,
+    )?;
+    let bucket = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                alpha:
+                  Enabled: true
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(bucket));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS
+    );
+
+    Ok(())
+}
+
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(

@@ -510,61 +510,9 @@ fn single_line(
     // query, which such a block does not have either. The result was a run that correctly exited 19
     // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
     // explanation was recorded and then dropped on the floor.
-    let mut unattributed = Vec::new();
-    for each_rule in &failure_report.not_compliant {
-        collect_unattributed_explanations(each_rule, &mut unattributed);
-    }
-    if !unattributed.is_empty() {
-        writeln!(writer, "Could not be evaluated:")?;
-        for (context, message) in unattributed {
-            writeln!(writer, "  {context}")?;
-            writeln!(writer, "    {message}")?;
-        }
-    }
+    super::common::write_unattributed_explanations(writer, &failure_report.not_compliant)?;
 
     Ok(())
-}
-
-/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
-///
-/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
-/// the value it got to, and the per-resource output renders that. A block with no such value failed
-/// for a reason that is only in its message.
-fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
-    match clause {
-        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
-            if let Some(explanation) = &blk.messages.error_message {
-                out.push((blk.context.to_string(), explanation.clone()));
-            }
-        }
-        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
-        ClauseReport::Rule(rule) => {
-            // A rule that failed on its own condition has no clause findings underneath it, so the
-            // per-resource output above has nothing to render and this message is the only account
-            // of why the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses
-            // produced findings has them rendered per resource already, and repeating the rule-level
-            // message there would duplicate rather than explain.
-            //
-            // Reached when a condition cannot be answered across a rule boundary -- a gate whose
-            // referenced or parameterized rule is undecidable. The evaluator records the explanation
-            // on the rule, the JSON reporter has always printed it, and the console reporter printed
-            // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
-            // not say why.
-            if rule.checks.is_empty() {
-                if let Some(explanation) = &rule.messages.custom_message {
-                    out.push((format!("rule {}", rule.name), explanation.clone()));
-                }
-            }
-            for child in &rule.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-        ClauseReport::Disjunctions(ors) => {
-            for child in &ors.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-    }
 }
 
 ///

@@ -1,7 +1,7 @@
 use crate::rules::errors::Error;
 use crate::rules::exprs::{
-    AccessQuery, Block, Conjunctions, FunctionExpr, GuardClause, LetExpr, LetValue,
-    ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
+    block_capture_names, AccessQuery, Block, CaptureNames, Conjunctions, FunctionExpr, GuardClause,
+    LetExpr, LetValue, ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
 };
 use crate::rules::functions::collections::count;
 use crate::rules::functions::converters::{
@@ -98,6 +98,10 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     /// resolved query result belongs to the iteration and dies with it, while a captured key has to
     /// survive for a clause that reads it after the block.
     captured: HashMap<&'value str, Vec<QueryResult>>,
+    /// Every name a filter in this block declares as a capture, read from the rule text at
+    /// construction rather than learned as keys arrive. See `resolve_variable` for what it is for and
+    /// `block_capture_names` for why it cannot be gathered at runtime.
+    capture_names: BTreeSet<&'value str>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
@@ -1181,9 +1185,13 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
     root: Rc<PathAwareValue>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
-) -> BlockScope<'value, 'loc, 'eval> {
+) -> BlockScope<'value, 'loc, 'eval>
+where
+    T: CaptureNames<'value>,
+{
     let (literals, variable_queries, function_expressions) = extract_variables(&block.assignments);
     BlockScope {
+        capture_names: block_capture_names(block),
         scope: Scope {
             literals,
             variable_queries,
@@ -1860,7 +1868,29 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
-            None => return self.parent.resolve_variable(variable_name),
+            None => {
+                // A name this block declares as a capture but did not capture resolves to nothing here,
+                // rather than deferring to the parent.
+                //
+                // Deferring is what let the per-iteration guarantee leak. `merge_captures_into_parent`
+                // hands each iteration's keys up as it exits, so by iteration two the parent holds
+                // iteration one's -- and a resource that captured nothing read its neighbour's key and
+                // passed on it. A silent false PASS at exit 0, and the shape that hides it is that the
+                // non-compliant resource fails correctly when it is the only one in the file.
+                //
+                // Three ways an iteration captures nothing: a filter that matched no entry, a capturing
+                // clause skipped because an `or` took the other branch, and one inside a `when` whose
+                // condition failed. None of them is an error, and none of them is evidence about this
+                // value, so an empty selection is the honest answer -- the clause reading it then fails
+                // with the "resolved to no values" reason rather than passing on somebody else's key.
+                //
+                // A name the block does *not* declare still defers, which is what keeps an outer `let`
+                // resolving from inside a block.
+                if self.capture_names.contains(variable_name) {
+                    return Ok(vec![]);
+                }
+                return self.parent.resolve_variable(variable_name);
+            }
         };
 
         let match_all = query.match_all;

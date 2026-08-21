@@ -1405,6 +1405,41 @@ mod validate_tests {
         );
     }
 
+    /// A Terraform finding that belongs to no resource change is still explained.
+    ///
+    /// `single_line` groups findings by resource change. A clause that failed *because it had nothing
+    /// to compare* points at no path, so it lands in no group and the loop cannot render it: the run
+    /// exited 19, printed "Number of non-compliant resources 0", and gave no reason anywhere. `cfn.rs`
+    /// grew a section for exactly this and `tf.rs` did not.
+    ///
+    /// Nothing reached it before, which is why it went unnoticed -- a capture that selected nothing was
+    /// an unresolved-variable error that ended the run before any reporter saw it. Scoping captures to
+    /// the block that declares them turns that into a clause failure, so this shape now arrives here.
+    #[test]
+    fn a_terraform_finding_that_belongs_to_no_resource_change_is_still_explained() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["terraform-plan.json"])
+            .rules(vec!["public_bucket_is_not_named_a.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the capture selects nothing against a plan, which fails the clause reading it"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Could not be evaluated:") && output.contains("%nm"),
+            "the run exits 19 and must say why, rather than counting zero resources and stopping:\n{}",
+            output
+        );
+    }
+
     /// A repeated document key does not misalign the keys from the values.
     ///
     /// `values` is an `IndexMap` and dedups; `keys` was a `Vec` that did not. The two therefore ended up

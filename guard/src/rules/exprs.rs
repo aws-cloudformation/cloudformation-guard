@@ -3,6 +3,7 @@ use crate::rules::values::*;
 use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::path_value::PathAwareValue;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -289,6 +290,195 @@ pub(crate) enum WhenGuardClause<'loc> {
 }
 
 pub(crate) type WhenConditions<'loc> = Conjunctions<WhenGuardClause<'loc>>;
+
+/// Read the filter capture names a clause declares out of the rule text.
+///
+/// A block has to know these *before* it evaluates anything, because the case that needs them is an
+/// iteration that captured nothing: it has no key to show, and "was this name meant to hold one?"
+/// cannot be answered from what happened at runtime. An earlier version of this fix learned names as
+/// keys were captured, which made the verdict depend on document order -- the same two buckets gave
+/// FAIL in one order and a file-fatal error in the other, because whichever bucket ran first was the
+/// one that taught the engine the name existed at all.
+///
+/// Named rules are deliberately not followed. A capture made inside one does not resolve outside it,
+/// so a name it declares is not a name the calling block can answer for.
+pub(crate) trait CaptureNames<'value> {
+    fn collect_capture_names(&'value self, into: &mut BTreeSet<&'value str>);
+}
+
+/// Every capture name a block could populate, including the ones in its nested blocks.
+///
+/// Nested blocks are included because they hand their captures up when they exit, so the outer block
+/// is where a name a nested block failed to capture is read.
+pub(crate) fn block_capture_names<'value, 'loc: 'value, T>(
+    block: &'value Block<'loc, T>,
+) -> BTreeSet<&'value str>
+where
+    T: CaptureNames<'value>,
+{
+    let mut names = BTreeSet::new();
+    for assignment in &block.assignments {
+        collect_let_value_capture_names(&assignment.value, &mut names);
+    }
+    collect_conjunctions_capture_names(&block.conjunctions, &mut names);
+    names
+}
+
+fn collect_conjunctions_capture_names<'value, T>(
+    conjunctions: &'value Conjunctions<T>,
+    into: &mut BTreeSet<&'value str>,
+) where
+    T: CaptureNames<'value>,
+{
+    for disjunctions in conjunctions {
+        for clause in disjunctions {
+            clause.collect_capture_names(into);
+        }
+    }
+}
+
+/// Only `Filter` and `MapKeyFilter` names count, and not even every `Filter`.
+///
+/// `AllValues` and `AllIndices` carry an `Option<String>` of the same shape, but a `Filter` sitting
+/// directly after either of them has its name dropped rather than captured -- the
+/// `check_and_delegate(conjunctions, &None)` branch of `query_retrieval`, because the wildcard has
+/// already expanded the map and the key the filter would capture is no longer in scope there.
+///
+/// Claiming such a name here would turn that dropped capture from a loud unresolved-variable error
+/// into a silently empty selection, which reads to the author as "your template had no matching
+/// entries" for entries the engine discarded itself. So the two stay in step: when that branch starts
+/// threading the key through, `preceded_by_wildcard` comes out with it.
+fn collect_query_capture_names<'value, 'loc: 'value>(
+    query: &'value [QueryPart<'loc>],
+    into: &mut BTreeSet<&'value str>,
+) {
+    for (index, part) in query.iter().enumerate() {
+        match part {
+            QueryPart::Filter(name, conjunctions) => {
+                let preceded_by_wildcard = matches!(
+                    index
+                        .checked_sub(1)
+                        .and_then(|previous| query.get(previous)),
+                    Some(QueryPart::AllValues(_)) | Some(QueryPart::AllIndices(_))
+                );
+                match name {
+                    Some(name) if !preceded_by_wildcard => {
+                        into.insert(name.as_str());
+                    }
+                    _ => {}
+                }
+                collect_conjunctions_capture_names(conjunctions, into);
+            }
+
+            QueryPart::MapKeyFilter(name, clause) => {
+                if let Some(name) = name {
+                    into.insert(name.as_str());
+                }
+                collect_let_value_capture_names(&clause.compare_with, into);
+            }
+
+            QueryPart::This
+            | QueryPart::Key(_)
+            | QueryPart::Index(_)
+            | QueryPart::AllValues(_)
+            | QueryPart::AllIndices(_) => {}
+        }
+    }
+}
+
+fn collect_access_clause_capture_names<'value, 'loc: 'value>(
+    clause: &'value AccessClause<'loc>,
+    into: &mut BTreeSet<&'value str>,
+) {
+    collect_query_capture_names(&clause.query.query, into);
+    if let Some(compare_with) = &clause.compare_with {
+        collect_let_value_capture_names(compare_with, into);
+    }
+}
+
+fn collect_let_value_capture_names<'value, 'loc: 'value>(
+    value: &'value LetValue<'loc>,
+    into: &mut BTreeSet<&'value str>,
+) {
+    match value {
+        LetValue::AccessClause(query) => collect_query_capture_names(&query.query, into),
+        LetValue::FunctionCall(function) => {
+            for parameter in &function.parameters {
+                collect_let_value_capture_names(parameter, into);
+            }
+        }
+        LetValue::Value(_) => {}
+    }
+}
+
+impl<'value, 'loc: 'value> CaptureNames<'value> for GuardClause<'loc> {
+    fn collect_capture_names(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            GuardClause::Clause(clause) => {
+                collect_access_clause_capture_names(&clause.access_clause, into)
+            }
+
+            GuardClause::BlockClause(block_clause) => {
+                collect_query_capture_names(&block_clause.query.query, into);
+                collect_conjunctions_capture_names(&block_clause.block.conjunctions, into);
+            }
+
+            GuardClause::WhenBlock(conditions, block) => {
+                collect_conjunctions_capture_names(conditions, into);
+                collect_conjunctions_capture_names(&block.conjunctions, into);
+            }
+
+            GuardClause::ParameterizedNamedRule(clause) => {
+                for parameter in &clause.parameters {
+                    collect_let_value_capture_names(parameter, into);
+                }
+            }
+
+            GuardClause::NamedRule(_) => {}
+        }
+    }
+}
+
+impl<'value, 'loc: 'value> CaptureNames<'value> for RuleClause<'loc> {
+    fn collect_capture_names(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            RuleClause::Clause(clause) => clause.collect_capture_names(into),
+
+            RuleClause::WhenBlock(conditions, block) => {
+                collect_conjunctions_capture_names(conditions, into);
+                collect_conjunctions_capture_names(&block.conjunctions, into);
+            }
+
+            // The type block's own query is where a filter on the resource selection sits, and its
+            // conditions are evaluated in this scope too.
+            RuleClause::TypeBlock(type_block) => {
+                collect_query_capture_names(&type_block.query, into);
+                if let Some(conditions) = &type_block.conditions {
+                    collect_conjunctions_capture_names(conditions, into);
+                }
+                collect_conjunctions_capture_names(&type_block.block.conjunctions, into);
+            }
+        }
+    }
+}
+
+impl<'value, 'loc: 'value> CaptureNames<'value> for WhenGuardClause<'loc> {
+    fn collect_capture_names(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            WhenGuardClause::Clause(clause) => {
+                collect_access_clause_capture_names(&clause.access_clause, into)
+            }
+
+            WhenGuardClause::ParameterizedNamedRule(clause) => {
+                for parameter in &clause.parameters {
+                    collect_let_value_capture_names(parameter, into);
+                }
+            }
+
+            WhenGuardClause::NamedRule(_) => {}
+        }
+    }
+}
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct Block<'loc, T> {

@@ -366,5 +366,15 @@ fn single_line(
         }
         writeln!(writer, "}}")?;
     }
+
+    // Failures that belong to no resource change.
+    //
+    // `cfn.rs` grew this section for a run that exited 19, printed "Number of non-compliant resources
+    // 0" and gave no reason anywhere; this reporter has the same shape and had the same gap, with no
+    // fixture reaching it because the inputs that produce such a finding used to fail earlier as an
+    // unresolved-variable error. A clause that failed *because it had nothing to compare* points at no
+    // path, so it lands in no resource bucket and the loop above cannot render it.
+    super::common::write_unattributed_explanations(writer, &failure_report.not_compliant)?;
+
     Ok(())
 }
