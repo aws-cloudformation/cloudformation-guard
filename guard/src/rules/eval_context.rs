@@ -773,7 +773,30 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     }
                 }
 
-                _ => unreachable!(),
+                // Not `unreachable!()`. `predicate_or_index` (parser.rs) lets an array index and a
+                // filter sit adjacent, so `Rules[0][ Action == 'allow' ]` parses and arrives here
+                // with `Index` as the preceding part -- as do `this` and a map-key filter. All three
+                // took the process down at exit 101.
+                //
+                // Reported as unresolved rather than guessed at. What `[ ... ]` should mean when
+                // applied to one already-indexed value is a language question: on a map the operator
+                // filters the map's entries, which is not what an author writing `Rules[0][ ... ]`
+                // means, and inventing an answer here would settle that question by accident. An
+                // unresolved result fails an assertion closed and names the query.
+                rest => to_unresolved_result(
+                    Rc::clone(&current),
+                    format!(
+                        "Query {} applies a filter directly to {}, which is not supported at path {}",
+                        SliceDisplay(&query[query_index..]),
+                        match rest {
+                            QueryPart::Index(_) => "an indexed value",
+                            QueryPart::This => "`this`",
+                            _ => "the result of a map key filter",
+                        },
+                        (*current).self_path(),
+                    ),
+                    query,
+                ),
             },
 
             PathAwareValue::List((_path, list)) => {
@@ -1418,16 +1441,16 @@ impl Callable for RegexReplaceFunction {
             format!("regex_replace function requires the {arg} argument to be a string")
         };
 
-        let extracted_expr = match &args[1][0] {
-            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+        let extracted_expr = match args[1].first() {
+            Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                 PathAwareValue::String((_, s)) => s,
                 _ => return Err(Error::ParseError(substring_err_msg(2))),
             },
             _ => return Err(Error::ParseError(substring_err_msg(2))),
         };
 
-        let replaced_expr = match &args[2][0] {
-            QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+        let replaced_expr = match args[2].first() {
+            Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                 PathAwareValue::String((_, s)) => s,
                 _ => return Err(Error::ParseError(substring_err_msg(3))),
             },
@@ -1477,13 +1500,13 @@ impl Callable for SubstringFunction {
             })
         };
 
-        let from = match &args[1][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(2, r)?,
+        let from = match args[1].first() {
+            Some(QueryResult::Literal(r)) | Some(QueryResult::Resolved(r)) => offset(2, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(2))),
         };
 
-        let to = match &args[2][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(3, r)?,
+        let to = match args[2].first() {
+            Some(QueryResult::Literal(r)) | Some(QueryResult::Resolved(r)) => offset(3, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(3))),
         };
 
@@ -1506,8 +1529,8 @@ impl Callable for ToLowerFunction {
 impl Callable for JoinFunction {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
         let res =
-            match &args[1][0] {
-                QueryResult::Resolved(r) | QueryResult::Literal(r) => match &**r {
+            match args[1].first() {
+                Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
                     PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
                     _ => return Err(Error::ParseError(String::from(
@@ -2442,8 +2465,17 @@ fn report_all_failed_clauses_for_rules<'value>(
                         .map_or("".to_string(), |s| format!("Error = [{}]", s));
 
                     let (message, check) = match from {
-                            QueryResult::Literal(_) => unreachable!(),
-                            QueryResult::Resolved(res) => {
+                            // A literal reaches here through `let x = 5` followed by a unary check
+                            // such as `%x empty`: the operator has no answer for a number, the
+                            // clause fails, and this is the message that failure carries. It was
+                            // `unreachable!()`, so building the report took the process down at exit
+                            // 101 in all four output modes. String and list literals never reached
+                            // it, because the operator answers those.
+                            //
+                            // Reported as a resolved value, which is what it is -- the two variants
+                            // carry the same payload, and the only difference is that a literal's
+                            // path is the unlocated root.
+                            QueryResult::Literal(res) | QueryResult::Resolved(res) => {
                                 (
                                     format!(
                                         "Check was not compliant as property [{prop}] {cmp_msg}.{err}",

@@ -7555,3 +7555,84 @@ fn boolean_empty_is_an_incompatible_type(#[case] operator: &str, #[case] flag: &
 
     Ok(())
 }
+
+/// A filter applied directly to an already-indexed value is reported, not a panic.
+///
+/// `predicate_or_index` lets an array index and a filter sit adjacent, so `Rules[0][ Action ==
+/// 'allow' ]` parses. Retrieval then reached a `_ => unreachable!()` whose match only handled a
+/// preceding wildcard or key, and the process died at exit 101 -- taking the finding with it. `this`
+/// and a map-key filter in the same position did the same.
+///
+/// Asserted as FAIL rather than as a specific message: what `[ ... ]` ought to mean when applied to one
+/// already-selected value is a language question -- on a map the operator filters the map's *entries*,
+/// which is not what an author writing `Rules[0][ ... ]` means -- so retrieval reports the query as
+/// unresolved and lets the clause fail closed rather than inventing an answer.
+#[rstest::rstest]
+#[case::filter_after_an_index("Resources.One.Properties.Rules[0][ Action == 'allow' ] !empty")]
+#[case::filter_after_a_filter(
+    "Resources.*[ Type == 'AWS::S3::Bucket' ][ Type == 'AWS::S3::Bucket' ] !empty"
+)]
+fn a_filter_applied_to_an_indexed_value_does_not_panic(#[case] clause: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            One: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Rules: [ { Action: 'allow' } ] }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule filtered { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "filtered")?,
+        "{} must fail closed rather than abort the process",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A scalar function argument whose query selects nothing gets the diagnostic it already had.
+///
+/// `resolve_function` pushes the query's result verbatim, and an empty result is legitimate -- a filter
+/// that matches no resource produces one. Every scalar-positional argument then indexed `[0]` on it,
+/// which panicked at exit 101 *before* reaching the arm that already carried the right message. Five
+/// sites: two in `substring`, two in `regex_replace`, one in `join`.
+///
+/// The first argument was never affected, because it is passed as a slice rather than indexed, which is
+/// why this went unnoticed.
+#[rstest::rstest]
+#[case::substring_from("let r = substring(%s, %empty_sel, 3)", "second")]
+#[case::substring_to("let r = substring(%s, 1, %empty_sel)", "third")]
+#[case::join_separator("let r = join(%s, %empty_sel)", "second")]
+fn a_function_argument_that_selects_nothing_does_not_panic(
+    #[case] call: &str,
+    #[case] which: &str,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Type: 'AWS::S3::Bucket' } } }
+    "#;
+
+    let rules = "let s = \"hello\"\nlet empty_sel = Resources[ Type == 'AWS::Nonexistent::Type' ]\nrule r {\n    CALL\n    %r == \"unused\"\n}\n"
+        .replace("CALL", call);
+
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(INPUT)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let outcome = eval_rules_file(&rules_file, &mut root, None);
+
+    let err = outcome.err().map(|e| format!("{}", e)).unwrap_or_default();
+    assert!(
+        err.contains(which),
+        "{} must name the {} argument rather than abort; got {:?}",
+        call,
+        which,
+        err
+    );
+
+    Ok(())
+}

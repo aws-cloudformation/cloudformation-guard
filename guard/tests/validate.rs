@@ -1294,6 +1294,50 @@ mod validate_tests {
         );
     }
 
+    /// A unary operator on a numeric literal is reported, not a panic.
+    ///
+    /// `let numeric = 5` followed by `%numeric empty` is a clause the operator cannot answer, so it
+    /// fails -- and building the *report* for that failure hit `QueryResult::Literal(_) =>
+    /// unreachable!()`, taking the process down at exit 101. String and list literals never reached it,
+    /// because the operator answers those; the arm is only reachable once the clause has already decided
+    /// to fail.
+    ///
+    /// This is an integration test rather than a unit test on purpose. The panic is in the
+    /// report-building path, which `eval_rules_file` alone does not enter -- a unit test asserting the
+    /// rule's status passes whether or not the bug is present, which is how the first version of this
+    /// test came out green against the unfixed code. Both output modes are covered because the reporter
+    /// is what reaches the arm.
+    #[rstest::rstest]
+    #[case::console(None)]
+    #[case::structured_json(Some("json"))]
+    fn a_unary_operator_on_a_numeric_literal_is_reported_not_a_panic(
+        #[case] output_format: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec!["numeric-literal-unary-template.yaml"])
+            .rules(vec!["unary_on_a_numeric_literal.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .structured()
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the clause fails, so the run reports 19; 101 is the panic this test exists for"
+        );
+    }
+
     /// The same explanation has to reach junit, which is the format a pipeline gates on.
     ///
     /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already
