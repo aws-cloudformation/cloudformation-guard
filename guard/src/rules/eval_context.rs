@@ -173,11 +173,34 @@ fn accumulate<'value, 'loc: 'value>(
 
     let mut accumulated = Vec::with_capacity(elements.len());
     for each in elements.iter() {
+        // Rebased onto the element, which is what every other expansion helper does and what this one
+        // did not. `accumulate_map` builds the same `ValueScope`, and so does the variable-interpolation
+        // path above.
+        //
+        // Without it, anything downstream that consults the scope's *root* rather than the value being
+        // traversed saw the whole document. A filter predicate is exactly that, so
+        // `Items[*][ Sub == 2 ]` tested `Sub == 2` against the file root, matched nothing, and selected
+        // nothing -- while `Items[ Sub == 2 ]`, which reaches the List arm of the filter and rebases
+        // there, was right all along. Two spellings of one query disagreed.
+        //
+        // The damage is not the empty selection, it is what an assertion over one reports: an assertion
+        // whose query selects nothing is not applicable, so `Items[*][ Sub == 2 ].Public == false`
+        // reported SKIP and a `Public: true` went unflagged at exit 0. The same clause written
+        // `Items[ Sub == 2 ].Public == false` fails, as it should.
+        //
+        // The check that distinguishes a wrong root from a genuine non-match: make the predicate name
+        // something only reachable from the document root, such as
+        // `Items[*][ Resources.One.Type == 'AWS::S3::Bucket' ]`. That passed, so the root really was
+        // the document. `a_filter_after_a_wildcard_resolves_against_the_element` pins it.
+        let mut val_resolver = ValueScope {
+            root: Rc::new(each.clone()),
+            parent: resolver,
+        };
         accumulated.extend(query_retrieval_with_converter(
             query_index + 1,
             query,
             Rc::new(each.clone()),
-            resolver,
+            &mut val_resolver,
             converter,
         )?);
     }

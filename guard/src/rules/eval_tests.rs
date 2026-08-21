@@ -7636,3 +7636,76 @@ fn a_function_argument_that_selects_nothing_does_not_panic(
 
     Ok(())
 }
+
+/// A filter after a wildcard resolves its predicate against the element, not the document.
+///
+/// `accumulate` -- the helper that expands a list -- passed the resolver through unchanged, while every
+/// other expansion path rebuilds it as a `ValueScope` rooted at the element. Anything downstream that
+/// consults the scope's root rather than the value being traversed therefore saw the whole document, and
+/// a filter predicate is exactly that.
+///
+/// So `Items[*][ Sub == 2 ]` tested `Sub == 2` against the file root, matched nothing, and selected
+/// nothing, while `Items[ Sub == 2 ]` -- which reaches the filter's own List arm and rebases there -- was
+/// right. Two spellings of one query disagreed.
+///
+/// The empty selection is not the damage. An assertion whose query selects nothing is *not applicable*,
+/// so the guarded comparison reported SKIP and a violating value went unflagged at exit 0. That is the
+/// `assertion_over_the_selection` cell, and its control is the same assertion written the working way.
+///
+/// `predicate_naming_the_document_root` is the cell that distinguishes a wrong root from a genuine
+/// non-match: `Resources.One.Type` is unreachable from a list element, so it must NOT hold. It passed
+/// before the fix, which is what proved the root was the document rather than the element.
+#[rstest::rstest]
+#[case::wildcard_filter_matches(
+    "Resources.One.Properties.Items[*][ Sub == 2 ] !empty",
+    Status::PASS
+)]
+#[case::wildcard_filter_matches_other(
+    "Resources.One.Properties.Items[*][ Sub == 9 ] !empty",
+    Status::PASS
+)]
+#[case::wildcard_filter_no_match(
+    "Resources.One.Properties.Items[*][ Sub == 99 ] !empty",
+    Status::FAIL
+)]
+#[case::plain_filter_control("Resources.One.Properties.Items[ Sub == 2 ] !empty", Status::PASS)]
+#[case::predicate_naming_the_document_root(
+    "Resources.One.Properties.Items[*][ Resources.One.Type == 'AWS::S3::Bucket' ] !empty",
+    Status::FAIL
+)]
+#[case::assertion_over_the_selection(
+    "Resources.One.Properties.Items[*][ Sub == 2 ].Public == false",
+    Status::FAIL
+)]
+#[case::assertion_control(
+    "Resources.One.Properties.Items[ Sub == 2 ].Public == false",
+    Status::FAIL
+)]
+fn a_filter_after_a_wildcard_resolves_against_the_element(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            One: {
+                Type: 'AWS::S3::Bucket',
+                Properties: {
+                    Items: [ { Sub: 2, Public: true }, { Sub: 9, Public: false } ]
+                }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule filtered { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "filtered")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
