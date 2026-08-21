@@ -254,7 +254,23 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                         let mut root_scope =
                             eval_context::root_scope(rule, Rc::clone(&each.path_value));
 
-                        eval_rules_file(rule, &mut root_scope, None)?;
+                        // Not `?`. Propagating discarded the whole structured result, so a rules file
+                        // with one unresolvable variable produced no document at all rather than one
+                        // saying what went wrong — the same defect the validate path had, in the command
+                        // that CI calls to check rules against their own expectations.
+                        //
+                        // Reported the way this function already reports a spec it cannot parse and an
+                        // expectation string it cannot read: as a `TestResult::Err` the caller renders.
+                        match eval_rules_file(rule, &mut root_scope, None) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Ok(TestResult::Err(Err {
+                                    rule_file: file.to_owned(),
+                                    error: e.to_string(),
+                                    time: now.elapsed().as_millis(),
+                                }))
+                            }
+                        }
 
                         // Read before `reset_recorder` consumes the scope, as in `validate`.
                         diagnostics.extend(root_scope.deprecations().cloned());

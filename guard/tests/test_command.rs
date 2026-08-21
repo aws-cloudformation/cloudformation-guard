@@ -179,6 +179,58 @@ mod test_command_tests {
         Ok(())
     }
 
+    /// A rule that cannot be evaluated costs its own expectation, not the file's.
+    ///
+    /// `get_by_result` propagated the evaluation error, so a rules file with one unresolvable variable
+    /// printed the case number, the case name, one error line and nothing else — neither of the two
+    /// decidable expectations checked or reported, and no report at all in `json` or `junit`.
+    ///
+    /// Both halves are asserted. The error must still be stated, because the ruleset really is broken; and
+    /// the two expectations must still be checked, because `eval_rules_file` evaluates every rule before
+    /// returning an error, so their verdicts are in the record and there is nothing to gain by discarding
+    /// them.
+    ///
+    /// `INCORRECT_STATUS_ERROR` is the command's own error code, and it is deliberately not
+    /// `TEST_COMMAND_FAILURE`: an expectation that could not be evaluated is a different answer from an
+    /// expectation that was not met.
+    #[test]
+    fn a_rule_that_cannot_be_evaluated_does_not_discard_the_other_expectations() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some(
+                "resources/test-command/data-dir/a_broken_rule_beside_working_ones_tests.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/rule-dir/a_broken_rule_beside_working_ones.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "a rule that could not be evaluated is an error, not an unmet expectation"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Could not resolve variable by name nm"),
+            "the run must still say what it could not evaluate:\n{}",
+            output
+        );
+        for expectation in [
+            "bucket_is_named_expected: Expected = FAIL",
+            "producer: Expected = PASS",
+        ] {
+            assert!(
+                output.contains(expectation),
+                "and must still report {}:\n{}",
+                expectation,
+                output
+            );
+        }
+    }
+
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
         let mut reader = Reader::default();

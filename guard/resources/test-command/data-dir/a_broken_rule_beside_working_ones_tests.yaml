@@ -1,0 +1,13 @@
+# Both expectations are decidable. `reads_another_rules_capture` is deliberately given none, because the
+# point of the case is that a rule which cannot be evaluated does not stop these two from being checked.
+- name: a bucket named something other than expected
+  input:
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: wrong
+  expectations:
+    rules:
+      bucket_is_named_expected: FAIL
+      producer: PASS
