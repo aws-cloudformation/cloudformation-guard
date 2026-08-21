@@ -722,7 +722,15 @@ fn evaluate_against_data_input<'r>(
         };
         let traversal = Traversal::from(&each);
         let mut root_scope = root_scope(rules, Rc::new(each.clone()));
-        let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
+        // Not `?`. A rules file with one unevaluatable rule still has findings from the others, and
+        // they are in the record by the time the error comes back -- `eval_rules_file` evaluates every
+        // rule before returning it. Reporting first and propagating afterwards keeps the exit code
+        // saying "the ruleset is broken" while letting the reader see what the rest of it found.
+        let evaluated = eval_rules_file(rules, &mut root_scope, Some(&file.name));
+        let status = match &evaluated {
+            Ok(status) => *status,
+            Err(_) => Status::FAIL,
+        };
 
         // Written to stderr, and read before `reset_recorder` consumes the scope. Stderr rather than
         // the report because the report on stdout is what pipelines parse, and a notice about a future
@@ -761,6 +769,8 @@ fn evaluate_against_data_input<'r>(
         if status == Status::FAIL {
             overall = Status::FAIL
         }
+
+        evaluated?;
     }
     Ok(overall)
 }

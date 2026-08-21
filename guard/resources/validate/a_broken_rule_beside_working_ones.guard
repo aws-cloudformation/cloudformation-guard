@@ -1,0 +1,21 @@
+#
+# The middle rule cannot be evaluated: a filter capture belongs to the rule that made it, so `%nm` does
+# not resolve here. That is a broken ruleset and the run says so with exit 255.
+#
+# What it must not do is cost the other rules their findings. `every_bucket_is_named_expected` fails for
+# every bucket in the template it is paired with, and those findings were discarded along with the whole
+# report before the error was contained to the rule that caused it.
+#
+rule producer {
+    Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty
+}
+
+rule reads_another_rules_capture {
+    some %nm == "Alpha"
+}
+
+rule every_bucket_is_named_expected {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.BucketName == 'expected'
+    }
+}

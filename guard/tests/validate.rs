@@ -1405,6 +1405,49 @@ mod validate_tests {
         );
     }
 
+    /// One rule that cannot be evaluated does not cost the file its report.
+    ///
+    /// `eval_rules_file` returned on the first rule that errored, after closing the *file's* record with
+    /// a rule-check payload. So the record was both mislabelled and truncated, every rule after the
+    /// broken one went unevaluated, and the run printed a single error line: five real findings from a
+    /// third rule, discarded because a second rule read a variable that does not exist in it.
+    ///
+    /// The exit code is deliberately unchanged. A variable that resolves nowhere is a broken ruleset
+    /// rather than a non-compliant template, and 255 rather than 19 is what says so; the fix is that
+    /// there is now a report to read beside it.
+    #[test]
+    fn a_rule_that_cannot_be_evaluated_does_not_discard_the_other_rules_findings() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["five-non-compliant-buckets-template.yaml"])
+            .rules(vec!["a_broken_rule_beside_working_ones.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INTERNAL_FAILURE, status_code,
+            "a ruleset that cannot be evaluated stays distinguishable from a non-compliant template"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let reported = output
+            .lines()
+            .filter(|l| l.starts_with("Resource = "))
+            .count();
+        assert_eq!(
+            reported, 5,
+            "the rules that could be evaluated must still report their findings:\n{}",
+            output
+        );
+        assert!(
+            output.contains("Could not resolve variable by name nm"),
+            "and the rule that could not be evaluated must still say why:\n{}",
+            output
+        );
+    }
+
     /// Resources are reported in a fixed order.
     ///
     /// The reporter aggregated them into a `std::collections::HashMap` and iterated that to write the

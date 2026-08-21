@@ -2778,6 +2778,11 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 RecordType::RuleCheck(NamedStatus {
                     status: Status::FAIL,
                     name: &rule.rule_name,
+                    // No message here on purpose. The clause that could not be evaluated records its
+                    // own explanation, and that is what both the console and the JSON view render --
+                    // naming the clause, which a rule-level restatement cannot. A message added here
+                    // reached the JSON only, beside the clause's, and
+                    // `every_recorded_explanation_has_a_rendering_path` is what caught it.
                     ..Default::default()
                 }),
             )?;
@@ -2802,6 +2807,7 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     resolver.start_record(&context)?;
     let mut fails = 0;
     let mut passes = 0;
+    let mut first_error = None;
     for each_rule in &rule.guard_rules {
         // A capture is scoped to the rule that made it. A rule condition is evaluated against the
         // enclosing scope, so without this a capture in one rule's `when` outlived it and the next
@@ -2819,16 +2825,23 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
                 Status::SKIP => {}
             },
 
+            // A rule that cannot be evaluated costs its own finding, not the file's.
+            //
+            // What was here closed the *file's* record with a rule-check payload -- `eval_rule` has
+            // already closed the rule's own record as a failure by the time this is reached -- and
+            // then returned, so the file's record was both mislabelled and truncated and every rule
+            // after this one went unevaluated. A file whose second rule read a variable that does not
+            // exist in it printed one error line and nothing else, discarding five real findings that
+            // its third rule had already produced.
+            //
+            // The error is still returned, after the loop rather than instead of it: a variable that
+            // resolves nowhere is a broken ruleset rather than a non-compliant template, and the exit
+            // code has to keep saying so. What changes is that there is a report to read alongside it.
             Err(e) => {
-                resolver.end_record(
-                    &context,
-                    RecordType::RuleCheck(NamedStatus {
-                        status: Status::FAIL,
-                        name: &each_rule.rule_name,
-                        ..Default::default()
-                    }),
-                )?;
-                return Err(e);
+                fails += 1;
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
     }
@@ -2850,7 +2863,10 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
         }),
     )?;
 
-    Ok(overall)
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(overall),
+    }
 }
 
 /// The clause type a disjunction is over, spelled the same way by every compiler.
