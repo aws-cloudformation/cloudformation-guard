@@ -1740,12 +1740,47 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         Ok(result)
     }
 
+    /// Captured here rather than delegated to the parent, because this is the scope the capture
+    /// belongs to.
+    ///
+    /// `RootScope`'s implementation appends and never resets, and both this scope and `ValueScope`
+    /// used to hand captures up to it. So every key captured by a filter outlived the iteration that
+    /// produced it and piled up in one list for the whole file -- and `resolve_variable` reads
+    /// `resolved_variables` before `variable_queries`, so the grown list is what a later `%name` saw.
+    ///
+    /// That is a false PASS, not merely untidy. Over two buckets, one with an enabled config named
+    /// `alpha` and one with only `beta`:
+    ///
+    /// ```text
+    /// Resources.*[ Type == 'AWS::S3::Bucket' ] {
+    ///     Properties.Config[ cfg | Enabled == true ] !empty
+    ///     some %cfg == "alpha"
+    /// }
+    /// ```
+    ///
+    /// the second bucket saw `["alpha", "beta"]` and satisfied `some %cfg == "alpha"` on the strength
+    /// of the first bucket's key. Adding a *compliant* resource made a non-compliant one pass, and
+    /// the non-compliant bucket alone failed correctly -- which is the shape that makes this
+    /// dangerous, because the rule looks like it works when tested on one resource at a time.
+    ///
+    /// A fresh `BlockScope` is built per iteration (`eval_guard_block_clause` loops the block's values
+    /// and `eval_general_block_clause` builds a new scope for each), so storing the capture here gives
+    /// it exactly the lifetime of the iteration that made it. `resolve_variable` already looks in this
+    /// scope before asking the parent, so nothing else has to change.
+    ///
+    /// `ValueScope` still delegates, and must: it carries no scope of its own, so a capture made under
+    /// one lands in the nearest enclosing block, which is the iteration boundary that matters.
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
-        self.parent.add_variable_capture_key(variable_name, key)
+        self.scope
+            .resolved_variables
+            .entry(variable_name)
+            .or_default()
+            .push(QueryResult::Resolved(Rc::clone(&key)));
+        Ok(())
     }
 }
 

@@ -7709,3 +7709,70 @@ fn a_filter_after_a_wildcard_resolves_against_the_element(
 
     Ok(())
 }
+
+/// A filter capture belongs to the iteration that made it.
+///
+/// `RootScope::add_variable_capture_key` appends and never resets, and both `BlockScope` and
+/// `ValueScope` used to hand captures up to it. So every key a filter captured outlived its iteration
+/// and piled up in one list for the whole file, and because `resolve_variable` reads
+/// `resolved_variables` before `variable_queries`, the grown list is what a later `%name` saw.
+///
+/// The result is a false PASS on the resource that should fail:
+///
+/// | template                       | before | correct |
+/// |--------------------------------|--------|---------|
+/// | BucketB alone (only `beta`)    | FAIL   | FAIL    |
+/// | BucketA + BucketB              | PASS   | FAIL    |
+/// | BucketA alone (has `alpha`)    | PASS   | PASS    |
+///
+/// The second row is the defect: adding a *compliant* resource made a non-compliant one pass, because
+/// BucketB saw `["alpha", "beta"]` and satisfied `some %cfg == "alpha"` on the strength of BucketA's
+/// key. What makes it dangerous is the first row -- tested on the offending resource alone, the rule
+/// looks like it works.
+///
+/// The third row is the liveness control, and it is the one that matters here: a fix that simply broke
+/// the capture would make every row FAIL and look correct without it.
+#[rstest::rstest]
+#[case::non_compliant_alone(false, true, Status::FAIL)]
+#[case::compliant_beside_non_compliant(true, true, Status::FAIL)]
+#[case::compliant_alone(true, false, Status::PASS)]
+fn a_filter_capture_does_not_outlive_its_iteration(
+    #[case] with_alpha: bool,
+    #[case] with_beta: bool,
+    #[case] expected: Status,
+) -> Result<()> {
+    // `alpha` is the config name the rule demands; `beta` is a bucket that has an enabled config under
+    // a different name, so it must fail.
+    let mut resources = vec![];
+    if with_alpha {
+        resources.push(
+            "BucketA: { Type: 'AWS::S3::Bucket', Properties: { Config: { alpha: { Enabled: true } } } }",
+        );
+    }
+    if with_beta {
+        resources.push(
+            "BucketB: { Type: 'AWS::S3::Bucket', Properties: { Config: { beta: { Enabled: true } } } }",
+        );
+    }
+    let input = format!("{{ Resources: {{ {} }} }}", resources.join(", "));
+
+    let rules = r###"
+    rule every_bucket_has_an_enabled_alpha_config {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "alpha"
+        }
+    }
+    "###;
+
+    assert_eq!(
+        expected,
+        rule_status_in(rules, &input, "every_bucket_has_an_enabled_alpha_config")?,
+        "alpha={} beta={} over {}",
+        with_alpha,
+        with_beta,
+        input
+    );
+
+    Ok(())
+}
