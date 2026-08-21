@@ -1216,6 +1216,84 @@ mod validate_tests {
         );
     }
 
+    /// Every shape the console reporter cannot organise by resource falls back instead of crashing.
+    ///
+    /// The first fix here covered one of four `unreachable!()` on this path, and review found the other
+    /// three. All four had the same cause: the reporter assumed every finding sits under a resolvable
+    /// CloudFormation resource, and reached for a panic when one did not.
+    ///
+    /// The range that fed it was `range("/Resources"..)` with no upper bound, wrong in both directions
+    /// and silently so in one of them:
+    ///
+    /// - After `Resources`: `Rules` and `Transform` are real CloudFormation sections and both sort
+    ///   after it, so a SAM template with a failing clause under either died at exit 101.
+    /// - Before `Resources`: `Outputs` was dropped from the aggregation entirely, and the file then
+    ///   printed "Number of non-compliant resources 0" while exiting 19. A failing gate with nothing to
+    ///   act on is worse than a crash, because it reads as a report.
+    ///
+    /// The other two are values of the wrong type on an otherwise ordinary resource -- a `Type` that is
+    /// a map, and an `aws:cdk:path` that is a number -- where the sibling arm already returned `None`.
+    ///
+    /// Each case asserts the finding is *named*, not merely that the run exited 19, because exiting 19
+    /// with nothing printed is the defect in the `Outputs` row.
+    #[rstest::rstest]
+    #[case::section_sorting_after_resources(
+        "transform-section-template.yaml",
+        "rules_section_assertion.guard",
+        "/Rules/RegionCheck"
+    )]
+    #[case::section_sorting_before_resources(
+        "outputs-section-template.yaml",
+        "outputs_value_is_right.guard",
+        "/Outputs/a/b/c"
+    )]
+    #[case::resource_type_is_not_a_string(
+        "non-string-type-template.yaml",
+        "nested_key_is_right.guard",
+        "/Resources/Nested/key"
+    )]
+    #[case::cdk_path_is_not_a_string(
+        "non-string-cdk-path-template.yaml",
+        "bucket_name_is_right.guard",
+        "/Resources/Bucket/Properties/BucketName"
+    )]
+    fn a_finding_the_cfn_reporter_cannot_place_is_still_reported(
+        #[case] data_file: &str,
+        #[case] rules_file: &str,
+        #[case] expected_path: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec![data_file])
+            .rules(vec![rules_file])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{} fails its rule, so the run reports 19; 101 is the panic these cases exist for",
+            data_file
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // The property path rather than a phrase, because the two outcomes are both correct and word
+        // things differently. The first three demote the file to the generic reporter, which prints
+        // "Property [...] is not compliant with"; the last one stays with the console reporter -- a
+        // non-string CDK path is now just a resource without a CDK path -- and keeps the detailed
+        // per-resource report. Either way the path has to appear, and "Number of non-compliant
+        // resources 0" contains no path at all.
+        assert!(
+            output.contains(expected_path),
+            "the finding for {} must name {}, not be counted as zero:\n{}",
+            data_file,
+            expected_path,
+            output
+        );
+    }
+
     /// The same explanation has to reach junit, which is the format a pipeline gates on.
     ///
     /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already
@@ -1657,20 +1735,32 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         let result = writer.stripped().unwrap();
+        // This expectation used to be "Number of non-compliant resources 0", twice, for a rule that
+        // really does fail: `Parameters.InstanceName` is "TestInstance" and the rule demands
+        // "SomeRandomString". The console reporter aggregates by CloudFormation resource and
+        // `/Parameters/InstanceName` is not under one, so the finding was dropped and the file was
+        // described by a count that did not include it -- exiting 19 with nothing to act on. The test
+        // pinned that, which is why it survived.
+        //
+        // The finding is now named, by the reporter that can name it.
         let expected = indoc! {
             r#"
             DATA_STDIN[1] Status = FAIL
             FAILED rules
             RULES_STDIN[2]/default    FAIL
             ---
-            Evaluating data DATA_STDIN[1] against rules RULES_STDIN[2]
-            Number of non-compliant resources 0
+            Evaluation of rules RULES_STDIN[2] against data DATA_STDIN[1]
+            --
+            Property [/Parameters/InstanceName] in data [DATA_STDIN[1]] is not compliant with [RULES_STDIN[2]/default] because provided value ["TestInstance"] did not match expected value ["SomeRandomString"]. Error Message []
+            --
             DATA_STDIN[2] Status = FAIL
             FAILED rules
             RULES_STDIN[2]/default    FAIL
             ---
-            Evaluating data DATA_STDIN[2] against rules RULES_STDIN[2]
-            Number of non-compliant resources 0
+            Evaluation of rules RULES_STDIN[2] against data DATA_STDIN[2]
+            --
+            Property [/Parameters/InstanceName] in data [DATA_STDIN[2]] is not compliant with [RULES_STDIN[2]/default] because provided value ["TestInstance"] did not match expected value ["SomeRandomString"]. Error Message []
+            --
             "#
         };
 

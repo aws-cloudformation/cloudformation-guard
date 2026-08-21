@@ -206,7 +206,44 @@ fn single_line(
 
     let root = data.root().unwrap();
     let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range(String::from("/Resources")..) {
+
+    // Every finding has to sit under `/Resources/` for this reporter to say anything true about the
+    // file, so if one does not, the whole file goes to the next reporter.
+    //
+    // The range below was `range("/Resources"..)` with no upper bound, which is wrong in both
+    // directions and silently so. Findings under a section sorting *before* `Resources` were dropped
+    // from the aggregation and the file then reported "Number of non-compliant resources 0" while
+    // exiting 19 -- a failing gate with nothing to act on, which is worse than a crash because it
+    // looks like a report. Findings under a section sorting *after* it were admitted and then
+    // panicked: `Rules` and `Transform` are real CloudFormation sections and both sort after
+    // `Resources` ("Rules" > "Resources" at u vs e), so a SAM template with a `Transform` and a
+    // failing clause under it died at exit 101.
+    // Any *located* path outside `/Resources/` is what this reporter cannot place. The loop below only
+    // consumes keys under `/Resources/`, so every other located path is dropped by it, and the file is
+    // then described by a resource count that does not include the finding.
+    //
+    // Emptiness is the discriminator, and depth is not -- that took two attempts. A key more than two
+    // separators deep leaves every shallower one silently lost: `Outputs.a`, `Parameters.p`,
+    // `Transform.t`, `Mappings.m` and a bare `/Resources` all sit at two or fewer and all reported
+    // "Number of non-compliant resources 0" with the path never named. Two of those were worse than
+    // pre-existing -- the old `else` branch used to fall back for `/Transform/t` and `/Resources`, so a
+    // depth test regressed them -- along with 23 fixtures whose retrieval error reads "Could not find
+    // key Vol inside struct at path /Resources".
+    //
+    // What separates the cases is whether the finding has a path at all. A retrieval error carries an
+    // empty one and is reported further down as "Property traversed until []", so it is not lost by
+    // being absent from the aggregation and must not demote the file.
+    if let Some((key, _)) = path_tree
+        .iter()
+        .find(|(key, _)| !key.is_empty() && !key.starts_with("/Resources/"))
+    {
+        return Err(unresolved_key(key));
+    }
+
+    for (key, value) in path_tree
+        .range(String::from("/Resources/")..)
+        .take_while(|(key, _)| key.starts_with("/Resources/"))
+    {
         let matches = key.matches('/').count();
         let mut count = 1;
 
@@ -224,7 +261,10 @@ fn single_line(
                 if matches - count == 0 {
                     return Err(unresolved_key(key));
                 }
-                let resource_name = get_resource_name(key, count, matches);
+                let resource_name = match get_resource_name(key, count, matches) {
+                    Some(name) => name,
+                    None => return Err(unresolved_key(key)),
+                };
 
                 match handle_resource_aggr(data, root, resource_name, &mut by_resources, value) {
                     Some(_) => break,
@@ -538,7 +578,7 @@ fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(S
 ///
 /// returns: String
 /// ```
-fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
+fn get_resource_name(key: &str, count: usize, matches: usize) -> Option<String> {
     let c = &char::from_u32(0xC).unwrap().to_string();
     // count = 2; key = "/Resources/foo/bar/baz -> placeholder = "\fResources\ffoo\fbar/baz"
     let mut placeholder = str::replacen(key, "/", c, matches - count);
@@ -550,9 +590,13 @@ fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
     match CFN_RESOURCES.captures(&placeholder) {
         Ok(Some(cap)) => {
             // resource_name = "foo/bar"
-            str::replace(cap.get(1).unwrap().as_str(), c, "/")
+            Some(str::replace(cap.get(1).unwrap().as_str(), c, "/"))
         }
-        _ => unreachable!(),
+        // `None`, not `unreachable!()`. The caller filters to keys under `/Resources/` now, so this
+        // should not be reached -- but "should not" is what the panic already claimed, and it was
+        // reachable through an unbounded range for as long as that range existed. A key this cannot
+        // parse is one this reporter cannot describe, which is a fallback, not a crash.
+        _ => None,
     }
 }
 
@@ -572,14 +616,19 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     let resource_type = match data.at("0/Type", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => v.as_str(),
-            _ => unreachable!(),
+            // Matching the arm below rather than panicking. A `Type` that is not a string means this
+            // is not a resource whose type this reporter can name, which is the same situation as a
+            // `Type` that is absent.
+            _ => return None,
         },
         _ => return None,
     };
     let cdk_path = match data.at("0/Metadata/aws:cdk:path", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => Some(v.as_str()),
-            _ => unreachable!(),
+            // As with `Type` above, and as the arm below already did for an absent key: a
+            // `aws:cdk:path` that is not a string is a resource with no CDK path to show.
+            _ => None,
         },
         _ => None,
     };

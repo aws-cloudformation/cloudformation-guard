@@ -1,0 +1,8 @@
+# A well-formed resource whose CDK path metadata is a number rather than a string.
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      aws:cdk:path: 12345
+    Properties:
+      BucketName: wrong
