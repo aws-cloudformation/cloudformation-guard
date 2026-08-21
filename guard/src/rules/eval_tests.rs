@@ -1330,6 +1330,46 @@ fn a_filter_after_a_wildcard_reads_a_single_object_the_same_either_way(
     Ok(())
 }
 
+/// A value filter's capture binds the selected key whether or not a wildcard precedes it.
+///
+/// `Resources[ nm | ... ]` always worked, because `accumulate_map` hands the filter the entry's key.
+/// After a wildcard the map had already been expanded by the time the filter ran, so the key was gone
+/// and the filter was invoked with its capture name forced to `None`: `nm` was declared in a position
+/// the parser accepts and was then unresolvable, ending the run at exit 255 and losing the report for
+/// every other rule in the file.
+///
+/// All three spellings are cases of one test because the defect was that they disagreed.
+#[rstest::rstest]
+#[case::no_wildcard("Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+#[case::all_indices("Resources[*][ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+#[case::all_values("Resources.*[ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+fn a_value_filter_capture_binds_its_key_after_a_wildcard(#[case] selection: &str) -> Result<()> {
+    let rules = format!(
+        "rule buckets_named_a {{\n    {}\n    some %nm == \"BucketA\"\n}}",
+        selection
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+          SomeVolume:
+            Type: AWS::EC2::Volume
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS,
+        "{} selects BucketA, so the capture reading it has a key to bind",
+        selection
+    );
+
+    Ok(())
+}
+
 /// A filter directly on a scalar still evaluates its predicate against that scalar.
 ///
 /// This is the scalar leg of the array-or-single leniency, and the reason

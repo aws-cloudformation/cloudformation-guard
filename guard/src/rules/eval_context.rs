@@ -826,6 +826,34 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         &query[index..],
                                     );
                                 }
+                                // A filter next is evaluated here, where the entry's key is still in
+                                // hand, rather than in the filter arm one level down.
+                                //
+                                // By the time that arm sees an entry the wildcard has already expanded
+                                // the map, so the key a capture would bind is gone and it called
+                                // `check_and_delegate` with `&None`:
+                                // `Resources[*][ nm | Type == 'AWS::S3::Bucket' ]` declared `nm` in a
+                                // position the parser accepts and then could not resolve it, ending the
+                                // run at exit 255 with no report. `Resources[ nm | ... ]` -- no wildcard,
+                                // the filter straight after the key -- always worked, because
+                                // `accumulate_map` hands this closure the key. Same call, same records,
+                                // same continuation index; only the key and the name are no longer
+                                // discarded.
+                                //
+                                // List elements keep the keyless path: `accumulate` has an index rather
+                                // than a key, and a capture over one would bind nothing meaningful.
+                                if let Some(QueryPart::Filter(filter_name, conjunctions)) =
+                                    query.get(index)
+                                {
+                                    return check_and_delegate(conjunctions, filter_name)(
+                                        index + 1,
+                                        query,
+                                        Rc::clone(&key),
+                                        Rc::clone(&value),
+                                        context,
+                                        converter,
+                                    );
+                                }
                                 query_retrieval_with_converter(
                                     index,
                                     query,
@@ -892,6 +920,34 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         value.self_path()
                                     ),
                                     &query[index..],
+                                );
+                            }
+                            // A filter next is evaluated here, where the entry's key is still in
+                            // hand, rather than in the filter arm one level down.
+                            //
+                            // By the time that arm sees an entry the wildcard has already expanded
+                            // the map, so the key a capture would bind is gone and it called
+                            // `check_and_delegate` with `&None`:
+                            // `Resources[*][ nm | Type == 'AWS::S3::Bucket' ]` declared `nm` in a
+                            // position the parser accepts and then could not resolve it, ending the
+                            // run at exit 255 with no report. `Resources[ nm | ... ]` -- no wildcard,
+                            // the filter straight after the key -- always worked, because
+                            // `accumulate_map` hands this closure the key. Same call, same records,
+                            // same continuation index; only the key and the name are no longer
+                            // discarded.
+                            //
+                            // List elements keep the keyless path: `accumulate` has an index rather
+                            // than a key, and a capture over one would bind nothing meaningful.
+                            if let Some(QueryPart::Filter(filter_name, conjunctions)) =
+                                query.get(index)
+                            {
+                                return check_and_delegate(conjunctions, filter_name)(
+                                    index + 1,
+                                    query,
+                                    Rc::clone(&key),
+                                    Rc::clone(&value),
+                                    context,
+                                    converter,
                                 );
                             }
                             query_retrieval_with_converter(
