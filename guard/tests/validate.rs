@@ -1405,6 +1405,83 @@ mod validate_tests {
         );
     }
 
+    /// A rule that cannot be evaluated does not discard the junit report.
+    ///
+    /// `get_test_case` propagated the evaluation error, so a junit run against a rules file with one
+    /// unresolvable variable emitted no XML at all. For a CI format that means the job reports nothing
+    /// rather than reporting a problem — the report is the entire interface.
+    ///
+    /// Everything needed was already present: `TestCaseStatus::Error` exists, `xml.rs` counts it into the
+    /// suite's `errors`, and that total sets the exit code. Only the `?` was in the way.
+    ///
+    /// The exit code changes for this case, from 255 to `ERROR_STATUS_CODE`. That is deliberate: 5 is what
+    /// this reporter already assigns to a test case in the `Error` state, so an evaluation error and a
+    /// rendering error now agree, and the distinction that matters to a consumer — not 19, so not a
+    /// policy failure — is kept either way.
+    #[test]
+    fn a_rule_that_cannot_be_evaluated_does_not_discard_the_junit_report() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["five-non-compliant-buckets-template.yaml"])
+            .rules(vec!["a_broken_rule_beside_working_ones.guard"])
+            .output_format(Some("junit"))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::PARSING_ERROR,
+            status_code,
+            "a test case in the error state sets the reporter's own error code, not 19"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("<?xml") && output.contains("errors=\"1\""),
+            "the report must be emitted and must count the error:\n{}",
+            output
+        );
+        assert!(
+            output.contains("Could not resolve variable by name nm"),
+            "and must name the cause:\n{}",
+            output
+        );
+    }
+
+    /// The same for the JSON, YAML and SARIF path, which shares one evaluator.
+    ///
+    /// `CommonStructuredReporter` propagated too, so the document a machine reads was replaced by a
+    /// single error line for a file whose other rules had findings. Here the error is still returned
+    /// after the document is written, so the exit code is unchanged and the document is gained.
+    #[test]
+    fn a_rule_that_cannot_be_evaluated_does_not_discard_the_structured_document() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["five-non-compliant-buckets-template.yaml"])
+            .rules(vec!["a_broken_rule_beside_working_ones.guard"])
+            .output_format(Some("json"))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INTERNAL_FAILURE,
+            status_code,
+            "the exit code for this path is unchanged; only the document is new"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("every_bucket_is_named_expected"),
+            "the rules that could be evaluated must still be in the document:\n{}",
+            output
+        );
+    }
+
     /// A failing `IN` comparison against a Terraform plan is rendered, not a panic.
     ///
     /// `binary_error_in_msg` in `tf.rs` was `todo!()`, and an everyday rule reaches it: `IN` on any

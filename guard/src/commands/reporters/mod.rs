@@ -110,7 +110,30 @@ fn get_test_case<'rule>(
 ) -> crate::rules::Result<TestCase<'rule>> {
     let now = Instant::now();
     let mut root_scope = root_scope(rule, Rc::new(data.path_value.clone()));
-    let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
+    // A rule that cannot be evaluated is a test case in the `Error` state, not a reason to discard the
+    // whole report.
+    //
+    // Everything needed for that was already here: `TestCaseStatus::Error` exists, `xml.rs` counts it
+    // into the suite's `errors` total, and that total already sets `ERROR_STATUS_CODE`. Only this `?`
+    // stood in the way, so a junit run against a rules file with one unresolvable variable emitted no
+    // XML at all — and junit is a CI format, where "no report" means the job reports nothing rather
+    // than reports a problem.
+    //
+    // The arm further down builds this same variant for a report that could not be *rendered*. This one
+    // covers a rule that could not be *evaluated*, which is the case a reader actually hits.
+    let status = match eval_rules_file(rule, &mut root_scope, Some(&data.name)) {
+        Ok(status) => status,
+        Err(error) => {
+            return Ok(TestCase {
+                id: None,
+                name,
+                time: now.elapsed().as_millis(),
+                status: TestCaseStatus::Error {
+                    error: error.to_string(),
+                },
+            })
+        }
+    };
     let root_record = root_scope.reset_recorder().extract();
     let time = now.elapsed().as_millis();
 

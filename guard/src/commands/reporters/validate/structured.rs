@@ -98,6 +98,7 @@ struct CommonStructuredReporter<'reporter> {
 impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
     fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
+        let mut first_error = None;
         for each in &self.data {
             let mut file_report: FileReport = FileReport {
                 name: &each.name,
@@ -107,8 +108,21 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
             for (rule, _) in &self.rules {
                 let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
 
-                if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
-                    self.exit_code = FAILURE_STATUS_CODE;
+                // Not `?`. By the time an error comes back the rules that *could* be evaluated have
+                // their findings in the record, and returning here discarded the whole document: a JSON,
+                // YAML or SARIF consumer got one error line for a file whose other rules had real
+                // findings. The same defect as the single-line path had, in the path that machines read.
+                //
+                // The error is returned after the document is written, so the exit code still says the
+                // ruleset is broken rather than the template being non-compliant.
+                match eval_rules_file(rule, &mut root_scope, Some(&each.name)) {
+                    Ok(Status::FAIL) => self.exit_code = FAILURE_STATUS_CODE,
+                    Ok(_) => {}
+                    Err(e) => {
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
+                    }
                 }
 
                 let root_record = root_scope.reset_recorder().extract();
@@ -129,6 +143,9 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
             _ => unreachable!(),
         };
 
-        Ok(self.exit_code)
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(self.exit_code),
+        }
     }
 }
