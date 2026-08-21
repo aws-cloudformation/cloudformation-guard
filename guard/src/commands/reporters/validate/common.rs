@@ -252,7 +252,15 @@ pub(super) fn extract_name_info_from_record<'record>(
         },
 
         Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(check))) => match &check.value.from {
-            QueryResult::Resolved(res) => {
+            // A literal is reported as the resolved value it is. The two variants carry the same payload
+            // and differ only in that a literal's path is the unlocated root.
+            //
+            // These three arms were `unreachable!()` and a reachability triage could not construct inputs
+            // for them, for a precise reason worth recording: a unary clause with a literal left-hand side
+            // died earlier, in `eval_context`, which *shadowed* these. Fixing that one made these
+            // reachable -- `let numeric = 5` plus `%numeric empty` now arrives here -- so the panic simply
+            // moved one layer out until this was fixed too.
+            QueryResult::Literal(res) | QueryResult::Resolved(res) => {
                 let (path, provided): (String, serde_json::Value) = (&**res).try_into()?;
                 NameInfo {
                     rule: rule_name,
@@ -289,19 +297,16 @@ pub(super) fn extract_name_info_from_record<'record>(
                     ..Default::default()
                 }
             }
-
-            QueryResult::Literal(_) => unreachable!(),
         },
 
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) => match &check.from {
-            QueryResult::Literal(_) => unreachable!(),
-
-            QueryResult::Resolved(res) => {
+            QueryResult::Literal(res) | QueryResult::Resolved(res) => {
                 let (path, provided): (String, serde_json::Value) = (&**res).try_into()?;
                 let expected: Option<(String, serde_json::Value)> = match &check.to {
                     Some(to) => match to {
-                        QueryResult::Literal(_) => unreachable!(),
-                        QueryResult::Resolved(v) => Some((&**v).try_into()?),
+                        QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                            Some((&**v).try_into()?)
+                        }
                         QueryResult::UnResolved(ur) => Some((&*ur.traversed_to).try_into()?),
                     },
                     None => None,

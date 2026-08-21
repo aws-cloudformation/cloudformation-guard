@@ -1307,18 +1307,26 @@ mod validate_tests {
     /// rule's status passes whether or not the bug is present, which is how the first version of this
     /// test came out green against the unfixed code. Both output modes are covered because the reporter
     /// is what reaches the arm.
+    /// The second data file is not interchangeable with the first, and that is the point. Fixing the
+    /// `eval_context` arm made a *further* `unreachable!()` reachable in `reporters/validate/common.rs`,
+    /// which had been shadowed by it -- a reachability triage had listed those arms as "not reproduced"
+    /// for exactly that reason. `flat-document-for-empty-lhs.yaml` reaches the second one and
+    /// `numeric-literal-unary-template.yaml` does not, so both are needed to hold both layers.
     #[rstest::rstest]
-    #[case::console(None)]
-    #[case::structured_json(Some("json"))]
+    #[case::console(None, "numeric-literal-unary-template.yaml")]
+    #[case::structured_json(Some("json"), "numeric-literal-unary-template.yaml")]
+    #[case::console_reaching_the_shadowed_arm(None, "flat-document-for-empty-lhs.yaml")]
+    #[case::json_reaching_the_shadowed_arm(Some("json"), "flat-document-for-empty-lhs.yaml")]
     fn a_unary_operator_on_a_numeric_literal_is_reported_not_a_panic(
         #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
     ) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let mut runner = ValidateTestRunner::default();
         let runner = runner
-            .data(vec!["numeric-literal-unary-template.yaml"])
+            .data(vec![data_file])
             .rules(vec!["unary_on_a_numeric_literal.guard"]);
         let status_code = match output_format {
             Some(format) => runner
