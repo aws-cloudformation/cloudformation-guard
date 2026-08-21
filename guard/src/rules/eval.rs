@@ -1828,7 +1828,11 @@ where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
 {
     let mut block_scope = block_scope(block, resolver.root(), resolver);
-    eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn)
+    let status = eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn);
+    // Captures are handed up whatever the block's verdict: a clause after the block reads them, and it
+    // reads them just the same when the block failed. See `merge_captures_into_parent`.
+    block_scope.merge_captures_into_parent()?;
+    status
 }
 
 /// `role` is inherited from the enclosing clause; a block clause is not itself a
@@ -2798,6 +2802,10 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     let mut fails = 0;
     let mut passes = 0;
     for each_rule in &rule.guard_rules {
+        // A capture is scoped to the rule that made it. A rule condition is evaluated against the
+        // enclosing scope, so without this a capture in one rule's `when` outlived it and the next
+        // rule using the same name saw the previous rule's keys.
+        resolver.reset_captures();
         // Top-level rule in a rules file: its clauses are assertions.
         match eval_rule(each_rule, resolver, ClauseRole::Assertion) {
             Ok(status) => match status {

@@ -360,6 +360,17 @@ pub(crate) trait RecordTracer<'value> {
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
+    /// Forget every key captured by a filter so far.
+    ///
+    /// Defaults to doing nothing, and only `RootScope` overrides it. It is called between top-level
+    /// rules, which is the boundary a capture must not cross: a capture belongs to the rule that made
+    /// it, and to the iteration inside that rule.
+    ///
+    /// A scope that does not own captures has nothing to forget, and deliberately does *not* reach up
+    /// and clear its parent's -- a rule referenced from inside another rule would otherwise discard the
+    /// captures of the rule that referenced it.
+    fn reset_captures(&mut self) {}
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult>>;
     fn find_parameterized_rule(

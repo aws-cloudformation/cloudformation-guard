@@ -7901,3 +7901,143 @@ fn a_bracket_wildcard_still_accepts_an_array_or_a_single_value(#[case] input: &s
 
     Ok(())
 }
+
+/// A filter capture is per-iteration inside its block and accumulated after it.
+///
+/// Two readings, both wanted, and getting one of them broke the other. Storing captures only in the
+/// block fixed the false PASS -- one resource's key satisfying another resource's clause -- but killed the
+/// name at the end of the block while the rule still referenced it. An unresolvable variable is an
+/// internal error, so a single rule took the whole file's report down at exit 255 rather than failing a
+/// clause.
+///
+/// So the block owns the captures while it runs, and hands them to the enclosing scope on the way out:
+///
+/// - `in_block_sees_only_its_own_iteration` is the false PASS. `BucketB` has no `alpha` config and must
+///   fail even though `BucketA` does.
+/// - `after_block_sees_every_iteration` reads the name after the block, where every iteration's keys are
+///   what such a clause means -- and what it saw before any of this.
+#[rstest::rstest]
+#[case::in_block_sees_only_its_own_iteration(true, Status::FAIL)]
+#[case::after_block_sees_every_iteration(false, Status::PASS)]
+fn a_filter_capture_is_scoped_to_its_block_and_survives_it(
+    #[case] read_inside_the_block: bool,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Config: { alpha: { Enabled: true } } } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { Config: { beta:  { Enabled: true } } } }
+        }
+    }
+    "#;
+
+    let rules = if read_inside_the_block {
+        "rule scoped {\n    Resources.*[ Type == 'AWS::S3::Bucket' ] {\n        Properties.Config[ cfg | Enabled == true ] !empty\n        some %cfg == \"alpha\"\n    }\n}"
+    } else {
+        "rule scoped {\n    Resources.*[ Type == 'AWS::S3::Bucket' ] {\n        Properties.Config[ cfg | Enabled == true ] !empty\n    }\n    some %cfg == \"alpha\"\n}"
+    };
+
+    assert_eq!(
+        expected,
+        rule_status_in(rules, INPUT, "scoped")?,
+        "read {} the block",
+        if read_inside_the_block {
+            "inside"
+        } else {
+            "after"
+        }
+    );
+
+    Ok(())
+}
+
+/// A capture in a rule's `when` condition does not outlive the rule.
+///
+/// A rule condition is evaluated against the enclosing scope, so a capture made there landed in the
+/// file-wide map and survived its rule. Two rules using the same capture name in their conditions then
+/// interfered: the second saw the first's keys, and a clause reading the name failed on evidence from a
+/// rule it has nothing to do with.
+///
+/// `renamed_capture` is the cell that proves it: the two rulesets differ *only* in what the first rule
+/// calls its capture, and that changed the second rule's verdict. No rule should have to know what
+/// another rule named a local.
+#[rstest::rstest]
+#[case::same_capture_name("nm")]
+#[case::renamed_capture("other")]
+fn a_capture_in_a_rule_condition_does_not_outlive_the_rule(#[case] first_name: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { A: { Type: 'AWS::S3::Bucket' }, B: { Type: 'AWS::EC2::Instance' } } }
+    "#;
+
+    let rules = "rule first when Resources[ FIRST | Type == 'AWS::S3::Bucket' ] !empty {\n    Resources.A.Type == 'AWS::S3::Bucket'\n}\nrule second when Resources[ nm | Type == 'AWS::EC2::Instance' ] !empty {\n    %nm == \"B\"\n}"
+        .replace("FIRST", first_name);
+
+    // `second` captures the instance key, which is "B", so it holds -- whatever the first rule called its
+    // own capture.
+    assert_eq!(
+        Status::PASS,
+        rule_status_in(&rules, INPUT, "second")?,
+        "second must not depend on what first named its capture (first used {:?})",
+        first_name
+    );
+
+    Ok(())
+}
+
+/// A filter applied to an already-indexed value fails closed in both polarities.
+///
+/// The first version of this reported the query as *unresolved*, which means "the value is not there" --
+/// and `!exists` and `empty` answer that with PASS. So an assertion failed closed only when it was written
+/// positively: `Tags[0][ Key == 'Name' ] exists` failed, and `... !exists` passed at exit 0 on a query
+/// the engine had explicitly refused to evaluate.
+///
+/// `IncompatibleError` is the branch's channel for "no answer either way". The clause arm fails an
+/// assertion closed in both polarities, so negating the clause cannot turn it into a pass.
+#[rstest::rstest]
+#[case::exists("Resources.One.Tags[0][ Key == 'Name' ] exists")]
+#[case::not_exists("Resources.One.Tags[0][ Key == 'Name' ] !exists")]
+#[case::empty("Resources.One.Tags[0][ Key == 'Name' ] empty")]
+#[case::not_empty("Resources.One.Tags[0][ Key == 'Name' ] !empty")]
+fn a_filter_on_an_indexed_value_fails_closed_in_both_polarities(
+    #[case] clause: &str,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Tags: [ { Key: 'Name', Value: 'v1' } ] } } }
+    "#;
+
+    let rules = "rule indexed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "indexed")?,
+        "{} must fail rather than pass on a query the engine refused to evaluate",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: the supported spelling still decides normally.
+#[rstest::rstest]
+#[case::exists_holds("Resources.One.Tags[ Key == 'Name' ] exists", Status::PASS)]
+#[case::not_exists_does_not("Resources.One.Tags[ Key == 'Name' ] !exists", Status::FAIL)]
+fn a_filter_without_an_index_still_decides(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Tags: [ { Key: 'Name', Value: 'v1' } ] } } }
+    "#;
+
+    let rules = "rule supported { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "supported")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}

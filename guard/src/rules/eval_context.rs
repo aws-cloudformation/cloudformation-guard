@@ -55,6 +55,15 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     /// A set rather than a list: a clause inside a type block is evaluated once per matched resource,
     /// and ten identical lines about the same rule tell the reader nothing the first one did not.
     deprecations: BTreeSet<String>,
+    /// Keys captured by a filter, held apart from `scope.resolved_variables` so they can be cleared
+    /// without discarding resolved query results.
+    ///
+    /// A rule's `when` condition is evaluated against this scope, so a capture made there used to land in
+    /// the same map for the whole file and outlive its rule. Two rules using the same capture name in
+    /// their conditions interfered: the second saw the first's keys, so a clause reading the name failed
+    /// on evidence from a rule it has nothing to do with -- and renaming one of them changed the other's
+    /// verdict, which is the tell that no rule should have to care about.
+    captured: HashMap<&'value str, Vec<QueryResult>>,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -83,7 +92,40 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
 
 pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     scope: Scope<'value, 'loc>,
+    /// Keys captured by a filter during *this* iteration of the block.
+    ///
+    /// Held apart from `scope.resolved_variables` so the two can be treated differently on exit: a
+    /// resolved query result belongs to the iteration and dies with it, while a captured key has to
+    /// survive for a clause that reads it after the block.
+    captured: HashMap<&'value str, Vec<QueryResult>>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
+}
+
+impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
+    /// Hand this iteration's captures to the enclosing scope.
+    ///
+    /// Called once the block has been evaluated, which gives a filter capture two different readings
+    /// depending on where it is read, and both are the ones that were wanted:
+    ///
+    /// - Inside the block, `resolve_variable` finds `captured` first, so a clause sees only the keys
+    ///   captured during the iteration it is part of. That is what stops one resource's key from
+    ///   satisfying another resource's clause.
+    /// - After the block, the keys have been merged upward, so a clause reading the name sees every
+    ///   iteration's keys -- which is what it saw before any of this and what such a clause means.
+    ///
+    /// Storing captures in the block and stopping there was the first attempt, and it broke the second
+    /// reading: the name died with the block while the rule still referenced it, and an unresolvable
+    /// variable is an internal error, so one rule took the whole file's report down at exit 255.
+    pub(in crate::rules) fn merge_captures_into_parent(&mut self) -> Result<()> {
+        for (name, keys) in std::mem::take(&mut self.captured) {
+            for key in keys {
+                if let QueryResult::Resolved(value) = key {
+                    self.parent.add_variable_capture_key(name, value)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
@@ -824,20 +866,26 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 // filters the map's entries, which is not what an author writing `Rules[0][ ... ]`
                 // means, and inventing an answer here would settle that question by accident. An
                 // unresolved result fails an assertion closed and names the query.
-                rest => to_unresolved_result(
-                    Rc::clone(&current),
-                    format!(
-                        "Query {} applies a filter directly to {}, which is not supported at path {}",
-                        SliceDisplay(&query[query_index..]),
-                        match rest {
-                            QueryPart::Index(_) => "an indexed value",
-                            QueryPart::This => "`this`",
-                            _ => "the result of a map key filter",
-                        },
-                        (*current).self_path(),
-                    ),
-                    query,
-                ),
+                // An *undecidable* error, not an unresolved result, and the difference is the whole
+                // point. An unresolved query means "the value is not there", which `!exists` and `empty`
+                // answer with PASS -- so the first version of this fix failed an assertion closed only
+                // when it was written positively. `Tags[0][ Key == 'Name' ] exists` failed, and
+                // `... !exists` passed at exit 0 on a query the engine had explicitly refused to
+                // evaluate.
+                //
+                // `IncompatibleError` is the branch's channel for "no answer either way": the clause
+                // arm fails an assertion closed in both polarities and a gate keeps the error, so it
+                // cannot be turned into a pass by negating it.
+                rest => Err(Error::IncompatibleError(format!(
+                    "Query {} applies a filter directly to {}, which is not supported at path {}",
+                    SliceDisplay(&query[query_index..]),
+                    match rest {
+                        QueryPart::Index(_) => "an indexed value",
+                        QueryPart::This => "`this`",
+                        _ => "the result of a map key filter",
+                    },
+                    (*current).self_path(),
+                ))),
             },
 
             PathAwareValue::List((_path, list)) => {
@@ -981,8 +1029,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                 // A key filter is the one filter shape where the key is what the
                                 // predicate tested, so it is right here to capture.
                                 if let Some(capture) = name {
-                                    resolver
-                                        .add_variable_capture_key(capture.as_str(), Rc::clone(&key))?;
+                                    resolver.add_variable_capture_key(
+                                        capture.as_str(),
+                                        Rc::clone(&key),
+                                    )?;
                                 }
                                 selected.push(QueryResult::Resolved(Rc::new(
                                     map.values.get(key_name.as_str()).unwrap().clone(),
@@ -1085,6 +1135,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
             events: vec![],
         },
         deprecations: BTreeSet::new(),
+        captured: HashMap::new(),
     }
 }
 
@@ -1103,6 +1154,7 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
             resolved_variables: HashMap::new(),
             function_expressions,
         },
+        captured: HashMap::new(),
         parent,
     }
 }
@@ -1268,6 +1320,12 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
         }
 
+        // Captures before resolved queries, and held in their own map so `reset_captures` can clear
+        // them between rules without discarding anything else.
+        if let Some(values) = self.captured.get(variable_name) {
+            return Ok(values.clone());
+        }
+
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
             return Ok(values.clone());
         }
@@ -1316,12 +1374,21 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
-        self.scope
-            .resolved_variables
+        self.captured
             .entry(variable_name)
             .or_default()
             .push(QueryResult::Resolved(Rc::clone(&key)));
         Ok(())
+    }
+
+    /// Forget every key captured by a filter.
+    ///
+    /// Overrides the trait's no-op, and it has to be here rather than on an inherent impl: the callers
+    /// hold a `&mut dyn EvalContext`, so an inherent method of the same name is simply not the one that
+    /// gets called. That mistake made the first version of this fix do nothing at all while compiling
+    /// and reading correctly.
+    fn reset_captures(&mut self) {
+        self.captured.clear();
     }
 }
 
@@ -1731,6 +1798,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
             return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
         }
 
+        // Before `resolved_variables`, so a clause inside the block sees the keys captured during its
+        // own iteration rather than an accumulation over all of them.
+        if let Some(values) = self.captured.get(variable_name) {
+            return Ok(values.clone());
+        }
+
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
             return Ok(values.clone());
         }
@@ -1805,8 +1878,7 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
-        self.scope
-            .resolved_variables
+        self.captured
             .entry(variable_name)
             .or_default()
             .push(QueryResult::Resolved(Rc::clone(&key)));
