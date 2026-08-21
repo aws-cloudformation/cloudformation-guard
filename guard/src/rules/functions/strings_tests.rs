@@ -136,3 +136,56 @@ fn test_substring() -> crate::rules::Result<()> {
 
     Ok(())
 }
+
+/// `substring` indexes characters, and does not panic on a string that is not ASCII.
+///
+/// The bounds were checked against `val.len()`, which counts bytes, and the slice that followed
+/// panics unless both ends land on a character boundary. `substring(x, 0, 3)` on `naïve` aborted the
+/// process with `byte index 3 is not a char boundary` and exit 101 -- a stack trace rather than a
+/// diagnostic, which in CI reads as the tool breaking rather than the policy failing.
+///
+/// The out-of-range and inverted cases keep answering with no value rather than panicking or clamping,
+/// which is what the surrounding code already did for those.
+#[test]
+fn substring_counts_characters_and_does_not_panic() -> crate::rules::Result<()> {
+    let cases = [
+        // (input, from, to, expected)
+        ("hello-world", 0, 5, Some("hello")),
+        // Byte 3 is inside the two bytes of `ï`. This is the panic.
+        ("naïve", 0, 3, Some("naï")),
+        ("naïve", 0, 5, Some("naïve")),
+        ("naïve", 2, 4, Some("ïv")),
+        ("日本語", 0, 2, Some("日本")),
+        ("日本語", 1, 3, Some("本語")),
+        // Past the end, in characters: `naïve` is 5 characters even though it is 6 bytes.
+        ("naïve", 0, 6, None),
+        ("naïve", 5, 6, None),
+        // Empty, inverted and degenerate ranges answer with no value, as before.
+        ("", 0, 1, None),
+        ("hello", 3, 3, None),
+        ("hello", 4, 2, None),
+    ];
+
+    for (input, from, to, expected) in cases {
+        let value = PathAwareValue::String((Path::root(), String::from(input)));
+        let args = vec![QueryResult::Resolved(Rc::new(value))];
+
+        let result = substring(&args, from, to)?;
+        assert_eq!(result.len(), 1, "one input, one answer");
+
+        match (&result[0], expected) {
+            (Some(PathAwareValue::String((_, got))), Some(want)) => assert_eq!(
+                got, want,
+                "substring({:?}, {}, {}) should be {:?}",
+                input, from, to, want
+            ),
+            (None, None) => {}
+            (got, want) => panic!(
+                "substring({:?}, {}, {}) gave {:?}, expected {:?}",
+                input, from, to, got, want
+            ),
+        }
+    }
+
+    Ok(())
+}

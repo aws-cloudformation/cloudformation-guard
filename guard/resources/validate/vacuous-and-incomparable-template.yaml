@@ -1,0 +1,4 @@
+# Not a CloudFormation template. `Sizes` is an empty list and `Name` is a string, which are the two
+# operand shapes whose answers change in a later release.
+Sizes: []
+Name: "50"

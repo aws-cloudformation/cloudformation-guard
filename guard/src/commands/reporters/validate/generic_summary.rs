@@ -95,10 +95,13 @@ impl Reporter for GenericSummary {
                 Some(Status::SKIP) => true,
                 _ => false,
             });
+        // The StatusContext path carries no record tree, so there is nothing to mine a reason
+        // from: every skip here is reported without one. This is the pre-record reporting path;
+        // the record-based path in `common::report_from_events` is where reasons come from.
         let skipped = skipped
             .iter()
-            .map(|s| s.context.clone())
-            .collect::<HashSet<String>>();
+            .map(|s| (s.context.clone(), None))
+            .collect::<SkippedRules>();
         let passed = passed
             .iter()
             .map(|s| s.context.clone())
@@ -158,7 +161,7 @@ impl SingleLineSummary {
         &self,
         failed: &HashMap<String, Vec<NameInfo<'_>>>,
         passed: &HashSet<String>,
-        skipped: &HashSet<String>,
+        skipped: &SkippedRules,
     ) -> bool {
         if self.summary_table.is_empty() {
             return false;
@@ -249,11 +252,53 @@ fn print_rules_output(
     if !rules.is_empty() {
         writeln!(writer, "--")?;
     }
+    // Sorted for the same reason the failing and skipped sections are: `rules` is a HashSet, and
+    // Rust seeds its hasher per process, so iterating it directly printed the compliant rules in a
+    // different order on every run of the same binary over the same input.
+    //
+    // This section was the worst of the three, and was missed when the other two were sorted.
+    // Measured on `seven-compliant-rules.guard` with `--show-summary pass`: twenty runs of the
+    // merge-base produced twenty distinct orderings in one measurement and nineteen in another.
+    // The count varies between measurements because the orderings come from a per-process hasher
+    // seed, so treat any single figure as an illustration rather than a constant -- what is fixed is
+    // that the merge-base produced many and the sorted version produces one.
+    let mut rules = rules.into_iter().collect::<Vec<String>>();
+    rules.sort();
     for rule in rules {
         writeln!(
             writer,
             "Rule [{rule}] is {descriptor} for template [{data_file_name}]"
         )?;
+    }
+
+    Ok(())
+}
+
+/// Skipped rules, each followed by the evaluator's reason when it recorded one.
+///
+/// Separate from `print_rules_output` rather than a flag on it: that function also prints the
+/// compliant set, which has no reasons, and threading an always-`None` argument through it to
+/// serve one caller reads worse than two small functions.
+fn print_skipped_rules_output(
+    writer: &mut dyn Write,
+    rules: SkippedRules,
+    data_file_name: &str,
+) -> crate::rules::Result<()> {
+    if !rules.is_empty() {
+        writeln!(writer, "--")?;
+    }
+    // Sorted so two runs over the same input produce the same output. The map is a HashMap, so
+    // iterating it directly would reorder the lines between runs.
+    let mut rules = rules.into_iter().collect::<Vec<(String, Option<String>)>>();
+    rules.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for (rule, reason) in rules {
+        writeln!(
+            writer,
+            "Rule [{rule}] is not applicable for template [{data_file_name}]"
+        )?;
+        if let Some(reason) = reason {
+            writeln!(writer, "  {reason}")?;
+        }
     }
 
     Ok(())
@@ -267,7 +312,7 @@ impl GenericReporter for SingleLineSummary {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()> {
         if !self.is_reportable(&failed, &passed, &skipped) {
@@ -282,6 +327,24 @@ impl GenericReporter for SingleLineSummary {
             if !failed.is_empty() {
                 writeln!(writer, "--")?;
             }
+            // Sorted by rule name. `failed` is a HashMap, so iterating it directly emitted the
+            // failing rules in whatever order the hasher produced -- two runs of the same binary
+            // over the same input printed the same findings in different orders.
+            //
+            // Measured on `three-failing-rules.guard`, twenty runs each: the merge-base produced six
+            // distinct reports with `--show-summary all` and five by default; sorted, it produces
+            // one. Pre-existing rather than introduced here, but it makes report diffing useless and
+            // any golden file covering two or more failing rules flaky.
+            //
+            // The distinct-report count is itself unstable between measurements, which is worth
+            // knowing before treating any single figure here as exact: the orderings are drawn from a
+            // per-process hasher seed, so the number of *different* orderings twenty runs happen to
+            // produce varies too. Only the sorted result is a fixed point.
+            //
+            // Sorting here rather than changing the map type, because the ordering is a property of
+            // the report and every other reporter is free to choose its own.
+            let mut failed = failed.into_iter().collect::<Vec<_>>();
+            failed.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (_rule, clauses) in failed {
                 super::common::print_name_info(
                     writer,
@@ -299,7 +362,7 @@ impl GenericReporter for SingleLineSummary {
             print_rules_output(writer, passed, "compliant", data_file_name)?;
         }
         if self.summary_table.contains(SummaryType::SKIP) {
-            print_rules_output(writer, skipped, "not applicable", data_file_name)?;
+            print_skipped_rules_output(writer, skipped, data_file_name)?;
         }
         writeln!(writer, "--")?;
         Ok(())

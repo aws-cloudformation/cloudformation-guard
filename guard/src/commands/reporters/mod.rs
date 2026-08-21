@@ -150,7 +150,17 @@ fn get_test_case<'rule>(
                 time,
                 status: match status {
                     Status::PASS => TestCaseStatus::Pass,
-                    Status::SKIP => TestCaseStatus::Skip,
+                    // The evaluator records why a rule did not apply; carry those reasons through so
+                    // junit says as much as the console does. Without this a skipped run reports
+                    // `status="skip"` and nothing else, which is indistinguishable from a rule that
+                    // was simply not selected.
+                    Status::SKIP => TestCaseStatus::Skip {
+                        reasons: report
+                            .not_applicable_reasons
+                            .iter()
+                            .map(|(rule, reason)| format!("{}: {}", rule, reason))
+                            .collect(),
+                    },
                     _ => unreachable!(),
                 },
             },
@@ -180,9 +190,16 @@ pub struct TestCase<'test> {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) enum TestCaseStatus {
     Pass,
-    Skip,
+    /// `reasons` holds one `rule: why` line per inapplicable rule that the evaluator could explain,
+    /// and is empty when it could not explain any -- which is the shape every consumer saw before,
+    /// since a skip previously carried nothing at all.
+    Skip {
+        reasons: Vec<String>,
+    },
     Fail(FailingTestCase),
-    Error { error: String },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +254,8 @@ pub struct TestSuites<'report, 'se: 'report> {
 #[derive(Debug)]
 enum EventType<'report, 'se: 'report> {
     Failure(Failure<'report>),
+    /// The `<skipped>` child of a test case, carrying one line per rule that did not apply.
+    Skipped(&'report [String]),
     Error(&'report str),
     TestCase(&'se TestCase<'report>),
     TestSuite(&'se TestSuite<'report>),
@@ -267,6 +286,9 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     tag.push_attribute(("message", name.as_str()));
                 }
             }
+            // The reasons go in the element body rather than a `message` attribute, because there is
+            // one per inapplicable rule and an attribute holds a single value.
+            EventType::Skipped(..) => {}
             EventType::TestCase(test_case) => {
                 if let Some(id) = test_case.id {
                     tag.push_attribute(("id", id));
@@ -279,7 +301,7 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     TestCaseStatus::Fail(..) => {}
                     status => {
                         let status = match status {
-                            TestCaseStatus::Skip => "skip",
+                            TestCaseStatus::Skip { .. } => "skip",
                             TestCaseStatus::Pass => "pass",
                             TestCaseStatus::Error { .. } => "error",
                             _ => unreachable!(),
@@ -352,11 +374,18 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     EventType::Error(error).serialize(writer)?;
                     self.serialize_end_event(writer)?;
                 }
+                // An unexplained skip stays an empty element, so output only grows where there is
+                // something to say.
+                TestCaseStatus::Skip { reasons } if !reasons.is_empty() => {
+                    self.serialize_start_event(writer, tag)?;
+                    EventType::Skipped(reasons).serialize(writer)?;
+                    self.serialize_end_event(writer)?;
+                }
                 _ => {
                     writer.write_event(Event::Empty(tag))?;
                 }
             },
-            EventType::Error(..) => {
+            EventType::Skipped(..) | EventType::Error(..) => {
                 self.serialize_start_event(writer, tag)?;
                 self.serialize_text_events(writer)?;
                 self.serialize_end_event(writer)?;
@@ -394,6 +423,14 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     writer.write_event(Event::Text(BytesText::new(message)))?;
                 }
             }
+            EventType::Skipped(reasons) => {
+                // One text event with explicit separators, not one event per reason. Adjacent text
+                // events are concatenated with nothing between them, so two rules came out as
+                // `...nothing to checkb: no AWS::S3::Bucket...` and the second reason was unreadable.
+                // Some reasons happen to end in whitespace, which hid this in the fixtures that had
+                // only one rule to explain.
+                writer.write_event(Event::Text(BytesText::new(&reasons.join("\n"))))?;
+            }
             EventType::Error(err) => {
                 writer.write_event(Event::Text(BytesText::new(err)))?;
             }
@@ -408,6 +445,7 @@ impl<'report, 'se: 'report> Display for EventType<'report, 'se> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
             EventType::Failure(..) => "failure",
+            EventType::Skipped(..) => "skipped",
             EventType::Error(..) => "error",
             EventType::TestCase(..) => "testcase",
             EventType::TestSuite(..) => "testsuite",

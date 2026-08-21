@@ -1,0 +1,5 @@
+# Not a CloudFormation template: a flat document whose top-level keys the three rules above check.
+# Deliberately simple, so the report contains exactly three failures and nothing else to order.
+Region: us-east-1
+Account: "123456789012"
+Partition: aws

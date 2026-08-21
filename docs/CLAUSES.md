@@ -93,6 +93,8 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
+On a value that cannot be empty — a number or a boolean — `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
+
 `exists` - Checks if each occurrence of the query exists.
 
 ```
@@ -103,6 +105,15 @@ Resources.S3Bucket.Properties.BucketEncryption exists
 The above clause will `PASS` for the example template as `BucketEncryption` is defined for `S3Bucket`.
 
 > **IMPORTANT**: `empty` and `not exists` checks evaluate to true for missing property keys when traversing the input data. E.g. if we check `Resources.S3Bucket.Properties.Tags empty` if `Properties` was not present in the template for S3Bucket, then `empty` evaluates to true.
+
+#### Array indexes
+
+An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element — past the end in either direction, or too large to be an offset at all — does not resolve, and the clause reports that rather than selecting a different element.
+
+```
+# the last tag, whatever the length of the list
+Resources.MyBucket.Properties.Tags[-1].Key == "Owner"
+```
 
 #### `is_string`, `is_list`, `is_bool`, `is_int`, `is_float` and `is_struct` operators
 
@@ -187,6 +198,32 @@ A value literal can be from any of the following supported categories,
 
 - arrays of primitive/associative array types
 
+Comparisons are between values of the same kind, with one exception: `integer` and `float` compare against each other as numbers. That includes range membership, so `Size IN r[5.0, 100.0]` holds for a `Size` of `50` and `Size IN r[5, 100]` holds for a `Size` of `50.5`. `Size > 10` holds for a `Size` of `50.5`, and `Size == 50` holds for a `Size` of `50.0`. Earlier versions treated the two as different types and reported that they could not be compared, which failed the clause. Comparing across kinds that are not both numeric, a `string` against an `integer`, say, still cannot be decided, and the clause fails rather than guessing.
+
+The distinction matters most inside a `when` condition. A condition that cannot be decided does not pass, and a rule whose condition does not pass is reported as not applicable, so the block it guards is never checked. A rule written as
+
+```
+rule large_volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size > 10 {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Encrypted == true
+}
+```
+
+now applies to a template whose `Size` is `50.5` as it always did to one whose `Size` is `50`.
+
+A comparison across kinds that are not both numeric is a sharper problem in the same place, and one to be aware of when writing conditions. CloudFormation templates frequently carry numbers as strings, `Size: "50"` rather than `Size: 50`, and a string cannot be compared against `10`. The condition cannot be decided, so it does not pass, so the rule is reported as not applicable and the block it guards is never checked. The run exits `0`, exactly as it would for a rule that genuinely did not apply.
+
+Guard reports which of the two happened. A rule skipped because a condition could not be decided says so, naming the operand kinds:
+
+```
+SKIP rules
+large_volumes_encrypted_gate.guard/large_volumes_are_encrypted    SKIP
+  large_volumes_are_encrypted: the rule did not apply because one of its conditions could not be decided: PathAwareValues are not comparable String, int
+```
+
+The same explanation appears under `not_applicable_reasons` in `--output-format json` and `yaml`.
+
+A rule skipped because its condition was decided and simply not met prints no such line, so the message appears only where something needs attention. If you see it, the fix is in the rule or the input rather than in Guard: compare against a value of the same kind, or guard the clause so the mismatch is explicit.
+
 Below are a couple of examples of clauses using binary operators:
 
 - Based on the Template-1 example template:
@@ -230,6 +267,33 @@ Resources.NewVolume.Properties.VolumeType IN [ 'io1','io2','gp3' ]
 ```
 
 > While these examples illustrate using `S3Bucket`, `NewVolume` in the query, often these are user defined and can be arbitrarily named in an IaC template. To write a rule that is generic and applies to all `AWS::S3::Bucket` resources defined in the template the most common form of query used is `Resources.*[ Type == ‘AWS::S3::Bucket’ ]` to select them. See [Guard: Query and Filtering](QUERY_AND_FILTERING.md) for details on usage and explore the examples directory.
+
+#### Comparing against a query that resolves to no values
+
+When the RHS of a binary operator is a query, it can resolve to no values at all. This usually happens because the query selects a resource type that the input does not contain:
+
+```
+# %denied is empty for any template that defines no KMS keys
+let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+
+rule bucket_name_is_not_denied {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}
+```
+
+There is nothing to compare the LHS against, so the clause cannot be decided and it `FAIL`s. This applies to both polarities: `IN %denied` and `!= %denied` both fail when `%denied` resolves to no values. The failure message says that the reference resolved to no values, so the fault is not mistaken for one in the input.
+
+Failing here is deliberate, and it is a change from earlier versions, which reported `SKIP`. A `SKIP` exits `0` and is indistinguishable from a `PASS` at a CI gate, so the rule above reported success for every template while comparing nothing, including a template whose bucket name was on the denylist that the query failed to populate.
+
+If a query is expected to resolve to no values, state that with a `when` guard. The condition fails, so the rule does not apply and is reported as `SKIP`:
+
+```
+rule bucket_name_is_not_denied when %denied !empty {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}
+```
+
+This is the same `when %query !empty` idiom used to scope a rule to templates that contain the resources it checks. A comparison written directly as a `when` condition is also reported as `SKIP` rather than `FAIL` when its reference is empty, because a failing condition would drop the block it guards.
 
 ## Custom Message
 

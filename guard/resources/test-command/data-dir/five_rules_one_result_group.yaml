@@ -1,0 +1,41 @@
+###
+# One test case whose expectations cover five rules, so the report has a result group with more
+# than one entry. That is the shape needed to pin the order rule names are listed in; the other
+# fixtures here have one rule per group.
+###
+---
+- name: All five properties set, every rule passes
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          VersioningConfiguration:
+            Status: Enabled
+          PublicAccessBlockConfiguration:
+            BlockPublicAcls: true
+          LoggingConfiguration:
+            DestinationBucketName: my-log-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_VERSIONING_ENABLED: PASS
+      S3_BUCKET_NAME_SET: PASS
+      S3_PUBLIC_ACCESS_BLOCKED: PASS
+      S3_LOGGING_ENABLED: PASS
+      S3_ENCRYPTION_SET: PASS
+
+- name: No bucket, every rule skips
+  input:
+    Resources: {}
+  expectations:
+    rules:
+      S3_VERSIONING_ENABLED: SKIP
+      S3_BUCKET_NAME_SET: SKIP
+      S3_PUBLIC_ACCESS_BLOCKED: SKIP
+      S3_LOGGING_ENABLED: SKIP
+      S3_ENCRYPTION_SET: SKIP

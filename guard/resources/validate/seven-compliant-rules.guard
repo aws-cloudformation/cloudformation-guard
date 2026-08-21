@@ -1,0 +1,38 @@
+# Seven rules that all pass, named out of alphabetical order on purpose.
+#
+# Fixture for the_report_orders_compliant_rules_deterministically. The compliant set reaches the
+# console reporter as a HashSet, and Rust seeds its hasher per process, so iterating it directly
+# printed these seven in a different order on every run. Twenty runs of the same binary over this
+# input produced twenty distinct reports in one measurement and nineteen in another; the count
+# varies between measurements because the seed does, so only the sorted result is a fixed point and
+# only that is asserted.
+#
+# Seven rather than three because the more entries there are, the less likely a run is to emit
+# sorted order by chance.
+rule g_seventh {
+    Region == "us-east-1"
+}
+
+rule c_third {
+    Account == "123456789012"
+}
+
+rule f_sixth {
+    Partition == "aws"
+}
+
+rule a_first {
+    Region == "us-east-1"
+}
+
+rule e_fifth {
+    Account == "123456789012"
+}
+
+rule b_second {
+    Partition == "aws"
+}
+
+rule d_fourth {
+    Region == "us-east-1"
+}

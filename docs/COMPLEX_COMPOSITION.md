@@ -253,6 +253,48 @@ Resources:
         - CertificateArn: 'arn:aws:acm...'
 ```
 
+## Type blocks
+
+A type block names a resource type and applies its clauses to every resource of that type in the input. Inside the block, queries are relative to the resource being checked rather than to the root of the document:
+
+```
+rule volumes_are_encrypted {
+    AWS::EC2::Volume {
+        Properties.Encrypted == true
+    }
+}
+```
+
+`Properties.Encrypted` above is read from each `AWS::EC2::Volume` in turn. If the input contains no volumes, the rule does not apply and is reported as such.
+
+A type block can carry a `when` condition, which decides per resource whether the clauses apply to it:
+
+```
+rule large_volumes_are_encrypted {
+    AWS::EC2::Volume when Properties.Size > 10 {
+        Properties.Encrypted == true
+    }
+}
+```
+
+The condition is evaluated against the same resource as the clauses it guards, so `Properties.Size` here refers to the volume under consideration. A volume of 5 GiB is exempt and contributes nothing to the outcome; a volume of 50 GiB is checked. A rule reports a failure if any resource the condition selected failed, passes if at least one was selected and none failed, and is reported as not applicable if the condition selected none of them.
+
+Being exempt is not the same as passing. A template whose volumes are all under the threshold produces "not applicable" for the rule above, and Guard says which of the two reasons applied: that no resource of the type was present, or that the condition exempted all of them. That distinction is worth reading, because a rule that never fires and a rule that passes both exit `0`.
+
+Earlier versions evaluated the condition once against the root of the document rather than per resource, which made the form above match nothing: `Properties` does not exist at the document root, so the condition could not be decided, and the rule was reported as not applicable for every input. Conditions written against the root, either as a variable or as a full path such as `Resources.MyVolume.Properties.Size > 10`, should now be expressed relative to the resource, or moved to the enclosing rule:
+
+```
+let volumes = Resources.*[ Type == 'AWS::EC2::Volume' ]
+
+rule large_volumes_are_encrypted when %volumes !empty {
+    AWS::EC2::Volume when Properties.Size > 10 {
+        Properties.Encrypted == true
+    }
+}
+```
+
+Conditions on the enclosing `rule`, as in the `when %volumes !empty` above, are still evaluated against the document root. Only the condition attached to the type block itself is per resource.
+
 ## Validating Multiple Rules against Multiple Data Files
 
 Guard is purpose-built for policy definition and evaluation on structured JSON- and YAML- formatted data. For better maintainability of rules, rule authors can write rules into multiple files and section them however they see fit and still be able to validate multiple rule files against a data file or multiple data files. The cfn-guard validate command can take a directory of files for the `--data` and `--rules` options. More information can be found in the [cfn-guard README](../guard/README.md).

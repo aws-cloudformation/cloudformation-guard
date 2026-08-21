@@ -3,13 +3,15 @@ use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
-    BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport, GuardClauseReport,
-    InComparison, UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
+    find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
+    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
+    ValueUnResolved,
 };
 
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status, UnResolved,
+    BlockCheck, ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
+    UnResolved,
 };
 use fancy_regex::Regex;
 use lazy_static::*;
@@ -59,6 +61,14 @@ impl<'a> Default for NameInfo<'a> {
     }
 }
 
+/// Rules that did not apply, each with the evaluator's reason when it recorded one.
+///
+/// One map rather than a name set plus a parallel reason map: the reason belongs to the skip, and
+/// two collections keyed by rule name can drift. `None` is the ordinary case -- most skips are a
+/// condition that legitimately did not match -- and `Some` is for the skips where the evaluator
+/// knows something the reader cannot infer from a bare "not applicable".
+pub(super) type SkippedRules = HashMap<String, Option<String>>;
+
 pub(super) trait GenericReporter: Debug {
     #[allow(clippy::too_many_arguments)]
     fn report(
@@ -68,7 +78,7 @@ pub(super) trait GenericReporter: Debug {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()>;
 }
@@ -97,6 +107,12 @@ struct DataOutput<'a> {
     rules_from: &'a str,
     not_compliant: HashMap<String, Vec<NameInfo<'a>>>,
     not_applicable: HashSet<String>,
+    /// Omitted entirely when no skip carried a reason, which keeps the document shape identical
+    /// to what consumers parse today. BTreeMap rather than HashMap so the order is stable across
+    /// runs -- a reporter that reshuffles its own output on every invocation is unusable in a
+    /// diff.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    not_applicable_reasons: BTreeMap<String, String>,
     compliant: HashSet<String>,
 }
 
@@ -108,15 +124,20 @@ impl GenericReporter for StructuredSummary {
         data_file_name: &str,
         failed: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         _: usize,
     ) -> crate::rules::Result<()> {
+        let not_applicable_reasons = skipped
+            .iter()
+            .filter_map(|(rule, reason)| reason.clone().map(|reason| (rule.clone(), reason)))
+            .collect::<BTreeMap<String, String>>();
         let value = DataOutput {
             rules_from: rules_file_name,
             data_from: data_file_name,
             not_compliant: failed,
             compliant: passed,
-            not_applicable: skipped,
+            not_applicable: skipped.into_keys().collect(),
+            not_applicable_reasons,
         };
 
         match &self.hierarchy_type {
@@ -146,6 +167,30 @@ pub(super) fn find_failing_clauses<'record, 'value>(
             ..
         })) => vec![current],
 
+        // A clause that failed without producing any per-value result carries its explanation on the
+        // block record instead, and there is no `ClauseValueCheck` underneath it to find. The
+        // empty-reference failures are the case that matters: the comparison never ran, so nothing
+        // was recorded per value, and this reporter used to walk past the block and report nothing at
+        // all -- a run that exits 19 and prints an empty violation section.
+        //
+        // Children first, so a block that does have per-value findings still reports those. Reporting
+        // the block instead would replace a path and a value with a one-line summary, which is the
+        // opposite of the intent.
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            message: Some(_),
+            status: Status::FAIL,
+            ..
+        })) => {
+            let mut from_children = Vec::new();
+            for child in &current.children {
+                from_children.extend(find_failing_clauses(child));
+            }
+            match from_children.is_empty() {
+                true => vec![current],
+                false => from_children,
+            }
+        }
+
         _ => {
             let mut acc = Vec::new();
             for child in &current.children {
@@ -168,6 +213,17 @@ pub(super) fn extract_name_info_from_record<'record>(
         })) => NameInfo {
             message: msg.clone(),
             rule: name,
+            ..Default::default()
+        },
+
+        // The block-level counterpart of the arms below: no path and no value, because the comparison
+        // never ran against one. The explanation is all there is, and printing it beats printing
+        // nothing.
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            message: Some(msg), ..
+        })) => NameInfo {
+            error: Some(msg.clone()),
+            rule: rule_name,
             ..Default::default()
         },
 
@@ -339,7 +395,7 @@ pub(super) fn report_from_events(
 ) -> crate::rules::Result<()> {
     let mut longest_rule_length = 0;
     let mut failed = HashMap::new();
-    let mut skipped = HashSet::new();
+    let mut skipped = SkippedRules::new();
     let mut success = HashSet::new();
     for each_rule in &root_record.children {
         if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) = &each_rule.container
@@ -361,7 +417,7 @@ pub(super) fn report_from_events(
                 }
 
                 Status::SKIP => {
-                    skipped.insert(name.to_string());
+                    skipped.insert(name.to_string(), find_skip_reason(each_rule));
                 }
             }
         }
@@ -547,9 +603,16 @@ where
                 let (cmp, not) = match &each.comparison {
                     Some(cmp) => (cmp.operator, cmp.not_operator_exists),
                     None => {
+                        // "Rule", not "Parameterized Rule". This is the arm for a failure carried on
+                        // the rule rather than on a clause comparison, and at the merge-base only a
+                        // parameterized rule reached it, so the wording was accurate. This branch
+                        // gives ordinary rules a rule-level message -- a condition that could not be
+                        // evaluated -- so an ordinary rule now arrives here and was being announced
+                        // as something it is not. A parameterized rule is still a rule, so dropping
+                        // the word is correct for both rather than a trade between them.
                         writeln!(
                             writer,
-                            "Parameterized Rule {rule_name} failed for {data}. Reason {msg}",
+                            "Rule {rule_name} failed for {data}. Reason {msg}",
                             data = data_file_name,
                             rule_name = each.rule,
                             msg = each.message.replace('\n', "; ")

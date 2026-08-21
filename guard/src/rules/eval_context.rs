@@ -10,7 +10,7 @@ use crate::rules::functions::converters::{
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
-use crate::rules::path_value::{Location, MapValue, PathAwareValue};
+use crate::rules::path_value::{index_offset, Location, MapValue, PathAwareValue};
 use crate::rules::values::CmpOperator;
 use crate::rules::Result;
 use crate::rules::Status::SKIP;
@@ -22,7 +22,7 @@ use crate::rules::{
 use cruet::case::{camel, class, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::rc::Rc;
 use std::vec::Vec;
@@ -47,9 +47,14 @@ pub(crate) struct EventRecord<'value> {
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
     rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
-    rules_status: HashMap<&'value str, Status>,
+    rules_status: HashMap<(&'value str, super::eval::ClauseRole), Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     recorder: RecordTracker<'value>,
+    /// Notices about behaviour that changes in a later release, collected during evaluation.
+    ///
+    /// A set rather than a list: a clause inside a type block is evaluated once per matched resource,
+    /// and ten identical lines about the same rule tell the reader nothing the first one did not.
+    deprecations: BTreeSet<String>,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -118,12 +123,15 @@ fn extract_variables<'value, 'loc: 'value>(
 
 fn retrieve_index(
     parent: Rc<PathAwareValue>,
-    index: i32,
+    index: i64,
     elements: &Vec<PathAwareValue>,
     query: &[QueryPart<'_>],
 ) -> QueryResult {
-    let check = if index >= 0 { index } else { -index } as usize;
-    if check < elements.len() {
+    // `index_offset` rather than arithmetic here, for two reasons it records: negating `i64::MIN` is
+    // not representable, which used to panic in a debug build and wrap in release, and a negative index
+    // counts from the end rather than being its own magnitude. Pinned by
+    // `an_out_of_range_index_does_not_panic` and `a_negative_index_counts_back_from_the_end`.
+    if let Some(check) = index_offset(index, elements.len()) {
         QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
         QueryResult::UnResolved(
@@ -282,7 +290,8 @@ fn check_and_delegate<'value, 'loc: 'value>(
         match super::eval::eval_conjunction_clauses(
             conjunctions,
             eval_context,
-            super::eval::eval_guard_clause,
+            // Filter predicate: a selection test, not an assertion.
+            |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
         ) {
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
@@ -389,7 +398,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             query_retrieval_with_converter(query_index + 1, query, current, resolver, converter)
         }
 
-        QueryPart::Key(key) => match key.parse::<i32>() {
+        QueryPart::Key(key) => match key.parse::<i64>() {
             Ok(idx) => match &*current {
                 PathAwareValue::List((_, list)) => map_resolved(
                     &current,
@@ -421,18 +430,31 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     if query[query_index].is_variable() {
                         let var = query[query_index].variable().unwrap();
                         let keys = resolver.resolve_variable(var)?;
-                        let keys = if query.len() > query_index + 1 {
+                        // `next_query_index` rather than `query_index + 1` at the recursions
+                        // below, because the `Index` arm *consumes* the part after the variable:
+                        // there it selects which resolved key to use, so the traversal has to
+                        // resume after it.
+                        //
+                        // Advancing by one applied the index a second time, to the value the key
+                        // had just selected. `Resources.%names[0].Type` picked `BucketA` and then
+                        // tried to index into it, so the query resolved to nothing and every part
+                        // after `[0]` was discarded -- silently, since an unresolved query is
+                        // reported as a retrieval failure rather than as a malformed rule. The
+                        // form without an index, `Resources.%names.Type`, always worked, which is
+                        // why this survived. Pinned by
+                        // `an_index_after_an_interpolated_key_is_not_applied_twice`.
+                        let (keys, next_query_index) = if query.len() > query_index + 1 {
                             match &query[query_index+1] {
-                                    QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
+                                    QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
-                                        let check = if *index >= 0 { *index } else { -*index } as usize;
-                                        if check < keys.len() {
-                                            vec![keys[check].clone()]
+                                        // See `index_offset` for why this is not arithmetic.
+                                        if let Some(check) = index_offset(*index, keys.len()) {
+                                            (vec![keys[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
                                                 current,
                                                 format!("Index {} on the set of values returned for variable {} on the join, is out of bounds. Length {}, Values = {:?}",
-                                                        check, var, keys.len(), keys),
+                                                        index, var, keys.len(), keys),
                                                 &query[query_index..]
                                             )
                                         }
@@ -443,7 +465,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                                 query[1], current.type_info(), SliceDisplay(query))))
                                 }
                         } else {
-                            keys
+                            (keys, query_index + 1)
                         };
 
                         let mut acc = Vec::with_capacity(keys.len());
@@ -464,7 +486,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                     if let PathAwareValue::String((_, k)) = &*key {
                                         if let Some(next) = map.values.get(k) {
                                             acc.extend(query_retrieval_with_converter(
-                                                query_index + 1,
+                                                next_query_index,
                                                 query,
                                                 Rc::new(next.clone()),
                                                 resolver,
@@ -484,7 +506,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                             match &each_key {
                                                     PathAwareValue::String((path, key_to_match)) => {
                                                         if let Some(next) = map.values.get(key_to_match) {
-                                                            acc.extend(query_retrieval_with_converter(query_index + 1, query, Rc::new(next.clone()), resolver, converter)?);
+                                                            acc.extend(query_retrieval_with_converter(next_query_index, query, Rc::new(next.clone()), resolver, converter)?);
                                                         } else {
                                                             acc.extend(
                                                                 to_unresolved_result(
@@ -764,7 +786,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     let result = match super::eval::eval_conjunction_clauses(
                         conjunctions,
                         &mut val_resolver,
-                        super::eval::eval_guard_clause,
+                        // A filter predicate selects values; it is a test, not an
+                        // assertion, so an unevaluatable clause makes the filter
+                        // select nothing rather than fail.
+                        |gc, r| {
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
+                        },
                     ) {
                         Ok(status) => {
                             resolver.end_record(&context, RecordType::Filter(status))?;
@@ -799,7 +826,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     match super::eval::eval_conjunction_clauses(
                         conjunctions,
                         &mut val_resolver,
-                        super::eval::eval_guard_clause,
+                        // A filter predicate selects values; it is a test, not an
+                        // assertion, so an unevaluatable clause makes the filter
+                        // select nothing rather than fail.
+                        |gc, r| {
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
+                        },
                     ) {
                         Ok(status) => match status {
                             Status::PASS => query_retrieval_with_converter(
@@ -974,6 +1006,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
             final_event: None,
             events: vec![],
         },
+        deprecations: BTreeSet::new(),
     }
 }
 
@@ -1059,7 +1092,21 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     }
 }
 
+impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
+    /// The deprecation notices collected while evaluating, in a stable order.
+    ///
+    /// Read by the commands after evaluation so the notices can be written to stderr, which keeps them
+    /// out of the report on stdout that pipelines parse.
+    pub(crate) fn deprecations(&self) -> impl Iterator<Item = &String> {
+        self.deprecations.iter()
+    }
+}
+
 impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.deprecations.insert(notice);
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         let root = self.root();
         query_retrieval(0, query, root, self)
@@ -1084,8 +1131,12 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 
     #[allow(clippy::never_loop)]
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        if let Some(status) = self.rules_status.get(rule_name) {
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        if let Some(status) = self.rules_status.get(&(rule_name, role)) {
             return Ok(*status);
         }
 
@@ -1102,7 +1153,23 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
         let status = 'done: loop {
             for each_rule in rule {
-                let status = super::eval::eval_rule(each_rule, self)?;
+                // The reference site's role is carried into the rule's own body rather
+                // than being fixed at Assertion.
+                //
+                // This used to pass `ClauseRole::Assertion` unconditionally, which made
+                // `ClauseRole` unable to cross the named-rule boundary: a `when` condition
+                // referencing a rule whose body contains an unevaluatable clause got a FAIL
+                // from that clause, the rule came back non-PASS, and `eval_rule` then
+                // dropped every check in the guarded block while still exiting 0. Trading
+                // one unenforced clause for a whole disarmed block is the same hazard
+                // recorded on the `EmptyLhsCollection` arm in eval.rs, reached one level
+                // further out.
+                //
+                // Propagating the role gives an unevaluatable clause inside the body the
+                // strictness the *reference* deserves: a failure when the reference is an
+                // assertion, inapplicable when it is a gate. That is exactly the
+                // Unevaluatable split `Outcome::to_status` describes.
+                let status = super::eval::eval_rule(each_rule, self, role)?;
                 if status != SKIP {
                     break 'done status;
                 }
@@ -1110,7 +1177,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             break SKIP;
         };
 
-        self.rules_status.insert(rule_name, status);
+        // Keyed on `(rule, role)`, not the rule name. The same rule referenced from a body
+        // and from a `when` condition are two different questions and must not share a
+        // cache slot -- whichever reference ran first would otherwise decide the answer for
+        // the other, making the outcome depend on evaluation order.
+        self.rules_status.insert((rule_name, role), status);
         Ok(status)
     }
 
@@ -1377,21 +1448,40 @@ impl Callable for SubstringFunction {
             format!("substring function requires the {arg} argument to be a number")
         };
 
+        // Rejected rather than narrowed. Both bounds went through `usize::from(n as u16)`, which
+        // wraps: `substring(s, 65536, 65539)` became `substring(s, 0, 3)` and returned the first
+        // three characters, reporting success for a rule that asked about something else entirely.
+        // A negative bound wrapped the other way, so `substring(s, -1, 3)` also answered rather
+        // than complaining. A bound that cannot be an offset is an error, not another offset.
+        let offset = |index: usize, value: &PathAwareValue| -> Result<usize> {
+            let n = match value {
+                PathAwareValue::Int((_, n)) => *n,
+                // A float bound truncates toward zero, which is what the previous cast did for the
+                // values it did not mangle, so this keeps `substring(s, 1.9, 3)` reading from 1.
+                PathAwareValue::Float((_, n)) if n.is_finite() => *n as i64,
+                _ => return Err(Error::ParseError(substring_err_msg(index))),
+            };
+            usize::try_from(n).map_err(|_| {
+                Error::ParseError(format!(
+                    "substring function requires the {} argument to be an offset into the string, \
+                     which {} is not",
+                    match index {
+                        2 => "second",
+                        3 => "third",
+                        _ => unreachable!(),
+                    },
+                    n
+                ))
+            })
+        };
+
         let from = match &args[1][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
-            },
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(2, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(2))),
         };
 
         let to = match &args[2][0] {
-            QueryResult::Literal(r) | QueryResult::Resolved(r) => match &**r {
-                PathAwareValue::Int((_, n)) => usize::from(*n as u16),
-                PathAwareValue::Float((_, n)) => usize::from(*n as u16),
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
-            },
+            QueryResult::Literal(r) | QueryResult::Resolved(r) => offset(3, r)?,
             _ => return Err(Error::ParseError(substring_err_msg(3))),
         };
 
@@ -1480,6 +1570,10 @@ impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         query_retrieval(0, query, self.root(), self.parent)
     }
@@ -1495,8 +1589,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         Rc::clone(&self.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1523,6 +1621,10 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'e
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'value, 'loc, 'eval> {
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         query_retrieval(0, query, self.root(), self)
     }
@@ -1538,8 +1640,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         Rc::clone(&self.scope.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1613,6 +1719,83 @@ pub(crate) struct Messages {
     pub(crate) location: Option<Location>,
 }
 
+/// The explanation for a rule that did not apply, if the evaluator recorded one.
+///
+/// A skipped rule reaches the reporters as a name and nothing else, which is why explanations
+/// written onto skip records used to be constructed and discarded -- the same defect that had five
+/// message-bearing record variants rendering nothing. Walking the rule's own subtree is what makes
+/// the message reachable, so a message may now be added to any of the block-shaped records below
+/// and it will surface.
+///
+/// The first explanation found wins rather than all of them being concatenated. A rule that skips
+/// usually skips for one reason, and a reporter line that grows without bound with nesting depth is
+/// worse than a slightly incomplete one.
+///
+/// Children are searched before the record's own message, because the deeper message is the more
+/// specific one. Taking `own` first made the specific messages unreachable in the case that
+/// motivated them: a type block always attaches a summary to its own SKIP ("every X was exempted by
+/// the `when` condition"), so the recursion never ran and the undecidable-comparison explanation
+/// underneath it -- the one naming `Size: "50"` as a string that cannot be compared against an
+/// integer -- was built, recorded, and never read. Pinned by
+/// `a_specific_skip_reason_is_not_shadowed_by_the_block_summary`.
+pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+    record
+        .children
+        .iter()
+        .find_map(find_skip_reason)
+        .or_else(|| own_skip_reason(record))
+}
+
+/// The explanation this record carries itself, ignoring its children.
+///
+/// Split out of [`find_skip_reason`] so the recursion order is one readable expression, and so the
+/// block-shaped variants share a single body -- they did not, and `clippy::collapsible_match` failed
+/// the `cargo clippy -- -D warnings` gate on the duplicate.
+fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+    match &record.container {
+        Some(RecordType::TypeCheck(TypeBlockCheck { block, .. }))
+        | Some(RecordType::GuardClauseBlockCheck(block))
+        | Some(RecordType::WhenCheck(block))
+        | Some(RecordType::BlockGuardCheck(block))
+        | Some(RecordType::Disjunction(block)) => match block {
+            BlockCheck {
+                status: Status::SKIP,
+                message,
+                ..
+            } => message.clone(),
+            _ => None,
+        },
+
+        // A clause that failed *and* explained itself, reached while walking a rule that skipped.
+        //
+        // Only two things record an explanation on a comparison: a reference that resolved to no
+        // values, and operands that cannot be compared. Both mean the clause could not be decided,
+        // as opposed to being decided false -- the ordinary failure arm records `message: None`. So
+        // finding one here says the rule did not apply because a condition was undecidable, which
+        // is a different situation from a condition that was simply not met, and the only one worth
+        // interrupting an operator over.
+        //
+        // This is the quietest wrong answer left in the evaluator. `when ... Size > 10` against a
+        // template carrying `Size: "50"` -- a string, which CloudFormation templates produce
+        // routinely -- cannot be decided, so the condition does not pass, so the rule is reported
+        // as not applicable and its body never runs. Exit 0, nothing named. The rule still does not
+        // enforce, and it cannot be made to from here: both FAIL and SKIP on a condition drop the
+        // block it guards, so telling them apart needs a status that means "could not tell", which
+        // `Status` does not have. Saying so is what is available, and it turns a silent non-check
+        // into a visible one.
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
+            status: Status::FAIL,
+            message: Some(explanation),
+            ..
+        }))) => Some(format!(
+            "the rule did not apply because one of its conditions could not be decided: {}",
+            explanation
+        )),
+
+        _ => None,
+    }
+}
+
 pub(crate) type Metadata = HashMap<String, String>;
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -1623,6 +1806,11 @@ pub(crate) struct FileReport<'value> {
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub(crate) not_compliant: Vec<ClauseReport<'value>>,
     pub(crate) not_applicable: BTreeSet<String>,
+    /// Why each inapplicable rule did not apply, for the ones where the evaluator knows something
+    /// a bare "not applicable" does not convey. Omitted when empty, so a run with nothing to
+    /// explain serialises to exactly the document consumers parse today.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) not_applicable_reasons: BTreeMap<String, String>,
     pub(crate) compliant: BTreeSet<String>,
 }
 
@@ -1636,6 +1824,8 @@ impl<'value> FileReport<'value> {
         self.not_compliant.extend(report.not_compliant);
         self.compliant.extend(report.compliant);
         self.not_applicable.extend(report.not_applicable);
+        self.not_applicable_reasons
+            .extend(report.not_applicable_reasons);
     }
 }
 
@@ -1987,15 +2177,20 @@ fn report_all_failed_clauses_for_rules<'value>(
 
             Some(RecordType::BlockGuardCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
                 if current.children.is_empty() {
                     clauses.push(ClauseReport::Block(GuardBlockReport {
                         context: current.context.clone(),
                         messages: Messages {
-                            error_message: Some(String::from(
-                                "query for block clause did not retrieve any value",
-                            )),
+                            // The record's own explanation when it carries one. This arm used to
+                            // hardcode the generic sentence below and ignore `message` entirely,
+                            // so a block that had said precisely why it failed was reported as
+                            // though it had merely selected nothing.
+                            error_message: Some(message.clone().unwrap_or_else(|| {
+                                String::from("query for block clause did not retrieve any value")
+                            })),
                             custom_message: None,
                             location: None,
                         },
@@ -2006,32 +2201,87 @@ fn report_all_failed_clauses_for_rules<'value>(
                 }
             }
 
+            // A disjunction records a message only on the error path in `eval_conjunction_clauses`,
+            // where it bails before any disjunct produced a child record. Reported as a block
+            // rather than as an empty `Disjunctions`, for the same reason as the arms below: an
+            // empty list of checks tells the reader nothing, and the message is the only account of
+            // what went wrong.
             Some(RecordType::Disjunction(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
+                let nested = report_all_failed_clauses_for_rules(&current.children);
+                if nested.is_empty() {
+                    if let Some(explanation) = message {
+                        clauses.push(ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(explanation.clone()),
+                                custom_message: None,
+                                location: None,
+                            },
+                            unresolved: None,
+                        }));
+                    }
+                    continue;
+                }
                 clauses.push(ClauseReport::Disjunctions(DisjunctionsReport {
-                    checks: report_all_failed_clauses_for_rules(&current.children),
+                    checks: nested,
                 }));
             }
 
+            // These four recurse into their children for the per-value detail. Each can also carry
+            // a message of its own, and that message used to be discarded: the arm matched with
+            // `..`, ignoring the field, and reported whatever the children produced.
+            //
+            // Nothing is what the children produce when the clause failed *because* there was
+            // nothing to compare. An empty-reference comparison records its explanation here and
+            // has no per-value results by construction, so the report came back empty, the console
+            // printed "Number of non-compliant resources 0", and the structured output carried
+            // "checks": [] with a null error_message -- for a run that had correctly exited 19.
+            //
+            // So: recurse when the children have something to say, and fall back to this record's
+            // own message when they do not. A failing clause now always explains itself somewhere.
             Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             }))
-            | Some(RecordType::TypeBlock(Status::FAIL))
             | Some(RecordType::TypeCheck(TypeBlockCheck {
                 block:
                     BlockCheck {
                         status: Status::FAIL,
+                        message,
                         ..
                     },
                 ..
             }))
             | Some(RecordType::WhenCheck(BlockCheck {
                 status: Status::FAIL,
+                message,
                 ..
             })) => {
+                let nested = report_all_failed_clauses_for_rules(&current.children);
+                if nested.is_empty() {
+                    if let Some(explanation) = message {
+                        clauses.push(ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(explanation.clone()),
+                                custom_message: None,
+                                location: None,
+                            },
+                            unresolved: None,
+                        }));
+                    }
+                } else {
+                    clauses.extend(nested);
+                }
+            }
+
+            // TypeBlock carries a bare Status with no message, so there is nothing to fall back to.
+            Some(RecordType::TypeBlock(Status::FAIL)) => {
                 clauses.extend(report_all_failed_clauses_for_rules(&current.children));
             }
 
@@ -2406,6 +2656,7 @@ pub(crate) fn simplified_json_from_root<'value>(
         Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
             let mut pass: BTreeSet<String> = BTreeSet::new();
             let mut skip: BTreeSet<String> = BTreeSet::new();
+            let mut skip_reasons: BTreeMap<String, String> = BTreeMap::new();
             for each in &root.children {
                 if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) =
                     &each.container
@@ -2416,6 +2667,9 @@ pub(crate) fn simplified_json_from_root<'value>(
                         }
                         SKIP => {
                             skip.insert(name.to_string());
+                            if let Some(reason) = find_skip_reason(each) {
+                                skip_reasons.insert(name.to_string(), reason);
+                            }
                         }
                         _ => {}
                     }
@@ -2426,6 +2680,7 @@ pub(crate) fn simplified_json_from_root<'value>(
                 name,
                 not_compliant: report_all_failed_clauses_for_rules(&root.children),
                 not_applicable: skip,
+                not_applicable_reasons: skip_reasons,
                 compliant: pass,
                 ..Default::default()
             }

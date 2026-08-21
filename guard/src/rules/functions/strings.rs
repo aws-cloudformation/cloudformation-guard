@@ -3,7 +3,6 @@ use crate::rules::QueryResult;
 
 use crate::rules::errors::Error;
 use fancy_regex::Regex;
-use nom::Slice;
 use std::convert::TryFrom;
 
 pub(crate) fn url_decode(
@@ -93,8 +92,24 @@ pub(crate) fn substring(
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
                 if let PathAwareValue::String((path, val)) = &**v {
-                    if !val.is_empty() && from < to && from <= val.len() && to <= val.len() {
-                        let sub = val.as_str().slice(from..to).to_string();
+                    // Character indices, not byte indices.
+                    //
+                    // The bounds were checked against `val.len()`, which counts bytes, and the slice
+                    // that followed panics unless both ends land on a character boundary. So
+                    // `substring(x, 0, 3)` on `naïve` aborted the process: byte 3 is inside the two
+                    // bytes of `ï`. Not a clean error -- a Rust panic and exit 101, with a stack
+                    // trace instead of a diagnostic, which in CI reads as the tool breaking rather
+                    // than the policy failing.
+                    //
+                    // Characters rather than a boundary check that returns nothing, because
+                    // `docs/FUNCTIONS.md` calls these a "starting index" and an "ending index" into a
+                    // string, and a rule author counting a prefix counts characters. For ASCII -- the
+                    // ARNs and resource names these are written against, including the example in
+                    // that document -- the two readings are identical, so this changes no working
+                    // rule. It replaces a crash on the rules that are not ASCII.
+                    let length = val.chars().count();
+                    if !val.is_empty() && from < to && from <= length && to <= length {
+                        let sub: String = val.chars().skip(from).take(to - from).collect();
                         aggr.push(Some(PathAwareValue::String((path.clone(), sub))));
                     } else {
                         aggr.push(None);

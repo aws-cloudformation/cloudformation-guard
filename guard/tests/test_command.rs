@@ -364,6 +364,220 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
+    /// An expectation that names no rule in the file says so.
+    ///
+    /// It used to be dropped in silence. Expectations are read per evaluated rule, so one whose name
+    /// matches nothing is never consulted, and the run exits 0 having checked less than the file
+    /// asked for. The fixture asserts FAIL twice on names that do not exist and the run still
+    /// succeeds, which is the whole defect: a misspelled rule name turns an assertion into nothing
+    /// without ever saying so.
+    ///
+    /// Still exit 0 here. Failing the run would break suites that pass today, so this reports rather
+    /// than enforces; the reporters already print the mirror case for a rule with no expectation.
+    ///
+    /// Two cases in the fixture and two lines expected, not four.
+    #[rstest]
+    #[case("")]
+    #[case("json")]
+    fn an_expectation_naming_no_rule_is_reported(#[case] output: &str) {
+        const DATA: &str =
+            "resources/test-command/data-dir/expectation_for_a_rule_that_does_not_exist.yaml";
+        const RULES: &str =
+            "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard";
+
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = match output {
+            "" => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .run(&mut writer, &mut reader),
+            _ => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .output_format(output)
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "reporting an unchecked expectation must not change the verdict"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let reported: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("is in this file"))
+            .collect();
+
+        assert_eq!(
+            reported.len(),
+            2,
+            "expected one line per unmatched name across both cases, got {:?} from stderr {:?}",
+            reported,
+            stderr
+        );
+        assert!(
+            reported
+                .iter()
+                .any(|l| l.contains("S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE ")),
+            "the name with a dropped final letter should be reported, got {:?}",
+            reported
+        );
+        assert!(
+            reported.iter().any(|l| l.contains("S3_BUCKET_ENCRYPTED")),
+            "the plausible-but-wrong name should be reported, got {:?}",
+            reported
+        );
+    }
+
+    /// The deprecation notices reach the command rule authors run.
+    ///
+    /// `validate` printed them and `test` did not, which is backwards. A notice saying a clause's
+    /// answer changes in a later release is addressed to whoever wrote the clause, and they run
+    /// `test`; the operator running `validate` in a pipeline usually cannot act on it. So the whole
+    /// warn-a-release-ahead approach was invisible to its audience.
+    ///
+    /// Both assertions matter. Stderr must carry the notices, and stdout must not, because
+    /// `--output-format json` is parsed -- which is also why the JSON case asserts the report still
+    /// deserializes with the notice present.
+    ///
+    /// Two notices from three cases, not six: a rule file is evaluated once per case, so the same
+    /// notice is produced again for every case, and they are collapsed before being written.
+    #[rstest]
+    #[case("")]
+    #[case("json")]
+    fn a_deprecation_notice_reaches_the_test_command(#[case] output: &str) {
+        const DATA: &str = "resources/test-command/data-dir/vacuous_and_incomparable_cases.yaml";
+        const RULES: &str = "resources/validate/vacuous_and_incomparable_clauses.guard";
+
+        // `stripped` and `err_to_stripped` both consume the writer, so a single run cannot be read
+        // for both streams. The command is deterministic over these inputs, so running it once per
+        // stream reads the same output twice rather than two different outputs.
+        let run = |output: &str| {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = match output {
+                "" => TestCommandTestRunner::default()
+                    .test_data(Option::from(DATA))
+                    .rules(Some(RULES))
+                    .run(&mut writer, &mut reader),
+                _ => TestCommandTestRunner::default()
+                    .test_data(Option::from(DATA))
+                    .rules(Some(RULES))
+                    .output_format(output)
+                    .run(&mut writer, &mut reader),
+            };
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run(output);
+        let (_, err_writer) = run(output);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a notice must not change the verdict; both clauses still pass in this release"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("DEPRECATION"),
+            "a notice on stdout would land inside the report that consumers parse, got {:?}",
+            stdout
+        );
+
+        if output == "json" {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .expect("the report on stdout must still parse with a notice on stderr");
+        }
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "expected one notice per clause across all three cases, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("without comparing anything")),
+            "the empty-collection clause should say it compared nothing, got {:?}",
+            notices
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("could not be compared with any element")),
+            "the membership clause should say nothing in the list was comparable, got {:?}",
+            notices
+        );
+    }
+
+    /// Two runs of the same command over the same files must produce the same report.
+    ///
+    /// They did not. Both test reporters iterate the map built by `get_by_rules`, which was a
+    /// `HashMap`, so the sequence of rule names inside a result group came from `RandomState` and
+    /// was reseeded every process. Ten consecutive runs of this fixture produced ten different
+    /// outputs before the fix.
+    ///
+    /// Nothing in this file could see that, because every other fixture has one rule per result
+    /// group, and with one entry hash order and sorted order are the same. So the fixture is the
+    /// substance of the test: five rules whose declared order is not alphabetical, listed in a
+    /// single group. A golden file over that shape is a live detector -- reverting `get_by_rules`
+    /// to a `HashMap` fails it on all but roughly one run in a hundred and twenty per case, and
+    /// there are two cases.
+    ///
+    /// Both reporters are covered because both read the same map: the generic one prints the group
+    /// directly, and the structured one fills `passed_rules` in iteration order, which JSON, YAML
+    /// and JUnit consumers then see.
+    #[rstest]
+    #[case("", "five_rules_one_result_group.out")]
+    #[case("json", "five_rules_one_result_group_json.out")]
+    fn rules_within_a_result_group_are_listed_in_a_fixed_order(
+        #[case] output: &str,
+        #[case] expected: &str,
+    ) {
+        const DATA: &str = "resources/test-command/data-dir/five_rules_one_result_group.yaml";
+        const RULES: &str = "resources/test-command/rule-dir/five_rules_one_result_group.guard";
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        // The builder ties its borrow to the whole chain, so the default format cannot be expressed
+        // by skipping a setter mid-chain; each case builds its own.
+        let status_code = match output {
+            "" => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .run(&mut writer, &mut reader),
+            _ => TestCommandTestRunner::default()
+                .test_data(Option::from(DATA))
+                .rules(Some(RULES))
+                .output_format(output)
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/{expected}").as_str(),
+            writer
+        );
+    }
+
     #[test]
     fn test_sarif_output_with_expected_failures() {
         let mut reader = Reader::default();

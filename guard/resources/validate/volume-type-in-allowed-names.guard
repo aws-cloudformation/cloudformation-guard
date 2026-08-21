@@ -1,0 +1,7 @@
+# Compares against a variable that resolves to nine separate values, so the failure message has
+# more to print than it should. The reporter caps the list at five and reports the total.
+let allowed_names = Resources.*[ Type == 'AWS::SNS::Topic' ].Properties.Name
+
+rule volume_type_is_allowed {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.VolumeType IN %allowed_names
+}

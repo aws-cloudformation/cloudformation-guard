@@ -201,6 +201,29 @@ mod validate_tests {
     #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
+    // A rule whose only check compares against a reference that resolved to no values must
+    // not reach a successful exit. It used to: the comparison reported SKIP, the file status
+    // was SKIP, and the process exited 0 having enforced nothing. Exit code rather than
+    // reported status is the assertion that matters here, because 0 is what a CI gate reads,
+    // and SKIP and PASS are indistinguishable from outside the process.
+    // These fixtures sit at the resources/validate root rather than in data-dir/ and
+    // rules-dir/, because test_updated_summary_output evaluates every rules file in
+    // rules-dir/ against every data file in data-dir/ and compares the result to a
+    // checked-in golden output.
+    #[case(
+        vec!["bucket-with-no-kms-keys-template.yaml"],
+        vec!["denied_names_from_empty_reference.guard"],
+        StatusCode::VALIDATION_ERROR
+    )]
+    // The same comparison with the possibly-empty reference declared as a `when` guard. The
+    // condition fails, the rule does not apply, and exiting 0 is correct. Without this row
+    // the case above is also satisfied by failing every ruleset that mentions an empty
+    // reference, which would leave no way to express a permissibly-empty denylist.
+    #[case(
+        vec!["bucket-with-no-kms-keys-template.yaml"],
+        vec!["denied_names_guarded_by_not_empty.guard"],
+        StatusCode::SUCCESS
+    )]
     fn test_single_data_file_single_rules_file_status(
         #[case] data_arg: Vec<&str>,
         #[case] rules_arg: Vec<&str>,
@@ -232,6 +255,905 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+    }
+
+    /// A clause that fails because its reference resolved to nothing must say so in the output.
+    ///
+    /// Exit code alone is not enough, and asserting only the exit code is how this was missed: the
+    /// run correctly returned 19 while the console said "Number of non-compliant resources 0" and
+    /// the structured output carried `"checks": []` with a null error_message. The explanation was
+    /// built, recorded, and discarded by the reporter, so an operator got a failure with no stated
+    /// reason -- and docs/CLAUSES.md promised one.
+    ///
+    /// Both output paths are asserted because they discard messages independently. The structured
+    /// reporter walks the record tree, and the console reporter additionally organises findings by
+    /// resource, which a clause with nothing to compare cannot be attributed to.
+    ///
+    /// Parameterized over the data shape as well, because the console reporter is really two: with a
+    /// `/Resources` key the CloudFormation-aware one renders the finding, and without one it delegates
+    /// to the generic reporter. Only the first was covered here, which is how the generic reporter
+    /// kept discarding the explanation after this test started passing -- it collected findings from
+    /// `ClauseValueCheck` records only, and a comparison that never ran against a value records its
+    /// explanation on the enclosing block instead.
+    #[rstest::rstest]
+    #[case(
+        None,
+        "bucket-with-no-kms-keys-template.yaml",
+        "denied_names_from_empty_reference.guard"
+    )]
+    #[case(
+        Some("json"),
+        "bucket-with-no-kms-keys-template.yaml",
+        "denied_names_from_empty_reference.guard"
+    )]
+    #[case(
+        None,
+        "flat-document-with-empty-filter.yaml",
+        "denied_names_from_empty_reference_flat.guard"
+    )]
+    #[case(
+        Some("json"),
+        "flat-document-with-empty-filter.yaml",
+        "denied_names_from_empty_reference_flat.guard"
+    )]
+    fn empty_reference_failure_explains_itself_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] rules_file: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner.data(vec![data_file]).rules(vec![rules_file]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the clause must still fail; this test is about the explanation, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("resolved to no values"),
+            "the {} output for {} did not explain that the reference resolved to no values.\n{}",
+            output_format.unwrap_or("console"),
+            data_file,
+            output
+        );
+        assert!(
+            output.contains("!empty"),
+            "the explanation should name the `!empty` guard as the remedy, got:\n{}",
+            output
+        );
+    }
+
+    /// A clause the evaluator cannot answer must not discard the rest of the file.
+    ///
+    /// `EMPTY` on an integer returned an error, and an error from one rule propagates out of
+    /// `eval_rules_file` and aborts the run. So a rules file whose first rule had already reported a
+    /// genuine violation exited 255 with nothing printed, instead of 19 with the finding. A gate
+    /// keyed on "nonzero" still fails, but one keyed on 19, or one parsing the report, loses the
+    /// finding entirely -- and the more rules a file has, the more it loses.
+    ///
+    /// Asserted on the output as well as the exit code, because the exit code alone was never the
+    /// whole problem: the run has to say which rule failed, and an aborted run says nothing at all.
+    #[test]
+    fn an_incompatible_type_does_not_discard_other_rules() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["volume-with-a-region.yaml"])
+            .rules(vec!["empty_on_a_scalar_with_an_unrelated_rule.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the file must report its violations rather than aborting; 255 here means an error \
+             escaped one rule and took every other rule's verdict with it"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("unrelated_violation"),
+            "the unrelated rule's failure was not reported, which is what the abort used to \
+             discard:\n{}",
+            output
+        );
+        assert!(
+            output.contains("empty_on_a_scalar"),
+            "the unanswerable clause should report its own failure too, not vanish:\n{}",
+            output
+        );
+        assert!(
+            output.contains("EMPTY"),
+            "the report should name the operation that could not be performed so the author can \
+             find the clause:\n{}",
+            output
+        );
+    }
+
+    /// A gate that cannot be evaluated fails its rule instead of disarming the body.
+    ///
+    /// This is the shape a reviewer found against the first version of the incompatible-type fix, and
+    /// it is the failure mode this whole branch exists to remove: `!EMPTY` on a boolean has no answer,
+    /// the rule was therefore treated as not applicable, and the violation inside it went unreported
+    /// with exit 0. On the merge-base the same file exits 19, because `!EMPTY` on a boolean was
+    /// unconditionally true there -- so the gate opened and the body ran. Fixing the boolean clause
+    /// without fixing the gate turned a bug that over-reported into one that under-reported.
+    ///
+    /// Why a status could not express this: `eval_rule` collapses both FAIL and SKIP on a condition to
+    /// a rule-level SKIP, since "the condition did not match" is the ordinary gating idiom and must
+    /// stay a skip. So an unevaluatable condition travels as an error and is caught at the rule
+    /// boundary, which is what makes the rule fail rather than the file abort.
+    ///
+    /// Asserted on the output as well as the exit code, and on the unrelated rule too: failing closed
+    /// is only correct if it does not also take the rest of the file down.
+    #[test]
+    fn an_unevaluatable_gate_fails_the_rule_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["unevaluatable_gate_guarding_a_violation.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "an unevaluatable gate must not report success; exit 0 here means the guarded body was \
+             silently skipped"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("guarded"),
+            "the rule with the unevaluatable gate should be reported as failing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing the rule closed must not discard the rest of the file:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the report should say the rule failed because its condition could not be evaluated, \
+             rather than leaving the reader to guess:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Parameterized Rule"),
+            "this rule takes no parameters; the rule-level failure line used to announce every such \
+             failure as a parameterized rule, which was true only of the callers that reached it \
+             before this branch:\n{}",
+            output
+        );
+    }
+
+    /// An undecidable condition one level in does not silence the rule it gates.
+    ///
+    /// The single-condition form is `an_unevaluatable_gate_fails_the_rule_closed`. This is the same
+    /// hazard reached across a parameterized-rule boundary, and that path was open while the direct
+    /// one was closed: the nested `when` converted the undecidable answer to `Status::FAIL`, one
+    /// level out a FAIL on a condition is indistinguishable from a condition that was decided and
+    /// did not match, and `eval_rule` maps that to a rule-level SKIP. Measured before the fix:
+    ///
+    ///     merge-base  exit 19   the gate opened, because `!EMPTY` on a boolean was always true
+    ///     this branch  exit  0  the rule was reported not applicable, `MustBeTrue` unchecked
+    ///
+    /// Reported by a reviewer, whose diagnosis named the mechanism exactly. The fix keeps the error
+    /// for a gate instead of converting it, so the enclosing condition site fails its own rule
+    /// closed; an assertion still answers FAIL, which is what stops one undecidable clause from
+    /// aborting the whole file.
+    #[test]
+    fn an_undecidable_nested_gate_does_not_silence_the_outer_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["undecidable_nested_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "exit 0 here means the guarded check was dropped because a condition two levels down \
+             could not be answered"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("guarded"),
+            "the rule whose gate could not be decided must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("SKIP rules"),
+            "the rule must not be reported as not applicable:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the console must say why the rule failed. The evaluator recorded the explanation and \
+             the JSON reporter always printed it, while the console printed `Number of non-compliant \
+             resources 0` and nothing else -- exit 19 with no account of the reason:\n{}",
+            output
+        );
+    }
+
+    /// The named-rule spelling of the same gate, where the exit code cannot detect the defect.
+    ///
+    /// `inner_gate` is a plain rule, so it is also a top-level rule, and its own undecidable
+    /// condition fails it as an assertion. That failure exits the file 19 no matter what happens to
+    /// `guarded`, so a test that checks only the exit code passes while the guarded rule is silently
+    /// dropped. This asserts on `guarded`.
+    ///
+    /// The cause was the rule-status cache, keyed on the rule name alone: `inner_gate` was evaluated
+    /// once as an assertion, and the gate reference read that cached FAIL instead of re-evaluating
+    /// with gate semantics. Keying on `(rule, role)` makes the reference ask its own question, and the
+    /// undecidable answer then reaches the enclosing condition as an error rather than as a status.
+    ///
+    /// Measured: the merge-base reports `guarded` FAIL, this branch reported SKIP before the fix.
+    #[test]
+    fn an_undecidable_named_gate_does_not_silence_the_outer_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unevaluatable-gate-template.yaml"])
+            .rules(vec!["undecidable_nested_gate_named.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("SKIP rules"),
+            "`guarded` must not be reported as not applicable; its gate could not be decided, which \
+             is not the same as a gate that did not match:\n{}",
+            output
+        );
+        assert!(
+            output.contains("guarded"),
+            "`guarded` must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the console must say why, not only that:\n{}",
+            output
+        );
+    }
+
+    /// Two skip reasons in one junit report stay two reasons.
+    ///
+    /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text
+    /// events, so the output was `...nothing to checkbucket_named: no AWS::S3::Bucket...`. A reviewer
+    /// found it with a direct serializer probe and noted why the CLI fixtures had not: some evaluator
+    /// reasons happen to end in whitespace, which supplies an accidental separator, and every existing
+    /// fixture had only one rule to explain.
+    ///
+    /// Asserted by splitting the element body on the delimiter, so the test fails if the separator is
+    /// dropped again rather than merely checking that both rule names appear somewhere.
+    #[test]
+    fn junit_keeps_multiple_skip_reasons_separate() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["two_type_blocks_that_do_not_apply.guard"])
+            .output_format(Some("junit"))
+            .show_summary(vec!["none"])
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let body = output
+            .split("<skipped>")
+            .nth(1)
+            .and_then(|rest| rest.split("</skipped>").next())
+            .expect("junit emitted no <skipped> element");
+
+        let reasons: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert_eq!(
+            reasons.len(),
+            2,
+            "expected one line per inapplicable rule, got {:?} from body {:?}",
+            reasons,
+            body
+        );
+        assert!(
+            reasons.iter().all(|r| r.contains(": ")),
+            "each line should name its rule and its reason, got {:?}",
+            reasons
+        );
+    }
+
+    /// A comparison whose left-hand variable resolved to nothing fails closed.
+    ///
+    /// An earlier commit on this branch closed this on the right-hand side and left the left open,
+    /// so `%x == 'abc'`,
+    /// `%x != 'abc'` and `%x > 5` all exited 0 when `%x` held no values. A rule whose only check is one
+    /// of those reported compliance having compared nothing, which is the same bypass the right-hand
+    /// fix removed.
+    ///
+    /// Scoped to a lone variable on purpose, and the negative half of that is asserted by
+    /// `an_empty_filtered_query_still_skips`: a filtered query that matches nothing must stay a SKIP,
+    /// because that is what lets one ruleset run against templates that do not all contain the
+    /// resource being checked.
+    #[test]
+    fn an_empty_variable_on_the_left_fails_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["flat-document-for-empty-lhs.yaml"])
+            .rules(vec!["empty_variable_on_the_left.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "a comparison that compared nothing must not report success"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("left_side_is_empty"),
+            "the clause with the empty left-hand side should be reported:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing closed must not discard the rest of the file:\n{}",
+            output
+        );
+        assert!(
+            output.contains("resolved to no values"),
+            "the report should say the left-hand side resolved to no values:\n{}",
+            output
+        );
+    }
+
+    /// The counterpart, and the reason the fix above is scoped to a lone variable: a filtered query
+    /// that matches nothing is not applicable, not a failure.
+    ///
+    /// This is the idiom that lets one ruleset run over templates that do not all contain the resource
+    /// type being checked, documented in `docs/QUERY_AND_FILTERING.md`. Failing it would fail every
+    /// template that omits the type, which is why the empty-left-hand-side fix distinguishes the two
+    /// shapes instead of treating every empty selection alike.
+    #[test]
+    fn an_empty_filtered_query_still_skips() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a filtered query that matched nothing must not fail the rule"
+        );
+    }
+
+    /// Two clauses that pass today, and will not in a later release, say so on stderr without changing
+    /// this run's answer.
+    ///
+    /// Both are spec violations rather than judgment calls. `QUERY_AND_FILTERING.md` lists `Tags: []`
+    /// beside a missing key and an empty map as retrieval errors and states that all retrieval errors
+    /// are failures; the other two do fail, so a comparison against an empty collection passing is the
+    /// outlier. And `CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be
+    /// decided, and the clause fails rather than guessing", which `!=` honours and `NOT IN` does not.
+    ///
+    /// Neither is changed yet, for different reasons: the empty-collection answer is #720's to change,
+    /// and `NOT IN` cannot change until five rules in aws-guard-rules-registry stop relying on the
+    /// current reading -- failing closed there makes a filter select fewer resources and turns a
+    /// reported violation into a pass. So the notice goes out a release ahead of the change.
+    ///
+    /// On stderr, not in the report: the report on stdout is what pipelines parse, and a notice about a
+    /// future release is not part of this run's result. This also keeps every golden file untouched.
+    ///
+    /// The assertion covers the verdict as well as the notices, because a deprecation notice that moves
+    /// a verdict is not a notice.
+    #[test]
+    fn clauses_whose_answer_changes_later_warn_now() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["vacuous-and-incomparable-template.yaml"])
+            .rules(vec!["vacuous_and_incomparable_clauses.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the notices must not change the verdict; both clauses still pass in this release"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+        assert_eq!(
+            notices.len(),
+            2,
+            "expected one notice per clause, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("without comparing anything")),
+            "the empty-collection clause should say it compared nothing, got {:?}",
+            notices
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("could not be compared with any element")),
+            "the membership clause should say nothing in the list was comparable, got {:?}",
+            notices
+        );
+    }
+
+    /// The counterpart: clauses that are not changing stay silent.
+    ///
+    /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be
+    /// mistaken for the ones above -- a filtered query that matched nothing, a `some` clause over the
+    /// same empty collection whose answer is already FAIL and is not changing, and ordinary comparisons
+    /// that decide normally.
+    #[test]
+    fn clauses_whose_answer_is_unchanged_stay_quiet() {
+        for (label, rules_file, data_file) in [
+            (
+                "a filtered query that matched nothing",
+                "large_volumes_encrypted_type_block.guard",
+                "no-volumes-template.yaml",
+            ),
+            (
+                "ordinary comparisons that decide",
+                "denied_names_guarded_by_not_empty.guard",
+                "bucket-with-no-kms-keys-template.yaml",
+            ),
+        ] {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            ValidateTestRunner::default()
+                .data(vec![data_file])
+                .rules(vec![rules_file])
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader);
+
+            let stderr = writer.err_to_stripped().expect("failed to read stderr");
+            assert!(
+                !stderr.contains("DEPRECATION"),
+                "{} should emit no notice, got: {}",
+                label,
+                stderr
+            );
+        }
+    }
+
+    /// The report lists failing rules in a fixed order.
+    ///
+    /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
+    /// emitted the findings in whatever order the hasher produced. Twenty runs of the merge-base
+    /// binary over this fixture produced five distinct reports, and `--show-summary all` produced
+    /// six. Structured output was already stable, since it is built from ordered collections.
+    ///
+    /// That makes report diffing across runs useless and any golden file covering two or more
+    /// failing rules flaky. It is pre-existing rather than introduced here -- confirmed by running
+    /// the merge-base binary -- but it also had to be fixed before a differential over output could
+    /// mean anything, since there was no stable baseline to compare against.
+    ///
+    /// Asserting sortedness rather than looping. A loop inside one process is close to vacuous: the
+    /// report is built once, so re-reading it re-reads the same map in the same order, and whether
+    /// two `HashMap`s in one process disagree depends on how `RandomState` seeds each instance.
+    /// Sortedness is the property that makes the order stable, and it is checkable in a single run.
+    /// The count is asserted too, so an extraction that silently found nothing cannot pass.
+    #[test]
+    fn the_report_orders_failing_rules_deterministically() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["three-failing-rules.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // The fixture names its rules out of alphabetical order on purpose, so declaration order and
+        // sorted order differ and the assertion cannot pass by coincidence.
+        let reported = output
+            .lines()
+            .filter_map(|line| {
+                line.split("is not compliant with [")
+                    .nth(1)
+                    .and_then(|rest| rest.split(']').next())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            reported.len(),
+            3,
+            "expected all three failing rules in the report, got {:?} from:\n{}",
+            reported,
+            output
+        );
+        let mut sorted = reported.clone();
+        sorted.sort();
+        assert_eq!(
+            reported, sorted,
+            "failing rules were reported in an unsorted order, which means the order came from a \
+             HashMap and varies between runs"
+        );
+    }
+
+    /// The report lists compliant rules in a fixed order too.
+    ///
+    /// Companion to the test above, and the same defect one section further down the same function:
+    /// the failing and skipped sections were sorted, but `print_rules_output` still iterated the
+    /// compliant set, a `HashSet`, directly. Twenty runs over this fixture produced nineteen
+    /// distinct orderings of the compliant lines while the failing lines produced exactly one, so
+    /// the invariant the sibling test establishes did not hold for a report that had any passing
+    /// rules at all -- which is most of them.
+    ///
+    /// `--show-summary pass` rather than `all`: with `all` the console section is suppressed
+    /// entirely for this input, so the compliant lines never reach the writer and the assertion
+    /// would pass vacuously.
+    #[test]
+    fn the_report_orders_compliant_rules_deterministically() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["seven-compliant-rules.guard"])
+            .show_summary(vec!["pass"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // The fixture declares its rules out of alphabetical order (g, c, f, a, e, b, d), so neither
+        // declaration order nor sorted order can be reached by coincidence.
+        let reported = output
+            .lines()
+            .filter_map(|line| {
+                line.split("Rule [")
+                    .nth(1)
+                    .and_then(|rest| rest.split(']').next())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            reported.len(),
+            7,
+            "expected all seven compliant rules in the report, got {:?} from:\n{}",
+            reported,
+            output
+        );
+        let mut sorted = reported.clone();
+        sorted.sort();
+        assert_eq!(
+            reported, sorted,
+            "compliant rules were reported in an unsorted order, which means the order came from a \
+             HashSet and varies between runs"
+        );
+    }
+
+    /// A failure message comparing against many values shows a few and says how many there were.
+    ///
+    /// The reporter computed its cut-off as `max(values.len(), 5)`, which is never below the number
+    /// of values, so the loop that was meant to stop early never did and the branch reporting a
+    /// `Total` was unreachable. A rule comparing against a denylist of five hundred entries printed
+    /// all five hundred, in every failure message, for every resource. The dead branch is what gives
+    /// the intent away -- it exists to say how many there were when not all are shown.
+    ///
+    /// The right-hand side has to resolve to many *separate* values to reach this at all. A literal
+    /// list is one value however long it is, which is why the fixture compares against a variable
+    /// over nine resources rather than against `['a', 'b', ...]`. An earlier version of this test
+    /// used the literal and proved nothing.
+    #[test]
+    fn a_long_in_comparison_is_truncated_with_a_total() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["many-allowed-values-template.yaml"])
+            .rules(vec!["volume-type-in-allowed-names.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the volume type is not among the allowed names, so the rule must fail"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Total"),
+            "a truncated comparison should report how many values there were:\n{}",
+            output
+        );
+        // Scoped to the ComparedWith line rather than the whole output. The report echoes the
+        // offending template, and the fixture's nine topic names all appear there, so a search over
+        // everything would find the withheld values in the code snippet and prove nothing.
+        let compared_with = output
+            .lines()
+            .find(|line| line.contains("ComparedWith"))
+            .unwrap_or_else(|| panic!("no ComparedWith line in the report:\n{}", output));
+
+        // Five shown, four withheld. Both halves are asserted: a reporter that printed no values at
+        // all would satisfy the withheld check on its own.
+        for shown in ["n0", "n4"] {
+            assert!(
+                compared_with.contains(shown),
+                "expected {} among the values shown, got: {}",
+                shown,
+                compared_with
+            );
+        }
+        for withheld in ["n5", "n8"] {
+            assert!(
+                !compared_with.contains(withheld),
+                "{} should have been withheld by the cut-off, got: {}",
+                withheld,
+                compared_with
+            );
+        }
+    }
+
+    /// A condition that could not be decided has to say so, and a condition that was merely false
+    /// must not.
+    ///
+    /// This is the quietest wrong answer left in the evaluator, and the reason the discrimination
+    /// matters. `when ... Size > 10` against a template carrying `Size: "50"` cannot be decided, so
+    /// the condition does not pass, so the rule is reported as not applicable and its unencrypted
+    /// volume is never checked. Exit 0. A template with `Size: 50` fails the same rule.
+    ///
+    /// The rule still does not enforce, and it cannot be made to from here: on a condition, both
+    /// FAIL and SKIP drop the block being guarded, so telling "could not decide" from "decided
+    /// false" at the point it matters needs a status meaning "could not tell", which `Status` does
+    /// not have. What is available is saying so, which turns a silent non-check into a visible one.
+    /// When that third state exists, this test is where the stronger behaviour gets asserted.
+    ///
+    /// The false-condition case is asserted alongside because the discriminator is the whole
+    /// mechanism: only an undecidable comparison records an explanation, so a rule that legitimately
+    /// does not apply stays quiet. Without that, every inapplicable rule in a large ruleset would
+    /// grow a line of output and the signal would be worthless.
+    #[rstest::rstest]
+    #[case(None, "volume-size-as-string-template.yaml", true)]
+    #[case(Some("json"), "volume-size-as-string-template.yaml", true)]
+    #[case(None, "volume-under-gate-threshold-template.yaml", false)]
+    #[case(Some("json"), "volume-under-gate-threshold-template.yaml", false)]
+    fn an_undecidable_condition_says_so_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] expect_explanation: bool,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec![data_file])
+            .rules(vec!["large_volumes_encrypted_gate.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        // Both templates exit 0, which is the point: the exit code cannot tell them apart.
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "an inapplicable rule exits 0 whichever reason applied"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let explained = output.contains("could not be decided");
+        assert_eq!(
+            explained,
+            expect_explanation,
+            "the {} output for {} {} an explanation; got:\n{}",
+            output_format.unwrap_or("console"),
+            data_file,
+            if expect_explanation {
+                "should have carried"
+            } else {
+                "should not have carried"
+            },
+            output
+        );
+    }
+
+    /// A rule that skipped has to say why, in both the console and the structured output.
+    ///
+    /// This is the case `every_recorded_explanation_has_a_rendering_path` refused earlier in this
+    /// branch. A message was written onto the skip record and it went nowhere: a skipped rule
+    /// reached the reporters as a bare name, so the explanation was constructed and discarded --
+    /// the same defect that had five other message-bearing record variants rendering nothing.
+    /// Making it reachable meant the skip set had to carry reasons, which changed the shape of
+    /// `FileReport` and of the `GenericReporter::report` signature.
+    ///
+    /// Both skip causes are asserted, because telling them apart is the whole value. "No volumes
+    /// in the template" is the ordinary reason for a rule not to apply. "Every volume was exempted
+    /// by the condition" is the one worth a second look, since a rule that never fires looks
+    /// exactly like a rule that passes -- both report SKIP and exit 0.
+    #[rstest::rstest]
+    #[case(
+        None,
+        "volume-below-threshold-template.yaml",
+        "was exempted by the type block"
+    )]
+    #[case(
+        Some("json"),
+        "volume-below-threshold-template.yaml",
+        "was exempted by the type block"
+    )]
+    #[case(None, "no-volumes-template.yaml", "no AWS::EC2::Volume in the input")]
+    #[case(
+        Some("json"),
+        "no-volumes-template.yaml",
+        "no AWS::EC2::Volume in the input"
+    )]
+    fn a_skipped_type_block_explains_itself_in_the_output(
+        #[case] output_format: Option<&str>,
+        #[case] data_file: &str,
+        #[case] expected: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let mut runner = ValidateTestRunner::default();
+        let runner = runner
+            .data(vec![data_file])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"]);
+        let status_code = match output_format {
+            Some(format) => runner
+                .output_format(Some(format))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+            None => runner
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(
+            StatusCode::SUCCESS, status_code,
+            "a rule that does not apply exits 0; this test is about the explanation, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains(expected),
+            "the {} output for {} did not explain why the rule was skipped; wanted {:?} in:\n{}",
+            output_format.unwrap_or("console"),
+            data_file,
+            expected,
+            output
+        );
+    }
+
+    /// The same explanation has to reach junit, which is the format a pipeline gates on.
+    ///
+    /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already
+    /// recorded had nowhere to go, and the element came out as `<testcase status="skip"/>`. A
+    /// consumer parsing junit saw a rule silently not apply -- the failure mode this branch exists to
+    /// remove, one output format further out than the reporters it started with.
+    ///
+    /// Asserted on the contents of the `<skipped>` element rather than on the whole document, so the
+    /// reason has to arrive somewhere a junit consumer actually reads. A substring assertion over the
+    /// document would also pass if the text leaked into an attribute of the wrong element.
+    #[test]
+    fn a_skipped_rule_explains_itself_in_junit_output() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["no-volumes-template.yaml"])
+            .rules(vec!["large_volumes_encrypted_type_block.guard"])
+            .output_format(Some("junit"))
+            .show_summary(vec!["none"])
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a rule that does not apply exits 0; this test is about the explanation"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let inside_skipped = output
+            .split("<skipped>")
+            .nth(1)
+            .and_then(|rest| rest.split("</skipped>").next());
+
+        match inside_skipped {
+            None => panic!(
+                "junit emitted no <skipped> element for a rule that did not apply:\n{}",
+                output
+            ),
+            Some(body) => assert!(
+                body.contains("no AWS::EC2::Volume in the input"),
+                "the <skipped> element did not carry the reason; body was {:?} in:\n{}",
+                body,
+                output
+            ),
+        }
+    }
+
+    /// The counterpart: a run with nothing wrong must not print the section.
+    ///
+    /// Without this, the assertion above is satisfied by a reporter that prints the explanation
+    /// unconditionally.
+    #[test]
+    fn a_clean_run_does_not_print_an_unevaluated_clause_section() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["denied_names_guarded_by_not_empty.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("Clauses that could not be evaluated"),
+            "a guarded, skipped clause is not an unevaluated failure, got:\n{}",
+            output
+        );
     }
 
     #[test]
@@ -552,6 +1474,33 @@ mod validate_tests {
         assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
+    /// A type block whose query cannot be resolved must not take the process down with it.
+    ///
+    /// Introduced by #432, "fixing panic in evaluator when query from typeblock is unresolved",
+    /// which replaced `QueryResult::UnResolved(_) => unreachable!()` -- a real panic on this fuzzed
+    /// input -- with a recorded failure and an `Err`. The assertion was `INTERNAL_FAILURE` because
+    /// that is what an `Err` escaping `execute` produces, so the exit code was the observable proof
+    /// that the panic was gone.
+    ///
+    /// The no-panic property is the point of that fix and it still holds. What changed is the
+    /// representation: an unresolvable slot is now not-applicable rather than an error, because an
+    /// `Err` from one rule aborts the whole rules file and takes the verdicts of unrelated rules
+    /// with it -- see `an_unresolved_type_block_query_skips_without_aborting_the_file`. This input
+    /// is a garbage rule (`d1z::Y` with a clause `m < ...`) against an empty document, so the
+    /// retrieval of `m` fails closed and the run reports a violation instead of an internal error.
+    ///
+    /// The assertion is deliberately not `SUCCESS`. That would mean the fuzzed rule had been quietly
+    /// accepted, which is the failure mode this whole branch exists to remove.
+    ///
+    /// It is now `PARSING_ERROR` rather than `VALIDATION_ERROR`, and the reason is in the payload:
+    /// the clause is `m<0m<03333333`, where the literal `0` runs straight into `m`. That used to
+    /// split into two clauses -- `m < 0` and `m < 03333333` -- because a bare identifier is a valid
+    /// clause, so the fuzzer's garbage parsed and then evaluated to a violation. A digit running into
+    /// a letter is never two clauses, and `reject_trailing_identifier` now says so, which is how
+    /// `Size == 1e5` stopped meaning `Size == 1` and a reference to a rule called `e5`.
+    ///
+    /// Rejecting garbage at parse time serves this test's intent better than evaluating it: both exit
+    /// non-zero, and only one of them pretends the rule was understood.
     #[test]
     fn test_with_payload_failing_type_block() {
         let payload = r#"{"data": [ "{}" ], "rules" : [ "d1z::Y\n\t\tm<0m<03333333" ]}"#;
@@ -561,7 +1510,7 @@ mod validate_tests {
             .payload()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     #[test]

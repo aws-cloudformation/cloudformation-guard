@@ -15,7 +15,7 @@ pub(crate) fn parse_epoch(
                 PathAwareValue::String((path, val)) => {
                     let datetime = DateTime::parse_from_rfc3339(val)
                         .map_err(|e| {
-                            crate::Error::ParseError(format!(
+                            crate::Error::IncompatibleError(format!(
                                 "Failed to parse datetime: {val} at {path}: {e}"
                             ))
                         })?

@@ -724,6 +724,14 @@ fn evaluate_against_data_input<'r>(
         let mut root_scope = root_scope(rules, Rc::new(each.clone()));
         let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
 
+        // Written to stderr, and read before `reset_recorder` consumes the scope. Stderr rather than
+        // the report because the report on stdout is what pipelines parse, and a notice about a future
+        // release is not part of this run's result -- adding it there would change the document for
+        // every consumer in order to tell them about something that has not happened yet.
+        for notice in root_scope.deprecations() {
+            write_output.write_err(notice.clone())?;
+        }
+
         let root_record = root_scope.reset_recorder().extract();
 
         reporter.report_eval(

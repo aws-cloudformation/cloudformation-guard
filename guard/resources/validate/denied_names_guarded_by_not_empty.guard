@@ -1,0 +1,15 @@
+#
+# The same denylist comparison as denied_names_from_empty_reference.guard, with the
+# expectation that the reference may be empty stated explicitly.
+#
+# The `!empty` condition fails when %denied resolves to no values, so the rule does not
+# apply and is reported SKIP instead of FAIL. This is the escape hatch for a reference
+# that is legitimately allowed to be empty.
+#
+# Kept out of rules-dir/ for the same reason as denied_names_from_empty_reference.guard.
+#
+let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+
+rule bucket_name_is_not_denied when %denied !empty {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}

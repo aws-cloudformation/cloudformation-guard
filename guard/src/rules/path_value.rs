@@ -201,7 +201,18 @@ impl Hash for PathAwareValue {
                 "NULL".hash(state);
             }
             PathAwareValue::Float((_, f)) => {
-                (*f as u64).hash(state);
+                // A float that is exactly an integer hashes as that integer, because `eq` says the
+                // two are equal: `compare_values` compares an integer against a float numerically,
+                // so `Int(-1) == Float(-1.0)`. Every other float hashes its bit pattern.
+                //
+                // `*f as u64` did neither of those things. That cast saturates, so every negative
+                // float hashed as 0 while its integer twin hashed as itself, and it truncates, so
+                // 1.1 and 1.9 both hashed as 1. Colliding is legal for a hash. Disagreeing with
+                // `eq` is not, and `PathAwareValue` asserts `Eq`.
+                match float_as_exact_i64(*f) {
+                    Some(i) => i.hash(state),
+                    None => f.to_bits().hash(state),
+                }
             }
 
             PathAwareValue::RangeChar((_, r)) => {
@@ -217,8 +228,20 @@ impl Hash for PathAwareValue {
             }
 
             PathAwareValue::RangeFloat((_, r)) => {
-                (r.lower as u64).hash(state);
-                (r.upper as u64).hash(state);
+                // Canonicalised the same way as a scalar float, and for the same reason: `as u64`
+                // saturates, so every range with a negative bound hashed that bound as 0, and it
+                // truncates, so `r[1.1, 2.9]` and `r[1.9, 2.1]` hashed alike. This is also what keeps
+                // the hash agreeing with the equality arm added below for two ranges, where `-0.0` and
+                // `0.0` are equal bounds and have different bit patterns.
+                //
+                // Missed when the scalar arm above was fixed: the cast appeared twice and only one
+                // copy was corrected.
+                for bound in [r.lower, r.upper] {
+                    match float_as_exact_i64(bound) {
+                        Some(i) => i.hash(state),
+                        None => bound.to_bits().hash(state),
+                    }
+                }
                 r.inclusive.hash(state);
             }
 
@@ -267,20 +290,22 @@ impl PartialEq for PathAwareValue {
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
 
+            // Two ranges are equal when they describe the same range. Structural, so it is reflexive,
+            // symmetric and transitive -- unlike the membership arms that used to live here, which
+            // answered "is this scalar inside that range" and made `eq` neither reflexive nor
+            // symmetric. Membership is `compare_eq`'s job and stays there.
             //
-            // Range checks
+            // Without these arms a range was not equal to *itself*: the fall-through asks
+            // `compare_values`, which reports two ranges as incomparable, and `impl Eq` below then
+            // promises a reflexivity the type did not have. Found by review of the commit that removed
+            // the membership arms, which closed the symmetry hole and left this one open.
             //
-            (PathAwareValue::Int((_, value)), PathAwareValue::RangeInt((_, r))) => {
-                value.is_within(r)
-            }
-
-            (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
-                value.is_within(r)
-            }
-
-            (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
-                value.is_within(r)
-            }
+            // A NaN bound would break reflexivity again, since `f64::NaN != f64::NaN`. Ranges are only
+            // built from parsed numeric literals, and NaN is not one, so it is unreachable rather than
+            // handled.
+            (PathAwareValue::RangeInt((_, r)), PathAwareValue::RangeInt((_, r2))) => r == r2,
+            (PathAwareValue::RangeFloat((_, r)), PathAwareValue::RangeFloat((_, r2))) => r == r2,
+            (PathAwareValue::RangeChar((_, r)), PathAwareValue::RangeChar((_, r2))) => r == r2,
 
             (rest, rest2) => match compare_values(rest, rest2) {
                 Ok(ordering) => matches!(ordering, Ordering::Equal),
@@ -290,6 +315,27 @@ impl PartialEq for PathAwareValue {
     }
 }
 
+/// `eq` above is a match relation, and `Eq` claims more than it delivers.
+///
+/// A string equals a regex it matches, and that arm is load-bearing rather than decorative: map key
+/// filters such as `Condition[ keys == /aws:[Ss]ource.*/ ]` are decided through it, and five
+/// evaluator tests fail if it is made to panic. It also puts a ceiling on how honest `Hash` can be,
+/// because a regex and every string matching it would have to share one hash. So `eq` is not
+/// transitive, and `PathAwareValue` must not key a hashed collection that can hold a `Regex`.
+///
+/// One hashed collection does key on it: the grouping of comparison results by their left-hand value
+/// in `report_at_least_one`. That is safe for a reason rather than by luck -- its keys come from the
+/// document under validation, and a `Regex` only ever arrives as a rule literal on the right-hand
+/// side of a comparison.
+///
+/// Range membership used to be answered here too, which broke symmetry outright:
+/// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
+/// arms were unreachable and were removed rather than mirrored. Nothing is lost, because every
+/// clause is decided by `compare_eq`, which keeps its own range table and recurses through itself
+/// for lists and maps, so a range nested in a list literal never arrives here either.
+///
+/// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
+/// equivalence relation on the values it relates, and `Hash` agrees with it.
 impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
@@ -611,7 +657,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i32>() {
+                match key.parse::<i64>() {
                     Ok(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
@@ -636,11 +682,9 @@ impl QueryResolver for PathAwareValue {
                                     match query[1] {
                                         QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
-                                            let check = if index >= 0 { index } else { -index } as usize;
-                                            if check < keys.len() {
-                                                vec![keys[check]]
-                                            } else {
-                                                self.map_some_or_error_all(all, query)?
+                                            match index_offset(index, keys.len()) {
+                                                Some(check) => vec![keys[check]],
+                                                None => self.map_some_or_error_all(all, query)?,
                                             }
                                         },
 
@@ -1001,12 +1045,11 @@ impl PathAwareValue {
 
     pub(crate) fn retrieve_index<'v>(
         parent: &PathAwareValue,
-        index: i32,
+        index: i64,
         list: &'v Vec<PathAwareValue>,
         query: &[QueryPart<'_>],
     ) -> Result<&'v PathAwareValue, Error> {
-        let check = if index >= 0 { index } else { -index } as usize;
-        if check < list.len() {
+        if let Some(check) = index_offset(index, list.len()) {
             Ok(&list[check])
         } else {
             Err(Error::
@@ -1044,6 +1087,125 @@ impl PathAwareValue {
     }
 }
 
+/// Is an integer inside a float range, and a float inside an integer range.
+///
+/// `WithinRange` is generic over a single type, so `i64` has an impl for `RangeType<i64>` and `f64`
+/// for `RangeType<f64>`, and the two mixed pairings have none. They fell through to `compare_values`,
+/// which reports `int` against `range(float, float)` as incomparable -- so `Size IN r[5.0, 100.0]`
+/// failed a `Size: 50` that sits inside the range, and `IN r[5, 100]` failed a `Size: 50.5`. A wrong
+/// verdict rather than a wrong skip, and the same defect as the scalar case one function below: the
+/// mixed-numeric widening landed on the scalar arms and stopped there.
+///
+/// Bounds are compared through `compare_int_to_float` for the reason given on that function. Casting
+/// the integer to `f64` instead would round above 2^53 and silently move the bound, which on a range
+/// check means quietly admitting or excluding a value at the edge.
+fn int_within_float_range(value: i64, range: &RangeType<f64>) -> bool {
+    let above_lower = match compare_int_to_float(value, range.lower) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => range.inclusive & LOWER_INCLUSIVE > 0,
+        _ => false,
+    };
+    let below_upper = match compare_int_to_float(value, range.upper) {
+        Some(Ordering::Less) => true,
+        Some(Ordering::Equal) => range.inclusive & UPPER_INCLUSIVE > 0,
+        _ => false,
+    };
+    above_lower && below_upper
+}
+
+fn float_within_int_range(value: f64, range: &RangeType<i64>) -> bool {
+    // `compare_int_to_float` orders the integer against the float, so each result is reversed to
+    // read as the value against the bound.
+    let above_lower = match compare_int_to_float(range.lower, value).map(Ordering::reverse) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => range.inclusive & LOWER_INCLUSIVE > 0,
+        _ => false,
+    };
+    let below_upper = match compare_int_to_float(range.upper, value).map(Ordering::reverse) {
+        Some(Ordering::Less) => true,
+        Some(Ordering::Equal) => range.inclusive & UPPER_INCLUSIVE > 0,
+        _ => false,
+    };
+    above_lower && below_upper
+}
+
+/// Order an integer against a float without going through a lossy conversion.
+///
+/// `(i as f64).partial_cmp(f)` is the obvious spelling and it is wrong: `i64` values above 2^53
+/// are not exactly representable in `f64`, so the cast rounds and two distinct values can compare
+/// `Equal`. Casting the other way is exact once the float is known to be in range, because
+/// `floor` is exact on `f64` and `as i64` then truncates a value that is already integral.
+///
+/// Returns `None` only for NaN, matching what `f64::partial_cmp` does for float-to-float.
+fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+
+    // 2^63. `i64::MAX as f64` rounds *up* to this value, so comparing against `i64::MAX as f64`
+    // would let f == 2^63 through, and the `as i64` below would then saturate to `i64::MAX` and
+    // report a spurious `Equal`. Bound on 2^63 itself instead.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f >= TWO_POW_63 {
+        return Some(Ordering::Less); // every i64 is smaller
+    }
+    if f < -TWO_POW_63 {
+        return Some(Ordering::Greater); // every i64 is larger
+    }
+
+    // -2^63 <= f < 2^63, so `floor` is representable as i64 and the cast is exact.
+    let truncated = f.floor();
+    Some(match i.cmp(&(truncated as i64)) {
+        // Same integral part, so the float decides it: anything above its own floor has a
+        // fraction left over and is therefore the larger of the two.
+        Ordering::Equal if f > truncated => Ordering::Less,
+        ordering => ordering,
+    })
+}
+
+/// The offset an array index refers to in a collection of `len` elements, or `None` when it refers to
+/// none of them.
+///
+/// A negative index counts back from the end, which is what the syntax implies and what `[-1]` means
+/// in every other tool that spells it that way. It used to be the magnitude: on `[a, b, c]`,
+/// `Items[-1]` returned `b` and `Items[-3]` was reported out of bounds, so the offset was inverted and
+/// off by one at the same time. Nothing asserted it in either direction, and the behaviour is
+/// undocumented, which is how it survived -- `docs/CLAUSES.md` now describes it.
+///
+/// `try_from` rather than `as usize`, because the index is an `i64`: on a 32-bit target the cast would
+/// truncate and could land back inside the collection, turning an out-of-range index into a wrong
+/// element rather than a rejection.
+pub(crate) fn index_offset(index: i64, len: usize) -> Option<usize> {
+    let magnitude = usize::try_from(index.unsigned_abs()).ok()?;
+    let offset = match index < 0 {
+        true => len.checked_sub(magnitude)?,
+        false => magnitude,
+    };
+    match offset < len {
+        true => Some(offset),
+        false => None,
+    }
+}
+
+/// The `i64` a float is exactly equal to, if there is one.
+///
+/// Only `Hash` needs this, so that `Int(n)` and `Float(n as f64)` hash alike -- `compare_values`
+/// makes them equal, and a `Hash` that disagreed with `eq` would be unsound. The bound is 2^63
+/// rather than `i64::MAX as f64` for the reason given on [`compare_int_to_float`].
+///
+/// `-0.0` reports `Some(0)`, which is wanted: it compares equal to `0.0`, so the two must hash
+/// alike, and their bit patterns differ.
+fn float_as_exact_i64(f: f64) -> Option<i64> {
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    // The NaN test is kept separate even though the range check would also reject it, so that the
+    // three reasons to have no exact integer stay legible: not a number, out of range, has a
+    // fraction.
+    if f.is_nan() || !(-TWO_POW_63..TWO_POW_63).contains(&f) || f.floor() != f {
+        return None;
+    }
+    Some(f as i64)
+}
+
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {
     match (first, other) {
         //
@@ -1058,6 +1220,21 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
                 "Float values are not comparable".to_owned(),
             )),
         },
+
+        // A number is a number. Without these two arms `Size > 10` reports the template's own
+        // value as not comparable the moment someone writes `50.5` instead of `50`, and in a
+        // `when` condition that non-PASS becomes a SKIP, which exits 0 and takes the guarded
+        // body with it. Pinned by `mixed_int_and_float_operands_compare_numerically`.
+        (PathAwareValue::Int((_, i)), PathAwareValue::Float((_, f))) => {
+            compare_int_to_float(*i, *f)
+                .ok_or_else(|| Error::NotComparable("Float values are not comparable".to_owned()))
+        }
+        (PathAwareValue::Float((_, f)), PathAwareValue::Int((_, i))) => {
+            compare_int_to_float(*i, *f)
+                .map(Ordering::reverse)
+                .ok_or_else(|| Error::NotComparable("Float values are not comparable".to_owned()))
+        }
+
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
         (_, _) => Err(Error::NotComparable(format!(
             "PathAwareValues are not comparable {}, {}",
@@ -1131,6 +1308,14 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
             return Ok(value.is_within(r))
+        }
+
+        (PathAwareValue::Int((_, value)), PathAwareValue::RangeFloat((_, r))) => {
+            return Ok(int_within_float_range(*value, r))
+        }
+
+        (PathAwareValue::Float((_, value)), PathAwareValue::RangeInt((_, r))) => {
+            return Ok(float_within_int_range(*value, r))
         }
 
         (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {

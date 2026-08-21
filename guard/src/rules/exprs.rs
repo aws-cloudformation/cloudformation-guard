@@ -68,7 +68,13 @@ pub(crate) enum QueryPart<'loc> {
     MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
     AllValues(Option<String>),
     AllIndices(Option<String>),
-    Index(i32),
+    /// An array index as written in the rule, kept at the width the parser reads.
+    ///
+    /// `i32` before, narrowed with `as i32` at both parse sites, which wrapped instead of rejecting:
+    /// `Items[4294967296]` became `Items[0]` and the clause then compared the wrong element and
+    /// passed. Retrieval already reports an out-of-range index as unresolved, so widening is all that
+    /// is needed -- the bounds check does the rejecting.
+    Index(i64),
     Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 
@@ -182,8 +188,53 @@ pub(crate) struct GuardAccessClause<'loc> {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct MapKeyFilterClause<'loc> {
-    pub(crate) comparator: (CmpOperator, bool),
+    pub(crate) comparator: MapKeyComparator,
     pub(crate) compare_with: LetValue<'loc>,
+}
+
+/// The comparators a map key filter can be written with.
+///
+/// This field held a `(CmpOperator, bool)`, which can express every operator in the language while
+/// `map_keys_match` parses exactly these four. The gap was not free. `real_binary_operation` -- whose
+/// only caller is the map key filter -- carried arms for `Ge`, `Gt`, `Lt` and `Le` that no rules
+/// file could reach, and they recorded zero executions against a 288-clause matrix using those very
+/// operators. Dead code that looks live is worse than dead code that looks dead: the arms duplicate
+/// the comparison logic, so someone fixing a comparison bug would naturally edit the one calling
+/// `compare_ge` and see no effect anywhere.
+///
+/// Narrowing the type is what makes those arms impossible rather than merely unused, which is why
+/// this is an enum here instead of a comment there.
+#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize, Hash)]
+pub(crate) enum MapKeyComparator {
+    Eq,
+    NotEq,
+    In,
+    NotIn,
+}
+
+impl MapKeyComparator {
+    /// The wider pair, for the comparison records the reporters render.
+    pub(crate) fn as_cmp_operator(self) -> (CmpOperator, bool) {
+        match self {
+            MapKeyComparator::Eq => (CmpOperator::Eq, false),
+            MapKeyComparator::NotEq => (CmpOperator::Eq, true),
+            MapKeyComparator::In => (CmpOperator::In, false),
+            MapKeyComparator::NotIn => (CmpOperator::In, true),
+        }
+    }
+
+    /// Equality against more than one right-hand value is membership.
+    ///
+    /// `keys == %several` reads as "each key equals" and is evaluated as "is among", which is what
+    /// the `Eq`-with-multiple-values promotion has always done. Kept as a method so the rule is
+    /// stated once rather than inline in the evaluator.
+    pub(crate) fn widened_for(self, rhs_count: usize) -> Self {
+        match self {
+            MapKeyComparator::Eq if rhs_count > 1 => MapKeyComparator::In,
+            MapKeyComparator::NotEq if rhs_count > 1 => MapKeyComparator::NotIn,
+            unchanged => unchanged,
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]

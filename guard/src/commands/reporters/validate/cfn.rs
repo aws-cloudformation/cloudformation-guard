@@ -1,6 +1,6 @@
 use fancy_regex::Regex;
 use std::{
-    cmp::max,
+    cmp::min,
     collections::{BTreeSet, HashMap, HashSet},
     io::Write,
     rc::Rc,
@@ -38,6 +38,21 @@ lazy_static! {
     static ref CFN_RESOURCES: Regex = Regex::new(r"^/Resources/(?P<name>[^/]+)(/?P<rest>.*$)?")
         .ok()
         .unwrap();
+}
+
+/// First line of the source snippet shown above a reported violation.
+///
+/// Starts two lines above the violation so there is context, but never below line
+/// 1 because line numbers are 1-based.
+///
+/// This was previously written inline as `max(1, line - 2)`, which evaluated the
+/// subtraction *before* the clamp. On an unsigned line number of 0 or 1 that
+/// underflows: a panic in a debug build, and a silent wrap to ~`usize::MAX` in a
+/// release build, where the subsequent seek runs past EOF and the snippet is
+/// dropped from the report without any diagnostic. `saturating_sub` clamps the
+/// input rather than the result.
+fn context_start_line(line: usize) -> usize {
+    line.saturating_sub(2).max(1)
 }
 
 #[derive(Debug)]
@@ -318,14 +333,21 @@ fn single_line(
                         bc: &InComparison,
                         prefix: &str,
                     ) -> rules::Result<usize> {
-                        let cut_off = max(bc.to.len(), 5);
-                        let mut collected = Vec::with_capacity(10);
-                        for (idx, each) in bc.to.iter().enumerate() {
-                            collected.push(ValueOnlyDisplay(Rc::clone(each)));
-                            if idx >= cut_off {
-                                break;
-                            }
-                        }
+                        // `min`, not `max`. With `max(len, 5)` the cut-off was never below the
+                        // number of values, so the loop never broke early and the branch below
+                        // that reports a `Total` was unreachable -- a rule comparing against a
+                        // denylist of five hundred entries printed all five hundred, in every
+                        // failure message, for every resource. The dead branch is what gives the
+                        // intent away: it exists to say how many there were when not all are
+                        // shown. Pinned by
+                        // `a_long_in_comparison_is_truncated_with_a_total`.
+                        let cut_off = min(bc.to.len(), 5);
+                        let collected = bc
+                            .to
+                            .iter()
+                            .take(cut_off)
+                            .map(|each| ValueOnlyDisplay(Rc::clone(each)))
+                            .collect::<Vec<_>>();
                         let collected = format!("{:?}", collected);
                         let width = "PropertyPath".len() + 4;
                         if cut_off >= bc.to.len() {
@@ -397,7 +419,9 @@ fn single_line(
                     ) -> rules::Result<()> {
                         writeln!(writer, "{prefix}Code:", prefix = prefix)?;
                         let new_prefix = format!("{}  ", prefix);
-                        if let Some((num, line)) = self.code_segment.seek_line(max(1, line - 2)) {
+                        if let Some((num, line)) =
+                            self.code_segment.seek_line(context_start_line(line))
+                        {
                             let line =
                                 format!("{num:>5}.{line}", num = num, line = line).bright_green();
                             writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
@@ -421,7 +445,69 @@ fn single_line(
         writeln!(writer, "}}")?;
     }
 
+    // Failures that belong to no resource.
+    //
+    // Everything above is organised by resource, because a violation normally points at a value in
+    // the input. A clause that failed *because it had nothing to compare* points at nothing, so it
+    // never reaches a resource bucket, and `pprint_clauses` renders a block through its `unresolved`
+    // query, which such a block does not have either. The result was a run that correctly exited 19
+    // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
+    // explanation was recorded and then dropped on the floor.
+    let mut unattributed = Vec::new();
+    for each_rule in &failure_report.not_compliant {
+        collect_unattributed_explanations(each_rule, &mut unattributed);
+    }
+    if !unattributed.is_empty() {
+        writeln!(writer, "Could not be evaluated:")?;
+        for (context, message) in unattributed {
+            writeln!(writer, "  {context}")?;
+            writeln!(writer, "    {message}")?;
+        }
+    }
+
     Ok(())
+}
+
+/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
+///
+/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
+/// the value it got to, and the per-resource output renders that. A block with no such value failed
+/// for a reason that is only in its message.
+fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
+    match clause {
+        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
+            if let Some(explanation) = &blk.messages.error_message {
+                out.push((blk.context.to_string(), explanation.clone()));
+            }
+        }
+        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
+        ClauseReport::Rule(rule) => {
+            // A rule that failed on its own condition has no clause findings underneath it, so the
+            // per-resource output above has nothing to render and this message is the only account
+            // of why the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses
+            // produced findings has them rendered per resource already, and repeating the rule-level
+            // message there would duplicate rather than explain.
+            //
+            // Reached when a condition cannot be answered across a rule boundary -- a gate whose
+            // referenced or parameterized rule is undecidable. The evaluator records the explanation
+            // on the rule, the JSON reporter has always printed it, and the console reporter printed
+            // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
+            // not say why.
+            if rule.checks.is_empty() {
+                if let Some(explanation) = &rule.messages.custom_message {
+                    out.push((format!("rule {}", rule.name), explanation.clone()));
+                }
+            }
+            for child in &rule.checks {
+                collect_unattributed_explanations(child, out);
+            }
+        }
+        ClauseReport::Disjunctions(ors) => {
+            for child in &ors.checks {
+                collect_unattributed_explanations(child, out);
+            }
+        }
+    }
 }
 
 ///
@@ -500,4 +586,38 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     }
 
     Some(())
+}
+
+#[cfg(test)]
+mod context_start_line_tests {
+    use super::context_start_line;
+
+    /// These three inputs are the regression. With the original
+    /// `max(1, line - 2)` they panic in a debug build (which is what a test
+    /// binary is) and wrap to ~usize::MAX in release.
+    #[test]
+    fn does_not_underflow_at_or_below_line_two() {
+        assert_eq!(1, context_start_line(0));
+        assert_eq!(1, context_start_line(1));
+        assert_eq!(1, context_start_line(2));
+    }
+
+    #[test]
+    fn keeps_two_lines_of_context_above_the_violation() {
+        assert_eq!(1, context_start_line(3));
+        assert_eq!(3, context_start_line(5));
+        assert_eq!(98, context_start_line(100));
+    }
+
+    /// Line numbers are 1-based, so 0 is never a valid answer.
+    #[test]
+    fn never_returns_zero() {
+        for line in 0..16usize {
+            assert!(
+                context_start_line(line) >= 1,
+                "context_start_line({}) returned 0, which is not a valid 1-based line",
+                line
+            );
+        }
+    }
 }

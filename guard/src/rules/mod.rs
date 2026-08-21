@@ -367,7 +367,14 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         rule_name: &str,
     ) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&mut self) -> Rc<PathAwareValue>;
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
+    /// Resolve a named rule's status for a reference in the given role.
+    ///
+    /// `role` is the role of the *reference site*, and it is carried into the rule's own
+    /// body: an unevaluatable clause in there is a failure when the reference is an
+    /// assertion and merely inapplicable when it is a `when` condition. Implementations
+    /// that cache must key on `(rule_name, role)`, since the same rule reached from a body
+    /// and from a gate are two different questions.
+    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
     fn add_variable_capture_key(
         &mut self,
@@ -377,6 +384,14 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }
+
+    /// Note that a clause took a path whose answer is going to change, without changing this run's
+    /// answer.
+    ///
+    /// Deliberately returns nothing, so a notice cannot influence a verdict: the evaluator can only
+    /// deposit a string, and no evaluation path reads one back. Defaulted to a no-op because the
+    /// nested scopes forward it and the test doubles do not care.
+    fn record_deprecation(&mut self, _notice: String) {}
 }
 
 pub(crate) trait EvaluationContext {
