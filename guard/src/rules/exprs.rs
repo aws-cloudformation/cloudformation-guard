@@ -337,35 +337,32 @@ fn collect_conjunctions_capture_names<'value, T>(
     }
 }
 
-/// Only `Filter` and `MapKeyFilter` names count, and not even every `Filter`.
+/// Only `Filter` and `MapKeyFilter` names count, because those are the positions that populate a
+/// capture.
 ///
-/// `AllValues` and `AllIndices` carry an `Option<String>` of the same shape, but a `Filter` sitting
-/// directly after either of them has its name dropped rather than captured -- the
-/// `check_and_delegate(conjunctions, &None)` branch of `query_retrieval`, because the wildcard has
-/// already expanded the map and the key the filter would capture is no longer in scope there.
+/// `AllValues` and `AllIndices` carry an `Option<String>` of the same shape and are collected through
+/// their own arms, not here.
 ///
-/// Claiming such a name here would turn that dropped capture from a loud unresolved-variable error
-/// into a silently empty selection, which reads to the author as "your template had no matching
-/// entries" for entries the engine discarded itself. So the two stay in step: when that branch starts
-/// threading the key through, `preceded_by_wildcard` comes out with it.
+/// A `Filter` directly after a wildcard used to be skipped, because the wildcard expanded the map
+/// before the filter ran and the name was dropped rather than captured. Now that the filter runs at the
+/// expansion site with the key in hand, such a name is a real capture and has to be counted -- leaving
+/// it out reopened the cross-iteration fallthrough for exactly the spelling that had just been fixed:
+/// `Properties.Config[*][ cfg | Enabled == true ]` in a per-resource block, read as `%cfg`, went back to
+/// answering with a previous resource's key at exit 0.
+///
+/// One shape still cannot capture: a wildcard over a *list*, where `accumulate` has an index rather
+/// than a key. A name declared there is counted anyway and resolves empty rather than erroring, which
+/// costs a less precise message on a rule that cannot work either way. That is the right side to err
+/// on -- an imprecise failure is recoverable for the reader, and a silent pass is not.
 fn collect_query_capture_names<'value, 'loc: 'value>(
     query: &'value [QueryPart<'loc>],
     into: &mut BTreeSet<&'value str>,
 ) {
-    for (index, part) in query.iter().enumerate() {
+    for part in query {
         match part {
             QueryPart::Filter(name, conjunctions) => {
-                let preceded_by_wildcard = matches!(
-                    index
-                        .checked_sub(1)
-                        .and_then(|previous| query.get(previous)),
-                    Some(QueryPart::AllValues(_)) | Some(QueryPart::AllIndices(_))
-                );
-                match name {
-                    Some(name) if !preceded_by_wildcard => {
-                        into.insert(name.as_str());
-                    }
-                    _ => {}
+                if let Some(name) = name {
+                    into.insert(name.as_str());
                 }
                 collect_conjunctions_capture_names(conjunctions, into);
             }
