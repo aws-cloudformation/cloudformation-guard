@@ -130,6 +130,19 @@ fn unresolved_key(key: &str) -> crate::Error {
     )))
 }
 
+/// The property part of a plan path, as this reporter prints it.
+///
+/// A finding's path is `/resource_changes/<n>/change/after/<property>`, and the resource half is already
+/// the heading it is printed under, so only the property half belongs on the line. A path with no
+/// `change/after/` in it -- a rule on `type`, `address` or `change.actions` -- keeps nothing, which is the
+/// behaviour the binary comparison arm already had; shared so the `IN` arm cannot drift from it.
+fn property_of(path: &str) -> String {
+    match path.find("change/after/") {
+        Some(at) => path[at + "change/after/".len()..].replace('/', "."),
+        None => String::new(),
+    }
+}
+
 fn single_line(
     writer: &mut dyn Write,
     data_file: &str,
@@ -292,12 +305,6 @@ fn single_line(
                         } else {
                             to.as_str()
                         };
-                        let (_res, property) = match resource_based.find("change/after/") {
-                            Some(idx) => resource_based.split_at(idx),
-                            None => (resource_based, ""),
-                        };
-
-                        let property = property.slice("change/after/".len()..).replace('/', ".");
                         writeln!(
                             writer,
                             "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
@@ -307,7 +314,7 @@ fn single_line(
                             val="Value",
                             cw="ComparedWith",
                             prefix=prefix,
-                            path=property,
+                            path=property_of(resource_based),
                             value=ValueOnlyDisplay(Rc::clone(&bc.from)),
                             cmp=crate::rules::eval_context::cmp_str(bc.comparison),
                             with=ValueOnlyDisplay(Rc::clone(&bc.to))
@@ -315,14 +322,72 @@ fn single_line(
                         Ok(width)
                     }
 
+                    /// An `IN` comparison that failed against a plan.
+                    ///
+                    /// This was `todo!()`, and it is reached by an everyday rule: `IN` on any
+                    /// `resource_changes[*].change.after.<field>` that fails renders through here, so
+                    /// `resource_changes[*].change.after.acl IN ['private']` against a plan whose acl is
+                    /// `public-read` took the process down at exit 101 with the report cut off mid-line.
+                    /// The trait's default writes nothing instead, which would have left the finding
+                    /// unnamed -- the panic and the silence are the same defect wearing different
+                    /// clothes, and neither is a rendering.
+                    ///
+                    /// The list is truncated the way `cfn.rs` truncates it, `min(len, 5)` with a `Total`
+                    /// when not all of it is shown, so a rule comparing against a long denylist does not
+                    /// print the whole list once per resource.
                     fn binary_error_in_msg(
                         &mut self,
-                        _: &mut dyn Write,
+                        writer: &mut dyn Write,
                         _: &ClauseReport<'_>,
-                        _: &InComparison,
-                        _: &str,
+                        bc: &InComparison,
+                        prefix: &str,
                     ) -> crate::rules::Result<usize> {
-                        todo!()
+                        let width = "PropertyPath".len() + 4;
+                        let cut_off = std::cmp::min(bc.to.len(), 5);
+                        let collected = bc
+                            .to
+                            .iter()
+                            .take(cut_off)
+                            .map(|each| ValueOnlyDisplay(Rc::clone(each)))
+                            .collect::<Vec<_>>();
+                        let collected = format!("{:?}", collected);
+                        let path = property_of(&bc.from.self_path().0);
+                        let cmp = crate::rules::eval_context::cmp_str(bc.comparison);
+                        let value = ValueOnlyDisplay(Rc::clone(&bc.from));
+                        if cut_off >= bc.to.len() {
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                                width = width,
+                                pp = "PropertyPath",
+                                op = "Operator",
+                                val = "Value",
+                                cw = "ComparedWith",
+                                prefix = prefix,
+                                path = path,
+                                value = value,
+                                cmp = cmp,
+                                with = collected
+                            )?;
+                        } else {
+                            writeln!(
+                                writer,
+                                "{prefix}{pp:<width$}= {path}\n{prefix}{op:<width$}= {cmp}\n{prefix}{total_name:<width$}= {total}\n{prefix}{val:<width$}= {value}\n{prefix}{cw:<width$}= {with}",
+                                width = width,
+                                pp = "PropertyPath",
+                                op = "Operator",
+                                val = "Value",
+                                total_name = "Total",
+                                cw = "ComparedWith",
+                                prefix = prefix,
+                                path = path,
+                                value = value,
+                                cmp = cmp,
+                                total = bc.to.len(),
+                                with = collected
+                            )?;
+                        }
+                        Ok(width)
                     }
 
                     fn unary_error_msg(

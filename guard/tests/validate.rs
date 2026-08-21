@@ -1405,6 +1405,92 @@ mod validate_tests {
         );
     }
 
+    /// A failing `IN` comparison against a Terraform plan is rendered, not a panic.
+    ///
+    /// `binary_error_in_msg` in `tf.rs` was `todo!()`, and an everyday rule reaches it: `IN` on any
+    /// `resource_changes[*].change.after.<field>` that fails renders through there, so it took the
+    /// process down at exit 101 with the report cut off mid-line. The trait's default writes nothing
+    /// instead, which would have left the finding unnamed — the panic and the silence are the same
+    /// defect in different clothes.
+    ///
+    /// The `Total` half is the other reason this needs a six-resource plan: the cut-off can only be
+    /// crossed when the compared-with side has more than five elements, and `terraform-plan.json` has one
+    /// resource change, so nothing in the corpus could reach it.
+    #[test]
+    fn a_failing_in_comparison_against_a_plan_is_rendered_not_a_panic() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["terraform-plan-many-resources.json"])
+            .rules(vec!["tf_acl_in_tags.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "no acl is among the tags, so the rule fails; 101 is the panic this case exists for"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Operator        = IN"),
+            "the failing IN comparison must be rendered:\n{}",
+            output
+        );
+
+        let compared_with = output
+            .lines()
+            .find(|line| line.contains("ComparedWith"))
+            .unwrap_or_else(|| panic!("no ComparedWith line in the report:\n{}", output));
+        assert_eq!(
+            compared_with.matches('"').count() / 2,
+            5,
+            "the reporter shows five of the values and no more, got: {}",
+            compared_with
+        );
+        assert!(
+            output.contains("Total           = 6"),
+            "and says how many there were in total:\n{}",
+            output
+        );
+    }
+
+    /// Terraform resource changes are reported in a fixed order.
+    ///
+    /// The companion to `resources_are_reported_in_a_fixed_order`: `tf.rs` had the same per-process
+    /// `HashMap` iteration and was fixed in the same commit, but no plan fixture had more than one
+    /// resource change, so nothing exercised it. With the `HashMap` restored, three runs of one binary
+    /// against this fixture produce three different orders.
+    #[test]
+    fn terraform_resources_are_reported_in_a_fixed_order() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["terraform-plan-many-resources.json"])
+            .rules(vec!["tf_acl_in_tags.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let reported: Vec<&str> = output
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("Resource = "))
+            .map(|rest| rest.trim_end_matches(" {"))
+            .collect();
+
+        assert_eq!(
+            reported,
+            vec!["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"],
+            "all six resource changes must be reported, in a fixed order:\n{}",
+            output
+        );
+    }
+
     /// One rule that cannot be evaluated does not cost the file its report.
     ///
     /// `eval_rules_file` returned on the first rule that errored, after closing the *file's* record with
