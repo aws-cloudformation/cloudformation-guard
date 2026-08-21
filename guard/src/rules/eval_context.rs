@@ -374,6 +374,35 @@ where
     }
 }
 
+/// Whether the filter at `index` can apply to `value`, an entry a wildcard has just expanded.
+///
+/// `[*]` and `.*` over a map hand each entry's *value* to the rest of the query, which is right when the
+/// map is a collection -- `Resources.*[ Type == 'AWS::S3::Bucket' ]` tests each resource. It is wrong
+/// when the map is a single object and the filter names the object's own fields: for
+/// `{ Statement: { Effect: Allow, Action: "s3:*" } }`, `Statement[*][ Effect == 'Allow' ]` expanded the
+/// object and tested `Effect == 'Allow'` against the strings "Allow" and "s3:*", matched neither, and
+/// selected nothing. An assertion over that empty selection reported SKIP at exit 0 with the violation
+/// unflagged, while `Statement.*[ ... ]` on the same input failed -- two spellings of one query
+/// disagreeing, and the `[*]` one failing open.
+///
+/// Reported as unresolved rather than guessed at, for the same reason as the `Rules[0][ ... ]` arm below:
+/// what `[*]` followed by a filter should *mean* on a single object is a language question, and an
+/// unresolved result fails an assertion closed and names the query instead of settling it by accident.
+///
+/// Narrow on purpose. The scalar leg of the array-or-single leniency -- `Tags[*][ this == 'x' ]` against
+/// `Tags: "x"` -- reaches the filter without going through an expansion at all, and still evaluates the
+/// predicate against the scalar. That rule works today and keeps working; only an entry produced by
+/// expanding a map is affected, which is the only case where the value under the filter is a field of
+/// the thing the author was talking about rather than the thing itself.
+fn filter_cannot_apply_to_expanded_entry(
+    index: usize,
+    query: &[QueryPart<'_>],
+    value: &PathAwareValue,
+) -> bool {
+    matches!(query.get(index), Some(QueryPart::Filter(..)))
+        && !matches!(value, PathAwareValue::Map(_) | PathAwareValue::List(_))
+}
+
 fn check_and_delegate<'value, 'loc: 'value>(
     conjunctions: &'value Conjunctions<GuardClause<'loc>>,
     name: &'value Option<String>,
@@ -786,6 +815,17 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                 if let Some(n) = name {
                                     context.add_variable_capture_key(n, Rc::clone(&key))?;
                                 }
+                                if filter_cannot_apply_to_expanded_entry(index, query, &value) {
+                                    return to_unresolved_result(
+                                        Rc::clone(&value),
+                                        format!(
+                                            "Filter on value type that was not a struct or array {} {}",
+                                            value.type_info(),
+                                            value.self_path()
+                                        ),
+                                        &query[index..],
+                                    );
+                                }
                                 query_retrieval_with_converter(
                                     index,
                                     query,
@@ -842,6 +882,17 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         |index, query, key, value, context, converter| {
                             if report {
                                 context.add_variable_capture_key(name, Rc::clone(&key))?;
+                            }
+                            if filter_cannot_apply_to_expanded_entry(index, query, &value) {
+                                return to_unresolved_result(
+                                    Rc::clone(&value),
+                                    format!(
+                                        "Filter on value type that was not a struct or array {} {}",
+                                        value.type_info(),
+                                        value.self_path()
+                                    ),
+                                    &query[index..],
+                                );
                             }
                             query_retrieval_with_converter(
                                 index,

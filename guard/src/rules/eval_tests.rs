@@ -1292,6 +1292,69 @@ Resources:
           Enabled: true
 "#;
 
+/// `[*]` and `.*` followed by a filter agree on a map that is a single object.
+///
+/// Both wildcards expand a map into its entries, so for a `Statement` written as one object the value
+/// reaching the filter is a *field value* -- the string `Allow` -- and `Effect == 'Allow'` resolves
+/// nothing against it. `[*]` evaluated the predicate there anyway, selected nothing, and an assertion
+/// over the empty selection reported SKIP at exit 0 with the violation unflagged; `.*` reported the
+/// same input unresolved and failed. The `!empty` spelling caught it in both, which is why only the
+/// assertion form hid.
+#[rstest::rstest]
+#[case::all_indices("Statement[*][ Effect == 'Allow' ].Action == \"never\"", Status::FAIL)]
+#[case::all_values("Statement.*[ Effect == 'Allow' ].Action == \"never\"", Status::FAIL)]
+#[case::all_indices_not_empty("Statement[*][ Effect == 'Allow' ] !empty", Status::FAIL)]
+#[case::all_values_not_empty("Statement.*[ Effect == 'Allow' ] !empty", Status::FAIL)]
+fn a_filter_after_a_wildcard_reads_a_single_object_the_same_either_way(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!("rule statements_are_denied {{ {} }}", clause);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let single_object = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Statement:
+          Effect: Allow
+          Action: "s3:*"
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(single_object));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "{} must not answer differently from the other spelling of the same query",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A filter directly on a scalar still evaluates its predicate against that scalar.
+///
+/// This is the scalar leg of the array-or-single leniency, and the reason
+/// `filter_cannot_apply_to_expanded_entry` is limited to entries a wildcard expanded: `Tags` here is a
+/// bare string, so nothing was expanded and the value under the filter is the value the rule is about.
+/// A first version of the fix above reported every scalar under a wildcard unresolved and turned this
+/// rule from a pass into a failure.
+#[test]
+fn a_filter_on_an_unexpanded_scalar_still_tests_that_scalar() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule tagged_x { Tags[*][ this == 'x' ] !empty }")?;
+    let scalar = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Tags: "x"
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(scalar));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS
+    );
+
+    Ok(())
+}
+
 #[test]
 fn a_capture_does_not_leak_from_one_iteration_of_a_block_into_the_next() -> Result<()> {
     let rules_file = RulesFile::try_from(CONFIG_CAPTURE_RULE)?;
