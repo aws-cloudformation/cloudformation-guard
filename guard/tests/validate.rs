@@ -1338,6 +1338,65 @@ mod validate_tests {
         );
     }
 
+    /// The Terraform reporter reports findings it cannot place, rather than aborting or dropping them.
+    ///
+    /// `tf.rs` carried the same four defects as `cfn.rs`, unfixed, and nothing exercised any of them
+    /// because the fixture corpus had no plan document at all. This adds one.
+    ///
+    /// The extraction regex only matches `/resource_changes/<x>/change/after/<...>`, so every other part
+    /// of a plan reached an abort: `type`, `address`, `name` and `change.actions` are everyday fields and
+    /// all four took the process down at exit 101. `terraform_version` is a real top-level key of a plan
+    /// and sorts *after* `resource_changes`, so the unbounded range admitted it and it panicked too.
+    /// `format_version` sorts *before*, so it was excluded from the aggregation and the file reported
+    /// "Number of non-compliant resources 0" while exiting 19.
+    ///
+    /// `TfAware` also had no `InternalError` fallback -- `CfnAware` has had one all along -- so there was
+    /// nothing for a declining reporter to fall back to. That is added here.
+    ///
+    /// The control matters: `change.after.acl` is the one path the regex does match, so it always worked
+    /// and must keep its detailed per-resource rendering rather than being demoted with the rest.
+    #[rstest::rstest]
+    #[case::top_level_keys_either_side_of_the_range(
+        "tf_plan_top_level_keys.guard",
+        "/terraform_version"
+    )]
+    #[case::resource_change_fields_outside_change_after(
+        "tf_resource_change_fields.guard",
+        "/resource_changes/0/type"
+    )]
+    #[case::control_inside_change_after(
+        "tf_change_after_control.guard",
+        "/resource_changes/0/change/after/acl"
+    )]
+    fn a_terraform_finding_the_reporter_cannot_place_is_still_reported(
+        #[case] rules_file: &str,
+        #[case] expected_path: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["terraform-plan.json"])
+            .rules(vec![rules_file])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "{} fails against the plan, so the run reports 19; 101 is the abort these cases exist for",
+            rules_file
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains(expected_path),
+            "the finding for {} must name {}, not be counted as zero:\n{}",
+            rules_file,
+            expected_path,
+            output
+        );
+    }
+
     /// The same explanation has to reach junit, which is the format a pipeline gates on.
     ///
     /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already

@@ -1,0 +1,4 @@
+# The control: this path IS what the extraction regex matches, so it always worked and must keep working.
+rule acl_is_private {
+    resource_changes[*].change.after.acl == "private"
+}

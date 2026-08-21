@@ -56,8 +56,28 @@ impl<'reporter> Reporter for TfAware<'reporter> {
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
+                // `TfAware` did not have this fallback, which `CfnAware` has had all along: any
+                // error from `single_line` propagated and ended the run. The sites below now request a
+                // fallback rather than aborting, so there has to be something to fall back to.
                 OutputFormatType::SingleLineSummary => {
-                    single_line(write, data_file, rules_file, data, root, failure_report)?
+                    match single_line(write, data_file, rules_file, data, root, failure_report) {
+                        Err(crate::Error::InternalError(_)) => {
+                            self.next.map_or(Ok(()), |next| {
+                                next.report_eval(
+                                    write,
+                                    status,
+                                    root_record,
+                                    rules_file,
+                                    data_file,
+                                    data_file_bytes,
+                                    data,
+                                    output_type,
+                                )
+                            })?
+                        }
+                        Ok(_) => {}
+                        Err(e) => return Err(e),
+                    }
                 }
                 OutputFormatType::Junit => unreachable!(),
                 OutputFormatType::Sarif => unreachable!(),
@@ -94,9 +114,21 @@ use super::common::{
 };
 use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::errors::Error;
+use crate::rules::errors::InternalError::UnresolvedKeyForReporter;
 use crate::rules::path_value::PathAwareValue;
 use colored::*;
 use nom::Slice;
+
+/// The signal that this reporter cannot organise a finding by Terraform resource change.
+///
+/// `report_eval` catches `InternalError` and delegates to the next reporter, so this is how a fallback
+/// is requested rather than an error in the ordinary sense. Mirrors `cfn.rs`.
+fn unresolved_key(key: &str) -> crate::Error {
+    crate::Error::InternalError(UnresolvedKeyForReporter(format!(
+        "Unable to resolve key {key} for single line-summary when expecting a terraform plan, falling \
+         back on next reporter"
+    )))
+}
 
 fn single_line(
     writer: &mut dyn Write,
@@ -118,26 +150,62 @@ fn single_line(
     }
 
     let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range(String::from("/resource_changes/")..) {
+
+    // Same shape as `cfn.rs`, and wrong in the same two directions before this. The range had no upper
+    // bound, so every key sorting after `/resource_changes/` was admitted and then failed the extraction
+    // below -- `terraform_version` is a real top-level key of a plan and did exactly that. Keys sorting
+    // *before* it, such as `format_version`, were excluded from the aggregation and the file then
+    // reported "Number of non-compliant resources 0" while exiting 19.
+    //
+    // A located path outside `/resource_changes/` is one this reporter cannot place, so the file goes to
+    // the next reporter. An unlocated path -- a retrieval error -- carries no key and is not lost by
+    // being absent from the aggregation.
+    if let Some((key, _)) = path_tree
+        .iter()
+        .find(|(key, _)| !key.is_empty() && !key.starts_with("/resource_changes/"))
+    {
+        return Err(unresolved_key(key));
+    }
+
+    for (key, value) in path_tree
+        .range(String::from("/resource_changes/")..)
+        .take_while(|(key, _)| key.starts_with("/resource_changes/"))
+    {
+        // Every one of these was an abort. The extraction regex only matches
+        // `/resource_changes/<x>/change/after/<...>`, so an everyday rule on any other part of a plan --
+        // `resource_changes[*].type`, `.address`, `.name`, `.change.actions` -- reached it and took the
+        // process down at exit 101 with the finding lost. The fixture corpus has no plan document, so
+        // nothing exercised any of it.
         let resource_ptr = match RESOURCE_CHANGE_EXTRACTION.captures(key) {
-            Ok(Some(cap)) => cap.name("index_or_name").unwrap().as_str(),
-            Ok(None) => unreachable!(),
+            Ok(Some(cap)) => match cap.name("index_or_name") {
+                Some(m) => m.as_str(),
+                None => return Err(unresolved_key(key)),
+            },
+            Ok(None) => return Err(unresolved_key(key)),
             Err(e) => return Err(Error::from(Box::new(e))),
         };
 
         let address = format!("/resource_changes/{}", resource_ptr);
         let resource = match data.at(&address, root)? {
             TraversalResult::Value(n) => n,
-            _ => unreachable!(),
+            _ => return Err(unresolved_key(key)),
         };
         let addr = match data.at("0/address", resource)? {
             TraversalResult::Value(n) => match n.value() {
                 PathAwareValue::String((_, rt)) => rt.as_str(),
-                _ => unreachable!(),
+                // An `address` that is a number or a map. The reporter splits it on a dot to get the
+                // type and the name, which only a string supports.
+                _ => return Err(unresolved_key(key)),
             },
-            _ => unreachable!(),
+            _ => return Err(unresolved_key(key)),
         };
-        let dot_sep = addr.find('.').unwrap();
+        // `find` rather than `unwrap`: an address without a dot -- `"mybucket"` rather than
+        // `"aws_s3_bucket.mybucket"` -- is not this reporter's shape, and unwrapping it was the same
+        // abort as the arms above wearing different clothes.
+        let dot_sep = match addr.find('.') {
+            Some(at) => at,
+            None => return Err(unresolved_key(key)),
+        };
         let (resource_type, resource_name) = (addr.slice(0..dot_sep), addr.slice(dot_sep + 1..));
         let resource_aggr = by_resources
             .entry(resource_name)
