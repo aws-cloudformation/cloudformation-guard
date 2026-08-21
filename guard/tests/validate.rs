@@ -1397,6 +1397,46 @@ mod validate_tests {
         );
     }
 
+    /// A repeated document key does not misalign the keys from the values.
+    ///
+    /// `values` is an `IndexMap` and dedups; `keys` was a `Vec` that did not. The two therefore ended up
+    /// different lengths, and `eval_context` pairs them *positionally* --
+    /// `map.keys.iter().zip(map.values.values())` -- so every entry after the duplicate was bound to the
+    /// wrong key and the last key was dropped altogether.
+    ///
+    /// On this template, where `A` is declared twice and `C` is the only public bucket, the capture bound
+    /// "A" -- a bucket whose `Public` is false. A rule that reports the wrong logical id sends someone to
+    /// the wrong resource.
+    ///
+    /// An integration test with a YAML fixture, not a unit test: the relaxed-JSON parser behind
+    /// `PathAwareValue::try_from(&str)` collapses a repeated key before a map is built, so a unit test
+    /// written against a string passes whether or not the bug is present. The first version of this test
+    /// was written that way and came out green against the unfixed code.
+    ///
+    /// The `not_named_a` case is the one that fails without the fix; `names_c` states the positive.
+    #[rstest::rstest]
+    #[case::names_c("which_bucket_is_public.guard", StatusCode::SUCCESS)]
+    #[case::not_named_a("public_bucket_is_not_named_a.guard", StatusCode::VALIDATION_ERROR)]
+    fn a_repeated_document_key_does_not_misalign_the_capture(
+        #[case] rules_file: &str,
+        #[case] expected: i32,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["duplicate-logical-id-template.yaml"])
+            .rules(vec![rules_file])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            expected, status_code,
+            "{} against a template whose logical id A is declared twice",
+            rules_file
+        );
+    }
+
     /// The same explanation has to reach junit, which is the format a pipeline gates on.
     ///
     /// It did not. `TestCaseStatus::Skip` was a unit variant, so the reason the evaluator had already

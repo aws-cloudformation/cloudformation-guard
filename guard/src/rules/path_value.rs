@@ -509,11 +509,30 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                     let sub_path = path.extend_string(&each_key);
                     let sub_path = sub_path.with_location(*each_value.location());
                     let value = PathAwareValue::try_from((each_value, sub_path))?;
-                    values.insert(each_key.to_owned(), value);
-                    keys.push(PathAwareValue::String((
-                        path.with_location(loc),
-                        each_key.to_string(),
-                    )));
+                    // Pushed only when the insert added a new entry. `values` is an `IndexMap` and
+                    // dedups; `keys` did not, so a document with a repeated key left the two different
+                    // lengths -- and `eval_context` pairs them *positionally*
+                    // (`map.keys.iter().zip(map.values.values())`), so every entry after the duplicate
+                    // was bound to the wrong key.
+                    //
+                    // On a template declaring `A` twice, with `C` the only public bucket,
+                    // `Resources[ nm | Properties.Public == true ]` captured `nm` as "A" -- a bucket
+                    // whose `Public` is false -- and the last key was dropped entirely. Remove the
+                    // duplicate and the same rule captures "C". A rule that reports the wrong logical
+                    // id sends someone to the wrong resource.
+                    //
+                    // Only the key side was affected, which is why it needs a capture to see at all: a
+                    // value traversal such as `Resources.*[ Type == ... ] { ... }` never reads `keys`
+                    // and always found `C`.
+                    //
+                    // Last-write-wins on the value is unchanged, and the key keeps the position of its
+                    // first appearance, which is what `IndexMap` does for the value too.
+                    if values.insert(each_key.to_owned(), value).is_none() {
+                        keys.push(PathAwareValue::String((
+                            path.with_location(loc),
+                            each_key.to_string(),
+                        )));
+                    }
                 }
                 Ok(PathAwareValue::Map((
                     path.with_location(loc),
