@@ -1,0 +1,9 @@
+#
+# Fails for every bucket in the template it is paired with, so the report has one block per resource
+# and their order is observable.
+#
+rule every_bucket_is_named_expected {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.BucketName == 'expected'
+    }
+}

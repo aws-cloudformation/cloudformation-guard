@@ -1405,6 +1405,45 @@ mod validate_tests {
         );
     }
 
+    /// Resources are reported in a fixed order.
+    ///
+    /// The reporter aggregated them into a `std::collections::HashMap` and iterated that to write the
+    /// output. Rust seeds that hasher per process, so the `Resource = ...` blocks came out in a
+    /// different order on every run: five distinct outputs from ten runs of one binary against a
+    /// three-resource template. Output that changes without the input changing cannot be diffed in CI,
+    /// and it made a differential over the fixture corpus report changes that were only noise.
+    ///
+    /// Asserted as "in name order" rather than "the same twice", because two runs inside one test
+    /// process may draw the same order by chance and prove nothing. Five resources make an accidental
+    /// alphabetical order one arrangement in a hundred and twenty.
+    #[test]
+    fn resources_are_reported_in_a_fixed_order() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["five-non-compliant-buckets-template.yaml"])
+            .rules(vec!["every_bucket_is_named_expected.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let reported: Vec<&str> = output
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("Resource = "))
+            .map(|rest| rest.trim_end_matches(" {"))
+            .collect();
+
+        assert_eq!(
+            reported,
+            vec!["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
+            "all five resources must be reported, in a fixed order:\n{}",
+            output
+        );
+    }
+
     /// A Terraform finding that belongs to no resource change is still explained.
     ///
     /// `single_line` groups findings by resource change. A clause that failed *because it had nothing

@@ -1,7 +1,7 @@
 use fancy_regex::Regex;
 use std::{
     cmp::min,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     io::Write,
     rc::Rc,
 };
@@ -205,7 +205,12 @@ fn single_line(
     }
 
     let root = data.root().unwrap();
-    let mut by_resources = HashMap::new();
+    // `BTreeMap`, not `HashMap`: this map is iterated to write the output, and a
+    // `std::collections::HashMap` seeds its hasher per process, so the `Resource = ...` blocks
+    // came out in a different order on every run. A template with three non-compliant resources
+    // produced five distinct outputs in fifteen runs of one binary, which makes the output
+    // undiffable in CI and made a differential over fixtures report changes that were noise.
+    let mut by_resources = BTreeMap::new();
 
     // Every finding has to sit under `/Resources/` for this reporter to say anything true about the
     // file, so if one does not, the whole file goes to the next reporter.
@@ -552,7 +557,7 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     data: &'value Traversal<'_>,
     root: &'value Node<'_>,
     name: String,
-    by_resources: &mut HashMap<String, LocalResourceAggr<'record, 'value>>,
+    by_resources: &mut BTreeMap<String, LocalResourceAggr<'record, 'value>>,
     value: &[Rc<crate::commands::reporters::validate::common::Node<'record, 'value>>],
 ) -> Option<()> {
     let path = format!("/Resources/{}", name);

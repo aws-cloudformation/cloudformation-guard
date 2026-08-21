@@ -8,7 +8,7 @@ use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
 use crate::rules::Status;
 use fancy_regex::Regex;
 use lazy_static::lazy_static;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Write;
 use std::rc::Rc;
 
@@ -149,7 +149,12 @@ fn single_line(
         populate_hierarchy_path_trees(each_rule, root_node.clone(), &mut path_tree, &mut hierarchy);
     }
 
-    let mut by_resources = HashMap::new();
+    // `BTreeMap`, not `HashMap`: this map is iterated to write the output, and a
+    // `std::collections::HashMap` seeds its hasher per process, so the `Resource = ...` blocks
+    // came out in a different order on every run. A template with three non-compliant resources
+    // produced five distinct outputs in fifteen runs of one binary, which makes the output
+    // undiffable in CI and made a differential over fixtures report changes that were noise.
+    let mut by_resources = BTreeMap::new();
 
     // Same shape as `cfn.rs`, and wrong in the same two directions before this. The range had no upper
     // bound, so every key sorting after `/resource_changes/` was admitted and then failed the extraction
