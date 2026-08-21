@@ -8041,3 +8041,54 @@ fn a_filter_without_an_index_still_decides(
 
     Ok(())
 }
+
+/// A key filter after `[*]` keeps the map as its subject.
+///
+/// The wildcard-expands-for-a-filter arm briefly included key filters, and that was wrong for a reason
+/// worth keeping: a key filter's subject *is* the map whose keys are matched, so handing that map through
+/// is exactly right. Routing it into `accumulate_map` moves the subject down a level, onto each entry's
+/// own keys instead of the logical ids -- so `Resources[*][ keys == /^Bucket/ ]` stopped matching the
+/// bucket names and started matching `Type` and `Properties`.
+///
+/// It produced both failure directions at once: a false failure on `!empty`, and FAIL turning into SKIP on
+/// the assertion form -- the same silent miss the arm exists to remove.
+///
+/// `own_key_discriminator` is the cell that proves the mechanism rather than the symptom. `/^Type$/`
+/// matches no logical id and every resource's own key, so it must NOT hold; while the subject was one
+/// level down it did.
+#[rstest::rstest]
+#[case::key_filter_not_empty("Resources[*][ keys == /^Bucket/ ] !empty", Status::PASS)]
+#[case::key_filter_assertion(
+    "Resources[*][ keys == /^Bucket/ ].Type == \"never-matches\"",
+    Status::FAIL
+)]
+#[case::own_key_discriminator("Resources[*][ keys == /^Type$/ ] !empty", Status::FAIL)]
+#[case::control_without_a_wildcard("Resources[ keys == /^Bucket/ ] !empty", Status::PASS)]
+#[case::value_filter_still_expands(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+fn a_key_filter_after_a_wildcard_keeps_the_map_as_its_subject(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Public: true } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { Public: false } }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}

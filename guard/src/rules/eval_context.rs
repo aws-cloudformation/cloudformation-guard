@@ -107,9 +107,30 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
     /// Called once the block has been evaluated, which gives a filter capture two different readings
     /// depending on where it is read, and both are the ones that were wanted:
     ///
-    /// - Inside the block, `resolve_variable` finds `captured` first, so a clause sees only the keys
-    ///   captured during the iteration it is part of. That is what stops one resource's key from
-    ///   satisfying another resource's clause.
+    /// - Inside the block, `resolve_variable` finds `captured` first, so a clause sees the keys captured
+    ///   during the iteration it is part of, *provided that iteration captured at least one under that
+    ///   name*. That is what stops one resource's key from satisfying another resource's clause in the
+    ///   ordinary case.
+    ///
+    ///   It is not a guarantee, and the gap is worth stating rather than implying otherwise. When an
+    ///   iteration captures nothing under the name -- a filter that matched no entry, or a capturing
+    ///   clause that did not run because an `or` took the other branch -- there is no entry to find, so
+    ///   the lookup falls through to the parent, which by then holds the earlier iterations' merged
+    ///   keys. A block of the shape
+    ///
+    ///   ```text
+    ///   Resources.*[ Type == 'AWS::S3::Bucket' ] {
+    ///       Properties.Config[ cfg | Enabled == true ] !empty or
+    ///       Properties.Config[ cfg | Enabled == true ] empty
+    ///       some %cfg == "alpha"
+    ///   }
+    ///   ```
+    ///
+    ///   therefore still lets a bucket with no enabled config pass on an earlier bucket's key. Closing
+    ///   it needs the block to know the capture names appearing in its clauses before evaluating them,
+    ///   so that an iteration which captured nothing answers "empty" instead of deferring -- which means
+    ///   walking the block's clauses for capture names at construction, not a change to this function.
+    ///   Pre-existing rather than introduced here; the two-clause shape above is the reproduction.
     /// - After the block, the keys have been merged upward, so a clause reading the name sees every
     ///   iteration's keys -- which is what it saw before any of this and what such a clause means.
     ///
@@ -719,10 +740,16 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // and an assertion over that empty selection reported SKIP with the violation
                     // unflagged, while `Resources.*[ ... ]` was right. The leniency never has a filter
                     // next; it has a key or another wildcard.
-                    let filter_next = matches!(
-                        query.get(query_index + 1),
-                        Some(QueryPart::Filter(..)) | Some(QueryPart::MapKeyFilter(..))
-                    );
+                    // `Filter` only. A key filter must NOT be included: its subject is the map whose
+                    // keys are being matched, so handing that map through is exactly right, and routing
+                    // it into `accumulate_map` moves the subject down a level -- onto each entry's own
+                    // keys instead of the logical ids. Including it turned
+                    // `Resources[*][ keys == /^Bucket/ ] !empty` from a pass into a false failure, and
+                    // the assertion form from FAIL into SKIP: the same silent miss this arm exists to
+                    // remove. The discriminator is `keys == /^Type$/`, which matches each resource's own
+                    // key rather than its id, and which went the other way.
+                    let filter_next =
+                        matches!(query.get(query_index + 1), Some(QueryPart::Filter(..)));
                     if name.is_none() && !filter_next {
                         query_retrieval_with_converter(
                             query_index + 1,
