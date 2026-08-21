@@ -665,7 +665,23 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 ),
 
                 PathAwareValue::Map((_, map)) => {
-                    if name.is_none() {
+                    // `[*]` on a map is a pass-through by design, not an oversight: a schema field that
+                    // accepts "an array or a single value" is written once as `Statement[*].Action`, and
+                    // handing the map onward is what makes that resolve when `Statement` is one object
+                    // rather than a list. `test_field_type_array_or_single` pins it, and IAM policies are
+                    // exactly that shape.
+                    //
+                    // A *filter* next is the one case where pass-through cannot be what was meant. The
+                    // predicate would be tested once against the whole map, match nothing, and select
+                    // nothing -- so `Resources[*][ Type == 'AWS::S3::Bucket' ]` selected no resources,
+                    // and an assertion over that empty selection reported SKIP with the violation
+                    // unflagged, while `Resources.*[ ... ]` was right. The leniency never has a filter
+                    // next; it has a key or another wildcard.
+                    let filter_next = matches!(
+                        query.get(query_index + 1),
+                        Some(QueryPart::Filter(..)) | Some(QueryPart::MapKeyFilter(..))
+                    );
+                    if name.is_none() && !filter_next {
                         query_retrieval_with_converter(
                             query_index + 1,
                             query,
@@ -674,7 +690,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             converter,
                         )
                     } else {
-                        let name = name.as_ref().unwrap().as_str();
+                        let name = name.as_ref().map(|n| n.as_str());
                         accumulate_map(
                             Rc::clone(&current),
                             map,
@@ -683,7 +699,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             resolver,
                             converter,
                             |index, query, key, value, context, converter| {
-                                context.add_variable_capture_key(name, Rc::clone(&key))?;
+                                if let Some(n) = name {
+                                    context.add_variable_capture_key(n, Rc::clone(&key))?;
+                                }
                                 query_retrieval_with_converter(
                                     index,
                                     query,

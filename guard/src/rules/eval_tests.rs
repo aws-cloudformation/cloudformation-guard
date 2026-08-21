@@ -7822,3 +7822,82 @@ fn a_key_filter_capture_binds_the_selected_keys(
 
     Ok(())
 }
+
+/// `[*]` on a map passes the map through, except when a filter comes next.
+///
+/// The pass-through is deliberate and load-bearing: a schema field that accepts "an array or a single
+/// value" is written once as `Statement[*].Action`, and handing the map onward is what makes that resolve
+/// when `Statement` is one object rather than a list. IAM policies are exactly that shape, and
+/// `test_field_type_array_or_single` pins it. Expanding the map unconditionally breaks that test and two
+/// join tests, which is how the first attempt at this was rejected.
+///
+/// A filter next is the one position where pass-through cannot be what was meant. The predicate was
+/// tested once against the whole map, matched nothing, and the filter selected nothing -- so
+/// `Resources[*][ Type == 'AWS::S3::Bucket' ]` selected no resources at all, and an assertion over that
+/// empty selection reported SKIP with the violation unflagged, while the `.*` spelling of the same query
+/// was right. Two spellings disagreed, and the wrong one failed open.
+///
+/// The leniency cells are the controls, and they are the reason this is keyed on what comes next rather
+/// than fixed by expanding: they must keep passing whether `Statement` is a list or a map.
+#[rstest::rstest]
+#[case::assertion_via_bracket_wildcard(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+#[case::assertion_via_dot_wildcard(
+    "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+#[case::filter_via_bracket_wildcard(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ] !empty",
+    Status::PASS
+)]
+#[case::filter_via_dot_wildcard("Resources.*[ Type == 'AWS::S3::Bucket' ] !empty", Status::PASS)]
+#[case::filter_matching_nothing("Resources[*][ Type == 'AWS::None::Here' ] !empty", Status::FAIL)]
+fn a_bracket_wildcard_on_a_map_expands_only_for_a_filter(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // BucketA is public, so an assertion that reaches it must fail. TableC is a different type, so the
+    // filter has something to exclude.
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Public: true } },
+            TableC:  { Type: 'AWS::DynamoDB::Table', Properties: { Public: false } }
+        }
+    }
+    "#;
+
+    let rules = "rule mapped { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "mapped")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: the array-or-single leniency must survive it.
+///
+/// `Statement[*].Action` has to resolve whether `Statement` is a list of statements or one statement
+/// object. A filter never follows the wildcard in this idiom -- a key does -- which is what lets the two
+/// cases be told apart.
+#[rstest::rstest]
+#[case::statement_is_a_list(r#"{ Statement: [ { Action: '*' } ] }"#)]
+#[case::statement_is_a_single_map(r#"{ Statement: { Action: '*' } }"#)]
+fn a_bracket_wildcard_still_accepts_an_array_or_a_single_value(#[case] input: &str) -> Result<()> {
+    let rules = "rule lenient { Statement[*].Action != '*' }";
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(rules, input, "lenient")?,
+        "`Statement[*].Action` must resolve for {}",
+        input
+    );
+
+    Ok(())
+}
