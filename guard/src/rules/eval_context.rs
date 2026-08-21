@@ -113,10 +113,11 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
     ///   ordinary case.
     ///
     ///   It is not a guarantee, and the gap is worth stating rather than implying otherwise. When an
-    ///   iteration captures nothing under the name -- a filter that matched no entry, or a capturing
-    ///   clause that did not run because an `or` took the other branch -- there is no entry to find, so
-    ///   the lookup falls through to the parent, which by then holds the earlier iterations' merged
-    ///   keys. A block of the shape
+    ///   iteration captures nothing under the name there is no entry to find, so the lookup falls through
+    ///   to the parent, which by then holds the earlier iterations' merged keys. Three ways to capture
+    ///   nothing: a filter that matched no entry, a capturing clause skipped because an `or` took the
+    ///   other branch, and a capturing clause inside a `when` block whose condition failed. A block of
+    ///   the shape
     ///
     ///   ```text
     ///   Resources.*[ Type == 'AWS::S3::Bucket' ] {
@@ -126,11 +127,21 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
     ///   }
     ///   ```
     ///
-    ///   therefore still lets a bucket with no enabled config pass on an earlier bucket's key. Closing
-    ///   it needs the block to know the capture names appearing in its clauses before evaluating them,
-    ///   so that an iteration which captured nothing answers "empty" instead of deferring -- which means
-    ///   walking the block's clauses for capture names at construction, not a change to this function.
+    ///   therefore still lets a bucket with no enabled config pass on an earlier bucket's key.
     ///   Pre-existing rather than introduced here; the two-clause shape above is the reproduction.
+    ///
+    ///   Two separable things are needed, and only the second is a large change:
+    ///
+    ///   1. To stop iteration N seeing iterations 1..N-1, defer the merge to after the loop rather than
+    ///      doing it per iteration. `eval_guard_block_clause` and `eval_type_block_clause` both build a
+    ///      fresh `ValueScope` inside a loop over one shared resolver, so buffering the merges across
+    ///      the loop and flushing once at the end is enough. No knowledge of capture names is required.
+    ///   2. To make such a lookup answer "empty" rather than fail, the block has to know the capture
+    ///      names appearing in its clauses before evaluating them -- a walk of the block's clauses at
+    ///      construction. Without it the lookup is simply unresolvable, which is a file-fatal error
+    ///      rather than a clause that fails closed.
+    ///
+    ///   Doing 1 without 2 turns the false PASS into that error, so they want doing together.
     /// - After the block, the keys have been merged upward, so a clause reading the name sees every
     ///   iteration's keys -- which is what it saw before any of this and what such a clause means.
     ///
