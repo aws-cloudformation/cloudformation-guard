@@ -907,7 +907,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
             }
         },
 
-        QueryPart::MapKeyFilter(_name, map_key_filter) => match &*current {
+        QueryPart::MapKeyFilter(name, map_key_filter) => match &*current {
             PathAwareValue::Map((_path, map)) => {
                 let mut selected = Vec::with_capacity(map.values.len());
                 let rhs = match &map_key_filter.compare_with {
@@ -954,6 +954,18 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     match each_result {
                         (QueryResult::Resolved(key), Status::PASS) => {
                             if let PathAwareValue::String((_, key_name)) = &*key {
+                                // The capture name was parsed and then dropped -- the arm bound it as
+                                // `_name` and no call site ever saw it. `Resources[ mk | keys ==
+                                // /^Bucket/ ]` therefore declared `mk` and left it unresolvable, and
+                                // the run died at 255 saying "Could not resolve variable by name mk",
+                                // which blames the wrong thing: the variable *was* declared.
+                                //
+                                // A key filter is the one filter shape where the key is what the
+                                // predicate tested, so it is right here to capture.
+                                if let Some(capture) = name {
+                                    resolver
+                                        .add_variable_capture_key(capture.as_str(), Rc::clone(&key))?;
+                                }
                                 selected.push(QueryResult::Resolved(Rc::new(
                                     map.values.get(key_name.as_str()).unwrap().clone(),
                                 )));

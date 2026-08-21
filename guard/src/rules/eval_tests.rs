@@ -7776,3 +7776,49 @@ fn a_filter_capture_does_not_outlive_its_iteration(
 
     Ok(())
 }
+
+/// A key filter's capture name binds the keys it selected.
+///
+/// The arm bound the name as `_name` and no call site ever saw it, so
+/// `Resources[ mk | keys == /^Bucket/ ]` declared `mk` and left it unresolvable. The run then died at
+/// 255 with "Could not resolve variable by name mk", which blames the wrong thing -- the variable *was*
+/// declared, in a position the parser accepts.
+///
+/// A key filter is the one filter shape where the key is what the predicate tested, so it is the shape
+/// where capturing it is unambiguous.
+///
+/// `filtered_out_key` is the cell that makes this a test of the selection rather than of the plumbing:
+/// `TableC` exists in the template and must NOT be captured, because the predicate excluded it. And the
+/// all-must-match form fails over two captured keys, which shows the capture is a list rather than
+/// whichever key happened to be last.
+#[rstest::rstest]
+#[case::selected_key("some %mk == \"BucketA\"", Status::PASS)]
+#[case::other_selected_key("some %mk == \"BucketB\"", Status::PASS)]
+#[case::filtered_out_key("some %mk == \"TableC\"", Status::FAIL)]
+#[case::all_must_match_over_two_keys("%mk == \"BucketA\"", Status::FAIL)]
+fn a_key_filter_capture_binds_the_selected_keys(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'a' } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'b' } },
+            TableC:  { Type: 'AWS::DynamoDB::Table', Properties: { TableName: 'c' } }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed {\n    Resources[ mk | keys == /^Bucket/ ] !empty\n    CLAUSE\n}"
+        .replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
