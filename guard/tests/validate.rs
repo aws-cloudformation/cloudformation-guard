@@ -861,6 +861,44 @@ mod validate_tests {
         );
     }
 
+    /// A filter whose predicate cannot be judged fails the query instead of selecting nothing.
+    ///
+    /// The predicate here is a block clause, so the undecidable answer has to travel out of
+    /// `eval_guard_block_clause` before the filter can act on it — the arm that answers
+    /// `Outcome::Unevaluatable` role-free. That arm previously split on `role.is_strict()` and handed a
+    /// gate the error instead, and a filter predicate runs as a gate, so this is the shape that
+    /// distinguishes the two.
+    ///
+    /// Three verdicts are possible and only one is right. Exit 0 would mean the filter silently dropped
+    /// the resource it could not judge, which selects fewer resources and makes a rule written to catch
+    /// violations catch fewer — the mechanism that turned five registry security rules from FAIL to PASS
+    /// when a fail-closed change was tried inside a filter. Exit 255 would mean the file aborted and
+    /// every other rule's findings went with it. Exit 19 naming the predicate is the answer, which is why
+    /// the reason is asserted and not only the code.
+    #[test]
+    fn a_filter_predicate_that_cannot_be_judged_fails_the_query() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecidable-filter-predicate-template.yaml"])
+            .rules(vec!["filter_predicate_that_cannot_be_judged.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "the query fails: 0 would mean the resource was silently dropped, 255 that the file aborted"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Filter predicate could not be evaluated"),
+            "and the reason names the predicate rather than blaming the resource:\n{}",
+            output
+        );
+    }
+
     /// A gate with one undecidable branch and one that decides is decided by the second.
     ///
     /// `when Enabled !EMPTY or Name == "keep"`: the first branch has no answer on a boolean, the

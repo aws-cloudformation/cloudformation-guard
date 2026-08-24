@@ -1,0 +1,16 @@
+#
+# A filter whose predicate cannot be evaluated for a value: `Enabled` is a boolean, so `!EMPTY` on it has
+# no answer, and the predicate is a block clause so the undecidable answer has to travel out of
+# `eval_guard_block_clause` before the filter can act on it.
+#
+# The filter fails the query rather than selecting nothing. That is the deliberate choice recorded on the
+# three filter-predicate sites: a filter that quietly drops the resources it could not judge selects fewer
+# of them, and a rule written to catch violations catches fewer -- the mechanism that turned five registry
+# security rules from FAIL to PASS when a fail-closed change was tried inside a filter.
+#
+# `MustFail` is false so that a filter which wrongly selected the resource would also fail, which is why
+# the test asserts on the reason and not only on the exit code.
+#
+rule volumes_must_be_encrypted {
+    Resources[ x | Properties { Enabled !EMPTY } ].Properties.MustFail == true
+}
