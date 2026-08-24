@@ -20,7 +20,7 @@ use nom::number::complete::double;
 use nom::sequence::{delimited, preceded};
 use nom::sequence::{pair, terminated};
 use nom::sequence::{separated_pair, tuple};
-use nom::{FindSubstring, InputTake, Slice};
+use nom::{InputTake, Slice};
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
@@ -702,7 +702,7 @@ fn var_name_access_inclusive(input: Span) -> IResult<Span, String> {
 // Comparison operators
 //
 fn in_keyword(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::In, alt((tag("in"), tag("IN"))))(input)
+    value(CmpOperator::In, alt((keyword("in"), keyword("IN"))))(input)
 }
 
 fn not(input: Span) -> IResult<Span, ()> {
@@ -750,42 +750,61 @@ fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 }
 
 fn is_list(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsList, alt((tag("IS_LIST"), tag("is_list"))))(input)
+    value(
+        CmpOperator::IsList,
+        alt((keyword("IS_LIST"), keyword("is_list"))),
+    )(input)
 }
 
 fn is_struct(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsMap,
-        alt((tag("IS_STRUCT"), tag("is_struct"))),
+        alt((keyword("IS_STRUCT"), keyword("is_struct"))),
     )(input)
 }
 
 fn is_string(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsString,
-        alt((tag("IS_STRING"), tag("is_string"))),
+        alt((keyword("IS_STRING"), keyword("is_string"))),
     )(input)
 }
 
 fn is_bool(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsBool, alt((tag("IS_BOOL"), tag("is_bool"))))(input)
+    value(
+        CmpOperator::IsBool,
+        alt((keyword("IS_BOOL"), keyword("is_bool"))),
+    )(input)
 }
 
 fn is_int(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsInt, alt((tag("IS_INT"), tag("is_int"))))(input)
+    value(
+        CmpOperator::IsInt,
+        alt((keyword("IS_INT"), keyword("is_int"))),
+    )(input)
 }
 
 fn is_float(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsFloat,
-        alt((tag("IS_FLOAT"), tag("is_float"))),
+        alt((keyword("IS_FLOAT"), keyword("is_float"))),
     )(input)
 }
 
 fn is_null(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsNull, alt((tag("IS_NULL"), tag("is_null"))))(input)
+    value(
+        CmpOperator::IsNull,
+        alt((keyword("IS_NULL"), keyword("is_null"))),
+    )(input)
 }
 
+/// The type operators, and `in`, go through `keyword` for the reason `true`/`false`/`null` do.
+///
+/// `tag("IS_INT")` matches the first six characters of `IS_INTEGER` and leaves `EGER` behind, and a bare
+/// identifier is a valid clause -- a reference to a rule of that name. So `Size IS_INTEGER` parsed as
+/// `Size IS_INT` *and* a reference to a rule called `EGER`: loud when no such rule exists, and silently
+/// PASS at exit 0 when one does. Same shape as the `falseFlag` case these helpers were written for; the
+/// guard had simply not been applied to this group or to `in`.
 fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
     alt((
         is_string, is_list, is_struct, is_bool, is_int, is_null, is_float,
@@ -825,8 +844,42 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     ))(input)
 }
 
+/// How far a message body may reach: to the first line that starts a new construct, or to the end.
+///
+/// A line whose first token is `}` closes the block the message sits inside, and a line whose first token is
+/// `rule` starts the next rule. A message cannot legitimately extend past either, because the clause that
+/// carries it is inside that block.
+///
+/// The first line is exempt: it holds the text that follows `<<` on the clause's own line.
+fn message_bound(fragment: &str) -> usize {
+    let mut offset = 0;
+    for line in fragment.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let starts_a_construct =
+            trimmed.starts_with('}') || trimmed.split_whitespace().next() == Some("rule");
+        if offset > 0 && starts_a_construct {
+            return offset;
+        }
+        offset += line.len();
+    }
+    fragment.len()
+}
+
+/// The message text between `<<` and `>>`.
+///
+/// Bounded, and that is the whole of the fix. The search used to run to the end of the file, so one
+/// forgotten `>>` consumed every rule up to the *next* rule's closing tag as message text and those rules
+/// ceased to exist. A file whose second rule the template violated reported PASS at exit 0 -- no finding, no
+/// diagnostic on any channel, and a parse tree containing only the first rule with the rest of the file
+/// sitting inside its custom message. A typo deleted a check and the run called the template compliant.
+///
+/// Bounding at the enclosing construct rather than at the line, because messages are legitimately
+/// multi-line: 231 of the 232 in the AWS rule registry and this repository's fixtures span lines. None of
+/// the 232 contains a line starting with `}` or `rule`, so the bound costs nothing that exists and turns the
+/// silent deletion into the error this function already raises when there is no `>>` at all.
 fn extract_message(input: Span) -> IResult<Span, &str> {
-    match input.find_substring(">>") {
+    let searchable = &input.fragment()[..message_bound(input.fragment())];
+    match searchable.find(">>") {
         None => Err(nom::Err::Failure(ParserError {
             span: input,
             kind: ErrorKind::Tag,
@@ -897,7 +950,19 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
             QueryPart::AllIndices(None),
             preceded(zero_or_more_ws_or_comment, char('*')),
         ),
-        map(var_name, |name| QueryPart::AllIndices(Some(name))),
+        // Whitespace-tolerant like the `*` branch above, and it was not. Without the `preceded`, a leading
+        // space made this branch fail, `array_index` fail after it, and `map_key_lookup` -- which does skip
+        // whitespace -- catch the same identifier and return `AllValues(Some(name))` instead. So `[x]` and
+        // `[x ]` were one query part while `[ x]` and `[ x ]` were another.
+        //
+        // Two spaces were the whole difference between a working rule and an unevaluatable one, because the
+        // `%var` map-key interpolation arm in `eval_context.rs` accepts `AllIndices`, `Key` and `Index` after
+        // an interpolated variable and not `AllValues`: `Tags.%k[x] == "prod"` passed at exit 0 while
+        // `Tags.%k[ x ] == "prod"` bailed at exit 19 with "This type of query R based variable interpolation
+        // is not supported".
+        map(preceded(zero_or_more_ws_or_comment, var_name), |name| {
+            QueryPart::AllIndices(Some(name))
+        }),
     ))(input)?;
     let (input, _close) = close_array(input)?;
     Ok((input, query_part))
@@ -946,7 +1011,17 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     // The four comparators a key filter accepts. `MapKeyComparator` exists so this list and the
     // evaluator cannot disagree: anything absent here is unrepresentable downstream rather than an
     // unreachable match arm.
-    let (input, cmp) = cut(preceded(
+    //
+    // Not `cut`, and that is the fix. `keys` is only reserved for these four comparators, so a filter over a
+    // *property* named `keys` -- `[ keys EXISTS ]` -- is a different clause and the next branch of
+    // `predicate_or_index` parses it. Committing here stopped that branch from ever running, and the proof
+    // that nothing ambiguous forced the rejection is positional: `[ Size EXISTS keys EXISTS ]` was accepted,
+    // so the identical clause parsed one slot later. `[ keys EXISTS ]`, `[ keys EMPTY ]`, `[ keys IS_LIST ]`
+    // and `[ keys >= 1 ]` were all rejected in first position alone.
+    //
+    // The `cut`s below stay: once a key-filter comparator has been seen, this is a key filter and a missing
+    // right-hand side or closing bracket is an error rather than another reading.
+    let (input, cmp) = preceded(
         zero_or_more_ws_or_comment,
         alt((
             value(MapKeyComparator::Eq, tag("==")),
@@ -954,7 +1029,7 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
             value(MapKeyComparator::In, in_keyword),
             map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
-    ))(input)?;
+    )(input)?;
     let (input, with) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
@@ -1618,8 +1693,33 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
 //
 // when keyword
 //
+/// The first variable name assigned twice in a list of assignments, if any.
+///
+/// Order of declaration is what an author would expect to decide the winner, and it is not what does; see
+/// the call sites for the measurement. Returning the name rather than a bool so the diagnostic can say
+/// which one.
+fn first_duplicate_assignment(assignments: &[LetExpr<'_>]) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    assignments
+        .iter()
+        .find(|assignment| !seen.insert(assignment.var.as_str()))
+        .map(|assignment| assignment.var.clone())
+}
+
+/// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
+///
+/// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
+/// then failed, and the `cut` inside it turned that recoverable Error into a Failure -- which escapes both
+/// the `opt(when_conditions(..))` around it and the `alt` in `rules_file` that would otherwise have read the
+/// line as an ordinary clause. So any clause whose first identifier began with `when` or `WHEN` was an
+/// unrecoverable parse failure: `whenCreated EXISTS` was rejected at the `C`, while `createdWhen EXISTS` and
+/// `WhenCreated EXISTS` were fine, because only the exact-case prefixes reach the tag.
+///
+/// The tell-tale was that `rule whenever { ... }` *defined* fine and a `whenever` reference did not -- a rule
+/// you could declare and never call. `some`, `let` and `rule` were already safe from this, not by design but
+/// because their own whitespace requirement yields a recoverable Error with no cut behind it.
 fn when(input: Span) -> IResult<Span, ()> {
-    value((), alt((tag("when"), tag("WHEN"))))(input)
+    value((), alt((keyword("when"), keyword("WHEN"))))(input)
 }
 
 #[allow(clippy::redundant_closure)]
@@ -1687,6 +1787,36 @@ where
                 (None, Some(v)) => conjunctions.push(v),
                 (_, _) => unreachable!(),
             }
+        }
+
+        // The same argument as the duplicate rule-name check, and a worse case than it. A name declared
+        // twice in one scope was accepted, and `%name` then resolved to one of the two by a rule the author
+        // cannot see: `extract_variables` files literals, queries and function calls into three separate
+        // maps, each `insert` overwriting silently, and `resolve_variable` consults them in a fixed order.
+        // So the winner is decided by *kind precedence*, not by which declaration came first.
+        //
+        // With `Size: 1` in the template and both declarations in one scope:
+        //
+        //     let v = 1     then  let v = 999   ->  exit 19
+        //     let v = 999   then  let v = 1     ->  exit 0
+        //
+        // and when the two are of different kinds, reordering them changes nothing at all -- the query wins
+        // over the literal wherever it sits. Unlike the rule-name case, which could not move the exit code,
+        // this one flips the verdict.
+        //
+        // Every nested scope reaches this function, so one check here covers rule bodies and blocks inside
+        // them; file-level declarations are checked where they are collected in `rules_file`.
+        if let Some(duplicate) = first_duplicate_assignment(&assignments) {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: format!(
+                    "Variable {} is assigned more than once in the same scope. Which assignment wins \
+                     depends on the kind of each value rather than on their order, so the file is \
+                     rejected rather than guessed at.",
+                    duplicate
+                ),
+            }));
         }
 
         let (input, _end_block) = cut(preceded(zero_or_more_ws_or_comment, char('}')))(input)?;
@@ -2113,6 +2243,17 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
     //
     // Parameterized rules share the namespace, so they are checked together: `rule r` and
     // `rule r(x)` collide for the same reason.
+    // File-level declarations, for the same reason and with the same consequence as the block-level check
+    // in `block`. Checked here because these are collected here and never pass through that function.
+    if let Some(duplicate) = first_duplicate_assignment(&global_assignments) {
+        return Err(Error::ParseError(format!(
+            "Variable {} is assigned more than once at the file level. Which assignment wins depends on \
+             the kind of each value rather than on their order, so the file is rejected rather than \
+             guessed at.",
+            duplicate
+        )));
+    }
+
     let mut seen = std::collections::HashSet::new();
     for name in named_rules.iter().map(|r| r.rule_name.as_str()).chain(
         parameterized_rules

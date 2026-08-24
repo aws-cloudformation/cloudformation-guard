@@ -1429,7 +1429,16 @@ fn test_keys_keyword() {
             context: "".to_string(),
         })),
         // "KEYS", // 1 err
-        Err(nom::Err::Failure(ParserError {
+        //
+        // A recoverable `Error`, not a `Failure`, and that change is the point rather than an accident.
+        // `map_keys_match` used to commit with `cut` the moment it had seen `keys`, so `[ keys EXISTS ]`
+        // could never fall through to the filter-clause branch that parses it -- a filter on a property
+        // actually named `keys` was unparsable in first position and parsed one slot later, which is how
+        // it was established that nothing ambiguous forced the rejection.
+        //
+        // `keys` stays reserved for the four key-filter comparators; it is no longer reserved for every
+        // other clause that happens to start with it.
+        Err(nom::Err::Error(ParserError {
             span: unsafe { Span::new_from_raw_offset("[KEYS".len(), 1, "]", "") },
             kind: ErrorKind::Char,
             context: "".to_string(),
@@ -4595,10 +4604,17 @@ fn test_variable_capture_syntax() -> Result<(), Error> {
     let map_index_capture = "Resources[ resource_name ].Properties";
     let access = AccessQuery::try_from(map_index_capture)?.query;
     assert_eq!(access.len(), 3);
+    // `AllIndices`, not `AllValues`, and the old expectation was the defect rather than the contract.
+    // `all_indices`'s named branch did not skip leading whitespace, so this spelling fell through to
+    // `map_key_lookup` and came back a different query part than `Resources[resource_name]` -- which
+    // matters because the `%var` interpolation arm accepts one and not the other.
     assert_eq!(
         access[1],
-        QueryPart::AllValues(Some(String::from("resource_name")))
+        QueryPart::AllIndices(Some(String::from("resource_name")))
     );
+    // Both spellings, so the equivalence is the assertion rather than one side of it.
+    let no_spaces = AccessQuery::try_from("Resources[resource_name].Properties")?.query;
+    assert_eq!(access, no_spaces);
 
     let map_index_with_filter =
         "Resources[ resource_name | Type == 'AWS::S3::Bucket' ].Properties.BucketName";
@@ -4881,5 +4897,205 @@ fn distinct_parameter_names_still_parse(#[case] rules: &str) -> Result<(), Error
         "these parameter names are distinct and must parse: {}",
         rules
     );
+    Ok(())
+}
+
+/// An unterminated `<<` is rejected rather than eating the rest of the file.
+///
+/// `extract_message` searched all remaining input for `>>`, so one forgotten closing tag consumed every
+/// rule up to the *next* rule's tag as message text. Those rules ceased to exist: the file below reported
+/// PASS at exit 0 against a template its second rule violates, with a parse tree containing only the first
+/// rule and the rest of the file inside its custom message. A typo deleted a check and the run called the
+/// template compliant, with no diagnostic on any channel.
+///
+/// Both halves are asserted. Rejecting the broken file is the fix; parsing the multi-line message is what
+/// the fix must not cost, and 231 of the 232 messages in the rule registry and this repository's fixtures
+/// are multi-line.
+#[test]
+fn an_unterminated_message_does_not_swallow_the_rules_after_it() -> Result<(), Error> {
+    let swallowed = r###"
+rule first_rule {
+    Resources.Bad.Properties.BucketName == "mybucket" << oops I forgot the closing tag
+}
+
+rule second_rule {
+    Resources.Bad.Properties.Public == false << buckets must not be public >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(swallowed)).is_err(),
+        "an unterminated << must be rejected, not close itself on a later rule's >>"
+    );
+
+    let multi_line = r###"
+rule r {
+    Resources.Bad.Properties.Public == false
+    <<
+      Violation: buckets must not be public
+      Fix: set Public to false
+    >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(multi_line))?.is_some(),
+        "a message spanning lines is the ordinary case and must still parse"
+    );
+    Ok(())
+}
+
+/// A leading space inside `[...]` does not change the query part.
+///
+/// The named branch of `all_indices` did not skip whitespace, so `[ x ]` fell through to `map_key_lookup`
+/// and returned `AllValues` where `[x]` returned `AllIndices`. Two spaces were then the difference between
+/// a rule that works and one that cannot be evaluated, because the `%var` map-key interpolation arm accepts
+/// `AllIndices` and not `AllValues`.
+#[test]
+fn whitespace_inside_a_named_index_does_not_change_the_query_part() -> Result<(), Error> {
+    let spellings = [
+        "Resources[x].Properties",
+        "Resources[x ].Properties",
+        "Resources[ x].Properties",
+        "Resources[ x ].Properties",
+        "Resources[  x  ].Properties",
+    ];
+    let expected = AccessQuery::try_from(spellings[0])?.query;
+    for spelling in &spellings[1..] {
+        assert_eq!(
+            AccessQuery::try_from(*spelling)?.query,
+            expected,
+            "all spellings of a named index must parse the same: {}",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// A clause whose first identifier starts with `when` is a clause, not a parse failure.
+///
+/// `tag("when")` matched the first four characters of `whenCreated`, the whitespace `when_conditions`
+/// requires then failed, and the `cut` inside it made that unrecoverable -- so the `alt` that would have
+/// read the line as an ordinary clause never got the chance. Only the exact-case prefixes reached the tag,
+/// which is why `WhenCreated` was fine and `WHENCREATED` was not.
+#[test]
+fn a_clause_starting_with_the_when_prefix_still_parses() -> Result<(), Error> {
+    for rules in [
+        "rule r {\n  Resources.*.Properties {\n    whenCreated EXISTS\n  }\n}",
+        "rule r {\n  Resources.*.Properties {\n    WHENCREATED EXISTS\n  }\n}",
+        "rule r {\n  Resources.*.Properties {\n    WhenCreated EXISTS\n  }\n}",
+        "rule r {\n  Resources.*.Properties {\n    createdWhen EXISTS\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules))?.is_some(),
+            "a property whose name starts with a keyword is a property: {}",
+            rules
+        );
+    }
+
+    // And `when` itself still gates a rule.
+    assert!(rules_file(from_str2(
+        "rule r when Resources.*.Properties.Size > 10 {\n  Resources.*.Properties.Encrypted == true\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
+/// A name assigned twice in one scope is rejected rather than resolved by kind precedence.
+///
+/// Both orders were accepted and they disagreed: with `Size: 1` in the template, `let v = 1` then
+/// `let v = 999` failed the rule and the reverse passed it. Worse, two assignments of *different* kinds
+/// ignored their order entirely, because `extract_variables` files literals, queries and function calls
+/// into separate maps and `resolve_variable` consults them in a fixed order. So the winner was decided by
+/// the kind of each value, which is not something an author can see.
+///
+/// Both scopes, because they are collected in different places: file-level in `rules_file`, everything
+/// nested in `block`.
+#[test]
+fn a_variable_assigned_twice_in_one_scope_is_rejected() -> Result<(), Error> {
+    for rules in [
+        "let v = 1\nlet v = 999\nrule r {\n  Resources.R.Properties.Size == %v\n}",
+        "let v = 999\nlet v = 1\nrule r {\n  Resources.R.Properties.Size == %v\n}",
+        "let v = 999\nlet v = Resources.R.Properties.Size\nrule r {\n  Resources.R.Properties.Size == %v\n}",
+        "rule r {\n  Resources.R {\n    let v = 1\n    let v = 999\n    Properties.Size == %v\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a duplicate assignment must be rejected: {}",
+            rules
+        );
+    }
+
+    // Distinct names in one scope, and the same name in sibling scopes, are both fine.
+    assert!(rules_file(from_str2(
+        "let a = 1\nlet b = 2\nrule r {\n  Resources.R.Properties.Size == %a\n}"
+    ))?
+    .is_some());
+    assert!(rules_file(from_str2(
+        "rule one {\n  let v = 1\n  Resources.R.Properties.Size == %v\n}\nrule two {\n  let v = 2\n  Resources.R.Properties.Size == %v\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
+/// A filter over a property named `keys` parses, and a key filter still does.
+///
+/// `map_keys_match` committed with `cut` as soon as it had seen `keys`, so a following token that was not
+/// one of the four key-filter comparators produced a Failure and stopped the filter-clause branch from
+/// running at all. The proof that nothing ambiguous forced it was positional: the identical clause parsed
+/// one slot later, as `[ Size EXISTS keys EXISTS ]`.
+#[test]
+fn a_filter_on_a_property_named_keys_parses() -> Result<(), Error> {
+    for rules in [
+        "rule r {\n  Resources.*.Properties[ keys EXISTS ] !EMPTY\n}",
+        "rule r {\n  Resources.*.Properties[ keys EMPTY ] !EMPTY\n}",
+        "rule r {\n  Resources.*.Properties[ keys >= 1 ] !EMPTY\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules))?.is_some(),
+            "`keys` is reserved for the key-filter comparators, not for every clause: {}",
+            rules
+        );
+    }
+
+    // The key filter itself is unaffected, in both spellings.
+    for rules in [
+        "rule r {\n  Resources[ keys == /^Bucket/ ] !EMPTY\n}",
+        "rule r {\n  Resources[ KEYS != 'aws:IsSecure' ] !EMPTY\n}",
+    ] {
+        assert!(rules_file(from_str2(rules))?.is_some(), "{}", rules);
+    }
+    Ok(())
+}
+
+/// An operator that is a prefix of a longer identifier does not split the clause in two.
+///
+/// `tag("IS_INT")` matched the first six characters of `IS_INTEGER` and left `EGER` behind, and a bare
+/// identifier is a valid clause -- a reference to a rule of that name. So `Size IS_INTEGER` parsed as
+/// `Size IS_INT` *and* a reference to a rule called `EGER`: loud when no such rule existed, and PASS at
+/// exit 0 when one did. The same guard the boolean and null keywords already had, applied to this group
+/// and to `in`.
+#[test]
+fn an_operator_that_prefixes_an_identifier_is_not_an_operator() -> Result<(), Error> {
+    for rules in [
+        "rule r {\n  Resources.R.Properties.Size IS_INTEGER\n}",
+        "rule r {\n  Resources.R.Properties.Size is_integer\n}",
+        "rule r {\n  Resources.R.Properties.Size IS_LISTING\n}",
+        "rule r {\n  Resources.R.Properties.Size inside [1, 2]\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a longer identifier must not be read as the shorter operator plus a rule reference: {}",
+            rules
+        );
+    }
+
+    // The operators themselves still parse.
+    for rules in [
+        "rule r {\n  Resources.R.Properties.Size IS_INT\n}",
+        "rule r {\n  Resources.R.Properties.Size is_list\n}",
+        "rule r {\n  Resources.R.Properties.Size in [1, 2]\n}",
+        "rule r {\n  Resources.R.Properties.Size IN [1, 2]\n}",
+    ] {
+        assert!(rules_file(from_str2(rules))?.is_some(), "{}", rules);
+    }
     Ok(())
 }
