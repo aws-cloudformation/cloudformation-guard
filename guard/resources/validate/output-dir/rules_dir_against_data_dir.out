@@ -13,24 +13,44 @@ advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-public-read-prohibited-template-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
+  NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
 s3-public-read-prohibited-template-non-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-public-read-prohibited-template-non-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
+  NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
 s3-server-side-encryption-template-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-server-side-encryption-template-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
+  NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
 s3-server-side-encryption-template-non-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-server-side-encryption-template-non-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
+  NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0]...
 s3-public-read-prohibited-template-compliant.yaml Status = FAIL
 FAILED rules
 s3_bucket_logging_enabled.guard/S3_BUCKET_LOGGING_ENABLED    FAIL

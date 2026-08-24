@@ -1611,6 +1611,62 @@ mod validate_tests {
         );
     }
 
+    /// A failing clause that belongs to no resource still says why.
+    ///
+    /// `let numeric = 5` then `%numeric empty`: the operand is a literal, so the finding has no path and
+    /// no resource to be filed under. The evaluator records "Attempting EMPTY operation on type int that
+    /// does not support it" and the JSON reporter prints it; the console reporter dropped it, so the run
+    /// exited 19 reporting `Number of non-compliant resources 0` and no reason at all.
+    ///
+    /// The third variant of one defect. The block-attributed and rule-attributed variants were fixed
+    /// earlier on this branch; a clause whose path is empty was the case left, and it is pre-existing —
+    /// the merge-base behaves the same way.
+    ///
+    /// Whether a clause is rendered is a property of its *rule*, not of the clause: the per-resource loop
+    /// matches a rule to a resource through its findings' paths and then renders all of it, so one placed
+    /// clause carries its pathless siblings into the output. Deciding this at the clause instead prints
+    /// such a sibling a second time, with the whole document as its "value traversed to" —
+    /// `test_validate_with_failing_join_and_compare_output` is the fixture that catches it, and it does.
+    ///
+    /// The data file has to be a CloudFormation template, and not because the rule reads it — the rule
+    /// never looks at the data at all. It is the reporter that has to be the resource-grouping one, since
+    /// that is the reporter with buckets to walk and therefore the one that had nowhere to put a finding
+    /// belonging to no resource.
+    #[test]
+    fn a_failing_clause_that_belongs_to_no_resource_still_says_why() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["numeric-literal-unary-template.yaml"])
+            .rules(vec!["unary_on_a_numeric_literal.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "`empty` has no answer for a number, so the clause fails"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Findings that belong to no resource:"),
+            "a finding that belongs to no resource is reported in its own section:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Could not be evaluated:"),
+            "and under its own heading — this clause was evaluated, it just has nowhere to be shown:\n{}",
+            output
+        );
+        assert!(
+            output.contains("EMPTY operation on type int"),
+            "and the reason the evaluator recorded reaches the console, not only the JSON:\n{}",
+            output
+        );
+    }
+
     /// Resources are reported in a fixed order.
     ///
     /// The reporter aggregated them into a `std::collections::HashMap` and iterated that to write the

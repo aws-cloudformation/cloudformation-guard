@@ -8,6 +8,7 @@ use crate::rules::eval_context::{
     ValueUnResolved,
 };
 
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
     BlockCheck, ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
@@ -36,6 +37,18 @@ impl From<(CmpOperator, bool)> for Comparison {
     }
 }
 
+/// The message, if it says anything.
+///
+/// A clause that carries no custom message records `Some("")` rather than `None`, so a plain `or` over
+/// the two message slots reports a blank reason -- which reads as a rendering bug rather than as a
+/// message nobody wrote.
+///
+/// A function rather than a closure: a closure taking `&Option<String>` and returning `Option<&str>`
+/// cannot express that the two lifetimes are the same one, and rustc rejects it.
+fn non_empty_message(message: &Option<String>) -> Option<&str> {
+    message.as_deref().filter(|text| !text.trim().is_empty())
+}
+
 /// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
 ///
 /// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
@@ -56,7 +69,13 @@ pub(super) fn collect_unattributed_explanations(
                 out.push((blk.context.to_string(), explanation.clone()));
             }
         }
-        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
+        ClauseReport::Block(_) => {}
+
+        // Not here. Whether a *clause* is rendered is not a property of the clause: the per-resource loop
+        // matches a whole rule to a resource and renders all of it, so a clause with no path of its own is
+        // still rendered when a sibling has one. `write_unattributed_explanations` asks the question at the
+        // rule, where it can be answered.
+        ClauseReport::Clause(_) => {}
         ClauseReport::Rule(rule) => {
             // A rule that failed on its own condition has no clause findings underneath it, so the
             // per-resource output has nothing to render and this message is the only account of why
@@ -86,24 +105,160 @@ pub(super) fn collect_unattributed_explanations(
     }
 }
 
-/// Render the findings that belong to no resource, after the per-resource output.
+/// Whether anything under this report has a path the per-resource output can file it under.
+///
+/// Mirrors `populate_hierarchy_path_trees`, which keys a finding by the value it compared from and the
+/// value it compared to, and recurses through rules and disjunctions to reach the clauses and blocks that
+/// carry those values. Both console reporters then match a *rule* to a resource through those keys and
+/// render the whole rule, so one finding with a path carries its pathless siblings into the output with
+/// it. A report with no such finding anywhere under it is rendered nowhere.
+fn placed_by_a_path(report: &ClauseReport<'_>) -> bool {
+    if is_located(report.value_from()) || is_located(report.value_to()) {
+        return true;
+    }
+
+    match report {
+        ClauseReport::Rule(rule) => rule.checks.iter().any(placed_by_a_path),
+        ClauseReport::Disjunctions(ors) => ors.checks.iter().any(placed_by_a_path),
+        ClauseReport::Clause(_) | ClauseReport::Block(_) => false,
+    }
+}
+
+/// Whether a comparison has a value with a path the aggregation can key on.
+///
+/// A value the clause resolved to but which has no path is a literal or a `let` binding; a value the
+/// query traversed to but stopped at has the path it reached, which is empty when it stopped at the
+/// document root. Neither can be filed under a resource.
+fn is_located(value: Option<std::rc::Rc<PathAwareValue>>) -> bool {
+    matches!(value, Some(value) if !value.self_path().0.is_empty())
+}
+
+/// The longest clause explanation this section prints, in characters.
+///
+/// A clause's `error_message` embeds the value its query traversed to, and for a query that resolved to
+/// nothing at the document root that value is the whole document -- tens of kilobytes on one line, which
+/// is not a report. The reason is at the front of the message, so a prefix carries it. Chosen to hold the
+/// longest whole message in the fixture corpus, the 196-character `EMPTY`-on-an-int explanation.
+///
+/// Nothing is lost by it: the JSON and YAML reports print the message untruncated and always have.
+const LONGEST_CLAUSE_EXPLANATION: usize = 240;
+
+/// The explanation, cut to a length a console can show.
+///
+/// Cut at whitespace, and that is what does the work rather than the length. An embedded value is
+/// serialised compactly and so contains no whitespace at all, which makes it one word: the cut lands in
+/// front of the whole blob instead of inside it, and what survives is the sentence naming the property.
+/// Cutting mid-word would also put half a word into the fixture output, where the spell checker reads it
+/// as a misspelling and fails the build. Half of "ServerSideEncryptionConfiguration" did exactly that.
+///
+/// By character rather than by byte, so a multi-byte character straddling the cut cannot panic.
+fn shortened(explanation: &str) -> String {
+    let cut = match explanation.char_indices().nth(LONGEST_CLAUSE_EXPLANATION) {
+        Some((at, _)) => at,
+        None => return explanation.to_string(),
+    };
+
+    let kept = &explanation[..cut];
+    let kept = match kept.rfind(char::is_whitespace) {
+        Some(at) => &kept[..at],
+        None => kept,
+    };
+
+    format!("{}...", kept.trim_end())
+}
+
+/// Collect `(context, explanation)` for every clause under a report the per-resource output will not
+/// render, which the caller has established.
+///
+/// `error_message` first: it is the evaluator's account of what happened, where `custom_message` is the
+/// rule author's, and a clause that has one usually has both.
+fn collect_clause_explanations(report: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
+    match report {
+        ClauseReport::Clause(clause) => {
+            let (context, messages) = match clause {
+                GuardClauseReport::Unary(unary) => (&unary.context, &unary.messages),
+                GuardClauseReport::Binary(binary) => (&binary.context, &binary.messages),
+            };
+            if let Some(explanation) = non_empty_message(&messages.error_message)
+                .or_else(|| non_empty_message(&messages.custom_message))
+            {
+                out.push((context.trim().to_string(), shortened(explanation)));
+            }
+        }
+        ClauseReport::Rule(rule) => {
+            for child in &rule.checks {
+                collect_clause_explanations(child, out);
+            }
+        }
+        ClauseReport::Disjunctions(ors) => {
+            for child in &ors.checks {
+                collect_clause_explanations(child, out);
+            }
+        }
+        // Handled by `collect_unattributed_explanations`, which reaches blocks whether or not the rule
+        // around them was placed.
+        ClauseReport::Block(_) => {}
+    }
+}
+
+fn write_section(
+    writer: &mut dyn Write,
+    heading: &str,
+    explanations: Vec<(String, String)>,
+) -> crate::rules::Result<()> {
+    if explanations.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(writer, "{heading}")?;
+    for (context, message) in explanations {
+        writeln!(writer, "  {context}")?;
+        writeln!(writer, "    {message}")?;
+    }
+
+    Ok(())
+}
+
+/// Render the findings the per-resource output has nowhere to put, after it.
 ///
 /// Writes nothing when there are none, so a reporter can call it unconditionally.
+///
+/// Two headings, because there are two reasons a finding ends up here and they are not the same answer.
+/// A block or rule that failed on a condition nobody could decide has no verdict to report about the
+/// data -- `Could not be evaluated`. A clause under a rule that no resource claimed was decided
+/// perfectly well and merely has no bucket to be printed in; calling that "could not be evaluated" would
+/// report an ordinary missing property as an undecidable one, which is the class of misreport this
+/// section exists to remove.
+///
+/// The second case: a rule none of whose findings has a path is rendered nowhere at all, because both
+/// console reporters match a rule to a resource through its findings' paths. `let numeric = 5` followed
+/// by `%numeric empty` records a serviceable explanation -- "Attempting EMPTY operation on type int that
+/// does not support it" -- and the JSON reporter has always printed it. The console reporter dropped it:
+/// the operand is a literal, so the value has an empty path, the aggregation consumes only keys under
+/// `/Resources/`, and the demotion check leaves the file here because an empty key is not a *located*
+/// path outside `/Resources/`. The run exited 19 saying "Number of non-compliant resources 0" and
+/// nothing else. Pre-existing rather than introduced on this branch: the merge-base does the same. A rule
+/// querying a top-level property against a CloudFormation template reaches it the same way, which is how
+/// four fixture pairs in `output-dir/rules_dir_against_data_dir.out` exited 19 without a reason.
+///
+/// Asked once per top-level rule rather than per clause, because a clause's own path does not decide
+/// whether it is rendered -- one placed sibling renders the whole rule -- and asking again on a nested
+/// rule would collect the same clauses twice.
 pub(super) fn write_unattributed_explanations(
     writer: &mut dyn Write,
     not_compliant: &[ClauseReport<'_>],
 ) -> crate::rules::Result<()> {
-    let mut unattributed = Vec::new();
+    let mut undecidable = Vec::new();
+    let mut unplaceable = Vec::new();
     for each_rule in not_compliant {
-        collect_unattributed_explanations(each_rule, &mut unattributed);
-    }
-    if !unattributed.is_empty() {
-        writeln!(writer, "Could not be evaluated:")?;
-        for (context, message) in unattributed {
-            writeln!(writer, "  {context}")?;
-            writeln!(writer, "    {message}")?;
+        collect_unattributed_explanations(each_rule, &mut undecidable);
+        if !placed_by_a_path(each_rule) {
+            collect_clause_explanations(each_rule, &mut unplaceable);
         }
     }
+
+    write_section(writer, "Could not be evaluated:", undecidable)?;
+    write_section(writer, "Findings that belong to no resource:", unplaceable)?;
 
     Ok(())
 }
@@ -1335,4 +1490,62 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod shortened_tests {
+    use super::{shortened, LONGEST_CLAUSE_EXPLANATION};
+
+    #[test]
+    fn leaves_a_message_that_fits_alone() {
+        let message = "Check was not compliant as property [Name] is missing.";
+        assert_eq!(message, shortened(message));
+    }
+
+    /// The case this exists for. A value the evaluator embedded is compact JSON, so it holds no
+    /// whitespace and the cut lands in front of all of it -- the property is still named and the
+    /// document is gone, rather than the first 240 bytes of the document being printed.
+    #[test]
+    fn drops_an_embedded_document_whole() {
+        let document = format!(r#"{{"Resources":{{"{}":{{}}}}}}"#, "A".repeat(400));
+        let message = format!("Property [Name] is missing. Value traversed to [{document}]");
+
+        let short = shortened(&message);
+
+        assert!(
+            short.starts_with("Property [Name] is missing. Value traversed to"),
+            "the sentence naming the property survives: {}",
+            short
+        );
+        assert!(
+            !short.contains("AAAA"),
+            "and none of the document does: {}",
+            short
+        );
+    }
+
+    /// A cut inside a multi-byte character is a panic, not a truncation, so the boundary is found by
+    /// character. The `e` is one byte and the `é` two, which puts a character boundary off every
+    /// multiple of the cap.
+    #[test]
+    fn does_not_split_a_multi_byte_character() {
+        let message = "é".repeat(LONGEST_CLAUSE_EXPLANATION * 2);
+
+        let short = shortened(&message);
+
+        assert!(short.ends_with("..."), "it was truncated: {}", short);
+        assert!(
+            short.chars().filter(|c| *c == 'é').count() <= LONGEST_CLAUSE_EXPLANATION,
+            "to no more than the cap in characters: {}",
+            short
+        );
+    }
+
+    /// No whitespace to cut at leaves the hard limit, which is the point of having one.
+    #[test]
+    fn still_bounds_a_message_that_is_one_word() {
+        let short = shortened(&"x".repeat(LONGEST_CLAUSE_EXPLANATION * 3));
+
+        assert_eq!(LONGEST_CLAUSE_EXPLANATION + 3, short.len());
+    }
 }
