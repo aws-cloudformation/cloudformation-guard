@@ -172,7 +172,18 @@ fn shortened(explanation: &str) -> String {
 ///
 /// `error_message` first: it is the evaluator's account of what happened, where `custom_message` is the
 /// rule author's, and a clause that has one usually has both.
-fn collect_clause_explanations(report: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
+///
+/// Each entry is labelled with the rule it came from, because without that the section repeats itself for
+/// no reason a reader can see. Two rules that share a clause -- `seven-compliant-rules.guard` has three
+/// spelling `Region == "us-east-1"` -- produce identical context and identical message, so an unlabelled
+/// section printed the same two lines three times over and said nothing about which rules failed.
+/// Deduplicating instead would have hidden that three rules failed rather than one, which is the fact the
+/// reader is here for.
+fn collect_clause_explanations(
+    report: &ClauseReport<'_>,
+    rule_name: Option<&str>,
+    out: &mut Vec<(String, String)>,
+) {
     match report {
         ClauseReport::Clause(clause) => {
             let (context, messages) = match clause {
@@ -182,17 +193,23 @@ fn collect_clause_explanations(report: &ClauseReport<'_>, out: &mut Vec<(String,
             if let Some(explanation) = non_empty_message(&messages.error_message)
                 .or_else(|| non_empty_message(&messages.custom_message))
             {
-                out.push((context.trim().to_string(), shortened(explanation)));
+                let context = match rule_name {
+                    Some(name) => format!("{name}: {}", context.trim()),
+                    None => context.trim().to_string(),
+                };
+                out.push((context, shortened(explanation)));
             }
         }
+        // A nested rule relabels: the clause belongs to the rule that spells it out, not to whichever
+        // rule referred to that one.
         ClauseReport::Rule(rule) => {
             for child in &rule.checks {
-                collect_clause_explanations(child, out);
+                collect_clause_explanations(child, Some(rule.name), out);
             }
         }
         ClauseReport::Disjunctions(ors) => {
             for child in &ors.checks {
-                collect_clause_explanations(child, out);
+                collect_clause_explanations(child, rule_name, out);
             }
         }
         // Handled by `collect_unattributed_explanations`, which reaches blocks whether or not the rule
@@ -253,7 +270,7 @@ pub(super) fn write_unattributed_explanations(
     for each_rule in not_compliant {
         collect_unattributed_explanations(each_rule, &mut undecidable);
         if !placed_by_a_path(each_rule) {
-            collect_clause_explanations(each_rule, &mut unplaceable);
+            collect_clause_explanations(each_rule, None, &mut unplaceable);
         }
     }
 
