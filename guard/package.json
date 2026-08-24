@@ -33,9 +33,11 @@
     "ajv": "6.14.0",
     "picomatch": "2.3.2",
     "micromatch": "4.0.8",
-    "js-yaml": ">=3.14.2",
-    "brace-expansion": ">=1.1.13",
+    "js-yaml": "5.2.2",
+    "brace-expansion@<2": "1.1.18",
+    "brace-expansion@>=2 <3": "2.1.4",
     "minimatch": ">=3.1.5",
+    "tar": "7.5.21",
     "@babel/helpers": ">=7.26.10"
   },
   "devDependencies": {
