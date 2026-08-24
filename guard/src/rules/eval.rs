@@ -3016,15 +3016,30 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                     &when_context,
                     RecordType::RuleCondition(Outcome::Unevaluatable.to_status(role)),
                 )?;
+                // Which clause, and why. The sentence explains the *verdict* -- that this is a failure
+                // rather than an inapplicable rule -- and says nothing about the cause, so on its own it
+                // sends the reader looking for a clause it does not name. The parent branch appended the
+                // cause by interpolating the error, because there the answer was the error. Here the answer
+                // is a value and `Outcome` is `Copy`, so the cause is read back out of the record the line
+                // above has just closed, where the leaf that could not evaluate the clause wrote it.
+                //
+                // Dropping it was a real loss and not only in the console: the text was absent from the
+                // JSON as well, so nothing downstream could recover it. Found by differencing this branch
+                // against its base over the fixture corpus -- same exit code, three outputs with less in
+                // them.
+                let verdict =
+                    "The rule's condition could not be evaluated, so the rule fails rather \
+                               than being treated as not applicable";
+                let message = match resolver.reason_from_last_closed_record() {
+                    Some(reason) => format!("{verdict}: {reason}"),
+                    None => String::from(verdict),
+                };
                 resolver.end_record(
                     &context,
                     RecordType::RuleCheck(NamedStatus {
                         status: Outcome::Unevaluatable.to_status(role),
                         name: &rule.rule_name,
-                        message: Some(String::from(
-                            "The rule's condition could not be evaluated, so the rule fails rather \
-                             than being treated as not applicable",
-                        )),
+                        message: Some(message),
                     }),
                 )?;
                 return Ok(Outcome::Unevaluatable);

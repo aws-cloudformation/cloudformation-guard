@@ -357,6 +357,18 @@ pub(crate) enum RecordType<'value> {
 pub(crate) trait RecordTracer<'value> {
     fn start_record(&mut self, context: &str) -> Result<()>;
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
+
+    /// The explanation a clause recorded under the record closed most recently, if it recorded one.
+    ///
+    /// Read-only and read-back, which is the opposite of `record_deprecation` and deliberately so: a
+    /// deprecation notice must never influence a verdict, and this must never *be* a verdict. It supplies
+    /// text for a message that has already been decided.
+    ///
+    /// Defaults to `None` so a test double need not model the record tree. Only the recorder can answer it;
+    /// the scopes forward.
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        None
+    }
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {

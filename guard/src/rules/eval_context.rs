@@ -1401,7 +1401,54 @@ impl<'value> RecordTracker<'value> {
     }
 }
 
+/// The explanation a clause recorded, from anywhere under this record.
+///
+/// Depth-first and first-match, because the caller wants *a* reason and the shallowest one is the most
+/// specific available: a condition that could not be evaluated has exactly one clause underneath it that
+/// could not be evaluated.
+///
+/// Unary and binary comparisons only. Those are the two checks that carry the evaluator's own text for an
+/// operation it could not perform; a missing property or a dependent rule records a different kind of
+/// message, and one of those appearing here would mean the condition failed for a reason that is already
+/// reported elsewhere.
+fn recorded_clause_reason(record: &EventRecord<'_>) -> Option<String> {
+    match &record.container {
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(unary))) => {
+            if let Some(message) = &unary.value.message {
+                return Some(message.clone());
+            }
+        }
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(comparison))) => {
+            if let Some(message) = &comparison.message {
+                return Some(message.clone());
+            }
+        }
+        _ => {}
+    }
+
+    record.children.iter().find_map(recorded_clause_reason)
+}
+
 impl<'value> RecordTracer<'value> for RecordTracker<'value> {
+    /// The reason recorded under the record that was closed most recently.
+    ///
+    /// `end_record` pops the finished record and pushes it onto its parent's children, so immediately after
+    /// closing one it is the last child of the record still open above it. That is the only moment this is
+    /// meaningful, and the caller is `eval_rule` right after it closes a rule's condition.
+    ///
+    /// This exists because `Outcome` cannot carry it. The parent branch reported *why* a condition could
+    /// not be evaluated by interpolating the error into the rule's message, since the answer was the error.
+    /// Here the answer is a value, `Outcome` is `Copy`, and giving the variant a payload would break `Copy`
+    /// at forty-six sites and force `and` and `or` to choose between two reasons. The reason is already in
+    /// the record; this reads it back rather than routing it a second time.
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        self.events
+            .last()?
+            .children
+            .last()
+            .and_then(recorded_clause_reason)
+    }
+
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.events.push(EventRecord {
             context: context.to_string(),
@@ -1935,6 +1982,10 @@ impl Callable for ParseCharFunction {
 }
 
 impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        self.recorder.reason_from_last_closed_record()
+    }
+
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.recorder.start_record(context)
     }
@@ -1986,6 +2037,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
 }
 
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'eval, 'loc> {
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        self.parent.reason_from_last_closed_record()
+    }
+
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.parent.start_record(context)
     }
@@ -2139,6 +2194,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 }
 
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'loc, 'eval> {
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        self.parent.reason_from_last_closed_record()
+    }
+
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.parent.start_record(context)
     }

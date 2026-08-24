@@ -708,6 +708,21 @@ mod validate_tests {
              rather than leaving the reader to guess:\n{}",
             output
         );
+        // The sentence above explains the verdict and names no cause, so on its own it sends the reader
+        // looking for a clause it does not identify. The parent branch appended the cause by interpolating
+        // the error it was returning; here the answer is a value that cannot carry one, and the cause is
+        // read back out of the record instead.
+        //
+        // This assertion exists because the branch lost it and nothing noticed: same exit code, three
+        // outputs with the type error missing, and missing from the JSON as well, so nothing downstream
+        // could recover it. It was found by differencing this branch against its base over the fixture
+        // corpus rather than by any test.
+        assert!(
+            output.contains("Attempting EMPTY operation on type bool"),
+            "and it should name the clause and the type it could not evaluate, not only that it could \
+             not:\n{}",
+            output
+        );
         assert!(
             !output.contains("Parameterized Rule"),
             "this rule takes no parameters; the rule-level failure line used to announce every such \
