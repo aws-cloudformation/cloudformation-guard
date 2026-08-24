@@ -2651,8 +2651,16 @@ fn report_all_failed_clauses_for_rules<'value>(
                         .as_ref()
                         .map_or("".to_string(), |s| s.replace('\n', ";"));
 
+                    // Says what happened, which it did not. The text was hardcoded as "was not empty" and
+                    // this check is reached from both polarities, so a `!EMPTY` clause that failed *because
+                    // its selection was empty* reported that the selection was not empty -- the negation of
+                    // the reason. Harmless while nothing printed it; the console reporter now does, and a
+                    // section whose whole purpose is to say why must not ship the opposite of why.
+                    //
+                    // The clause selected nothing either way, so that is what the message says, and the
+                    // operator it failed is already in the context beside it.
                     let error_message = format!(
-                        "Check was not compliant as variable in context [{}] was not empty",
+                        "Check was not compliant as the query in context [{}] selected no values to test",
                         current.context
                     );
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(

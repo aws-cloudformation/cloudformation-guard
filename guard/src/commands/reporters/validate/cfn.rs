@@ -311,6 +311,14 @@ fn single_line(
         num_of_resources
     )?;
 
+    // What the per-resource output below is about to render, gathered before the loop consumes the map.
+    //
+    // `pprint_clauses` renders a clause only when it is in the resource's own set, so the union of those
+    // sets *is* the rendered set. Handing it to the unattributed section lets that section ask the only
+    // question that matters -- "did anything show this finding?" -- instead of predicting the answer from a
+    // path, which is what it did before and got wrong in both directions.
+    let rendered = super::common::rendered_contexts(by_resources.values());
+
     for (_resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
         let prefix = String::from("  ");
@@ -515,7 +523,11 @@ fn single_line(
     // query, which such a block does not have either. The result was a run that correctly exited 19
     // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
     // explanation was recorded and then dropped on the floor.
-    super::common::write_unattributed_explanations(writer, &failure_report.not_compliant)?;
+    super::common::write_unattributed_explanations(
+        writer,
+        &failure_report.not_compliant,
+        &rendered,
+    )?;
 
     Ok(())
 }

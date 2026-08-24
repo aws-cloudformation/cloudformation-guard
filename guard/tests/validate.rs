@@ -1674,6 +1674,85 @@ mod validate_tests {
         );
     }
 
+    /// A block whose query fails at the document root is still reported.
+    ///
+    /// Of the four ways a block report is built, `MissingBlockValue` is the one that sets `unresolved`, and
+    /// when the query fails at the root the value it traversed to has an empty path. So the per-resource
+    /// output had no bucket for it, and the collector that handles blocks skipped it because that collector
+    /// required `unresolved` to be absent. The run exited 19 with "Number of non-compliant resources 0" and
+    /// nothing else -- the everyday shape of the defect this section exists for, in block syntax, and it
+    /// took the author's own message down with it.
+    ///
+    /// The gate is now what the reporter actually rendered rather than what a path predicts it will.
+    #[test]
+    fn a_block_query_that_fails_at_the_document_root_still_says_why() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["one-bucket-no-parameters-template.yaml"])
+            .rules(vec!["block_query_at_the_document_root.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the block's query resolves to nothing, so the rule fails"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Parameters"),
+            "a run that exits 19 has to say which query it could not resolve:\n{}",
+            output
+        );
+    }
+
+    /// A pathless clause beside a placed one is reported, and the placed one is not reported twice.
+    ///
+    /// Both halves matter and they pull against each other. `pprint_clauses` gates each clause individually
+    /// on membership of the resource's set, so a clause over a literal is skipped there even though its rule
+    /// renders; a rule-level "was anything placed?" gate then hid it from the unattributed section as well,
+    /// and it appeared nowhere while the JSON carried its reason. Deciding per clause instead reintroduces a
+    /// different fault -- the evaluator emits two reports for one comparison it resolved one way and could
+    /// not resolve another, so the unresolved twin gets printed beside the entry already on screen. That is
+    /// what `test_validate_with_failing_join_and_compare_output` catches.
+    ///
+    /// The rendered-context set separates them: the twin shares a context with what was shown, a genuinely
+    /// unreported sibling does not.
+    #[test]
+    fn a_pathless_clause_beside_a_placed_one_is_reported_once() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["numeric-literal-unary-template.yaml"])
+            .rules(vec!["a_pathless_clause_beside_a_placed_one.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Resource = One"),
+            "the clause with a path is still rendered under its resource:\n{}",
+            output
+        );
+        assert!(
+            output.contains("EMPTY operation on type int"),
+            "and the clause without one is reported rather than dropped:\n{}",
+            output
+        );
+        assert_eq!(
+            output.matches("EMPTY operation on type int").count(),
+            1,
+            "exactly once:\n{}",
+            output
+        );
+    }
+
     /// Resources are reported in a fixed order.
     ///
     /// The reporter aggregated them into a `std::collections::HashMap` and iterated that to write the

@@ -8,7 +8,6 @@ use crate::rules::eval_context::{
     ValueUnResolved,
 };
 
-use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
     BlockCheck, ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
@@ -49,32 +48,81 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
     message.as_deref().filter(|text| !text.trim().is_empty())
 }
 
-/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
+/// Every context the per-resource output is going to render, given the resources it aggregated.
 ///
-/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
-/// the value it got to, and the per-resource output renders that. A block with no such value failed
-/// for a reason that is only in its message.
+/// `pprint_clauses` renders a clause only when it is in that resource's own set, so the union of those sets
+/// is exactly what gets shown. Collected as context strings rather than node identities because the
+/// comparison wanted downstream is "has this text already been shown", and two clause reports that share a
+/// context are the same finding to a reader even when they are separate nodes -- which is the case the
+/// evaluator produces for a comparison it resolved one way and could not resolve another.
+pub(super) fn rendered_contexts<'a, 'record: 'a, 'value: 'record>(
+    resources: impl Iterator<Item = &'a LocalResourceAggr<'record, 'value>>,
+) -> HashSet<String> {
+    resources
+        .flat_map(|resource| resource.clauses.iter())
+        .filter_map(|held| report_context(held.key))
+        .collect()
+}
+
+/// The context a report would be shown under, for the two kinds that carry one.
+fn report_context(report: &ClauseReport<'_>) -> Option<String> {
+    match report {
+        ClauseReport::Clause(GuardClauseReport::Unary(unary)) => {
+            Some(unary.context.trim().to_string())
+        }
+        ClauseReport::Clause(GuardClauseReport::Binary(binary)) => {
+            Some(binary.context.trim().to_string())
+        }
+        ClauseReport::Block(block) => Some(block.context.trim().to_string()),
+        ClauseReport::Rule(_) | ClauseReport::Disjunctions(_) => None,
+    }
+}
+
+/// Collect `(context, explanation)` for failed blocks the per-resource output did not render.
 ///
-/// Here rather than in one reporter because every reporter that groups findings by resource needs it,
-/// and for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so
-/// a reporter that only walks buckets exits 19 having said nothing. `cfn.rs` grew this first; `tf.rs`
-/// had the identical gap and no fixture reaching it.
+/// The gate is what the reporter actually showed, not what a path predicts it will show. It used to be
+/// `unresolved.is_none()`, on the reasoning that a block which failed while traversing a query keeps the
+/// value it got to and gets rendered through it. That is true only when the value has a path: of the four
+/// constructors of a block report, `MissingBlockValue` sets `unresolved: Some(..)`, and when the query fails
+/// at the *document root* the value it traversed to has an empty path. Such a block was then rendered by
+/// nobody and collected by nobody -- `pprint_clauses` had no bucket for it and this guard skipped it -- so a
+/// rule querying a top-level property against a CloudFormation template exited 19 saying nothing, taking the
+/// author's own `<< >>` message with it. That is the everyday shape of the very defect this section exists
+/// for, in block syntax.
+///
+/// Here rather than in one reporter because every reporter that groups findings by resource needs it, and
+/// for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so a reporter
+/// that only walks buckets exits 19 having said nothing. `cfn.rs` grew this first; `tf.rs` had the identical
+/// gap and no fixture reaching it.
 pub(super) fn collect_unattributed_explanations(
     clause: &ClauseReport<'_>,
+    rendered: &HashSet<String>,
     out: &mut Vec<(String, String)>,
 ) {
     match clause {
-        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
-            if let Some(explanation) = &blk.messages.error_message {
-                out.push((blk.context.to_string(), explanation.clone()));
+        ClauseReport::Block(blk) => {
+            let context = blk.context.trim().to_string();
+            if !rendered.contains(&context) {
+                // Both messages and both bounded, for the same reasons as the clause path: the author's
+                // `<< >>` text is the half a reader can act on, and a block whose query failed at the
+                // document root carries the whole document in its `error_message`.
+                let explanation = [
+                    non_empty_message(&blk.messages.custom_message),
+                    non_empty_message(&blk.messages.error_message),
+                ]
+                .iter()
+                .filter_map(|message| *message)
+                .map(shortened)
+                .collect::<Vec<_>>()
+                .join(" ");
+                if !explanation.is_empty() {
+                    out.push((context, explanation));
+                }
             }
         }
-        ClauseReport::Block(_) => {}
 
-        // Not here. Whether a *clause* is rendered is not a property of the clause: the per-resource loop
-        // matches a whole rule to a resource and renders all of it, so a clause with no path of its own is
-        // still rendered when a sibling has one. `write_unattributed_explanations` asks the question at the
-        // rule, where it can be answered.
+        // Not here. A clause is collected by `collect_clause_explanations`, which the caller reaches for
+        // every clause the reporter did not render rather than for every clause under an unrendered rule.
         ClauseReport::Clause(_) => {}
         ClauseReport::Rule(rule) => {
             // A rule that failed on its own condition has no clause findings underneath it, so the
@@ -94,43 +142,15 @@ pub(super) fn collect_unattributed_explanations(
                 }
             }
             for child in &rule.checks {
-                collect_unattributed_explanations(child, out);
+                collect_unattributed_explanations(child, rendered, out);
             }
         }
         ClauseReport::Disjunctions(ors) => {
             for child in &ors.checks {
-                collect_unattributed_explanations(child, out);
+                collect_unattributed_explanations(child, rendered, out);
             }
         }
     }
-}
-
-/// Whether anything under this report has a path the per-resource output can file it under.
-///
-/// Mirrors `populate_hierarchy_path_trees`, which keys a finding by the value it compared from and the
-/// value it compared to, and recurses through rules and disjunctions to reach the clauses and blocks that
-/// carry those values. Both console reporters then match a *rule* to a resource through those keys and
-/// render the whole rule, so one finding with a path carries its pathless siblings into the output with
-/// it. A report with no such finding anywhere under it is rendered nowhere.
-fn placed_by_a_path(report: &ClauseReport<'_>) -> bool {
-    if is_located(report.value_from()) || is_located(report.value_to()) {
-        return true;
-    }
-
-    match report {
-        ClauseReport::Rule(rule) => rule.checks.iter().any(placed_by_a_path),
-        ClauseReport::Disjunctions(ors) => ors.checks.iter().any(placed_by_a_path),
-        ClauseReport::Clause(_) | ClauseReport::Block(_) => false,
-    }
-}
-
-/// Whether a comparison has a value with a path the aggregation can key on.
-///
-/// A value the clause resolved to but which has no path is a literal or a `let` binding; a value the
-/// query traversed to but stopped at has the path it reached, which is empty when it stopped at the
-/// document root. Neither can be filed under a resource.
-fn is_located(value: Option<std::rc::Rc<PathAwareValue>>) -> bool {
-    matches!(value, Some(value) if !value.self_path().0.is_empty())
 }
 
 /// The longest clause explanation this section prints, in characters.
@@ -145,9 +165,13 @@ const LONGEST_CLAUSE_EXPLANATION: usize = 240;
 
 /// The explanation, cut to a length a console can show.
 ///
-/// Cut at whitespace, and that is what does the work rather than the length. An embedded value is
-/// serialised compactly and so contains no whitespace at all, which makes it one word: the cut lands in
-/// front of the whole blob instead of inside it, and what survives is the sentence naming the property.
+/// Cut at whitespace, so a word is never split in half. That also drops a *compactly serialised* value
+/// whole, because such a value contains no whitespace and is therefore one word -- but only such a value.
+/// A document containing a string with a space in it, which is any template with a `Description` or a tag
+/// value, has whitespace inside the blob and the cut lands there instead, so up to the cap of unrelated
+/// content can still appear. The length is what bounds the output; the whitespace rule only decides where
+/// within that bound the cut falls.
+///
 /// Cutting mid-word would also put half a word into the fixture output, where the spell checker reads it
 /// as a misspelling and fails the build. Half of "ServerSideEncryptionConfiguration" did exactly that.
 ///
@@ -167,11 +191,26 @@ fn shortened(explanation: &str) -> String {
     format!("{}...", kept.trim_end())
 }
 
-/// Collect `(context, explanation)` for every clause under a report the per-resource output will not
-/// render, which the caller has established.
+/// Collect `(context, explanation)` for every clause the per-resource output did not render.
 ///
-/// `error_message` first: it is the evaluator's account of what happened, where `custom_message` is the
-/// rule author's, and a clause that has one usually has both.
+/// Per clause, against the set of contexts the reporter showed. It used to be per *rule*, on the reasoning
+/// that one placed sibling renders the whole rule and carries its pathless siblings with it. That is false:
+/// `pprint_clauses` gates every clause individually on membership of the resource's own set, so a clause
+/// with no path is skipped there even when its rule renders -- and the rule-level gate then suppressed the
+/// only other place it could have appeared. A rule with one located finding and one pathless one showed the
+/// first and lost the second entirely, from the console and from the section both, while the JSON carried
+/// its reason.
+///
+/// Deciding per clause on its own would print a second entry for a clause already shown, because the
+/// evaluator emits two reports for one comparison it resolved one way and could not resolve another -- the
+/// `join` fixture has exactly that, and it is what fails when the rule-level gate is simply removed. The
+/// rendered-context set is what separates the two cases: the twin shares its context with the entry already
+/// on screen, and a genuinely unreported sibling does not.
+///
+/// Both messages, in the order a reader wants them: the rule author's `<< >>` text first when there is one,
+/// then the evaluator's account. `.or_else` on the two was dead code for the second half -- every clause arm
+/// records a non-empty `error_message`, so the author's message could never win and never appeared here at
+/// all, though the per-resource output prints both.
 ///
 /// Each entry is labelled with the rule it came from, because without that the section repeats itself for
 /// no reason a reader can see. Two rules that share a clause -- `seven-compliant-rules.guard` has three
@@ -182,6 +221,7 @@ fn shortened(explanation: &str) -> String {
 fn collect_clause_explanations(
     report: &ClauseReport<'_>,
     rule_name: Option<&str>,
+    rendered: &HashSet<String>,
     out: &mut Vec<(String, String)>,
 ) {
     match report {
@@ -190,30 +230,40 @@ fn collect_clause_explanations(
                 GuardClauseReport::Unary(unary) => (&unary.context, &unary.messages),
                 GuardClauseReport::Binary(binary) => (&binary.context, &binary.messages),
             };
-            if let Some(explanation) = non_empty_message(&messages.error_message)
-                .or_else(|| non_empty_message(&messages.custom_message))
-            {
-                let context = match rule_name {
-                    Some(name) => format!("{name}: {}", context.trim()),
-                    None => context.trim().to_string(),
+            let context = context.trim().to_string();
+            if rendered.contains(&context) {
+                return;
+            }
+            let explanation = [
+                non_empty_message(&messages.custom_message),
+                non_empty_message(&messages.error_message),
+            ]
+            .iter()
+            .filter_map(|message| *message)
+            .map(shortened)
+            .collect::<Vec<_>>()
+            .join(" ");
+            if !explanation.is_empty() {
+                let labelled = match rule_name {
+                    Some(name) => format!("{name}: {context}"),
+                    None => context,
                 };
-                out.push((context, shortened(explanation)));
+                out.push((labelled, explanation));
             }
         }
         // A nested rule relabels: the clause belongs to the rule that spells it out, not to whichever
         // rule referred to that one.
         ClauseReport::Rule(rule) => {
             for child in &rule.checks {
-                collect_clause_explanations(child, Some(rule.name), out);
+                collect_clause_explanations(child, Some(rule.name), rendered, out);
             }
         }
         ClauseReport::Disjunctions(ors) => {
             for child in &ors.checks {
-                collect_clause_explanations(child, rule_name, out);
+                collect_clause_explanations(child, rule_name, rendered, out);
             }
         }
-        // Handled by `collect_unattributed_explanations`, which reaches blocks whether or not the rule
-        // around them was placed.
+        // Handled by `collect_unattributed_explanations`, which asks the same question of a block.
         ClauseReport::Block(_) => {}
     }
 }
@@ -258,20 +308,20 @@ fn write_section(
 /// querying a top-level property against a CloudFormation template reaches it the same way, which is how
 /// four fixture pairs in `output-dir/rules_dir_against_data_dir.out` exited 19 without a reason.
 ///
-/// Asked once per top-level rule rather than per clause, because a clause's own path does not decide
-/// whether it is rendered -- one placed sibling renders the whole rule -- and asking again on a nested
-/// rule would collect the same clauses twice.
+/// Asked of every clause and block against `rendered`, the set of contexts the per-resource output showed.
+/// An earlier version asked once per rule and predicted the answer from the findings' paths, which was wrong
+/// in both directions: it suppressed a pathless clause whose rule happened to have a located sibling, and it
+/// could not see a block whose query failed at the document root.
 pub(super) fn write_unattributed_explanations(
     writer: &mut dyn Write,
     not_compliant: &[ClauseReport<'_>],
+    rendered: &HashSet<String>,
 ) -> crate::rules::Result<()> {
     let mut undecidable = Vec::new();
     let mut unplaceable = Vec::new();
     for each_rule in not_compliant {
-        collect_unattributed_explanations(each_rule, &mut undecidable);
-        if !placed_by_a_path(each_rule) {
-            collect_clause_explanations(each_rule, None, &mut unplaceable);
-        }
+        collect_unattributed_explanations(each_rule, rendered, &mut undecidable);
+        collect_clause_explanations(each_rule, None, rendered, &mut unplaceable);
     }
 
     write_section(writer, "Could not be evaluated:", undecidable)?;

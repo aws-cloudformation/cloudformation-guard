@@ -248,6 +248,10 @@ fn single_line(
         "Evaluating data {} against rules {}",
         data_file, rules_file
     )?;
+    // The same question the CloudFormation reporter asks, gathered before the loop consumes the map: what
+    // is the per-resource output about to render? See `rendered_contexts`.
+    let rendered = super::common::rendered_contexts(by_resources.values());
+
     let num_of_resources = format!("{}", by_resources.len()).bold();
     writeln!(
         writer,
@@ -444,7 +448,11 @@ fn single_line(
     // fixture reaching it because the inputs that produce such a finding used to fail earlier as an
     // unresolved-variable error. A clause that failed *because it had nothing to compare* points at no
     // path, so it lands in no resource bucket and the loop above cannot render it.
-    super::common::write_unattributed_explanations(writer, &failure_report.not_compliant)?;
+    super::common::write_unattributed_explanations(
+        writer,
+        &failure_report.not_compliant,
+        &rendered,
+    )?;
 
     Ok(())
 }
