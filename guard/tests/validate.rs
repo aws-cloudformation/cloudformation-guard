@@ -1628,17 +1628,24 @@ mod validate_tests {
     /// such a sibling a second time, with the whole document as its "value traversed to" —
     /// `test_validate_with_failing_join_and_compare_output` is the fixture that catches it, and it does.
     ///
-    /// The data file has to be a CloudFormation template, and not because the rule reads it — the rule
-    /// never looks at the data at all. It is the reporter that has to be the resource-grouping one, since
-    /// that is the reporter with buckets to walk and therefore the one that had nowhere to put a finding
-    /// belonging to no resource.
-    #[test]
-    fn a_failing_clause_that_belongs_to_no_resource_still_says_why() {
+    /// The data file matters only in that it has to reach a resource-grouping reporter — the rule never
+    /// looks at the data at all. Those reporters are the ones with buckets to walk, and therefore the ones
+    /// that had nowhere to put a finding belonging to no resource.
+    ///
+    /// Both of them, which is why this is two cases. The collector lives in `common.rs` and `tf.rs` calls
+    /// it on the same terms as `cfn.rs`, so a Terraform plan reaches the same code by a different route.
+    /// Every defect this branch fixed in `cfn.rs` was present in `tf.rs` too and unnoticed there, because
+    /// the fixture corpus had no plan document reaching any of them — an untested second caller of shared
+    /// code is how that happened, and one fixture is what stops it happening again.
+    #[rstest::rstest]
+    #[case::cloudformation("numeric-literal-unary-template.yaml")]
+    #[case::terraform("terraform-plan.json")]
+    fn a_failing_clause_that_belongs_to_no_resource_still_says_why(#[case] data_file: &str) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
         let status_code = ValidateTestRunner::default()
-            .data(vec!["numeric-literal-unary-template.yaml"])
+            .data(vec![data_file])
             .rules(vec!["unary_on_a_numeric_literal.guard"])
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
