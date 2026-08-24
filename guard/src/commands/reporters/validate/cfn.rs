@@ -347,10 +347,18 @@ fn single_line(
                 _ => unreachable!(),
             };
 
+            // A whole path segment, not a prefix of one. `starts_with` matched `/chk` against
+            // `/chk2/...`, so a resource whose only findings came from rule `chk2` rendered an empty
+            // `Rule = chk { ALL { } }` block as well -- and once the unattributed section existed, `chk`
+            // could appear under a resource while its own finding printed as belonging to no resource.
+            // Paths are `/<rule>/...`, so the segment ends at the next separator or at the end.
             let range = resource
                 .paths
                 .range(rule_name.clone()..)
-                .take_while(|p| p.starts_with(&rule_name))
+                .take_while(|p| {
+                    p.strip_prefix(&rule_name)
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                })
                 .count();
             if range > 0 {
                 struct ErrWriter<'w, 'b> {

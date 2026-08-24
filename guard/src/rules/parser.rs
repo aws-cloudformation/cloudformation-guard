@@ -10,7 +10,7 @@ use nom::character::complete::{alpha1, space1};
 use nom::character::complete::{anychar, digit1, one_of};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{all_consuming, cut, peek};
-use nom::combinator::{map, value};
+use nom::combinator::{map, recognize, value};
 use nom::combinator::{map_res, opt};
 use nom::error::context;
 use nom::error::ErrorKind;
@@ -212,8 +212,12 @@ fn keyword<'a>(word: &'static str) -> impl Fn(Span<'a>) -> IResult<'a, Span<'a>,
 }
 
 pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
-    let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
-        s.fragment().parse::<i64>().map(|i| Value::Int(-i))
+    // Sign and digits together, because negating afterwards caps the magnitude at `i64::MAX` and
+    // `i64::MIN` is one larger. `-9223372036854775808` was rejected while `-9223372036854775807` and
+    // `9223372036854775807` were accepted -- a single expressible value that the parser refused. Loud, so
+    // never a wrong verdict, and one fewer thing an author has to discover.
+    let negative = map_res(recognize(preceded(tag("-"), digit1)), |s: Span| {
+        s.fragment().parse::<i64>().map(Value::Int)
     });
     let positive = map_res(digit1, |s: Span| {
         s.fragment().parse::<i64>().map(Value::Int)
@@ -614,10 +618,16 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  basic_cmp                  = "==" / ">=" / "<=" / ">" / "<"
 ///  other_operators            = "IN" / "EXISTS" / "EMPTY"
 ///  not_other_operators        = not_keyword 1*SP other_operators
-///  not_cmp                    = "!=" / not_other_operators / "NOT_IN"
-///  special_operators          = "KEYS" 1*SP ("==" / other_operators / not_other_operators)
+///  not_cmp                    = "!=" / not_other_operators
 ///
-///  cmp                        = basic_cmp / other_operators / not_cmp / special_operators
+///  cmp                        = basic_cmp / other_operators / not_cmp
+///
+///  Two productions came out of this grammar rather than into the parser, because neither was ever
+///  accepted and this block is normative: `NOT_IN` as a spelling of `not in`, and `KEYS` as a
+///  clause-level operator. `Resources.X NOT_IN ["a","b"]` and `Resources.X KEYS == /^a/` are both
+///  rejected -- `not in` is the spelling that works, and `keys ==` is valid only inside a filter, where
+///  `map_keys_match` handles it. Nothing in `docs/` or the README claims either form, so the grammar was
+///  the only thing saying they existed.
 ///
 ///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
 ///  rule_clause                = rule_name / not_keyword rule_name / clause
@@ -1456,12 +1466,17 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
     // we peek to preserve the input, if it is or, space+newline or comment
     // we return
     //
+    // `}` is in the set, and it was not. Anything not peeked here falls to the `cut(custom_message)`
+    // below, whose Failure escapes the enclosing alternation -- so `rule b { a }` was rejected with an
+    // error naming `}` rather than the reference, while the same rule written over three lines parsed.
+    // Every other clause form works inline, which made this specific to rule references.
     let do_return = remaining.is_empty()
         || matches!(
             peek(alt((
                 preceded(space0, value((), newline)),
                 preceded(space0, value((), comment2)),
                 preceded(space0, value((), char('{'))),
+                preceded(space0, value((), char('}'))),
                 value((), or_join),
             )))(remaining),
             Ok((_same, _ignored))

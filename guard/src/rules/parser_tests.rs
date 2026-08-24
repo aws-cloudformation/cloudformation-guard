@@ -5099,3 +5099,86 @@ fn an_operator_that_prefixes_an_identifier_is_not_an_operator() -> Result<(), Er
     }
     Ok(())
 }
+
+/// The integer boundary is exact in both directions.
+///
+/// `parse_int_value` parsed the digits of a negative literal and negated afterwards, which caps the
+/// magnitude at `i64::MAX` -- so `i64::MIN` was the one expressible value the parser refused. Loud, so it
+/// never produced a wrong verdict, and one fewer thing for an author to discover. `i64::MAX + 1` is still
+/// rejected, which is the half that must not change: a wrap there would compare the wrong number.
+#[test]
+fn the_integer_literal_boundary_is_exact() -> Result<(), Error> {
+    for accepted in [
+        "-9223372036854775808",
+        "-9223372036854775807",
+        "9223372036854775807",
+        "0",
+        "-0",
+    ] {
+        let rules = format!("rule r {{\n  Resources.X == {accepted}\n}}");
+        assert!(
+            rules_file(from_str2(&rules))?.is_some(),
+            "an expressible integer must parse: {}",
+            accepted
+        );
+    }
+
+    for rejected in ["9223372036854775808", "-9223372036854775809"] {
+        let rules = format!("rule r {{\n  Resources.X == {rejected}\n}}");
+        assert!(
+            rules_file(from_str2(&rules)).is_err(),
+            "an integer that does not fit must be rejected rather than wrapped: {}",
+            rejected
+        );
+    }
+    Ok(())
+}
+
+/// A rule reference may end its line or its block.
+///
+/// `rule_clause` peeked for newline, comment, `{` and `or`, and anything else fell to a `cut` whose Failure
+/// escaped the enclosing alternation. So `rule b { a }` was rejected -- with an error naming `}` rather than
+/// the reference -- while the same rule written over three lines parsed. Every other clause form works
+/// inline, which made this specific to rule references.
+#[test]
+fn a_rule_reference_can_end_its_block() -> Result<(), Error> {
+    for rules in [
+        "rule a { Resources EXISTS }\nrule b { a }",
+        "rule a { Resources EXISTS }\nrule b {\n  a\n}",
+        "rule a { Resources EXISTS }\nrule b { !a }",
+        "rule a { Resources EXISTS }\nrule b when a { Resources EXISTS }",
+    ] {
+        assert!(
+            rules_file(from_str2(rules))?.is_some(),
+            "a rule reference is a clause like any other: {}",
+            rules
+        );
+    }
+    Ok(())
+}
+
+/// The two forms the grammar comment used to document but the parser never accepted.
+///
+/// Pinned so the ABNF and the code cannot drift apart again in that direction: if either spelling is ever
+/// implemented, this test is where the grammar comment gets updated with it.
+#[test]
+fn the_two_forms_the_grammar_no_longer_claims_are_still_rejected() -> Result<(), Error> {
+    for rejected in [
+        "rule r {\n  Resources.X NOT_IN [\"a\", \"b\"]\n}",
+        "rule r {\n  Resources.X KEYS == /^a/\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rejected)).is_err(),
+            "not accepted, and the grammar no longer says otherwise: {}",
+            rejected
+        );
+    }
+
+    // The spellings that do work, so this test fails if the intent is ever inverted.
+    assert!(rules_file(from_str2(
+        "rule r {\n  Resources.X not in [\"a\", \"b\"]\n}"
+    ))?
+    .is_some());
+    assert!(rules_file(from_str2("rule r {\n  Resources[ keys == /^a/ ] !EMPTY\n}"))?.is_some());
+    Ok(())
+}

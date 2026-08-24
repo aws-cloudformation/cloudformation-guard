@@ -158,10 +158,16 @@ pub(super) fn collect_unattributed_explanations(
 /// A clause's `error_message` embeds the value its query traversed to, and for a query that resolved to
 /// nothing at the document root that value is the whole document -- tens of kilobytes on one line, which
 /// is not a report. The reason is at the front of the message, so a prefix carries it. Chosen to hold the
-/// longest whole message in the fixture corpus, the 196-character `EMPTY`-on-an-int explanation.
+/// longest whole message in the fixture corpus.
 ///
 /// Nothing is lost by it: the JSON and YAML reports print the message untruncated and always have.
-const LONGEST_CLAUSE_EXPLANATION: usize = 240;
+///
+/// 320 because the cap has to clear the longest explanation that carries no embedded value, and clipping
+/// one of those is a real loss rather than a saving. Measured over every rule/data pair in the fixture
+/// corpus, that is 261 characters: the advice a failed comparison against an empty selection gives, which
+/// ends by telling the author to guard the clause with `when <variable> !empty { ... }`. At 240 the
+/// instruction was cut off mid-sentence. An embedded document has no length to clear, so any cap bounds it.
+const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 
 /// The explanation, cut to a length a console can show.
 ///
