@@ -85,7 +85,8 @@
     "picomatch": ">=2.3.2",
     "minimatch": ">=3.1.5",
     "@babel/helpers": ">=7.26.10",
-    "@eslint/plugin-kit": ">=0.3.4"
+    "@eslint/plugin-kit": ">=0.3.4",
+    "undici@<6.28.0": "6.28.0"
   },
   "dependencies": {
     "@actions/core": "2.0.3",
