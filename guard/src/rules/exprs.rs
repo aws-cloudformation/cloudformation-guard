@@ -337,11 +337,8 @@ fn collect_conjunctions_capture_names<'value, T>(
     }
 }
 
-/// Only `Filter` and `MapKeyFilter` names count, because those are the positions that populate a
-/// capture.
-///
-/// `AllValues` and `AllIndices` carry an `Option<String>` of the same shape and are collected through
-/// their own arms, not here.
+/// Every query part that populates a capture counts: `Filter`, `MapKeyFilter`, and a named `AllValues`
+/// or `AllIndices`.
 ///
 /// A `Filter` directly after a wildcard used to be skipped, because the wildcard expanded the map
 /// before the filter ran and the name was dropped rather than captured. Now that the filter runs at the
@@ -349,6 +346,20 @@ fn collect_conjunctions_capture_names<'value, T>(
 /// it out reopened the cross-iteration fallthrough for exactly the spelling that had just been fixed:
 /// `Properties.Config[*][ cfg | Enabled == true ]` in a per-resource block, read as `%cfg`, went back to
 /// answering with a previous resource's key at exit 0.
+///
+/// `AllValues` and `AllIndices` were omitted on the reading that their `Option<String>` was collected
+/// through arms of their own. There are no such arms; this is the only walk over query parts. Both
+/// arms call `add_variable_capture_key` when the name is `Some` and the value under them is a map, so a
+/// name written there is a capture on the same footing as a filter's.
+///
+/// Omitting them left an entire spelling undeclared rather than an unusual corner of one. `all_indices`
+/// is the first branch of `predicate_or_index` and it accepts a bare `var_name`, so the pipe-less
+/// `Properties.Tags[ tk ]` parses to `AllIndices(Some("tk"))` and never reaches `Filter` at all. Read as
+/// `%tk` from a sibling `when` block that only a resource without `Tags` entered, it answered with a
+/// previous resource's key: that resource alone exited 255, a compliant resource ahead of it exited 0,
+/// and the reverse order exited 255. Document order decided the verdict and the leaking order was the
+/// one that passed. Pre-existing rather than introduced by scoping capture names -- `origin/main` at
+/// ef17f36 gives the same three exit codes -- because no scope ever held the name to begin with.
 ///
 /// One shape still cannot capture: a wildcard over a *list*, where `accumulate` has an index rather
 /// than a key. A name declared there is counted anyway and resolves empty rather than erroring, which
@@ -374,11 +385,13 @@ fn collect_query_capture_names<'value, 'loc: 'value>(
                 collect_let_value_capture_names(&clause.compare_with, into);
             }
 
-            QueryPart::This
-            | QueryPart::Key(_)
-            | QueryPart::Index(_)
-            | QueryPart::AllValues(_)
-            | QueryPart::AllIndices(_) => {}
+            QueryPart::AllValues(name) | QueryPart::AllIndices(name) => {
+                if let Some(name) = name {
+                    into.insert(name.as_str());
+                }
+            }
+
+            QueryPart::This | QueryPart::Key(_) | QueryPart::Index(_) => {}
         }
     }
 }

@@ -1518,6 +1518,147 @@ fn a_block_still_resolves_a_variable_it_does_not_declare_as_a_capture() -> Resul
     Ok(())
 }
 
+/// A capture written as a bare name in brackets is declared, so an iteration that did not make it
+/// answers empty instead of reading a neighbour's key.
+///
+/// `Properties.Tags[ tk ]` does not parse to `QueryPart::Filter`. `all_indices` is the first branch of
+/// `predicate_or_index` and it accepts a bare `var_name`, so the pipe-less spelling lands on
+/// `AllIndices(Some("tk"))` -- an arm that captures the entry's key at retrieval just as a filter does.
+/// `collect_query_capture_names` read names out of `Filter` and `MapKeyFilter` only, so no block
+/// declared `tk`, `BlockScope::resolve_variable` deferred to its parent, and the parent held the keys
+/// earlier iterations had merged up.
+///
+/// The nested `when` is what lets an iteration capture nothing without failing: `BucketB` has no
+/// `Tags`, so the capturing clause never runs, and `BucketB` is the only resource that reaches the
+/// clause reading `%tk`.
+///
+/// Three documents in one test because order independence is the property, and the leaky order was the
+/// one that passed. `BucketB` alone ended the run at 255, `BucketA` then `BucketB` exited 0 with
+/// `BucketB` credited with `BucketA`'s key, and the reverse order was 255 again. Adding a compliant
+/// resource is what made the non-compliant one pass, which is why a rule of this shape looks correct
+/// when it is tested one resource at a time.
+#[test]
+fn a_bare_name_capture_does_not_leak_across_iterations_of_a_block() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule tag_named {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Tags exists {
+                Properties.Tags[ tk ] !empty
+            }
+            when Properties.Other exists {
+                some %tk == "Name"
+            }
+        }
+    }
+    "#,
+    )?;
+
+    // The names order the iteration, so the third document spells the same two resources as
+    // `ABucketB` and `ZBucketA` to put the non-compliant one first.
+    let arrangements = [
+        (
+            "the non-compliant bucket alone",
+            r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+        ),
+        (
+            "the compliant bucket first",
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Tags:
+                Name: alpha
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+        ),
+        (
+            "the compliant bucket second",
+            r#"
+        Resources:
+          ABucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+          ZBucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Tags:
+                Name: alpha
+        "#,
+        ),
+    ];
+
+    for (arrangement, document) in arrangements {
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            Status::FAIL,
+            "with {}, a bucket that captured no key under `tk` must not pass on another bucket's",
+            arrangement
+        );
+    }
+
+    Ok(())
+}
+
+/// A name that appears nowhere as a capture stays an unresolved-variable error.
+///
+/// The control on the test above, and it asserts behaviour that must not change rather than behaviour
+/// that does: `tk` is declared by `Properties.Tags[ tk ]`, so resolving it to nothing fails the clause
+/// reading it, while `absent` is a typo or a name belonging to another rule. Collapsing the second into
+/// the first would turn an unwritable rule into a quiet FAIL that reads like a finding about the
+/// template.
+#[test]
+fn a_capture_name_that_appears_nowhere_is_still_an_unresolved_variable() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule tag_named {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Tags exists {
+                Properties.Tags[ tk ] !empty
+            }
+            when Properties.Other exists {
+                some %absent == "Name"
+            }
+        }
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    let error = eval_rules_file(&rules_file, &mut scope, None)
+        .expect_err("a name no filter declares must not resolve to an empty selection");
+    assert!(
+        error.to_string().contains("absent"),
+        "the error has to name the variable it could not resolve, got: {}",
+        error
+    );
+
+    Ok(())
+}
+
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
