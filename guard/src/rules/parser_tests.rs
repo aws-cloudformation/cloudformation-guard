@@ -5033,13 +5033,16 @@ rule r {
         "a when block inside a rule body is the third block parser, and it must reject the tag as well"
     );
 
-    // The legitimate form of each, so none of the three can pass by rejecting whatever it is handed.
+    // The legitimate form of each, so none of the three can pass by rejecting whatever it is handed. The
+    // body here starts on the `<<` line and closes on a line of its own, which is the permissive half of
+    // the block form: entering block mode does not require `<<` to be the last thing on its line.
     let type_block_message = r###"
 rule r {
     AWS::S3::Bucket {
         Properties.Encrypted == true
         << Violation: not encrypted
-           Fix: set Encrypted to true >>
+           Fix: set Encrypted to true
+        >>
     }
 }
 "###;
@@ -5068,6 +5071,140 @@ rule r {
     assert!(
         rules_file(from_str2(nested_when_message))?.is_some(),
         "a closed message inside a nested when block is ordinary and must still parse"
+    );
+    Ok(())
+}
+
+/// A `>>` that is not a closing tag does not close a message.
+///
+/// Both earlier bounds on this search read a `>>` as a terminator wherever they found one, and differed only
+/// in where they stopped looking. That is what a comment defeats: a `>>` inside a comment is not a closing
+/// tag, and no bound expressed in braces or in `<<` can tell the difference. Bounding at the next `<<` let a
+/// comment in a *later* rule close a forgotten tag, which exited 0 against a template that later rule
+/// violates and left it out of the parse tree entirely -- the original silent-deletion defect. A comment at
+/// the end of the *same* block defeats both bounds at once, because neither a `}` line nor a second `<<`
+/// sits between the two tags, and both exited 0 on it.
+///
+/// The terminator is now a line whose trimmed text is exactly `>>`, so a `>>` with anything else on its line
+/// is text rather than a tag, and both shapes are rejected.
+#[test]
+fn a_stray_closing_tag_does_not_close_a_message() -> Result<(), Error> {
+    // The `>>` sits in a comment in a later rule, with no second `<<` anywhere to bound the search.
+    let comment_in_a_later_rule = r###"
+rule one {
+    Resources.One.Type == "AWS::S3::Bucket" << closing tag forgotten
+}
+rule two {
+    Resources.One.Properties.Encrypted == true
+    # see the runbook for escalation >>
+}
+rule three {
+    Resources.One.Properties.Public == true
+}
+"###;
+    assert!(
+        rules_file(from_str2(comment_in_a_later_rule)).is_err(),
+        "a >> inside a comment is not a closing tag, whichever rule the comment belongs to"
+    );
+
+    // The same `>>`, in a comment at the end of the block that holds the forgotten tag. No `}` line and no
+    // second `<<` lies between the two, which is why neither of the earlier bounds saw anything wrong.
+    let trailing_comment_in_the_same_block = r###"
+rule one {
+    Resources.One.Type == "AWS::S3::Bucket" << forgot
+    Resources.One.Properties.Encrypted == true
+    # trailing comment with >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(trailing_comment_in_the_same_block)).is_err(),
+        "a trailing comment carrying >> must not close a tag forgotten earlier in the same block"
+    );
+
+    // The other direction, and the reason the test is "the line is exactly `>>`" rather than "the line
+    // contains `>>`": a body line may hold a `>>` of its own. Every earlier version closed the message at
+    // the first `>>` it found, so this file did not parse.
+    let closing_tag_shares_the_body_with_another = r###"
+rule r {
+    Resources.One.Properties.Public == false
+    <<
+      Violation: buckets must not be public
+      Fix: rewrite A >> B as a redirect
+    >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(closing_tag_shares_the_body_with_another))?.is_some(),
+        "a >> inside the body is text: the terminator is a line that is exactly >>, not one containing it"
+    );
+    Ok(())
+}
+
+/// Both message forms parse, and only those two.
+///
+/// The grammar now treats them differently, so each needs pinning. Of the 233 messages in the AWS rule
+/// registry and this repository's fixtures, 231 are block form with the closing `>>` alone on its line and 2
+/// are inline with both tags on one line; nothing follows `>>` on its line in any of them.
+///
+/// The last assertion is the cost of closing the defect, recorded on purpose so that it is not reopened by
+/// loosening the terminator. A block body whose `>>` shares a line with body text cannot be admitted,
+/// because the swallowed clause of an intra-block forgotten tag is itself a line ending in `>>`: accepting
+/// one accepts the other. No message in the corpus is written that way.
+#[test]
+fn the_inline_and_block_message_forms_are_both_accepted() -> Result<(), Error> {
+    let inline = r###"
+rule r {
+    Resources.One.Properties.Public == false << buckets must not be public >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(inline))?.is_some(),
+        "a message with both tags on one line is one of the two forms that occur"
+    );
+
+    let empty_spaced = r###"
+rule r {
+    Resources.One.Properties.Public == false << >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(empty_spaced))?.is_some(),
+        "an empty inline message is still a closed message"
+    );
+
+    let empty_tight = r###"
+rule r {
+    Resources.One.Properties.Public == false <<>>
+}
+"###;
+    assert!(
+        rules_file(from_str2(empty_tight))?.is_some(),
+        "an empty inline message with no space between the tags is closed too"
+    );
+
+    let block = r###"
+rule r {
+    Resources.One.Properties.Public == false
+    <<
+      Violation: buckets must not be public
+    >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(block))?.is_some(),
+        "a block message with the closing tag alone on its line is the shape 231 of the 233 use"
+    );
+
+    let closing_tag_not_alone_on_its_line = r###"
+rule r {
+    Resources.One.Properties.Public == false
+    << Violation: buckets must not be public
+       Fix: set Public to false >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(closing_tag_not_alone_on_its_line)).is_err(),
+        "a block body whose >> shares a line with body text is rejected: admitting it admits the swallow"
     );
     Ok(())
 }

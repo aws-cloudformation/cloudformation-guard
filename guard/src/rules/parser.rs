@@ -854,50 +854,93 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     ))(input)
 }
 
-/// How far a message body may reach: to the next `<<`, or to the end of the input.
+/// The message text between `<<` and `>>`, delimited by the grammar the language actually uses.
 ///
-/// A second message opener inside what is being read as a message body means the first one was never
-/// closed. That is the whole rule, and it is the one that holds in every scope: the next `<<` may belong to
-/// the next clause of the same rule, or to a clause of some later rule, and either way the `>>` after it
-/// closes *that* message rather than this one.
+/// Two forms occur. A census of all 233 messages in the AWS rule registry and this repository's fixtures
+/// found nothing else: 231 are block form, with the closing `>>` alone on its own line, and 2 are inline,
+/// with both tags on one line. In none of the 233 does anything follow `>>` on its line. So a `>>` on the
+/// opening line closes the message, and otherwise the message ends at the first later line whose trimmed
+/// text is exactly `>>`. A body with no terminator raises the error this function has always raised when
+/// there is no `>>` at all.
 ///
-/// Two narrower bounds were tried and both were wrong in both directions. Stopping at a line whose first
-/// token is `}` or `rule` catches a forgotten tag whose next `>>` lives in a later rule, and misses the one
-/// whose next `>>` is the very next clause of the same rule -- so
+/// The history is worth carrying, because two earlier versions of this each looked right and each was
+/// wrong. Upstream searched all remaining input for `>>`. One forgotten closing tag therefore consumed
+/// every following rule as message text and those rules ceased to exist: a file whose second rule the
+/// template violated reported PASS at exit 0, with no diagnostic on any channel.
+///
+/// The first fix bounded the search at the first line whose first token is `}` or `rule`. It misses the same
+/// defect one scope in, because when the next `>>` belongs to the next clause of the same block, no such
+/// line sits between the two tags:
 ///
 /// ```text
-/// rule r {
-///     Resources.One.Type == "AWS::S3::Bucket" << oops
+/// rule one {
+///     Resources.One.Type == "AWS::S3::Bucket" << closing tag forgotten
 ///     Resources.One.Properties.Encrypted == true << must be encrypted >>
 /// }
 /// ```
 ///
-/// still swallowed the encryption check and reported PASS at exit 0. In the other direction it rejected a
-/// legitimate message: `}` at the start of a line is what a body looks like when it quotes example JSON,
-/// which is exactly what a "Fix: add one, for example ..." message does.
+/// That exited 0 with the encryption check deleted. It also rejected a legitimate body quoting example
+/// JSON, because such a body has a line starting with `}`.
 ///
-/// Measured over the 233 messages in the AWS rule registry and this repository's fixtures: none contains a
-/// second `<<`, none has a line starting `}`, and none has a line starting `rule`. All three bounds are
-/// equally safe against real input; only this one is right about which inputs are broken.
-fn message_bound(fragment: &str) -> usize {
-    fragment.find("<<").unwrap_or(fragment.len())
-}
-
-/// The message text between `<<` and `>>`.
+/// The second bounded at the next `<<`, which fixed both of those and broke a third case. With no second
+/// `<<` in the file the search ran on to a `>>` inside a *comment* and closed the message there:
 ///
-/// Bounded, and that is the whole of the fix. The search used to run to the end of the file, so one
-/// forgotten `>>` consumed every rule up to the *next* rule's closing tag as message text and those rules
-/// ceased to exist. A file whose second rule the template violated reported PASS at exit 0 -- no finding, no
-/// diagnostic on any channel, and a parse tree containing only the first rule with the rest of the file
-/// sitting inside its custom message. A typo deleted a check and the run called the template compliant.
+/// ```text
+/// rule one {
+///     Resources.One.Type == "AWS::S3::Bucket" << closing tag forgotten
+/// }
+/// rule two {
+///     Resources.One.Properties.Encrypted == true
+///     # see the runbook for escalation >>
+/// }
+/// ```
 ///
-/// Bounding at the enclosing construct rather than at the line, because messages are legitimately
-/// multi-line: 231 of the 232 in the AWS rule registry and this repository's fixtures span lines. None of
-/// the 232 contains a line starting with `}` or `rule`, so the bound costs nothing that exists and turns the
-/// silent deletion into the error this function already raises when there is no `>>` at all.
+/// That exited 0 against a template rule two violates, with rule two absent from the parse tree -- the
+/// original defect, reintroduced. A comment carrying `>>` at the end of the same block defeats both bounds
+/// at once, since neither a `}` line nor a second `<<` sits between the tags, and it exited 0 under each:
+///
+/// ```text
+/// rule one {
+///     A == 1 << forgot
+///     B == 2
+///     # trailing comment with >>
+/// }
+/// ```
+///
+/// This is not a third heuristic, which is why it replaces both bounds instead of combining them. Each
+/// bound inferred document structure from a token that may legitimately sit inside a message body, so each
+/// had a shape it read wrongly in both directions, and their intersection still admits the fourth shape
+/// above. A terminator line infers nothing: it is what a closing tag looks like in 231 of the 233 messages
+/// that exist. All four shapes are now rejected for one reason -- the opening line holds no `>>` and no
+/// later line is exactly `>>`.
+///
+/// One shape that used to parse no longer does: a block body whose closing `>>` shares its line with body
+/// text, as in `<< Violation: X` and then `Fix: Y >>`. No message in the corpus is written that way, and it
+/// cannot be admitted without reopening the defect, because the swallowed clause in the first example above
+/// is itself a line ending in `>>`. In exchange, a brace in a body is now just text, so the JSON-quoting
+/// message that the first bound rejected parses.
 fn extract_message(input: Span) -> IResult<Span, &str> {
-    let searchable = &input.fragment()[..message_bound(input.fragment())];
-    match searchable.find(">>") {
+    let fragment = input.fragment();
+    let opening_line_end = fragment.find('\n').unwrap_or(fragment.len());
+
+    let closing_tag = fragment[..opening_line_end].find(">>").or_else(|| {
+        let mut cursor = opening_line_end;
+        while cursor < fragment.len() {
+            let line_start = cursor + 1;
+            let line_end = fragment[line_start..]
+                .find('\n')
+                .map_or(fragment.len(), |offset| line_start + offset);
+            let line = &fragment[line_start..line_end];
+            let body = line.trim_start();
+            if body.trim_end() == ">>" {
+                return Some(line_start + (line.len() - body.len()));
+            }
+            cursor = line_end;
+        }
+        None
+    });
+
+    match closing_tag {
         None => Err(nom::Err::Failure(ParserError {
             span: input,
             kind: ErrorKind::Tag,
