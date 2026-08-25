@@ -15,7 +15,7 @@ jobs:
       run:
         working-directory: ./guard
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v3
       - uses: actions/setup-node@v4.0.2
         with:
           node-version: '20'
@@ -28,7 +28,7 @@ jobs:
       run:
         working-directory: ./guard
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v3
       - uses: actions/setup-node@v4.0.2
         with:
           node-version: '20'

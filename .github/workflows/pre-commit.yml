@@ -20,7 +20,7 @@ jobs:
   run-unit-tests-and-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Run unit tests & linters
         uses: actions/setup-python@v5
         with:
@@ -34,7 +34,7 @@ jobs:
   validate-integ-test-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - run: sudo apt-get install pre-commit
       - run: pre-commit install
       - run: echo >> ./guard/resources/validate/data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml
@@ -50,7 +50,7 @@ jobs:
   test-integ-test-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - run: sudo apt-get install pre-commit
       - run: pre-commit install
       - run: echo >> ./pre_commit_hooks_tests/resources/s3_bucket_logging_enabled.guard
@@ -66,7 +66,7 @@ jobs:
   validate-integ-test-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - run: brew install pre-commit
       - run: pre-commit install
       - run: echo >> ./guard/resources/validate/data-dir/advanced_regex_negative_lookbehind_non_compliant.yaml
@@ -82,7 +82,7 @@ jobs:
   test-integ-test-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - run: brew install pre-commit
       - run: pre-commit install
       - run: echo >> ./pre_commit_hooks_tests/resources/s3_bucket_logging_enabled.guard
@@ -98,7 +98,7 @@ jobs:
   validate-integ-test-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10.0'
@@ -120,7 +120,7 @@ jobs:
   test-integ-test-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10.0'
