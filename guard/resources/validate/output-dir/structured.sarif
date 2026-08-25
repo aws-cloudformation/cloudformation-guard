@@ -25,7 +25,7 @@
       ],
       "results": [
         {
-          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+          "ruleId": "advanced_regex_negative_lookbehind_rule.guard/default",
           "level": "error",
           "message": {
             "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "
@@ -45,7 +45,7 @@
           ]
         },
         {
-          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+          "ruleId": "advanced_regex_negative_lookbehind_rule.guard/default",
           "level": "error",
           "message": {
             "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "

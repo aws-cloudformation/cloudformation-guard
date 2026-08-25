@@ -310,12 +310,26 @@ fn handle_messages(messages: &Messages) -> String {
     )
 }
 
+/// The rule's name, unchanged.
+///
+/// `ruleId` is the identity a SARIF consumer keys on: code scanning matches alerts across runs by
+/// it, and suppressions and baselines are written against it. It has to be the name the rule
+/// actually has.
+///
+/// What was here read a rule name as though it were a file name -- `split('.')`, take the first
+/// part, upper-case it -- and so produced neither. `s3_versioning_enabled` came out as
+/// `S3_VERSIONING_ENABLED`, a name that appears in no rules file and cannot be suppressed by name.
+/// A rule declared at file scope in `My.Dotted-Rules.guard` is named
+/// `My.Dotted-Rules.guard/default`, and came out as `MY`: the file stem rather than the rule, cut at
+/// the first dot, colliding with every other rules file whose name starts `My.`.
+///
+/// Returning the name verbatim also makes the id cross-referenceable, which is the practical loss.
+/// json and yaml report this same finding under `"name"` and the console prints it after `Rule =`;
+/// all three now agree with sarif for the same run. Taking the half after `.guard/` -- which is what
+/// junit's `<failure message>` does -- was rejected: it reduces every file-scoped rule to `default`,
+/// so two rules files collide, and it matches none of the other three formats.
 fn extract_rule_id(rule_name: &str) -> String {
-    let first_part_of_rule_file_name: Vec<&str> = rule_name.split('.').collect();
-
-    first_part_of_rule_file_name
-        .first()
-        .map_or(String::default(), |&s| s.to_uppercase())
+    rule_name.to_string()
 }
 
 fn sanitize_path(path: &str) -> String {
