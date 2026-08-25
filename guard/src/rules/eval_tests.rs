@@ -1938,6 +1938,215 @@ fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()
     Ok(())
 }
 
+/// One bucket and one instance, so that two filters over `Resources` select different keys.
+const BUCKET_AND_INSTANCE: &str = r#"
+Resources:
+  Alpha:
+    Type: AWS::S3::Bucket
+  Inst:
+    Type: AWS::EC2::Instance
+"#;
+
+/// A capture in a file-level assignment's query reads the same in every rule and at any clause
+/// position.
+///
+/// Two rules with the same two clauses used to give PASS and then an unresolved-variable error at exit
+/// 255, and swapping the two clauses in one rule did the same. The assignment's result is memoised for
+/// the file and never invalidated, so the second read of `%names` did not re-run the query and made no
+/// capture, while `reset_captures` had already discarded the keys the first read produced. A verdict
+/// that depends on which rule you are in, or on the order of two clauses that do not mention each
+/// other, is not one an author can reason about.
+///
+/// Reading the capture name now resolves the assignment that declares it, and the keys are kept for the
+/// file rather than for the rule. Each case below is asserted with its mirror, so the PASSes are the
+/// key `Alpha` being read rather than a clause that could not fail.
+#[rstest::rstest]
+#[case::assignment_then_capture("%names !empty\n        %nm == \"Alpha\"", Status::PASS)]
+#[case::capture_then_assignment("%nm == \"Alpha\"\n        %names !empty", Status::PASS)]
+#[case::assignment_then_capture_mirror("%names !empty\n        %nm == \"Inst\"", Status::FAIL)]
+#[case::capture_then_assignment_mirror("%nm == \"Inst\"\n        %names !empty", Status::FAIL)]
+#[case::capture_alone("%nm == \"Alpha\"", Status::PASS)]
+#[case::capture_alone_mirror("%nm == \"Inst\"", Status::FAIL)]
+fn a_file_level_capture_reads_the_same_in_every_rule_and_at_any_clause_position(
+    #[case] clauses: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // Two rules with the same body, so that a capture bound only in the rule that first forced the
+    // assignment shows up as the two rules disagreeing.
+    let rules = format!(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule first {{
+        {clauses}
+    }}
+
+    rule second {{
+        {clauses}
+    }}
+    "#,
+        clauses = clauses
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "both rules run the clauses `{}` and must agree",
+        clauses
+    );
+
+    Ok(())
+}
+
+/// A clause that mentions neither the capture nor anything it touches does not change what it holds.
+///
+/// Two assignments spelling their capture `nm` appended into one root-level list, so `%nm` held the keys
+/// of whichever assignments some clause had forced. Adding `%b_names !empty` -- which names nothing the
+/// assertion reads -- turned a PASS into a FAIL at exit 19, and nothing in the file says the two `nm`s
+/// are one binding.
+///
+/// Reading `%nm` now resolves every assignment that declares it, so the answer is the union either way.
+/// `some %nm == "Inst"` is the discriminator: it is false if only the bucket assignment contributed and
+/// true if both did, and it has to give the same answer with the extra clause and without it. The
+/// `all` spelling is asserted alongside because that is the shape that changed verdict.
+///
+/// The file declares one name twice in one scope, which `docs/QUERY_AND_FILTERING.md` forbids and the
+/// parser ought to refuse. The union is what makes the verdict independent of the clause list until it
+/// does; a parse rejection would supersede this test rather than contradict it.
+#[rstest::rstest]
+#[case::one_assignment_forced("%a_names !empty", "some %nm == \"Inst\"", Status::PASS)]
+#[case::both_assignments_forced(
+    "%a_names !empty\n        %b_names !empty",
+    "some %nm == \"Inst\"",
+    Status::PASS
+)]
+#[case::one_assignment_forced_all("%a_names !empty", "%nm == \"Alpha\"", Status::FAIL)]
+#[case::both_assignments_forced_all(
+    "%a_names !empty\n        %b_names !empty",
+    "%nm == \"Alpha\"",
+    Status::FAIL
+)]
+fn a_capture_two_file_level_assignments_declare_reads_as_the_union_of_both(
+    #[case] preamble: &str,
+    #[case] assertion: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let a_names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+    let b_names = Resources[ nm | Type == 'AWS::EC2::Instance' ]
+
+    rule r {{
+        {preamble}
+        {assertion}
+    }}
+    "#,
+        preamble = preamble,
+        assertion = assertion
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`{}` must not answer differently for the clauses that ran before it",
+        assertion
+    );
+
+    Ok(())
+}
+
+/// A file-level capture whose query matched nothing fails its clause; a name declared nowhere is still
+/// an error.
+///
+/// The same split `BlockScope::lookup` makes for a name a block declares, applied at file level, and it
+/// is the reason the split has to be made twice: `%nm` resolved when the query matched and ended the
+/// run at exit 255 when it did not, so whether the file produced a report depended on the template it
+/// was run against.
+#[test]
+fn a_file_level_capture_that_matched_nothing_fails_its_clause_rather_than_the_file() -> Result<()> {
+    let matched_nothing = RulesFile::try_from(
+        r#"
+    let functions = Resources[ nm | Type == 'AWS::Lambda::Function' ]
+
+    rule r {
+        %nm == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&matched_nothing, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&matched_nothing, &mut scope, None)?,
+        Status::FAIL,
+        "no resource is a Lambda function, so `nm` has no keys and the clause reading it fails"
+    );
+
+    let declared_nowhere = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule r {
+        %absent == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&declared_nowhere, Rc::new(template));
+    let error = eval_rules_file(&declared_nowhere, &mut scope, None)
+        .expect_err("a name no assignment declares must not resolve to an empty selection");
+    assert!(
+        error.to_string().contains("absent"),
+        "the error has to name the variable it could not resolve, got: {}",
+        error
+    );
+
+    Ok(())
+}
+
+/// A filter predicate reading the capture its own filter declares terminates.
+///
+/// Resolving a capture name now resolves the assignment declaring it, which is a new way for one
+/// resolution to ask for another, so the loop it closes has to be checked rather than assumed absent.
+/// `Type == %nm` asks for `nm` while the assignment binding `nm` is the one being resolved. The
+/// in-progress set answers that inner ask by declining to resolve the assignment a second time, the
+/// predicate selects nothing, and the clause fails. Returning a verdict at all is the property; a
+/// stack overflow is not a verdict, and this rule text reaches the recursion in one line.
+#[test]
+fn a_filter_predicate_reading_its_own_capture_does_not_recurse() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == %nm ]
+
+    rule r {
+        %nm !empty
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL,
+        "the filter selected nothing, so `nm` has no keys and `!empty` over it fails"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(

@@ -1,7 +1,8 @@
 use crate::rules::errors::Error;
 use crate::rules::exprs::{
-    block_capture_names, AccessQuery, Block, CaptureNames, Conjunctions, FunctionExpr, GuardClause,
-    LetExpr, LetValue, ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
+    block_capture_names, collect_let_value_capture_names, collect_query_capture_names, AccessQuery,
+    Block, CaptureNames, Conjunctions, FunctionExpr, GuardClause, LetExpr, LetValue,
+    ParameterizedRule, QueryPart, Rule, RulesFile, SliceDisplay,
 };
 use crate::rules::functions::collections::count;
 use crate::rules::functions::converters::{
@@ -67,6 +68,27 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     /// Keys handed up by a block that has finished. See `MergedKeys` for why they are not in
     /// `captured`.
     merged: HashMap<&'value str, Vec<QueryResult>>,
+    /// Keys captured while a file-level assignment's right-hand side was being resolved.
+    ///
+    /// Not in `captured`, because the lifetimes disagree and it was the disagreement that showed. A
+    /// capture is a side effect of running a query, the query behind an assignment runs once and its
+    /// result is memoised for the file, and `reset_captures` clears `captured` between rules. So the
+    /// keys existed only in the rule that first forced the assignment: two rules containing the same
+    /// two clauses gave PASS and then an unresolved-variable error, and swapping two clauses inside one
+    /// rule did the same. These keys belong to the assignment, and the assignment belongs to the file.
+    assignment_captures: HashMap<&'value str, Vec<QueryResult>>,
+    /// For each name a file-level assignment declares as a filter capture, the assignments declaring
+    /// it, sorted. Read from the rule text at construction, so that `bind_assignment_captures` can
+    /// resolve them on a read of the capture name rather than waiting for a clause to read the
+    /// assignment.
+    capture_sources: HashMap<&'value str, Vec<&'value str>>,
+    /// The file-level assignments whose right-hand sides are being resolved right now.
+    ///
+    /// Two jobs, and they are the same fact: while this is non-empty a capture arriving at this scope
+    /// came from an assignment and belongs in `assignment_captures`, and an assignment already in here
+    /// must not be resolved again on its own behalf. The second is reachable rather than defensive --
+    /// `Resources[ nm | Type == %nm ]` has a predicate reading the capture its own filter declares.
+    resolving_assignments: BTreeSet<&'value str>,
 }
 
 /// Whether a variable lookup may be answered from keys a finished block handed up.
@@ -123,6 +145,8 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
         }
 
+        self.bind_assignment_captures(variable_name)?;
+
         // Captures before resolved queries, and held in their own map so `reset_captures` can clear
         // them between rules without discarding anything else.
         if let Some(values) = self.captured.get(variable_name) {
@@ -135,6 +159,10 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             }
         }
 
+        if let Some(values) = self.assignment_captures.get(variable_name) {
+            return Ok(values.clone());
+        }
+
         if let Some(values) = self.scope.resolved_variables.get(variable_name) {
             return Ok(values.clone());
         }
@@ -143,7 +171,12 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             parameters, name, ..
         }) = self.scope.function_expressions.get(variable_name)
         {
-            let result = resolve_function(name, parameters, self)?;
+            // Marked as in progress for the whole resolution, so that a capture a parameter's query
+            // makes is filed against this assignment rather than against the rule that read it.
+            self.resolving_assignments.insert(variable_name);
+            let result = resolve_function(name, parameters, self);
+            self.resolving_assignments.remove(variable_name);
+            let result = result?;
             self.scope
                 .resolved_variables
                 .insert(variable_name, result.clone());
@@ -154,16 +187,32 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
             None => {
+                // A name a file-level assignment declares as a capture, whose query captured nothing,
+                // resolves to an empty selection. That is what a block already answers for a name its
+                // own clauses declare, and for the same reason: capturing nothing is not an error, so
+                // the clause reading it fails rather than ending the run. The alternative is that
+                // whether the file produces a report at all depends on the template it was run
+                // against, since the same clause resolves when the query does match.
+                //
+                // A name declared nowhere is still an error, which is the split `BlockScope::lookup`
+                // makes as well: a typo, or a name belonging to another rule, is a broken ruleset
+                // rather than a finding about the input.
+                if self.capture_sources.contains_key(variable_name) {
+                    return Ok(vec![]);
+                }
                 return Err(Error::MissingValue(format!(
                     "Could not resolve variable by name {} across scopes",
                     variable_name
-                )))
+                )));
             }
         };
 
         let match_all = query.match_all;
 
-        let result = query_retrieval(0, &query.query, self.root(), self)?;
+        self.resolving_assignments.insert(variable_name);
+        let result = query_retrieval(0, &query.query, self.root(), self);
+        self.resolving_assignments.remove(variable_name);
+        let result = result?;
         let result = if !match_all {
             result
                 .into_iter()
@@ -176,6 +225,40 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             .resolved_variables
             .insert(variable_name, result.clone());
         Ok(result)
+    }
+
+    /// Resolve every file-level assignment whose right-hand side declares `variable_name` as a filter
+    /// capture, so that reading the capture name is what binds it.
+    ///
+    /// The alternative, which is what this replaces, is that the name is bound only if some clause
+    /// earlier in the same rule read the assignment. That made the value depend on things the author
+    /// cannot see from the clause: swapping two clauses in one rule turned a PASS into an
+    /// unresolved-variable error, two rules with the same two clauses gave PASS and then that error,
+    /// and adding a clause reading an unrelated assignment that happened to spell its capture the same
+    /// way changed what the name held.
+    ///
+    /// Resolving on read is cheap after the first time, because the assignment's result is memoised and
+    /// its keys are kept in `assignment_captures` rather than in the map `reset_captures` clears.
+    ///
+    /// A name more than one assignment declares binds to the union over all of them, so that the value
+    /// does not depend on which of them some clause happened to force. Such a file declares one name
+    /// twice in one scope, which `docs/QUERY_AND_FILTERING.md` forbids and the parser ought to refuse;
+    /// until it does, the union is what keeps the answer the same everywhere it is read.
+    fn bind_assignment_captures(&mut self, variable_name: &'value str) -> Result<()> {
+        let sources = match self.capture_sources.get(variable_name) {
+            Some(sources) => sources.clone(),
+            None => return Ok(()),
+        };
+        for source in sources {
+            // An assignment already being resolved is skipped rather than resolved again. A filter
+            // predicate can read the capture its own filter declares, and asking for that assignment
+            // from inside itself has no answer to wait for.
+            if self.resolving_assignments.contains(source) {
+                continue;
+            }
+            self.lookup(source, MergedKeys::Visible)?;
+        }
+        Ok(())
     }
 }
 
@@ -1537,6 +1620,30 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     function_expressions: HashMap<&'value str, &'value FunctionExpr<'loc>>,
     root: Rc<PathAwareValue>,
 ) -> RootScope<'value, 'loc> {
+    let mut capture_sources: HashMap<&'value str, Vec<&'value str>> = HashMap::new();
+    let mut record = |assignment: &'value str, declared: BTreeSet<&'value str>| {
+        for capture in declared {
+            capture_sources.entry(capture).or_default().push(assignment);
+        }
+    };
+    for (assignment, query) in &queries {
+        let mut declared = BTreeSet::new();
+        collect_query_capture_names(&query.query, &mut declared);
+        record(assignment, declared);
+    }
+    for (assignment, function) in &function_expressions {
+        let mut declared = BTreeSet::new();
+        for parameter in &function.parameters {
+            collect_let_value_capture_names(parameter, &mut declared);
+        }
+        record(assignment, declared);
+    }
+    // Sorted, because the two maps above are hashed and the order a name's sources are resolved in is
+    // the order its keys end up in. A report that lists them must not depend on the hash seed.
+    for sources in capture_sources.values_mut() {
+        sources.sort_unstable();
+    }
+
     RootScope {
         scope: Scope {
             root,
@@ -1556,6 +1663,9 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         deprecations: BTreeSet::new(),
         captured: HashMap::new(),
         merged: HashMap::new(),
+        assignment_captures: HashMap::new(),
+        capture_sources,
+        resolving_assignments: BTreeSet::new(),
     }
 }
 
@@ -1756,7 +1866,14 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
-        self.captured
+        // Filed against the assignment being resolved when there is one. A capture reaching the root
+        // scope otherwise came from a rule's `when` condition, which is evaluated here, and that one is
+        // the rule's.
+        let target = match self.resolving_assignments.is_empty() {
+            true => &mut self.captured,
+            false => &mut self.assignment_captures,
+        };
+        target
             .entry(variable_name)
             .or_default()
             .push(QueryResult::Resolved(Rc::clone(&key)));
@@ -1781,6 +1898,10 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     /// hold a `&mut dyn EvalContext`, so an inherent method of the same name is simply not the one that
     /// gets called. That mistake made the first version of this fix do nothing at all while compiling
     /// and reading correctly.
+    ///
+    /// `assignment_captures` is deliberately not cleared. Its keys belong to a file-level assignment
+    /// whose result is memoised for the whole file, so clearing them here is what made a capture name
+    /// resolve in the rule that first forced the assignment and nowhere else.
     fn reset_captures(&mut self) {
         self.captured.clear();
         self.merged.clear();

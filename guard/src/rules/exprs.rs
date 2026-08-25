@@ -365,7 +365,7 @@ fn collect_conjunctions_capture_names<'value, T>(
 /// than a key. A name declared there is counted anyway and resolves empty rather than erroring, which
 /// costs a less precise message on a rule that cannot work either way. That is the right side to err
 /// on -- an imprecise failure is recoverable for the reader, and a silent pass is not.
-fn collect_query_capture_names<'value, 'loc: 'value>(
+pub(crate) fn collect_query_capture_names<'value, 'loc: 'value>(
     query: &'value [QueryPart<'loc>],
     into: &mut BTreeSet<&'value str>,
 ) {
@@ -406,7 +406,7 @@ fn collect_access_clause_capture_names<'value, 'loc: 'value>(
     }
 }
 
-fn collect_let_value_capture_names<'value, 'loc: 'value>(
+pub(crate) fn collect_let_value_capture_names<'value, 'loc: 'value>(
     value: &'value LetValue<'loc>,
     into: &mut BTreeSet<&'value str>,
 ) {
