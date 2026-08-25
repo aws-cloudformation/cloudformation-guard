@@ -1,0 +1,25 @@
+#
+# Two identical references to a rule whose condition cannot be evaluated.
+#
+# `Enabled !EMPTY` against a bool is undecidable, so `inner` fails for "the condition could not be
+# evaluated" and both references inherit that answer -- a reference cannot know more than the rule did.
+# `outer_first` and `outer_second` are character-for-character identical apart from their names, so the
+# two must be explained identically. Anything else is the evaluation order showing through.
+#
+# It does show through, because the rule-status cache memoises the answer per (rule, role). The first
+# reference misses the cache and re-evaluates `inner`, which records the type error under the
+# referencing rule's own condition subtree, where the reason is read from. The second reference hits the
+# cache, records nothing, and had nothing to read: it printed the verdict sentence and stopped, in the
+# same run as two rules above it that printed the reason in full.
+#
+rule inner when Enabled !EMPTY {
+    Name == "irrelevant"
+}
+
+rule outer_first when inner {
+    Name == "definitely_not_this"
+}
+
+rule outer_second when inner {
+    Name == "definitely_not_this"
+}

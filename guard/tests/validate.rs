@@ -1421,6 +1421,80 @@ mod validate_tests {
         );
     }
 
+    /// Two identical references to a rule whose condition could not be evaluated are explained
+    /// identically.
+    ///
+    /// The reason a rule failed for "the condition could not be evaluated" is read out of the record
+    /// tree, and the rule-status cache means the tree is not the same for two identical references. The
+    /// first reference misses the cache and re-evaluates the rule, which records the type error under
+    /// the referencing rule's condition; the second hits the cache, evaluates nothing, and records
+    /// nothing.
+    ///
+    /// Measured over this fixture against a template carrying `Enabled: true`. Exit 19 either way, all
+    /// three rules FAIL either way, so the verdict was never in question -- the cached answer survives
+    /// the reference, which is what the `(rule, role)` key is for. What did not survive was the reason:
+    ///
+    ///     rule            this commit    before        the branch's base
+    ///     inner           names it       names it      names it
+    ///     outer_first     names it       names it      names it
+    ///     outer_second    names it       bare          names it
+    ///
+    /// Asserted as agreement between the two references rather than against one expected string, for the
+    /// same reason the branch-order test is: the property is that the explanation does not depend on
+    /// which reference the cache happened to serve.
+    #[test]
+    fn two_references_to_an_undecidable_rule_are_explained_the_same_way() {
+        const AFTER_VERDICT: &str = "treated as not applicable";
+
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecidable-beside-violated-template.yaml"])
+            .rules(vec!["undecidable_rule_referenced_twice.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "an undecidable condition fails the rule closed, and a reference to it inherits that"
+        );
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let reason_for = |rule: &str| -> String {
+            let line = stdout
+                .lines()
+                .find(|l| l.contains(&format!("Rule {} failed", rule)))
+                .unwrap_or_else(|| panic!("{} did not fail, got {:?}", rule, stdout));
+            assert!(
+                line.contains("condition could not be evaluated"),
+                "{} failed for some other reason, got {:?}",
+                rule,
+                line
+            );
+            line.split_once(AFTER_VERDICT)
+                .expect("the verdict sentence is fixed text")
+                .1
+                .to_string()
+        };
+
+        let first = reason_for("outer_first");
+        let second = reason_for("outer_second");
+
+        assert_eq!(
+            first, second,
+            "two references that differ only in their name must be explained the same way; which one \
+             the cache served is not part of why the condition could not be evaluated"
+        );
+        assert!(
+            first.contains("Attempting EMPTY operation on type bool"),
+            "and both must name the clause the referenced rule could not evaluate, got {:?}",
+            first
+        );
+    }
+
     /// A gate whose operands the comparator could not compare says so, without moving the verdict.
     ///
     /// `Port > "abc"` against a numeric `Port` asks for an ordering that does not exist. The comparator

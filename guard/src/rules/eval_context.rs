@@ -45,11 +45,45 @@ pub(crate) struct EventRecord<'value> {
     pub(crate) children: Vec<EventRecord<'value>>,
 }
 
+/// What a rule answered, memoised, together with the explanation that answer does not carry.
+///
+/// The reason is here rather than left in the record tree because the tree is not the same for two
+/// references to one rule. The first reference misses this cache and re-evaluates the rule, which
+/// records the failing clause under the referencing rule's own condition -- where
+/// [`RecordTracer::reason_from_last_closed_record`] reads it from. The second reference hits, evaluates
+/// nothing, and leaves nothing to read, so it printed the verdict and stopped while the reference above
+/// it in the same run printed the reason in full.
+///
+/// Kept beside the outcome and not inside it for the reason recorded on `Outcome` itself: it is `Copy`,
+/// and a payload would break that at every site that folds one.
+struct CachedRuleAnswer {
+    /// The rule's answer. The only thing any caller reads to decide anything.
+    outcome: Outcome,
+
+    /// Why the rule could not be evaluated, when that is what it answered and it said why.
+    ///
+    /// Read back only to explain a verdict that has already been decided, never to decide one -- the
+    /// same one-way rule the accessor it feeds is documented under.
+    undecidable_reason: Option<String>,
+}
+
 pub(crate) struct RootScope<'value, 'loc: 'value> {
     scope: Scope<'value, 'loc>,
     rules: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
-    rules_status: HashMap<(&'value str, super::eval::ClauseRole), Outcome>,
+    rules_status: HashMap<(&'value str, super::eval::ClauseRole), CachedRuleAnswer>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
+    /// Why a rule a memoised undecidable answer was just served for could not be evaluated, and how many
+    /// records had closed at the moment it was served.
+    ///
+    /// Set by [`RootScope::rule_status`] when it answers from the cache, and read by
+    /// [`RootScope::reason_from_last_closed_record`] as the fallback for a reference that recorded
+    /// nothing. Deliberately not a bare "last reason": the count is what ties it to one record. The
+    /// reference closes exactly one record after being answered, so the fallback applies only while
+    /// `closed_records()` is that count plus one, and a reason left here by an earlier reference cannot
+    /// be read by a later clause. That bound is structural, rather than a clearing discipline for a
+    /// future change to get wrong, and it is deliberately not the reference's *name*: a gate reference
+    /// records a block check that does not carry one, which is the shape this case actually produces.
+    served_from_cache: Option<(String, usize)>,
     recorder: RecordTracker<'value>,
     /// Notes for the author that this run's answer does not carry, collected during evaluation.
     ///
@@ -85,6 +119,7 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             &mut self.recorder,
             RecordTracker {
                 final_event: None,
+                closed: 0,
                 events: vec![],
             },
         )
@@ -1352,9 +1387,11 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         rules_status: HashMap::new(),
         recorder: RecordTracker {
             final_event: None,
+            closed: 0,
             events: vec![],
         },
         diagnostics: BTreeSet::new(),
+        served_from_cache: None,
         captured: HashMap::new(),
     }
 }
@@ -1386,6 +1423,9 @@ where
 pub(crate) struct RecordTracker<'value> {
     pub(crate) events: Vec<EventRecord<'value>>,
     pub(crate) final_event: Option<EventRecord<'value>>,
+    /// How many records have been closed, counted only so one of them can be named. See
+    /// [`RecordTracker::closed_records`].
+    closed: usize,
 }
 
 impl<'value> RecordTracker<'value> {
@@ -1394,10 +1434,23 @@ impl<'value> RecordTracker<'value> {
         RecordTracker {
             events: vec![],
             final_event: None,
+            closed: 0,
         }
     }
     pub(crate) fn extract(mut self) -> EventRecord<'value> {
         self.final_event.take().unwrap()
+    }
+
+    /// How many records have been closed so far.
+    ///
+    /// Monotonic and never reset, so it is an identity for "the record that closed most recently" rather
+    /// than a count anyone reads as a quantity. `RootScope` pairs it with a reason served from the
+    /// rule-status cache so that reason can only be read back against the one record it belongs to.
+    ///
+    /// Inherent rather than on [`RecordTracer`]: the only caller is `RootScope`, which holds the recorder
+    /// directly, and no forwarding scope has a cache to pair it with.
+    fn closed_records(&self) -> usize {
+        self.closed
     }
 }
 
@@ -1537,6 +1590,8 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
             }
         };
 
+        self.closed += 1;
+
         match self.events.last_mut() {
             Some(parent) => {
                 parent.children.push(matched);
@@ -1594,8 +1649,17 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         rule_name: &'value str,
         role: super::eval::ClauseRole,
     ) -> Result<Outcome> {
-        if let Some(outcome) = self.rules_status.get(&(rule_name, role)) {
-            return Ok(*outcome);
+        // A reference answered from here evaluates nothing, so it records nothing, so the reason its
+        // verdict needs is not in the tree. Hand it over beside the answer. Cleared on every call, hit
+        // or miss, so the slot never holds anything older than the reference being answered now.
+        self.served_from_cache = None;
+        if let Some(answered) = self.rules_status.get(&(rule_name, role)) {
+            if let (Outcome::Unevaluatable, Some(reason)) =
+                (answered.outcome, &answered.undecidable_reason)
+            {
+                self.served_from_cache = Some((reason.clone(), self.recorder.closed_records()));
+            }
+            return Ok(answered.outcome);
         }
 
         let rule = match self.rules.get(rule_name) {
@@ -1641,11 +1705,32 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             break Outcome::NotApplicable;
         };
 
+        // Read here, at the one moment it is readable. `eval_rule` has just closed the rule's own
+        // record, so it is the last child of the reference's record and the walk finds the clause that
+        // could not be evaluated. Asking later, from a reference that hit the cache, finds nothing;
+        // asking earlier is asking before the clause has recorded anything.
+        let undecidable_reason = match outcome {
+            Outcome::Unevaluatable => self.recorder.reason_from_last_closed_record(),
+            _ => None,
+        };
+
         // Keyed on `(rule, role)`, not the rule name. The same rule referenced from a body
         // and from a `when` condition are two different questions and must not share a
         // cache slot -- whichever reference ran first would otherwise decide the answer for
         // the other, making the outcome depend on evaluation order.
-        self.rules_status.insert((rule_name, role), outcome);
+        //
+        // The reason is keyed the same way for the same reason. A rule's condition is evaluated at
+        // `ClauseRole::Gate` however the rule was reached -- `eval_when_clause` takes no role and
+        // hardcodes it on every arm -- but its *body* is evaluated at the reference's role, and a rule
+        // can answer `Unevaluatable` from its body. So the explanation is role-dependent even though the
+        // condition's is not, and sharing one slot between the roles would quote the wrong one.
+        self.rules_status.insert(
+            (rule_name, role),
+            CachedRuleAnswer {
+                outcome,
+                undecidable_reason,
+            },
+        );
         Ok(outcome)
     }
 
@@ -2039,8 +2124,30 @@ impl Callable for ParseCharFunction {
 }
 
 impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
+    /// The recorded reason, falling back to the one the rule-status cache just served.
+    ///
+    /// A reference answered from that cache evaluated nothing and so recorded nothing, which left the
+    /// walk with no clause to read and the verdict with no explanation -- while an identical reference
+    /// earlier in the same run, the one that missed the cache and re-evaluated, was explained in full.
+    ///
+    /// Bounded to one record rather than taken on trust. A reference closes exactly one record after
+    /// being answered from the cache, so the fallback applies only while the closed-record count is the
+    /// one captured at that moment plus one -- which is the record the reason belongs to and no other.
+    /// Without that bound this would be a second read by position, and reading a reason by position
+    /// instead of by identity is the defect the commit before this one removed.
+    ///
+    /// Keyed on the count and not on the referenced rule's name, because a gate reference to a rule that
+    /// could not be evaluated records a block check, and a block check does not carry one. That is the
+    /// shape this case actually produces: `Unevaluatable.to_status(Gate)` is SKIP, and the SKIP arm of
+    /// `eval_guard_named_clause` records `GuardClauseBlockCheck` so the reference contributes nothing to
+    /// the failure report.
     fn reason_from_last_closed_record(&self) -> Option<String> {
-        self.recorder.reason_from_last_closed_record()
+        if let Some(reason) = self.recorder.reason_from_last_closed_record() {
+            return Some(reason);
+        }
+
+        let (reason, closed_when_served) = self.served_from_cache.as_ref()?;
+        (self.recorder.closed_records() == closed_when_served + 1).then(|| reason.clone())
     }
 
     fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
