@@ -246,13 +246,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate release notes
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREVIOUS_TAG="$(gh release list \
+            --repo "${{ github.repository }}" \
+            --exclude-drafts \
+            --limit 1 \
+            --json tagName \
+            --jq '.[0].tagName')"
+          if [[ -z "$PREVIOUS_TAG" ]]; then
+            echo "::error::No previous published release found"
+            exit 1
+          fi
+
+          echo "Generating release notes from $PREVIOUS_TAG to $VERSION"
+          gh api --method POST \
+            "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$VERSION" \
+            -f previous_tag_name="$PREVIOUS_TAG" \
+            --jq '.body' > release-notes.md
+
       - name: Create release
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'false' }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
           name: v${{ env.VERSION }}
-          generate_release_notes: ${{ steps.check.outputs.exists == 'false' }}
+          body_path: release-notes.md
+          files: artifacts/*.tar.gz
+
+      - name: Update existing release assets
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.VERSION }}
           files: artifacts/*.tar.gz
 
   # ---------------------------------------------------------------------------
