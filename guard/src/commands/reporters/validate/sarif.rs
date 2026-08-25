@@ -332,8 +332,42 @@ fn extract_rule_id(rule_name: &str) -> String {
     rule_name.to_string()
 }
 
+/// An absolute path as a `file://` URI, percent-encoded per segment. Anything that is not an
+/// absolute path is returned unchanged.
+///
+/// `artifactLocation.uri` is declared in the SARIF schema as "A string containing a valid relative or
+/// absolute URI", with `"format": "uri-reference"`. What was here removed the leading `/` from a
+/// path that `validate` has already canonicalised to absolute, which produces neither: not an
+/// absolute URI, because it has no scheme, and not a usable relative reference, because there is no
+/// `uriBaseId` -- nor any `runs[].originalUriBaseIds` -- to say what it is relative to. So
+/// `/home/me/repo/template.yaml` was emitted as `home/me/repo/template.yaml`, which resolves to a
+/// real file only against `/`.
+///
+/// That matters for the consumer this repository ships an Action for. GitHub code scanning
+/// "interprets results that are reported with relative paths as relative to the root of the
+/// repository analyzed", and separately states that "if a result contains an absolute URI, the URI is
+/// converted to a relative URI" using the checkout path. A stripped absolute path names nothing at
+/// the repository root, so the alert had no file to attach to; a `file://` URI is converted for us.
+///
+/// Adding a `uriBaseId` and an `originalUriBaseIds` entry was the alternative. It was rejected
+/// because Guard does not know a repository root -- it is run against arbitrary paths -- so the base
+/// would have to be invented. An absolute URI needs no base.
+///
+/// Percent-encoding is per segment rather than over the whole string, so the `/` separators survive.
+/// Without it a path containing `#` is truncated at the fragment delimiter by any URI parser, `?`
+/// starts a query, a space is not legal in a URI at all, and a literal `%` is an invalid escape.
 fn sanitize_path(path: &str) -> String {
-    path.strip_prefix('/').unwrap_or(path).to_string()
+    if !path.starts_with('/') {
+        return path.to_string();
+    }
+
+    let encoded = path
+        .split('/')
+        .map(|segment| urlencoding::encode(segment).into_owned())
+        .collect::<Vec<String>>()
+        .join("/");
+
+    format!("file://{encoded}")
 }
 
 fn generate_sarif_locations(

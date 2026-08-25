@@ -2809,6 +2809,65 @@ mod validate_tests {
         );
     }
 
+    /// Every sarif `artifactLocation.uri` is a resolvable `file://` URI.
+    ///
+    /// This has its own test because `test_structured_output` cannot have one: `sanitize_sarif_writer`
+    /// rewrites every `"uri"` in the document to `"some/path"` before comparing, which is why all
+    /// eight sites in the committed golden read that. The sanitiser is defensible -- the path depends
+    /// on where the repository is checked out -- but it leaves the URI with no coverage at all rather
+    /// than with correct coverage, and the value it was hiding was wrong.
+    ///
+    /// `validate` canonicalises every data-file path, so `report.name` is always absolute. Removing
+    /// its leading `/` produced a relative reference with no `uriBaseId` to resolve it against, which
+    /// named nothing at a code-scanning consumer's repository root.
+    ///
+    /// Skipped on Windows for the reason `compare_write_buffer_with_file` skips there: the paths are
+    /// not POSIX-absolute and this assertion is about POSIX path-to-URI conversion.
+    #[test]
+    fn sarif_artifact_locations_are_resolvable_file_uris() {
+        if cfg!(windows) {
+            return;
+        }
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let expected = format!(
+            "\"uri\": \"file://{}\"",
+            get_full_path_for_resource_file(
+                "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml"
+            )
+        );
+
+        assert!(
+            output.contains(&expected),
+            "every artifact location must be a file:// URI naming the real file; expected to find\n\
+             {}\nin\n{}",
+            expected,
+            output
+        );
+        assert!(
+            !output.contains("\"uri\": \"local/")
+                && !output.contains("\"uri\": \"home/")
+                && !output.contains("\"uri\": \"github/"),
+            "no location may be an absolute path with its leading slash removed:\n{}",
+            output
+        );
+    }
+
     #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
