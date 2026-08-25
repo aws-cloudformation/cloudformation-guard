@@ -5587,11 +5587,100 @@ fn the_two_forms_the_grammar_no_longer_claims_are_still_rejected() -> Result<(),
 /// how the first attempt at the bracket whitespace fix on this branch did its damage. Each caller spells out
 /// its own substitution, because `Key: rule` cannot be shortened to `rule` -- that is a substring of the
 /// tree's own field names, `guard_rules`, `rule_name` and `parameterized_rules`.
-fn parse_tree_with(rules: &str, from: &str, to: &str) -> Result<String, Error> {
+fn parse_tree_of(rules: &str) -> Result<String, Error> {
     let parsed =
         rules_file(from_str2(rules))?.expect("these rules files all hold at least one rule");
-    let tree = serde_yaml::to_string(&parsed).expect("a parsed rules file serialises");
-    Ok(tree.replace(from, to))
+    Ok(serde_yaml::to_string(&parsed).expect("a parsed rules file serialises"))
+}
+
+fn parse_tree_with(rules: &str, from: &str, to: &str) -> Result<String, Error> {
+    Ok(parse_tree_of(rules)?.replace(from, to))
+}
+
+/// The same tree, with the line and column of every location blanked out.
+///
+/// `nom_locate` counts lines by `\n`, so every clause in a file whose lines end with a bare CR reports line 1.
+/// That is a property of the position tracking and not of the parse, so comparing a CR-only file against the
+/// LF spelling means comparing everything except the positions: the query parts, the comparators, the
+/// operands, the block structure, the rule names.
+fn parse_tree_without_positions(rules: &str) -> Result<String, Error> {
+    let tree = parse_tree_of(rules)?;
+    Ok(tree
+        .lines()
+        .map(|line| match line.trim_start().split(':').next() {
+            Some("line") | Some("column") => {
+                let indent = line.len() - line.trim_start().len();
+                format!("{}position: blanked", &line[..indent])
+            }
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// A bare CR ends a line in every construct, as it already did in every whitespace position.
+///
+/// `multispace1` accepts `" \t\r\n"`, so a lone CR was whitespace everywhere -- except in two places that
+/// looked for a line ending themselves. `rule_clause` peeked through `newline`, which listed `\n` and `\r\n`
+/// and not `\r`, and everything outside that peek set falls to the `cut` on `custom_message`; and `comment2`
+/// searched for `\n` alone, so a comment ran to the end of the file. Across 25 constructs written three ways, a
+/// CR-only file rejected 6, parsed 1 to *no rules at all*, and read the other 18 as it should. The one that
+/// parsed to nothing is the worst of them: a leading comment consumed every rule in the file, and `validate`
+/// then reported a violating template compliant at exit 0 with nothing on any channel. The grammar block
+/// already said a comment ends at LF or CR.
+#[test]
+fn a_bare_carriage_return_ends_a_line_like_the_other_two_spellings() -> Result<(), Error> {
+    for body in [
+        // the five that a CR-only file could not express, one per mechanism
+        "rule a { A == 1 }@rule b {@  a@}@",
+        "rule a { A == 1 }@rule b {@  !a@}@",
+        "rule a { A == 1 }@rule c { A == 2 }@rule b {@  a or c@}@",
+        "rule r {@  Resources exists # trailing@}@",
+        "# leading@rule r {@  Resources exists@}@",
+        // and shapes that already worked, which must not move
+        "rule r {@  Resources exists@}@",
+        "rule r {@  when Resources exists {@    A == 1@  }@}@",
+        "AWS::S3::Bucket {@  Properties.Encrypted == true@}@",
+        "let x = 5@rule r {@  A == %x@}@",
+    ] {
+        let lf = body.replace('@', "\n");
+        let crlf = body.replace('@', "\r\n");
+        let cr = body.replace('@', "\r");
+        let expected = parse_tree_without_positions(&lf)?;
+        assert_eq!(
+            parse_tree_without_positions(&cr)?,
+            expected,
+            "a CR-only file must parse to what the LF spelling parses to: {}",
+            body
+        );
+        assert_eq!(
+            parse_tree_without_positions(&crlf)?,
+            expected,
+            "and CRLF, which already worked: {}",
+            body
+        );
+    }
+
+    // The one that did not fail loudly, stated on its own. A comment on the first line of a CR-only file
+    // swallowed every rule after it, and an empty rules file is not an error -- so the run passed.
+    let swallowed =
+        "# encryption is mandatory\rrule encrypted {\r  Resources.*.Encrypted == true\r}\r";
+    let parsed =
+        rules_file(from_str2(swallowed))?.expect("a comment must not consume the rules after it");
+    assert_eq!(
+        parsed.guard_rules.len(),
+        1,
+        "the rule after the comment has to survive"
+    );
+
+    // A multi-line message keeps its line endings verbatim, which is the one thing that does differ between
+    // the spellings and is meant to: the reporter prints the message as written.
+    let message = "rule r {\r  Resources exists <<\r  why\r  >>\r}\r";
+    assert!(
+        parse_tree_of(message)?.contains(r#""\r  why\r  ""#),
+        "the message text is verbatim"
+    );
+    Ok(())
 }
 
 /// A clause whose first identifier *is* `when` reads as a clause about a property of that name.

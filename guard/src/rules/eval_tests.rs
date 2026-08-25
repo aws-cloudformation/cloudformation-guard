@@ -8509,6 +8509,47 @@ fn a_key_filter_after_a_wildcard_keeps_the_map_as_its_subject(
     Ok(())
 }
 
+/// A rules file whose lines end with a bare CR still enforces its rules.
+///
+/// `comment2` searched for `\n` alone while `multispace1` treats a lone `\r` as whitespace everywhere else, so
+/// in a CR-only file a comment ran to the end of the file. With the comment on the first line, every rule
+/// after it became comment text, the file parsed to no rules at all, and an empty rules file is not an error --
+/// so a violating template came back compliant at exit 0 with nothing printed on any channel. That is the
+/// shape of the unterminated-message defect fixed earlier on this branch, reached through line endings.
+///
+/// Asserted on the verdict, and on the rule count first so the failure says which of the two went wrong.
+#[test]
+fn a_cr_only_rules_file_still_enforces_its_rules() -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            bucket: { Type: 'AWS::S3::Bucket', Properties: { Encrypted: false } }
+        }
+    }
+    "#;
+
+    let cr = "# encryption is mandatory\rrule encrypted {\r  Resources.*.Properties.Encrypted == true\r}\r";
+    let lf = cr.replace('\r', "\n");
+
+    for (spelling, rules) in [("CR", cr), ("LF", lf.as_str())] {
+        let parsed = crate::rules::parser::rules_file(crate::rules::parser::from_str2(rules))?
+            .unwrap_or_else(|| panic!("{} spelling parsed to no rules at all", spelling));
+        assert_eq!(
+            parsed.guard_rules.len(),
+            1,
+            "{} spelling lost the rule after the comment",
+            spelling
+        );
+        assert_eq!(
+            Status::FAIL,
+            rule_status_in(rules, INPUT, "encrypted")?,
+            "{} spelling must still fail the violating template",
+            spelling
+        );
+    }
+    Ok(())
+}
+
 /// A function call on the right of `keys` compares against the map's keys, like the other two right-hand sides.
 ///
 /// `map_keys_match` took a value and an access there and not a function call, so `access` matched the

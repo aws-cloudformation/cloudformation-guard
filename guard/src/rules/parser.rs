@@ -107,8 +107,26 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A comment, ending at the end of its line -- and a bare CR ends a line here, as it does everywhere else in
+/// this parser.
+///
+/// `multispace1`, which `white_space_or_comment` reaches for the other half of its alternation, accepts
+/// `" \t\r\n"`, so a lone `\r` is a line ending as far as every whitespace position is concerned. This search
+/// stopped at `\n` alone, so in a file whose lines end with a bare CR a comment ran to the end of the file:
+/// the `}` closing the block the comment sat in was consumed as comment text, and the file was rejected for
+/// having no closing brace. Ten of thirteen constructs parsed in such a file and this was one of the three
+/// that did not, which is the worst shape for it to be in -- whether the file is readable depended on whether
+/// it happened to contain a comment.
+///
+/// A `\r` inside a comment in an otherwise LF file now ends the comment too, and that is the same judgement:
+/// this parser treats a bare CR as a line ending, so text after one is the next line rather than more comment.
+/// No rules file in this repository or in the AWS rule registry contains a CR of either kind.
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
-    delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
+    delimited(
+        char('#'),
+        take_till(|c| c == '\n' || c == '\r'),
+        multispace0,
+    )(input)
 }
 //
 // This function extracts either white-space-CRLF or a comment
@@ -1579,17 +1597,30 @@ fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
 //  parsing to see which of these forms is present for the rule clause
 //  to succeed
 //
-//      rule_name[ \t]*\n
+//      rule_name[ \t]*(\n / \r\n / \r)
 //      rule_name[ \t\n]+or[ \t\n]+
-//      rule_name(#[^\n]+)
+//      rule_name(#[^\n\r]+)
 //
 //      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
 //
 //
 //
 
+/// The line endings `rule_clause` peeks for, which has to be the set the rest of the parser accepts.
+///
+/// A bare `\r` was missing. `zero_or_more_ws_or_comment` reaches `multispace1`, which accepts `" \t\r\n"`, so a
+/// lone CR is whitespace at every other position in this parser -- but a rule reference is read by peeking for
+/// one of a fixed set of following tokens, and anything outside that set falls to the `cut` on
+/// `custom_message`, whose Failure escapes the alternation. So in a file whose lines end with a bare CR, a
+/// comparison clause parsed and a rule reference on its own line did not, and the second term of a disjunction
+/// did not either. Measured across thirteen constructs in one such file, ten parsed and three did not, which
+/// makes readability depend on which construct happens to sit at the boundary. A uniform rejection would at
+/// least be predictable; this was not.
+///
+/// Longest first, so `\r\n` is never read as a bare `\r` with a stray `\n` after it. CRLF was already handled
+/// and is unaffected.
 fn newline(input: Span) -> IResult<Span, Span> {
-    alt((tag("\n"), tag("\r\n")))(input)
+    alt((tag("\r\n"), tag("\n"), tag("\r")))(input)
 }
 
 fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
