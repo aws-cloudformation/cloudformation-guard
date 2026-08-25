@@ -2,7 +2,9 @@ use crate::commands::reporters::test::generic::GenericReporter;
 use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
-use crate::commands::reporters::test::{write_diagnostics, Diagnostics};
+use crate::commands::reporters::test::{
+    unmatched_test_file_message, write_diagnostics, Diagnostics,
+};
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
     Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
@@ -145,6 +147,18 @@ impl Executable for Test {
             validate_path(dir)?;
             let walk = walkdir::WalkDir::new(dir);
             let ordered_directory = OrderedTestDirectory::from(walk);
+
+            // Before the report and on stderr, as the unchecked-expectation note is, and here rather
+            // than in either handler so that every output format says it. Read now because
+            // iterating the directory consumes it.
+            write_diagnostics(
+                &ordered_directory
+                    .orphaned_test_files
+                    .iter()
+                    .map(|path| unmatched_test_file_message(path))
+                    .collect(),
+                writer,
+            )?;
 
             match self.output_format {
                 OutputFormatType::SingleLineSummary => {
@@ -497,11 +511,18 @@ pub struct TestSpec {
     pub expectations: TestExpectations,
 }
 
-struct OrderedTestDirectory(BTreeMap<String, Vec<GuardFile>>);
+struct OrderedTestDirectory {
+    files: BTreeMap<String, Vec<GuardFile>>,
+    /// Test files under a `tests/` directory that no rules file took, in walk order.
+    ///
+    /// Read by the caller before it consumes the directory. Nothing named these before, so a test
+    /// file left behind by a rules file rename was discarded in silence.
+    orphaned_test_files: Vec<PathBuf>,
+}
 
 impl IntoIterator for OrderedTestDirectory {
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.files.into_iter()
     }
 
     type IntoIter = std::collections::btree_map::IntoIter<String, Vec<GuardFile>>;
@@ -512,6 +533,7 @@ impl From<walkdir::WalkDir> for OrderedTestDirectory {
     fn from(walk: walkdir::WalkDir) -> Self {
         let mut non_guard: Vec<DirEntry> = vec![];
         let mut files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
+        let mut orphaned_test_files: Vec<PathBuf> = vec![];
         for file in walk
             .follow_links(true)
             .sort_by_file_name()
@@ -564,31 +586,41 @@ impl From<walkdir::WalkDir> for OrderedTestDirectory {
                 let parent = file.path().parent();
 
                 if parent.map_or(false, |p| p.ends_with("tests")) {
-                    if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
+                    let candidates = parent.unwrap().parent().and_then(|grand| {
                         let grand = format!("{}", grand.display());
                         files.get_mut(&grand)
-                    }) {
-                        // The longest matching prefix, not the first match in sort order. A shorter
-                        // stem is a prefix of a longer one, so `s3_encryption_tests.yml` starts with
-                        // both `s3` and `s3_encryption`, and taking the first left it on `s3.guard`
-                        // while `s3_encryption.guard` was reported as having no tests.
-                        //
-                        // `min_by_key` over the reversed length rather than `max_by_key`: on a tie
-                        // the first element in sort order must still win, as it did before, and
-                        // `min_by_key` returns the first of equal keys where `max_by_key` returns
-                        // the last. Ties are real -- `x.guard` and `x.ruleset` share the prefix `x`.
-                        if let Some(guard_file) = candidates
+                    });
+
+                    // The longest matching prefix, not the first match in sort order. A shorter
+                    // stem is a prefix of a longer one, so `s3_encryption_tests.yml` starts with
+                    // both `s3` and `s3_encryption`, and taking the first left it on `s3.guard`
+                    // while `s3_encryption.guard` was reported as having no tests.
+                    //
+                    // `min_by_key` over the reversed length rather than `max_by_key`: on a tie
+                    // the first element in sort order must still win, as it did before, and
+                    // `min_by_key` returns the first of equal keys where `max_by_key` returns
+                    // the last. Ties are real -- `x.guard` and `x.ruleset` share the prefix `x`.
+                    let claimed_by = candidates.and_then(|candidates| {
+                        candidates
                             .iter_mut()
                             .filter(|guard_file| name.starts_with(&guard_file.prefix))
                             .min_by_key(|guard_file| Reverse(guard_file.prefix.len()))
-                        {
-                            guard_file.test_files.push(file);
-                        }
+                    });
+
+                    // Whether the file was taken is asked once, here, and both halves read the
+                    // answer. Deciding it a second time by repeating the prefix test would let the
+                    // two drift, and a file could then be both paired and reported as unpaired.
+                    match claimed_by {
+                        Some(guard_file) => guard_file.test_files.push(file),
+                        None => orphaned_test_files.push(file.path().to_path_buf()),
                     }
                 }
             }
         }
 
-        OrderedTestDirectory(files)
+        OrderedTestDirectory {
+            files,
+            orphaned_test_files,
+        }
     }
 }

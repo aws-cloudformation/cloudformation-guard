@@ -507,6 +507,90 @@ mod test_command_tests {
         }
     }
 
+    /// A test file no rules file claimed is named, instead of being dropped in silence.
+    ///
+    /// This is what a rules file rename looks like. `s3_bucket.guard` beside `tests/s3_tests.yml`
+    /// ran nothing and said only that the rules file had no tests associated, which reads as benign
+    /// because a rules file legitimately may have none. The suite that was skipped fails: rename the
+    /// file to `s3_bucket_tests.yml` and change nothing else and the run goes from exit 0 to exit 7.
+    ///
+    /// The exit code is deliberately still 0. A `tests/` directory may hold a yaml or json file that
+    /// is not a suite at all and the walker cannot tell by name, so failing would break setups that
+    /// work; and the line about the rules file must stay as it was, because it is not wrong.
+    #[test]
+    fn a_test_file_that_matches_no_rules_file_is_named_rather_than_discarded() {
+        const DIR: &str = "resources/test-command/orphaned-test-file";
+
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(DIR))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming the ignored file must not change the verdict"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "resources/test-command/orphaned-test-file/tests/s3_tests.yml did not match any rules file, so it was not run"
+            ),
+            "the ignored test file must be named, path included:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains(
+                "Guard File resources/test-command/orphaned-test-file/s3_bucket.guard did not have any tests associated, skipping."
+            ),
+            "and the existing line about the rules file must be unchanged:\n{}",
+            stdout
+        );
+    }
+
+    /// A directory where every test file pairs says nothing, so this does not become noise.
+    ///
+    /// Two shapes. `dir` is the plain one, every stem matching its own test file. The three-way
+    /// collision is the one that matters: whether a file was taken is answered once, where it is
+    /// taken, so longest-prefix pairing and this diagnostic cannot disagree. Deciding it a second
+    /// time by repeating the prefix test is what would report a paired file as unpaired, and
+    /// `a_b_tests.yml` -- which matches two stems and is claimed by one -- is where that would show.
+    #[rstest]
+    #[case("resources/test-command/dir")]
+    #[case("resources/test-command/prefix-collision-three-way")]
+    fn a_directory_where_every_test_file_pairs_reports_no_unmatched_file(#[case] dir: &str) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(dir))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("did not match any rules file"),
+            "every test file in {} is paired, so nothing should be reported:\n{}",
+            dir,
+            stderr
+        );
+    }
+
     #[rstest]
     #[case("json")]
     #[case("yaml")]
