@@ -8508,3 +8508,68 @@ fn a_key_filter_after_a_wildcard_keeps_the_map_as_its_subject(
 
     Ok(())
 }
+
+/// A function call on the right of `keys` compares against the map's keys, like the other two right-hand sides.
+///
+/// `map_keys_match` took a value and an access there and not a function call, so `access` matched the
+/// function's name as a query, `close_array` failed recoverably on the `(`, and `predicate_filter_clauses` read
+/// the same text as an ordinary filter over a child property named `keys`. Both readings parse, so this is
+/// asserted on the verdict rather than on the tree: the document is built so the two disagree in both
+/// directions. Its one entry is keyed `alpha` and that entry has a child named `keys` whose value is `zulu`, so
+/// a key filter for `alpha` selects the entry and the property reading does not -- and for `zulu` it is the
+/// other way round. Each function case is paired with the literal spelling of the same question, which is the
+/// verdict it has to agree with.
+///
+/// Before the fix, `to_lower("ALPHA")` failed and `to_lower("ZULU")` passed. Both were the property reading
+/// answering a question nobody asked, at exit 19 and exit 0 respectively, with no diagnostic naming the key.
+/// Six of these cases held the opposite verdict before it: the four `==`/`!=` function cases and the `in` and
+/// `not in` ones. The literal spellings and the two quoted-property cases held already and are here as the
+/// references the function spellings have to agree with; `case_is_not_folded` also held already, by arriving at
+/// the same verdict through the wrong reading, and is here to pin that the function is evaluated at all.
+#[rstest::rstest]
+#[case::function_result_matches_the_key(
+    r#"Tags[ keys == to_lower("ALPHA") ] !empty"#,
+    Status::PASS
+)]
+#[case::literal_spelling_of_the_same_question(r#"Tags[ keys == "alpha" ] !empty"#, Status::PASS)]
+#[case::function_result_matches_no_key(r#"Tags[ keys == to_lower("ZULU") ] !empty"#, Status::FAIL)]
+#[case::literal_spelling_agrees_there_too(r#"Tags[ keys == "zulu" ] !empty"#, Status::FAIL)]
+#[case::case_is_not_folded(r#"Tags[ keys == to_upper("alpha") ] !empty"#, Status::FAIL)]
+#[case::not_equal_selects_the_other_key(r#"Tags[ keys != to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::not_equal_excludes_the_only_key(
+    r#"Tags[ keys != to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+#[case::in_takes_a_function_too(r#"Tags[ keys in to_lower("ALPHA") ] !empty"#, Status::PASS)]
+#[case::not_in_takes_one(r#"Tags[ keys not in to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::a_quoted_first_token_is_still_the_property(
+    r#"Tags[ "keys" == to_lower("ZULU") ] !empty"#,
+    Status::PASS
+)]
+#[case::and_the_property_reading_answers_about_the_child(
+    r#"Tags[ "keys" == to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Tags: {
+            alpha: { keys: 'zulu' }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}

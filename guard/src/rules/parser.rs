@@ -1121,12 +1121,31 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
             map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
     )(input)?;
+    // Value, then function call, then access -- the order and the set that `clause_with_map` and `let_value`
+    // use. The function call was missing here, and it is the one right-hand side of the three that changed
+    // what a clause means rather than rejecting it. `access` matched the function's name as a query and left
+    // `(...)` behind, `close_array` carries no `cut` so that failed recoverably, and
+    // `predicate_filter_clauses` -- the next branch of `predicate_or_index` -- then read the same text as an
+    // ordinary filter over a property named `keys`. So `Tags[ keys == to_lower("ALPHA") ]` asked whether a
+    // child property called `keys` equalled `alpha`, where the two spellings beside it asked what the author
+    // wrote. Against a document holding one entry keyed `alpha` whose `keys` child is `zulu`, the literal and
+    // the variable spellings pass at exit 0 and the function spelling failed at exit 19, blaming a value it
+    // named as `[null]`.
+    //
+    // Nothing downstream forced the narrower set: `MapKeyFilterClause::compare_with` is a `LetValue`, and the
+    // arm that resolves a `LetValue::FunctionCall` for a key filter is already there in
+    // `eval_context::query_retrieval_with_converter` -- it was unreachable because the parser could not build
+    // one.
     let (input, with) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
             map(parse_value, |value| {
                 LetValue::Value(PathAwareValue::try_from(value).unwrap())
             }),
+            map(
+                preceded(zero_or_more_ws_or_comment, function_expr),
+                LetValue::FunctionCall,
+            ),
             map(
                 preceded(zero_or_more_ws_or_comment, access),
                 LetValue::AccessClause,

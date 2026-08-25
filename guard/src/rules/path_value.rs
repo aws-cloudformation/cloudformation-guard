@@ -886,7 +886,23 @@ impl QueryResolver for PathAwareValue {
                             }
                         }
 
-                        LetValue::FunctionCall(_) => unreachable!(),
+                        // Not `unreachable!()` any more. It was true only because the parser could not
+                        // build a key filter with a function call on the right, and that was the defect --
+                        // the same input parsed as an ordinary filter over a property named `keys` and
+                        // returned a different verdict. Now that the parser builds it, an abort here would
+                        // be one panic away from any caller of this resolver.
+                        //
+                        // Resolving it is the live engine's job and it does resolve it, in
+                        // `eval_context::query_retrieval_with_converter`; this resolver has no function
+                        // machinery to reach for and no command path reaches this arm. So it says what it
+                        // cannot do rather than dying of it.
+                        LetValue::FunctionCall(function) => {
+                            return Err(Error::RetrievalError(format!(
+                                "A key filter with a function call on the right, {}, needs the evaluation \
+                                 context that resolves functions. This resolver does not have one.",
+                                function.name
+                            )))
+                        }
                     };
                     if query.len() > 1 {
                         let mut acc = Vec::with_capacity(selected.len());

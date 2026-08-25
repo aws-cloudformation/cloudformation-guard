@@ -5912,6 +5912,96 @@ fn a_clause_whose_first_identifier_is_let_reads_as_that_clause() -> Result<(), E
     Ok(())
 }
 
+/// A function call on the right of `keys` builds a key filter, like the other two right-hand sides.
+///
+/// `map_keys_match` accepted a value and an access there and not a function call, so `access` matched the
+/// function's name as a query, `close_array` -- which carries no `cut` -- failed recoverably on the `(`, and
+/// `predicate_filter_clauses` read the same text as an ordinary filter over a child property named `keys`. The
+/// clause parsed either way, which is the whole problem: the query part is what changed, and with it what the
+/// clause asks. See `a_function_call_on_the_right_of_keys_compares_against_the_keys` in eval_tests for the two
+/// verdicts.
+#[test]
+fn a_function_call_on_the_right_of_keys_is_a_key_filter() -> Result<(), Error> {
+    for (spelled, comparator) in [
+        (r#"Tags[ keys == to_lower("ALPHA") ]"#, MapKeyComparator::Eq),
+        (
+            r#"Tags[ keys != to_lower("ALPHA") ]"#,
+            MapKeyComparator::NotEq,
+        ),
+        (r#"Tags[ keys in to_lower("ALPHA") ]"#, MapKeyComparator::In),
+        (
+            r#"Tags[ keys not in to_lower("ALPHA") ]"#,
+            MapKeyComparator::NotIn,
+        ),
+        (r#"Tags[ keys == count(Resources) ]"#, MapKeyComparator::Eq),
+    ] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        match &query[1] {
+            QueryPart::MapKeyFilter(None, clause) => {
+                assert_eq!(
+                    clause.comparator, comparator,
+                    "the comparator a key filter was built with: {}",
+                    spelled
+                );
+                assert!(
+                    matches!(clause.compare_with, LetValue::FunctionCall(..)),
+                    "a function call on the right must stay a function call: {} gave {:?}",
+                    spelled,
+                    clause.compare_with
+                );
+            }
+            other => panic!(
+                "expected a key filter, got {:?} for {} -- a Filter here is the defect",
+                other, spelled
+            ),
+        }
+    }
+
+    // The capture form too, since the name is read before the comparator.
+    let captured = AccessQuery::try_from(r#"Tags[ mk | keys == to_lower("ALPHA") ]"#)?.query;
+    assert!(
+        matches!(&captured[1], QueryPart::MapKeyFilter(Some(name), _) if name == "mk"),
+        "the capture name survives: {:?}",
+        captured.get(1)
+    );
+    Ok(())
+}
+
+/// `keys` still names a property when the comparator is not one a key filter takes.
+///
+/// This is the boundary the earlier `keys` fix on this branch drew, and the new alternative sits inside it: the
+/// four key-filter comparators are what reserve the word, and `EXISTS` is not one of them. A quoted first
+/// token reaches the property reading even for those four.
+#[test]
+fn keys_is_still_a_property_name_outside_a_key_filter() -> Result<(), Error> {
+    for spelled in [
+        "Tags[ keys EXISTS ]",
+        "Tags[ keys EMPTY ]",
+        "Tags[ keys >= 1 ]",
+        r#"Tags[ "keys" == to_lower("ALPHA") ]"#,
+    ] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        assert!(
+            matches!(query.get(1), Some(QueryPart::Filter(..))),
+            "expected an ordinary filter, got {:?} for {}",
+            query.get(1),
+            spelled
+        );
+    }
+
+    // And the two right-hand sides that always worked still build a key filter.
+    for spelled in [r#"Tags[ keys == "alpha" ]"#, "Tags[ keys not in %denied ]"] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        assert!(
+            matches!(query.get(1), Some(QueryPart::MapKeyFilter(..))),
+            "expected a key filter, got {:?} for {}",
+            query.get(1),
+            spelled
+        );
+    }
+    Ok(())
+}
+
 /// `let` still declares a variable in both scopes, with either sign.
 #[test]
 fn let_still_declares_a_variable() -> Result<(), Error> {
