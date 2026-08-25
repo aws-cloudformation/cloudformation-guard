@@ -1031,7 +1031,25 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
 
 fn array_index(input: Span) -> IResult<Span, QueryPart> {
     map(
-        delimited(open_array, parse_int_value, cut(close_array)),
+        delimited(
+            open_array,
+            // Whitespace-tolerant like every other bracket form, and it was not. `open_array` and
+            // `close_array` each skip whitespace, so a trailing space was fine and a leading one was not:
+            // `Names[0 ]` parsed and `Names[ 0]` did not, because the space reached `parse_int_value`, whose
+            // `digit1` cannot begin on one. The numeric index was the only bracket form with the omission --
+            // `[*]`, `[x]` and a filter all accepted the space.
+            //
+            // Nothing else in `predicate_or_index` reads a bare integer, so the query fell through to
+            // `predicate_filter_clauses` and the whole file was rejected with "There were no clauses
+            // present". Loud rather than misread, but `Names[ 0 ]` is an ordinary way to write it, and it
+            // took `Tags[ 0 ].Key` and an index inside a filter down with it.
+            //
+            // The `cut` below keeps its scope: a filter whose first token is an integer is not a clause in
+            // any spelling, `[0 == 1]` included, so accepting the space cannot commit to this branch for
+            // input another branch would have read.
+            preceded(zero_or_more_ws_or_comment, parse_int_value),
+            cut(close_array),
+        ),
         |idx| {
             let idx = match idx {
                 Value::Int(i) => i,

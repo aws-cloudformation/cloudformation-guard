@@ -5236,6 +5236,82 @@ fn whitespace_inside_a_named_index_does_not_change_the_query_part() -> Result<()
     Ok(())
 }
 
+/// A leading space before a numeric index does not change the query part.
+///
+/// Same omission as the named branch above, in `array_index`. `open_array` and `close_array` both skip
+/// whitespace, so `Names[0 ]` parsed and `Names[ 0]` did not: the space reached `parse_int_value`, whose
+/// `digit1` cannot start on one. Nothing else in `predicate_or_index` reads a bare integer, so the query
+/// fell through to `predicate_filter_clauses` and the file was rejected at "There were no clauses present".
+#[test]
+fn whitespace_inside_a_numeric_index_does_not_change_the_query_part() -> Result<(), Error> {
+    let spellings = [
+        "Names[0].Value",
+        "Names[0 ].Value",
+        "Names[ 0].Value",
+        "Names[ 0 ].Value",
+        "Names[  0  ].Value",
+    ];
+    let expected = AccessQuery::try_from(spellings[0])?.query;
+    for spelling in &spellings[1..] {
+        assert_eq!(
+            AccessQuery::try_from(*spelling)?.query,
+            expected,
+            "all spellings of a numeric index must parse the same: {}",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// A negative index takes whitespace on both sides too.
+///
+/// Its own branch of `parse_int_value`, so it needed asserting separately: the sign is parsed with the
+/// digits rather than applied afterwards, and a space between `[` and `-` failed for the same reason a
+/// space before a digit did.
+#[test]
+fn whitespace_inside_a_negative_numeric_index_does_not_change_the_query_part() -> Result<(), Error>
+{
+    let spellings = [
+        "Names[-1].Value",
+        "Names[-1 ].Value",
+        "Names[ -1].Value",
+        "Names[ -1 ].Value",
+    ];
+    let expected = AccessQuery::try_from(spellings[0])?.query;
+    for spelling in &spellings[1..] {
+        assert_eq!(
+            AccessQuery::try_from(*spelling)?.query,
+            expected,
+            "all spellings of a negative index must parse the same: {}",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// The nested positions, which the same omission also rejected.
+///
+/// An index inside a filter and an index followed by a key access are the two spellings an author is most
+/// likely to write with spaces, and both were parse errors.
+#[test]
+fn whitespace_inside_a_nested_numeric_index_does_not_change_the_query_part() -> Result<(), Error> {
+    for (spaced, unspaced) in [
+        (
+            "Resources[ Properties.Names[ 0 ] == \"a\" ]",
+            "Resources[ Properties.Names[0] == \"a\" ]",
+        ),
+        ("Tags[ 0 ].Key", "Tags[0].Key"),
+    ] {
+        assert_eq!(
+            AccessQuery::try_from(spaced)?.query,
+            AccessQuery::try_from(unspaced)?.query,
+            "a spaced nested index must parse the same as the unspaced one: {}",
+            spaced
+        );
+    }
+    Ok(())
+}
+
 /// A clause whose first identifier starts with `when` is a clause, not a parse failure.
 ///
 /// `tag("when")` matched the first four characters of `whenCreated`, the whitespace `when_conditions`
