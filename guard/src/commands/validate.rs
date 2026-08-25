@@ -1,5 +1,4 @@
 use std::cmp;
-use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
@@ -28,7 +27,7 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
-use crate::rules::path_value::PathAwareValue;
+use crate::rules::path_value::{DuplicateKey, PathAwareValue};
 use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
@@ -292,7 +291,7 @@ impl Executable for Validate {
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let data_file = build_data_file(content, name)?;
+                                let data_file = build_data_file(content, name, writer)?;
                                 streams.push(data_file);
                             }
                         }
@@ -305,7 +304,7 @@ impl Executable for Validate {
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
 
-                    let data_file = build_data_file(content, "STDIN".to_string())?;
+                    let data_file = build_data_file(content, "STDIN".to_string(), writer)?;
 
                     vec![data_file]
                 } else {
@@ -334,7 +333,8 @@ impl Executable for Validate {
                                 let mut reader = BufReader::new(File::open(file.path())?);
                                 reader.read_to_string(&mut content)?;
 
-                                let DataFile { path_value, .. } = build_data_file(content, name)?;
+                                let DataFile { path_value, .. } =
+                                    build_data_file(content, name, writer)?;
 
                                 primary_path_value = match primary_path_value {
                                     Some(current) => Some(current.merge(path_value)?),
@@ -445,7 +445,7 @@ impl Executable for Validate {
                 |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
                     let content = data.to_string();
                     let name = format!("DATA_STDIN[{}]", i + 1);
-                    let data_file = build_data_file(content, name)?;
+                    let data_file = build_data_file(content, name, writer)?;
 
                     data_collection.push(data_file);
 
@@ -781,13 +781,43 @@ fn data_file_is_empty(name: &str) -> Error {
     ))
 }
 
-fn build_data_file(content: String, name: String) -> Result<DataFile> {
+/// Reports each key the document declared twice inside one mapping, on the same stderr channel the
+/// empty-file message uses.
+///
+/// The verdict is left alone: the last value still wins and the exit code does not move. The YAML
+/// 1.2 spec makes a duplicate key a loading failure, so rejecting the document would be defensible
+/// on it, but every template that carries one passes today and that is a maintainer's call. Saying
+/// so is not.
+///
+/// One line per duplicated key, written once when the file is read. Data files are built before any
+/// rule is evaluated, so the count does not scale with the number of rules.
+fn report_duplicate_keys(writer: &mut Writer, name: &str, duplicates: &[DuplicateKey]) {
+    for duplicate in duplicates {
+        writer
+            .write_err(format!(
+                "Warning: duplicate key {} in data file {}, first at {} and again at {}. \
+                 The last value is the one evaluated.",
+                duplicate.path, name, duplicate.first, duplicate.repeated
+            ))
+            .expect("Unable to write to stderr");
+    }
+}
+
+fn build_data_file(content: String, name: String, writer: &mut Writer) -> Result<DataFile> {
     if content.trim().is_empty() {
         return Err(data_file_is_empty(&name));
     }
 
+    let mut duplicates = vec![];
     let path_value = match crate::rules::values::read_from(&content) {
-        Ok(value) => PathAwareValue::try_from(value)?,
+        Ok(value) => {
+            let converted = PathAwareValue::try_from_marked(
+                (value, crate::rules::path_value::Path::root()),
+                &mut duplicates,
+            )?;
+            report_duplicate_keys(writer, &name, &duplicates);
+            converted
+        }
         // A file that parses but holds no document -- one that is all comments, say -- has nothing
         // more in it to validate than a file of no bytes, and is reported the same way. The check
         // above cannot answer this on the text alone, so the loader is what decides it.

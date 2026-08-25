@@ -48,6 +48,19 @@ impl std::fmt::Display for Location {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct Path(pub(crate) String, pub(crate) Location);
 
+/// A key a document declared more than once inside one mapping.
+///
+/// Both locations are carried, not just the repeated one, because a warning that a key is duplicated
+/// without saying where is unusable on a template of any size: the reader needs the line they can
+/// see and the line that actually decided the value. A key name reused in two *different* mappings
+/// is ordinary and is not this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DuplicateKey {
+    pub(crate) path: String,
+    pub(crate) first: Location,
+    pub(crate) repeated: Location,
+}
+
 impl Path {
     #[cfg(test)]
     pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
@@ -466,7 +479,26 @@ impl TryFrom<MarkedValue> for PathAwareValue {
 impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
     type Error = Error;
 
+    /// Drops any duplicate keys the document held. Callers that report them use
+    /// `try_from_marked` instead; this exists for the ones with nowhere to report to.
     fn try_from(incoming: (MarkedValue, Path)) -> Result<Self, Self::Error> {
+        Self::try_from_marked(incoming, &mut vec![])
+    }
+}
+
+impl PathAwareValue {
+    /// The conversion, collecting the keys a mapping declared twice as it goes.
+    ///
+    /// This is where the duplicate is visible and nowhere earlier is: the loader keys its map on
+    /// `(String, Location)`, so two same-named keys at different lines are two separate entries and
+    /// both survive it. They collapse here, where the map is rebuilt keyed on the name alone, and
+    /// this is also the only point that holds the path the key was reached by. Collection is
+    /// per-mapping by construction, since the check is the insert into the map being built for one
+    /// mapping, so a name reused across two mappings cannot register.
+    pub(crate) fn try_from_marked(
+        incoming: (MarkedValue, Path),
+        duplicates: &mut Vec<DuplicateKey>,
+    ) -> Result<Self, Error> {
         let root = incoming.0;
         let path = incoming.1;
 
@@ -495,7 +527,8 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 for (idx, each) in v.into_iter().enumerate() {
                     let sub_path = path.extend_usize(idx);
                     let loc = *each.location();
-                    let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
+                    let value =
+                        Self::try_from_marked((each, sub_path.with_location(loc)), duplicates)?;
                     result.push(value);
                 }
 
@@ -505,10 +538,13 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             MarkedValue::Map(map, loc) => {
                 let mut keys = Vec::with_capacity(map.len());
                 let mut values = indexmap::IndexMap::with_capacity(map.len());
+                let mut first_seen: indexmap::IndexMap<String, Location> =
+                    indexmap::IndexMap::with_capacity(map.len());
                 for ((each_key, loc), each_value) in map {
                     let sub_path = path.extend_string(&each_key);
                     let sub_path = sub_path.with_location(*each_value.location());
-                    let value = PathAwareValue::try_from((each_value, sub_path))?;
+                    let key_path = sub_path.0.clone();
+                    let value = Self::try_from_marked((each_value, sub_path), duplicates)?;
                     // Pushed only when the insert added a new entry. `values` is an `IndexMap` and
                     // dedups; `keys` did not, so a document with a repeated key left the two different
                     // lengths -- and `eval_context` pairs them *positionally*
@@ -527,11 +563,21 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                     //
                     // Last-write-wins on the value is unchanged, and the key keeps the position of its
                     // first appearance, which is what `IndexMap` does for the value too.
+                    //
+                    // That same insert is what tells a duplicate from a first appearance, so the
+                    // collection below costs no second pass over the mapping.
                     if values.insert(each_key.to_owned(), value).is_none() {
+                        first_seen.insert(each_key.to_owned(), loc);
                         keys.push(PathAwareValue::String((
                             path.with_location(loc),
                             each_key.to_string(),
                         )));
+                    } else if let Some(first) = first_seen.get(&each_key) {
+                        duplicates.push(DuplicateKey {
+                            path: key_path,
+                            first: *first,
+                            repeated: loc,
+                        });
                     }
                 }
                 Ok(PathAwareValue::Map((

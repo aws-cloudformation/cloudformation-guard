@@ -385,6 +385,151 @@ mod validate_tests {
         );
     }
 
+    /// A duplicated key took the last value and said nothing, on any channel. A reviewer reading a
+    /// template top-down sees the first value and the tool judges the last, so the document can
+    /// present one posture and be evaluated on another with no diagnostic to notice it by.
+    ///
+    /// The diagnostic names the path and both lines, because a warning that only says a key was
+    /// duplicated does not tell anyone which of several thousand lines to look at. It fires once per
+    /// duplicated key rather than once per document, which the two-duplicate case below pins.
+    #[rstest::rstest]
+    #[case::yaml(
+        "Resources:\n  B:\n    Properties:\n      Encrypted: false\n      Encrypted: true\n",
+        "L:3,C:6",
+        "L:4,C:6"
+    )]
+    #[case::json(
+        "{\"Resources\":{\"B\":{\"Properties\":{\"Encrypted\":false,\"Encrypted\":true}}}}",
+        "L:0,C:33",
+        "L:0,C:51"
+    )]
+    fn test_a_duplicate_key_is_reported_with_its_path(
+        #[case] input: &str,
+        #[case] first: &str,
+        #[case] repeated: &str,
+    ) {
+        let mut reader = Reader::new(ReadCursor(Cursor::new(input.as_bytes().to_vec())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        ValidateTestRunner::default()
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert_eq!(
+            format!(
+                "Warning: duplicate key /Resources/B/Properties/Encrypted in data file STDIN, \
+                 first at {first} and again at {repeated}. The last value is the one evaluated.\n"
+            ),
+            stderr
+        );
+    }
+
+    /// The control, and the one that matters more than the positive case. A key name appearing in
+    /// two different mappings is ordinary and legal -- nearly every template repeats a property name
+    /// across its resources -- so a diagnostic that fired on that would fire on almost everything.
+    /// Nothing at all may be written to stderr here.
+    #[test]
+    fn test_a_key_repeated_across_two_mappings_is_not_reported() {
+        let input = indoc! {r#"
+            Resources:
+              A:
+                Properties:
+                  Encrypted: true
+              B:
+                Properties:
+                  Encrypted: true
+        "#};
+        let mut reader = Reader::new(ReadCursor(Cursor::new(input.as_bytes().to_vec())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert_eq!(
+            "",
+            writer.err_to_stripped().expect("failed to read stderr"),
+            "a key name used in two separate mappings was reported as a duplicate"
+        );
+    }
+
+    /// Reporting the duplicate must not change the verdict. Which value wins is unchanged, and it is
+    /// asserted from both directions so that the exit code alone shows the winner: last-wins means
+    /// `false` then `true` passes and `true` then `false` fails. Deciding to reject a duplicate key
+    /// outright, which the YAML 1.2 spec allows, would break every template that carries one today
+    /// and is a separate change from saying so.
+    #[rstest::rstest]
+    #[case::last_value_true("false", "true", StatusCode::SUCCESS)]
+    #[case::last_value_false("true", "false", StatusCode::VALIDATION_ERROR)]
+    fn test_reporting_a_duplicate_key_leaves_the_winning_value_alone(
+        #[case] first: &str,
+        #[case] second: &str,
+        #[case] expected_status_code: i32,
+    ) {
+        let input = format!(
+            indoc! {r#"
+                Resources:
+                  B:
+                    Properties:
+                      Encrypted: {}
+                      Encrypted: {}
+            "#},
+            first, second
+        );
+        let mut reader = Reader::new(ReadCursor(Cursor::new(input.into_bytes())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            expected_status_code, status_code,
+            "Encrypted declared {} then {} did not resolve to {}",
+            first, second, second
+        );
+    }
+
+    /// Two different duplicated keys in one document produce two warnings, not one for the document.
+    #[test]
+    fn test_each_duplicated_key_is_reported_once() {
+        let input = indoc! {r#"
+            Resources:
+              B:
+                Properties:
+                  Encrypted: false
+                  Encrypted: true
+                  Public: false
+                  Public: true
+        "#};
+        let mut reader = Reader::new(ReadCursor(Cursor::new(input.as_bytes().to_vec())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        ValidateTestRunner::default()
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert_eq!(
+            2,
+            stderr.lines().count(),
+            "two duplicated keys reported as:\n{}",
+            stderr
+        );
+        assert!(
+            stderr.contains("/Resources/B/Properties/Encrypted")
+                && stderr.contains("/Resources/B/Properties/Public"),
+            "both duplicated keys should be named:\n{}",
+            stderr
+        );
+    }
+
     /// A clause that fails because its reference resolved to nothing must say so in the output.
     ///
     /// Exit code alone is not enough, and asserting only the exit code is how this was missed: the
