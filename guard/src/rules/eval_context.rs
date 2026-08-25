@@ -18,7 +18,7 @@ use crate::rules::Status::SKIP;
 use crate::rules::{
     BlockCheck, ClauseCheck, ComparisonClauseCheck, EvalContext, InComparisonCheck, NamedStatus,
     QueryResult, RecordTracer, RecordType, Status, TypeBlockCheck, UnResolved, UnaryValueCheck,
-    ValueCheck,
+    UnboundName, ValueCheck,
 };
 use cruet::case::{camel, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
@@ -134,12 +134,12 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         )
     }
 
-    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`, which differ only
-    /// in whether `merged` is one of the places consulted.
+    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`.
     fn lookup(
         &mut self,
         variable_name: &'value str,
         merged: MergedKeys,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
             return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
@@ -187,17 +187,18 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
             None => {
-                // A name a file-level assignment declares as a capture, whose query captured nothing,
-                // resolves to an empty selection. That is what a block already answers for a name its
-                // own clauses declare, and for the same reason: capturing nothing is not an error, so
-                // the clause reading it fails rather than ending the run. The alternative is that
-                // whether the file produces a report at all depends on the template it was run
-                // against, since the same clause resolves when the query does match.
+                // The end of the chain, and the only place the unresolved-variable error is produced.
+                // Two declarations save a name from it. One is a file-level assignment declaring it as
+                // a capture, whose query then captured nothing: the same clause resolves when the query
+                // does match, so erroring here makes whether the file produces a report at all depend
+                // on the template it was run against. The other is a block the lookup came out of,
+                // which is what `unbound` carries -- see `UnboundName` for why the block has to be the
+                // one to say so.
                 //
-                // A name declared nowhere is still an error, which is the split `BlockScope::lookup`
-                // makes as well: a typo, or a name belonging to another rule, is a broken ruleset
-                // rather than a finding about the input.
-                if self.capture_sources.contains_key(variable_name) {
+                // A name neither declares is still an error.
+                if self.capture_sources.contains_key(variable_name)
+                    || unbound == UnboundName::EmptySelection
+                {
                     return Ok(vec![]);
                 }
                 return Err(Error::MissingValue(format!(
@@ -256,7 +257,7 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             if self.resolving_assignments.contains(source) {
                 continue;
             }
-            self.lookup(source, MergedKeys::Visible)?;
+            self.lookup(source, MergedKeys::Visible, UnboundName::Error)?;
         }
         Ok(())
     }
@@ -346,12 +347,12 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
         Ok(())
     }
 
-    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`, which differ only
-    /// in whether `merged` is one of the places consulted.
+    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`.
     fn lookup(
         &mut self,
         variable_name: &'value str,
         merged: MergedKeys,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
         if let Some(val) = self.scope.literals.get(variable_name) {
             return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
@@ -388,32 +389,36 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
         let query = match self.scope.variable_queries.get(variable_name) {
             Some(val) => val,
             None => {
-                // A name this block declares as a capture but did not capture resolves to nothing here,
-                // rather than deferring to the parent.
-                //
-                // Deferring is what let the per-iteration guarantee leak. `merge_captures_into_parent`
-                // hands each iteration's keys up as it exits, so by iteration two the parent holds
-                // iteration one's -- and a resource that captured nothing read its neighbour's key and
-                // passed on it. A silent false PASS at exit 0, and the shape that hides it is that the
-                // non-compliant resource fails correctly when it is the only one in the file.
+                // Every name defers. What this block contributes is `unbound`: a name it declares as a
+                // filter capture, which this iteration did not capture, resolves to an empty selection
+                // if no enclosing scope binds it either.
                 //
                 // Three ways an iteration captures nothing: a filter that matched no entry, a capturing
                 // clause skipped because an `or` took the other branch, and one inside a `when` whose
-                // condition failed. None of them is an error, and none of them is evidence about this
-                // value, so an empty selection is the honest answer -- the clause reading it then fails
-                // with the "resolved to no values" reason rather than passing on somebody else's key.
+                // condition failed. None of them is an error, so ending the run over one would take
+                // every other rule's findings down with it; and none of them is evidence about the
+                // value, so the clause reading it fails with the "resolved to no values" reason rather
+                // than passing on somebody else's key.
                 //
-                // A name the block does *not* declare still defers, which is what keeps an outer `let`
-                // resolving from inside a block. The deferral asks for the nested-block reading whatever
-                // this lookup was, because it is leaving a block either way: a name this block does not
-                // declare is not one of its iterations' keys, so the union a finished block left in an
-                // enclosing scope is not an answer about the value being iterated here.
-                if self.capture_names.contains(variable_name) {
-                    return Ok(vec![]);
-                }
+                // Answering empty *here* was the earlier shape, and it went further than the argument
+                // for it. An outer `let` or an enclosing parameterized rule's parameter of the same name
+                // is a real binding, and this iteration capturing nothing says nothing about it -- so
+                // the short-circuit made that binding unreachable for the whole block, in every
+                // iteration, and even where the capturing clause provably never ran. A clause then
+                // failed on a variable whose `let` sits at the top of the file. Deferring first and
+                // keeping the empty selection as the answer of last resort separates the two.
+                //
+                // The deferral asks for the nested-block reading whatever this lookup was, because it is
+                // leaving a block either way: a name this block does not declare is not one of its
+                // iterations' keys, so the union a finished block left in an enclosing scope is not an
+                // answer about the value being iterated here.
+                let unbound = match self.capture_names.contains(variable_name) {
+                    true => UnboundName::EmptySelection,
+                    false => unbound,
+                };
                 return self
                     .parent
-                    .resolve_variable_from_nested_block(variable_name);
+                    .resolve_variable_from_nested_block(variable_name, unbound);
             }
         };
 
@@ -1851,14 +1856,15 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
-        self.lookup(variable_name, MergedKeys::Visible)
+        self.lookup(variable_name, MergedKeys::Visible, UnboundName::Error)
     }
 
     fn resolve_variable_from_nested_block(
         &mut self,
         variable_name: &'value str,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
-        self.lookup(variable_name, MergedKeys::Hidden)
+        self.lookup(variable_name, MergedKeys::Hidden, unbound)
     }
 
     fn add_variable_capture_key(
@@ -2286,13 +2292,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
     /// Forwarded rather than left to the trait's default, which would call this scope's
     /// `resolve_variable` and so ask the parent for the enclosing-level reading. A `ValueScope` sits
     /// between a block and the scope it defers to, and dropping the distinction here would put the
-    /// merged union back in reach of every nested block.
+    /// merged union back in reach of every nested block and turn a capture that matched nothing into an
+    /// error again.
     fn resolve_variable_from_nested_block(
         &mut self,
         variable_name: &'value str,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
         self.parent
-            .resolve_variable_from_nested_block(variable_name)
+            .resolve_variable_from_nested_block(variable_name, unbound)
     }
 
     fn add_variable_capture_key(
@@ -2351,14 +2359,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
-        self.lookup(variable_name, MergedKeys::Visible)
+        self.lookup(variable_name, MergedKeys::Visible, UnboundName::Error)
     }
 
     fn resolve_variable_from_nested_block(
         &mut self,
         variable_name: &'value str,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
-        self.lookup(variable_name, MergedKeys::Hidden)
+        self.lookup(variable_name, MergedKeys::Hidden, unbound)
     }
 
     /// Captured here rather than delegated to the parent, because this is the scope the capture

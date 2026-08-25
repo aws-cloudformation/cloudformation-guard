@@ -212,10 +212,12 @@ pub(super) enum EvaluationResult {
 /// Explanation attached to a clause that could not compare because its right-hand reference
 /// resolved to no values.
 ///
-/// Names the remedy as well as the cause. An author who genuinely expects a possibly-empty
-/// reference can wrap the clause in `when <reference> !empty { ... }`: the gate's own
-/// `!empty` check fails when the reference is empty, so the block is skipped rather than
-/// failed, and the comparison never runs.
+/// Points at what binds the reference, which is where the fault is. It used to name `when
+/// <reference> !empty { ... }` as the remedy, and that is not one: the gate's own `!empty` check
+/// fails when the reference is empty, so the block is skipped and the comparison never runs. An
+/// author following the advice turned a check that was failing for a reason into a check that does
+/// not run, at exit 0, which is the outcome this message exists to prevent. Saying so is worth the
+/// extra sentence, because the advice was there for two releases.
 fn empty_reference_message(negated: bool) -> String {
     let clause = if negated {
         "negated comparison"
@@ -223,9 +225,10 @@ fn empty_reference_message(negated: bool) -> String {
         "comparison"
     };
     format!(
-        "The {clause} could not be performed: the reference on the right-hand side resolved \
-         to no values. If an empty reference is expected here, guard the clause with `when \
-         <reference> !empty {{ ... }}` so it is skipped rather than failed."
+        "The {clause} could not be performed: the reference on the right-hand side resolved to no \
+         values, so the clause fails. Look at what binds the reference -- a `let` or a filter \
+         capture that selected nothing. `when <reference> !empty {{ ... }}` skips the clause rather \
+         than satisfying it."
     )
 }
 
@@ -311,14 +314,19 @@ fn incomparable_membership_notice(context: &str) -> String {
 
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
-/// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
-/// thing about enforcement -- nothing was compared -- but the remedy differs: the author has to decide
-/// whether an empty selection is expected, and if it is, guard the clause rather than rely on it
-/// silently passing.
+/// Distinct from [`empty_reference_message`] only in which side it is about; both point at what binds
+/// the name and both say what guarding the clause would actually do.
+///
+/// This is the message a capture that matched no entry produces, and the reason the old wording
+/// mattered so much: it told the author to write `when %name !empty { ... }`, which skips the block, so
+/// the reading that looks like "make the rule tolerate an empty selection" is "stop checking". The
+/// clause is failing because nothing was compared, and the thing to change is the query or filter that
+/// was supposed to bind the name.
 fn empty_lhs_message() -> String {
     "The comparison could not be performed: the variable on the left-hand side resolved to no \
-     values, so there was nothing to compare. If an empty selection is expected here, guard the \
-     clause with `when <variable> !empty { ... }` so it is skipped rather than failed."
+     values, so the clause fails. Look at what binds the variable -- a `let` or a filter capture \
+     that selected nothing. `when <variable> !empty { ... }` skips the clause rather than \
+     satisfying it."
         .to_string()
 }
 
@@ -2149,15 +2157,20 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
 
     /// An argument the call site passed is the same binding whichever depth of block reads it, so this
     /// answers as `resolve_variable` does and only the onward deferral differs.
+    ///
+    /// Answering here is what makes the parameter half of the shadowing fix work: a block inside the
+    /// rule declaring a capture of the parameter's name used to end the lookup before it reached this
+    /// scope, so the argument the call site passed was unreadable for that whole block.
     fn resolve_variable_from_nested_block(
         &mut self,
         variable_name: &'value str,
+        unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
         match self.resolved_parameters.get(variable_name) {
             Some(res) => Ok(res.clone()),
             None => self
                 .parent
-                .resolve_variable_from_nested_block(variable_name),
+                .resolve_variable_from_nested_block(variable_name, unbound),
         }
     }
 

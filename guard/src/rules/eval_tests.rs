@@ -1938,6 +1938,113 @@ fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()
     Ok(())
 }
 
+/// A capture name a block declares does not hide an enclosing binding of the same name.
+///
+/// `capture_names` used to answer the lookup itself, before asking the parent, so an outer `let` or an
+/// enclosing parameterized rule's parameter became unreachable for the whole block -- in every
+/// iteration, and even where the capturing clause provably never ran. Each case here is paired with a
+/// control that differs only in the capture's name, and the control passed while the collision failed at
+/// exit 19, on a variable whose `let` sits at the top of the file.
+///
+/// Three shapes because they reach the same short-circuit by different routes: a `when` block whose
+/// condition failed, so the capturing clause did not run; a wildcard over a list, where `accumulate` has
+/// an index rather than a key and the name can *never* be populated on any input; and a rule parameter,
+/// which lives in `ResolvedParameterContext` and is reachable only through the parent chain, so the
+/// argument the call site passed was never read.
+///
+/// Every case is asserted with its mirror, which is what shows the outer binding was read rather than
+/// the clause being skipped: `"fromlet"` passes and `"other"` fails, and the failing one reports
+/// `Value="fromlet"` as what it found.
+#[rstest::rstest]
+#[case::when_condition_failed(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "bucket"
+)]
+#[case::wildcard_over_a_list(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Ports[ allowed ] > 0
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "ports"
+)]
+#[case::rule_parameter(
+    r#"
+    rule inner(allowed) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    rule caller {
+        inner("fromlet")
+    }
+    "#,
+    "bucket"
+)]
+fn a_declared_capture_does_not_hide_an_enclosing_binding_of_the_same_name(
+    #[case] rules: &str,
+    #[case] document: &str,
+) -> Result<()> {
+    let template = match document {
+        "ports" => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Ports:
+                - 80
+                - 443
+        "#
+        }
+        _ => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                alpha:
+                  Enabled: true
+        "#
+        }
+    };
+
+    for (expected_value, expected) in [("fromlet", Status::PASS), ("other", Status::FAIL)] {
+        let rules = rules.replace("EXPECTED", expected_value);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "the block declares `allowed` as a capture and captured nothing, so `%allowed` is the \
+             enclosing binding: comparing it with {:?} must be {:?}",
+            expected_value,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
 /// A capture shadows a same-named assignment in an *enclosing* scope, and the parser accepts that.
 ///
 /// The half of the assigned-and-captured collision that is left alone, and it needs asserting because

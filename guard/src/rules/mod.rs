@@ -359,6 +359,26 @@ pub(crate) trait RecordTracer<'value> {
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
 }
 
+/// What a variable lookup answers when no scope on the chain binds the name.
+///
+/// The two answers are far apart -- a clause that fails, or an error that ends the run and takes every
+/// other rule's findings with it -- and which is right depends on whether the name is one the rule text
+/// declares. A filter capture that matched no entry has no keys to show and nothing to report: an
+/// iteration capturing nothing is not an error, so the clause reading the name fails and the report
+/// still names every other rule's findings. A name the rule text never declares is a typo or a name
+/// belonging to another rule, which is a broken ruleset rather than a finding about the input.
+///
+/// Only a block knows which of the two it is, because only a block reads the capture names out of its
+/// own clauses, and the error is produced at the far end of the chain. So the answer travels with the
+/// lookup rather than being decided where it is needed.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum UnboundName {
+    /// A block the lookup came out of declares the name as a filter capture.
+    EmptySelection,
+    /// No block does.
+    Error,
+}
+
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// Forget every key captured by a filter so far.
     ///
@@ -393,18 +413,24 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
 
     /// Resolve `variable_name` for a lookup that started inside a nested block.
     ///
-    /// The same as `resolve_variable` except that keys merged out of a block that has already
-    /// finished are withheld. Those keys are a union over that block's iterations, while the clause
-    /// asking is one iteration of another block, so answering from the union lets one resource's key
-    /// satisfy a second resource's clause. A key captured by a filter in a scope whose iteration is
-    /// still running is offered as usual: that key belongs to the iteration doing the asking.
+    /// Two things differ from `resolve_variable`.
     ///
-    /// Defaults to `resolve_variable`, which is the same thing for a scope that holds no merged keys.
-    /// A scope that only forwards lookups has to forward this one too, or the distinction is lost at
-    /// that link in the chain.
+    /// Keys merged out of a block that has already finished are withheld. Those keys are a union over
+    /// that block's iterations, while the clause asking is one iteration of another block, so answering
+    /// from the union lets one resource's key satisfy a second resource's clause. A key captured by a
+    /// filter in a scope whose iteration is still running is offered as usual: that key belongs to the
+    /// iteration doing the asking.
+    ///
+    /// `unbound` says what to answer if no scope on the chain binds the name, and it is the block the
+    /// lookup came out of that knows: see [`UnboundName`].
+    ///
+    /// Defaults to `resolve_variable`, which is the same thing for a scope that holds no merged keys
+    /// and produces no unresolved-variable error. A scope that only forwards lookups has to forward
+    /// this one too, or both distinctions are lost at that link in the chain.
     fn resolve_variable_from_nested_block(
         &mut self,
         variable_name: &'value str,
+        _unbound: UnboundName,
     ) -> Result<Vec<QueryResult>> {
         self.resolve_variable(variable_name)
     }

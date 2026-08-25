@@ -769,9 +769,16 @@ mod validate_tests {
             data_file,
             output
         );
+        // The explanation has to reach its last sentence, which is the one that says what the `!empty`
+        // guard would do. It used to name that guard as the *remedy*, and it is not one: the gate's own
+        // `!empty` check fails when the reference is empty, so the block is skipped and the comparison
+        // never runs. An author following the old advice replaced a check that was failing with a check
+        // that does not run, at exit 0. The message is also the longest one the console section prints,
+        // so asserting the tail here is what catches the truncation cap being outgrown.
         assert!(
-            output.contains("!empty"),
-            "the explanation should name the `!empty` guard as the remedy, got:\n{}",
+            output.contains("skips the clause rather than satisfying it"),
+            "the explanation should say what the `!empty` guard does rather than offer it as the \
+             remedy, and should not be cut off before saying it, got:\n{}",
             output
         );
     }

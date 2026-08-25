@@ -287,9 +287,14 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
 ///
 /// 320 because the cap has to clear the longest explanation that carries no embedded value, and clipping
 /// one of those is a real loss rather than a saving. Measured over every rule/data pair in the fixture
-/// corpus, that is 261 characters: the advice a failed comparison against an empty selection gives, which
-/// ends by telling the author to guard the clause with `when <variable> !empty { ... }`. At 240 the
-/// instruction was cut off mid-sentence. An embedded document has no length to clear, so any cap bounds it.
+/// corpus, that is 292 characters: what a failed comparison against an empty selection says, which ends by
+/// naming what `when <reference> !empty { ... }` would actually do. At 240 that last sentence was cut off
+/// mid-way. An embedded document has no length to clear, so any cap bounds it.
+///
+/// The 292 was 261 while the same explanation named the `!empty` guard as the remedy. It no longer does --
+/// guarding the clause skips the check rather than satisfying it, so the advice disarmed the rule it was
+/// printed for -- and saying what the guard does instead costs the difference. Anyone re-tuning this
+/// number should re-measure rather than trust either figure, since it tracks a message that changes.
 ///
 /// Counted over the content and not over the indentation around it. A `<< >>` message is written inside
 /// the clause that carries it, so every line of it is indented to that clause's nesting depth, and the
