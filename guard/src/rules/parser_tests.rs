@@ -781,6 +781,94 @@ fn test_range_type_equal_bounds() {
     }
 }
 
+/// One integer bound and one float bound widen to a float range, which is what the evaluator's
+/// `int_within_float_range` and `float_within_int_range` already check either kind of value against.
+/// Each of these was a parse error before.
+#[test]
+fn test_range_type_mixed_numeric_bounds() {
+    let s = "r[0,20.5]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(
+        parse_range(from_str2(s)),
+        Ok((
+            cmp,
+            Value::RangeFloat(RangeType {
+                upper: 20.5,
+                lower: 0.0,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE
+            })
+        ))
+    );
+
+    let s = "r(0.5,20]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(
+        parse_range(from_str2(s)),
+        Ok((
+            cmp,
+            Value::RangeFloat(RangeType {
+                upper: 20.0,
+                lower: 0.5,
+                inclusive: UPPER_INCLUSIVE
+            })
+        ))
+    );
+
+    // Emptiness is still measured after the widening, so a mixed pair cannot smuggle a reversed
+    // range through.
+    for s in ["r[20.5,0]", "r[20,0.5]"] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => assert!(
+                e.context.contains("no value can satisfy it"),
+                "{} gave {}",
+                s,
+                e.context
+            ),
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+
+    // An integer bound above 2^53 does not fit a float exactly, and widening it would move the
+    // bound, so it is refused rather than silently shifted.
+    let s = "r[9007199254740993,1e300]";
+    match parse_range(from_str2(s)) {
+        Err(nom::Err::Failure(e)) => assert!(
+            e.context.contains("would move the bound"),
+            "{} gave {}",
+            s,
+            e.context
+        ),
+        other => panic!("{} must be a Failure, got {:?}", s, other),
+    }
+    // 2^53 itself is exact, and so is any smaller magnitude.
+    assert!(matches!(
+        parse_range(from_str2("r[9007199254740992,1e300]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+    assert!(matches!(
+        parse_range(from_str2("r[-9007199254740992,1e300]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+
+    // A pairing that is not two numbers still has no comparison, and the span is the literal rather
+    // than what follows it.
+    for s in ["r[0,z]", "r[a,2.5]", "r[a,5]"] {
+        let span = unsafe { Span::new_from_raw_offset(0, 1, s, "") };
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => {
+                assert_eq!(e.span, span, "span must be the literal for {}", s);
+                assert!(
+                    e.context.contains("not both numbers"),
+                    "{} gave {}",
+                    s,
+                    e.context
+                );
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+}
+
 //
 // test with comments
 //

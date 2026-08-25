@@ -541,6 +541,7 @@ fn range_admits_a_value<T: PartialOrd>(lower: &T, upper: &T, inclusive: u8) -> b
 /// `Failure`, not `Error`, for the reason given on `parse_float` above: a recoverable error sends
 /// `alt` back to the other value productions, and the author is told about a stray fragment instead
 /// of about the range they wrote.
+///
 /// The bounds are named through `Debug` rather than `Display`, so that a float keeps its point and a
 /// char is quoted. `Display` prints the `2.0` of `r[2.0,1.0]` as `2`, which does not match what the
 /// author wrote.
@@ -568,6 +569,32 @@ fn reject_empty_range<'a, T: PartialOrd + Debug>(
     }))
 }
 
+/// Widen an integer bound so it can sit alongside a float bound in one `RangeType<f64>`.
+///
+/// `RangeType` holds a single type, so a range mixing the two kinds has to carry both bounds as
+/// floats, and the integer is the one that converts. `bound as f64` on its own is the conversion
+/// `compare_int_to_float` in `path_value.rs` refuses to make: above 2^53 an `i64` is not exactly
+/// representable, so the cast moves the bound, and on a range check a moved bound quietly admits or
+/// excludes a value at the edge. A bound that cannot be widened without moving is refused instead,
+/// which is what the surrounding parser already does with a number it cannot represent.
+fn widen_bound_to_float(bound: i64, input: Span<'_>) -> Result<f64, nom::Err<ParserError<'_>>> {
+    // 2^63. `i64::MAX as f64` rounds *up* to this value and casting it back saturates to
+    // `i64::MAX`, so a bare round-trip would report a bound it had moved as exact. Bound on 2^63
+    // itself, for the reason `compare_int_to_float` gives.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    let widened = bound as f64;
+    if (-TWO_POW_63..TWO_POW_63).contains(&widened) && widened as i64 == bound {
+        return Ok(widened);
+    }
+    Err(nom::Err::Failure(ParserError {
+        context: format!(
+            "Range bound {bound} cannot be paired with a float bound: it does not fit a 64 bit float exactly, and widening it would move the bound"
+        ),
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
 /// The four range forms, each over a lower and an upper bound.
 ///
 /// Nothing compared the two bounds, so a transposed pair parsed and became a clause that no
@@ -588,6 +615,14 @@ fn reject_empty_range<'a, T: PartialOrd + Debug>(
 /// usable thing to write, and it is kept. The three spellings that put an open end on equal bounds
 /// admit nothing, so they go with the reversed ones. That line is drawn on purpose in
 /// `range_admits_a_value` rather than falling out of whichever comparison happened to be written.
+///
+/// The bound kinds pair off separately from that. A range mixing one integer bound and one float
+/// bound used to be refused here, while `docs/CLAUSES.md:201` promises that the two kinds "compare
+/// against each other as numbers. That includes range membership", and `path_value.rs` carries
+/// `int_within_float_range` and `float_within_int_range` to do exactly that. So `Size in r[1,2]`
+/// held for a `Size` of `1.5`, and `Size in r[0,20.5]` did not parse at all: the gate was narrower
+/// than the thing it was gating, the same shape of defect as the float shape test above. Both
+/// bounds widen to float when exactly one of them is a float.
 fn parse_range(input: Span) -> IResult<Span, Value> {
     let parsed = preceded(
         char('r'),
@@ -628,11 +663,41 @@ fn parse_range(input: Span) -> IResult<Span, Value> {
             })
         }
 
+        // One integer bound and one float bound, widened to the float range the evaluator already
+        // knows how to check a value of either kind against.
+        (Value::Int(s), Value::Float(e)) => {
+            let s = widen_bound_to_float(s, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        (Value::Float(s), Value::Int(e)) => {
+            let e = widen_bound_to_float(e, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        // What is left is a bound pairing that is not two numbers, `r[0,z]` or `r[a,2.5]`, which no
+        // comparison decides.
+        //
+        // The span is `input` rather than the `parsed.0` it used to be. `parsed.0` is what follows
+        // the range, so the reporter put the caret one column past the closing bracket and quoted
+        // the lines after the offending literal instead of the literal: `let bounds = r[0,z]` puts
+        // the literal at column 16 and its `]` at column 21, and was reported at column 22 with an
+        // empty fragment. `parse_float` above already spans `input` for its equivalent failure.
         _ => {
             return Err(nom::Err::Failure(ParserError {
-                span: parsed.0,
+                span: input,
                 kind: ErrorKind::IsNot,
-                context: "Could not parse range".to_string(),
+                context: "Could not parse range: the bounds are not both numbers".to_string(),
             }))
         }
     };
