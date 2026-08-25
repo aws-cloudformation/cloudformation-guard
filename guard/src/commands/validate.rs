@@ -922,7 +922,7 @@ fn canonical_name(path: &Path) -> Result<String> {
 }
 
 /// The final component of a path, or an empty string if it has none.
-fn file_name_of(path: &Path) -> String {
+pub(crate) fn file_name_of(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .map_or_else(String::new, String::from)
