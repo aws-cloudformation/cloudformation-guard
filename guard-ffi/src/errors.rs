@@ -33,7 +33,14 @@ fn get_code(e: &Error) -> ErrorCode {
         //that use both the regular cli, and the ffi
         Error::XMLError(_) => 20,
         Error::MissingDocument => 21,
-        Error::InternalError(_) => unreachable!(),
+        // This answered `unreachable!()`. Nothing routes an `InternalError` here as the code stands,
+        // because `validate_and_return_json` maps every conversion failure to `ParseError` before
+        // returning, but `Error` and `run_checks` are both public, so the reachability of one
+        // variant is not something this table should rest on. A panic here is caught by the
+        // `catch_unwind` in `ffi_support::call_with_result` and reported as `ErrorCode::PANIC`, which
+        // is -1, so the cost was not an abort: it was the cause being replaced by the panic raised
+        // while reporting it.
+        Error::InternalError(_) => 22,
     };
     ErrorCode::new(code)
 }
@@ -43,3 +50,7 @@ impl From<FfiError> for ExternError {
         ExternError::new_error(get_code(&e.0), e.0.to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "errors_tests.rs"]
+mod errors_tests;

@@ -15,6 +15,10 @@ use crate::commands::test::Test;
 use crate::commands::validate::{OutputFormatType, ShowSummaryType, Validate};
 use crate::commands::Executable;
 pub use crate::rules::errors::Error;
+/// The payload of `Error::InternalError`. Exported because that variant is public and its type
+/// was not nameable outside this crate, so a consumer could match the variant but could neither
+/// construct nor destructure what it carries. `cfn-guard-ffi` is one such consumer.
+pub use crate::rules::errors::InternalError;
 
 #[cfg(target_arch = "wasm32")]
 use crate::utils::reader::{ReadBuffer, Reader};
