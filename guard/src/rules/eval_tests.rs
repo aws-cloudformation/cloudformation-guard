@@ -6600,6 +6600,72 @@ fn an_index_after_an_interpolated_key_is_not_applied_twice() -> Result<()> {
     Ok(())
 }
 
+/// An index after an interpolated key counts the keys the variable names, not the results it resolved
+/// to.
+///
+/// The two differ when one result holds a list. `let k = Cfg.KeyList` over `KeyList: [Name, Owner]`
+/// resolves to a single result holding the whole list, and the expansion of that list into one key per
+/// element happens after the index has already been applied. So the length was one: `[0]` selected the
+/// list and then used *every* key in it, and `[1]` was out of bounds. Over
+/// `Tags: {Name: alpha, Owner: bob}`, `some Cfg.Tags.%k[0] == "bob"` passed at exit 0 although the 0th
+/// key is `Name` and names `alpha`.
+///
+/// The index was inert rather than off by one, which is what `list_bound_without_an_index` shows: the
+/// same rule with no index at all answers the same way, so `[0]` was selecting nothing. Under either
+/// reading of `[N]` -- the Nth key, or the Nth resolved value -- exactly one key must come back, and two
+/// came back.
+///
+/// Every clause is run against both spellings of the binding because the defect was that they
+/// disagreed. `Cfg.KeyList[*]` was always right: the projection makes one result per key, so there was
+/// nothing left to flatten. The pair is also why this survived, since the two spellings look
+/// interchangeable and only one of them was.
+///
+/// The `alpha` and negative cases matter even though their verdict did not move. Both passed before for
+/// the wrong reason -- every key was in play, so `alpha` was among the values and `[-1]` offset into a
+/// length of one and landed back on the whole list. They pin which key the index now selects, which a
+/// verdict that was already right cannot.
+#[rstest::rstest]
+#[case::zeroth_key_is_not_the_last_value("%k[0]", "\"bob\"", Status::FAIL)]
+#[case::zeroth_key_names_alpha("%k[0]", "\"alpha\"", Status::PASS)]
+#[case::first_key_names_bob("%k[1]", "\"bob\"", Status::PASS)]
+#[case::last_key_names_bob("%k[-1]", "\"bob\"", Status::PASS)]
+#[case::past_the_last_key("%k[2]", "\"bob\"", Status::FAIL)]
+#[case::without_an_index("%k", "\"bob\"", Status::PASS)]
+fn an_index_after_an_interpolated_key_counts_keys_not_results(
+    #[case] selection: &str,
+    #[case] expected_value: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const CONFIG: &str = r#"
+Cfg:
+  KeyList: [Name, Owner]
+  Tags:
+    Name: alpha
+    Owner: bob
+"#;
+
+    // The same two keys reached two ways: bound as the list itself, and bound as its elements.
+    for preamble in ["let k = Cfg.KeyList", "let k = Cfg.KeyList[*]"] {
+        let rules = format!(
+            "{}\nrule tag_is_bob {{ some Cfg.Tags.{} == {} }}",
+            preamble, selection, expected_value
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let config = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(CONFIG)?)?;
+
+        let mut scope = root_scope(&rules_file, Rc::new(config));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` under `{}` must not answer differently from the other spelling of the same keys",
+            selection,
+            preamble
+        );
+    }
+
+    Ok(())
+}
+
 /// An unresolvable type block query must skip, not abort the rules file.
 ///
 /// This one is a regression this branch introduced and a defect it inherited, in the same place.

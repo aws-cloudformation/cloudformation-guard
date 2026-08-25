@@ -199,6 +199,44 @@ fn extract_variables<'value, 'loc: 'value>(
     (literals, queries, functions)
 }
 
+/// The keys a variable used in place of a map key denotes, one entry per key.
+///
+/// `resolve_variable` answers with the results the variable's query produced, and a single result can
+/// hold a list -- `let k = Cfg.KeyList` over `KeyList: [Name, Owner]` is one result naming two keys.
+/// The loop that consumes these keys already expands a list-valued result into one key per element;
+/// this makes the same expansion available to the index that is applied before it.
+///
+/// One level, which is what that loop does. An element that is itself a list stays a list here and
+/// reaches the same "non-string value for key" error it always reached.
+fn interpolated_keys(keys: &[QueryResult]) -> Vec<QueryResult> {
+    let mut denoted = Vec::with_capacity(keys.len());
+    for each in keys {
+        let (value, literal) = match each {
+            QueryResult::Resolved(value) => (value, false),
+            QueryResult::Literal(value) => (value, true),
+            QueryResult::UnResolved(_) => {
+                denoted.push(each.clone());
+                continue;
+            }
+        };
+
+        match &**value {
+            PathAwareValue::List((_, elements)) => {
+                denoted.extend(elements.iter().map(|element| {
+                    let element = Rc::new(element.clone());
+                    match literal {
+                        true => QueryResult::Literal(element),
+                        false => QueryResult::Resolved(element),
+                    }
+                }));
+            }
+
+            _ => denoted.push(each.clone()),
+        }
+    }
+    denoted
+}
+
 fn retrieve_index(
     parent: Rc<PathAwareValue>,
     index: i64,
@@ -598,14 +636,38 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             match &query[query_index+1] {
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
-                                        // See `index_offset` for why this is not arithmetic.
-                                        if let Some(check) = index_offset(*index, keys.len()) {
-                                            (vec![keys[check].clone()], query_index + 2)
+                                        // Indexed over the keys the variable denotes, not over the
+                                        // results it resolved to. The two differ whenever one result
+                                        // holds a list, because the expansion of that list into one key
+                                        // per element happens in the loop below -- after this point.
+                                        //
+                                        // So a variable bound to `Cfg.KeyList` had a length of one:
+                                        // `[0]` selected the whole list and the loop then used *every*
+                                        // key in it, and `[1]` was out of bounds. Over
+                                        // `KeyList: [Name, Owner]` and `Tags: {Name: alpha, Owner: bob}`,
+                                        // `some Cfg.Tags.%k[0] == "bob"` passed at exit 0 although the
+                                        // 0th key is `Name` and names `alpha`. The index was inert
+                                        // rather than off by one: the same rule with no index passed
+                                        // too, and under either reading of `[N]` exactly one key must
+                                        // come back where two came back.
+                                        //
+                                        // The element-bound spelling was always right --
+                                        // `let k = Cfg.KeyList[*]` makes the projection produce one
+                                        // result per key, so there was nothing left to flatten -- which
+                                        // is why this survived: the two spellings look interchangeable
+                                        // and only one of them was.
+                                        //
+                                        // See `index_offset` for why this is not arithmetic. It also
+                                        // means a negative index counts back from the last key rather
+                                        // than from the last result.
+                                        let denoted = interpolated_keys(&keys);
+                                        if let Some(check) = index_offset(*index, denoted.len()) {
+                                            (vec![denoted[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
                                                 current,
                                                 format!("Index {} on the set of values returned for variable {} on the join, is out of bounds. Length {}, Values = {:?}",
-                                                        index, var, keys.len(), keys),
+                                                        index, var, denoted.len(), denoted),
                                                 &query[query_index..]
                                             )
                                         }
