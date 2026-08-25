@@ -9,6 +9,7 @@ use crate::commands::{
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Write;
@@ -567,11 +568,21 @@ impl From<walkdir::WalkDir> for OrderedTestDirectory {
                         let grand = format!("{}", grand.display());
                         files.get_mut(&grand)
                     }) {
-                        for guard_file in candidates {
-                            if name.starts_with(&guard_file.prefix) {
-                                guard_file.test_files.push(file);
-                                break;
-                            }
+                        // The longest matching prefix, not the first match in sort order. A shorter
+                        // stem is a prefix of a longer one, so `s3_encryption_tests.yml` starts with
+                        // both `s3` and `s3_encryption`, and taking the first left it on `s3.guard`
+                        // while `s3_encryption.guard` was reported as having no tests.
+                        //
+                        // `min_by_key` over the reversed length rather than `max_by_key`: on a tie
+                        // the first element in sort order must still win, as it did before, and
+                        // `min_by_key` returns the first of equal keys where `max_by_key` returns
+                        // the last. Ties are real -- `x.guard` and `x.ruleset` share the prefix `x`.
+                        if let Some(guard_file) = candidates
+                            .iter_mut()
+                            .filter(|guard_file| name.starts_with(&guard_file.prefix))
+                            .min_by_key(|guard_file| Reverse(guard_file.prefix.len()))
+                        {
+                            guard_file.test_files.push(file);
                         }
                     }
                 }
