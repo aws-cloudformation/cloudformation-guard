@@ -167,6 +167,19 @@ pub(super) fn collect_unattributed_explanations(
 /// corpus, that is 261 characters: the advice a failed comparison against an empty selection gives, which
 /// ends by telling the author to guard the clause with `when <variable> !empty { ... }`. At 240 the
 /// instruction was cut off mid-sentence. An embedded document has no length to clear, so any cap bounds it.
+///
+/// Counted over the content and not over the indentation around it. A `<< >>` message is written inside
+/// the clause that carries it, so every line of it is indented to that clause's nesting depth, and the
+/// evaluator records those spaces as part of the string. Charged against the cap, they make the length an
+/// author may write depend on how deeply their rule is nested rather than on what the cap is for, which
+/// defeats the "longest whole message" the paragraph above chose it to hold.
+///
+/// Measured over the 233 messages in the AWS rule registry and this repository's fixtures: 9 are longer
+/// than 320 characters as written, and 5 are longer once trimmed. The four in between were cut, and
+/// marked with an ellipsis as though content had been dropped, on account of their own indentation
+/// alone -- the message in `elasticsearch_application_logging_enabled.guard` at 322 characters as written
+/// and 276 trimmed, and the one in `opensearch_application_logging_enabled.guard` at 326 and 280, each
+/// appearing twice. Median whitespace across all 233 messages is 8 characters and the most is 54.
 const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 
 /// The explanation, cut to a length a console can show.
@@ -182,7 +195,23 @@ const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 /// as a misspelling and fails the build. Half of "ServerSideEncryptionConfiguration" did exactly that.
 ///
 /// By character rather than by byte, so a multi-byte character straddling the cut cannot panic.
+///
+/// Trimmed before it is measured, so an explanation that fits once its indentation is set aside comes out
+/// whole and carries no ellipsis. An ellipsis is a claim that something was dropped, and a message shortened
+/// only because of the spaces around it makes that claim falsely -- the smaller half of the same defect.
+///
+/// Measured against the raw string the leading whitespace is spent from the same budget as the words, and a
+/// message indented far enough spends all of it:
+///
+/// ```text
+/// <<          ... 350 spaces ...          REALREASON>>
+/// ```
+///
+/// The first 320 characters are then all whitespace, the cut at the last whitespace within them leaves 319
+/// spaces, `trim_end` empties what is left, and the line renders as a bare `...` with the author's only word
+/// gone. Nothing about the length of what they wrote put it there.
 fn shortened(explanation: &str) -> String {
+    let explanation = explanation.trim();
     let cut = match explanation.char_indices().nth(LONGEST_CLAUSE_EXPLANATION) {
         Some((at, _)) => at,
         None => return explanation.to_string(),
@@ -1620,5 +1649,90 @@ mod shortened_tests {
         let short = shortened(&"x".repeat(LONGEST_CLAUSE_EXPLANATION * 3));
 
         assert_eq!(LONGEST_CLAUSE_EXPLANATION + 3, short.len());
+    }
+
+    /// One of the four registry messages the cap was cutting on account of its own indentation, verbatim
+    /// from `elasticsearch_application_logging_enabled.guard`. The clause carrying it sits six blocks deep,
+    /// so each line arrives with 24 leading spaces and the string the evaluator records is 322 characters
+    /// where the author's sentences are 276. Measured raw, that was cut and given an ellipsis -- a report
+    /// that content was dropped when none was.
+    ///
+    /// The two length assertions pin the literal to the registry file, so a transcription slip here fails
+    /// as a wrong length rather than passing against a message that is not the one measured.
+    #[test]
+    fn a_message_that_fits_once_trimmed_is_left_whole() {
+        let message = "\n                        Violation: Elasticsearch domains are are configured to send application logs to Amazon CloudWatch Logs\n                        Fix: In LogPublishingOptions.ES_APPLICATION_LOGS, set Enabled to true and CloudWatchLogsLogGroupArn to the ARN of a Amazon CloudWatch Logs log group.\n                    ";
+
+        assert_eq!(
+            322,
+            message.chars().count(),
+            "the message as the evaluator records it, indentation included"
+        );
+        assert_eq!(
+            276,
+            message.trim().chars().count(),
+            "and the part of it the author wrote, which fits under the cap"
+        );
+
+        let short = shortened(message);
+
+        assert_eq!(
+            message.trim(),
+            short,
+            "an explanation that fits once trimmed comes out whole"
+        );
+        assert!(
+            !short.ends_with("..."),
+            "and unmarked, because nothing was dropped: {}",
+            short
+        );
+    }
+
+    /// The control for the test above: the cap still cuts, and still says so, when the content itself is
+    /// over it. Verbatim from `lambda_inside_vpc.guard`, one of the five registry messages that exceed 320
+    /// characters after trimming -- 342 as written and 334 trimmed.
+    ///
+    /// Where it cuts is the discriminator. Charged for its 8 characters of whitespace the message lost
+    /// `function's`, the last word of the sentence explaining why the fix is what it is; measured over the
+    /// content, that word is inside the cap and survives. Both forms end in an ellipsis, so asserting only
+    /// on that would not tell the two apart.
+    #[test]
+    fn a_message_over_the_cap_after_trimming_is_still_cut() {
+        let message = "\n    Violation:  All AWS Lambda Functions must be configured with access to a VPC\n    Fix: set the VpcConfig.SecurityGroupIds and VpcConfig.SubnetIds parameters with a list of security groups and subnets.\n    Lambda creates an elastic network interface for each combination of security group and subnet in the function's VPC configuration.\n  ";
+
+        assert_eq!(342, message.chars().count());
+        assert_eq!(
+            334,
+            message.trim().chars().count(),
+            "over the cap even with the indentation set aside"
+        );
+
+        let short = shortened(message);
+
+        assert!(short.ends_with("..."), "it was cut, and says so: {}", short);
+        assert!(
+            short.chars().count() < message.trim().chars().count(),
+            "and is shorter than what it was cut from: {}",
+            short
+        );
+        assert!(
+            short.contains("in the function's"),
+            "the cap measured the content, so this word is inside it: {}",
+            short
+        );
+    }
+
+    /// The pathological form, which makes the mechanism plain. Every character of the cap is whitespace, so
+    /// the cut at the last whitespace leaves only spaces, `trim_end` empties them, and the line rendered as
+    /// a bare ellipsis -- the author's one word of reason deleted by their own indentation. Reproduced end
+    /// to end by a rule whose `<< >>` message is 350 spaces followed by `REALREASON`, which printed a
+    /// leading `...` and no reason at all.
+    #[test]
+    fn leading_whitespace_does_not_swallow_the_message() {
+        let message = format!("{}REALREASON", " ".repeat(350));
+
+        let short = shortened(&message);
+
+        assert_eq!("REALREASON", short);
     }
 }
