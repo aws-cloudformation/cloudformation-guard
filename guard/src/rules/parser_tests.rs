@@ -4977,6 +4977,101 @@ rule r {
     Ok(())
 }
 
+/// The same defect inside a nested block, which is a separate parse path rather than a repeat.
+///
+/// `message_bound` is one function and every scope calls it, so it is fair to ask why a nested block needs
+/// its own assertion. Because the bound is shared and the parsers that reach it are not. Three separate
+/// `block(...)` instantiations can hold a clause carrying a message: `rule_block` builds
+/// `block(rule_block_clause)` for a rule body, `type_block` builds `block(clause)`, and the `when`-block arm
+/// of `rule_block_clause` builds `block(alt((clause, rule_clause)))`. A change that re-routes or
+/// special-cases the message scan in one of them leaves the other two alone, and an assertion written
+/// against a rule body would not see it.
+///
+/// What makes that worth an assertion rather than a comment is the shape of the failure. A wrong bound does
+/// not error: the message swallows the clause after it, and the swallowed check is then reported as
+/// compliant. Measured against a bucket whose name matches the first clause and whose `Encrypted` is
+/// `false`, both broken files below exited 0 under the `}`-or-`rule` bound and exit 5 under the current one.
+///
+/// A rule-level `when` is not a third parser -- `rule_block` calls `block(rule_block_clause)` whether or not
+/// it parsed a condition -- but it is the form real rules files are written in, so it is asserted too.
+#[test]
+fn an_unterminated_message_does_not_swallow_the_clauses_in_a_nested_block() -> Result<(), Error> {
+    let type_block_swallow = r###"
+rule r {
+    AWS::S3::Bucket {
+        Properties.BucketName == "mybucket" << oops no closing tag
+        Properties.Encrypted == true << must be encrypted >>
+    }
+}
+"###;
+    assert!(
+        rules_file(from_str2(type_block_swallow)).is_err(),
+        "an unterminated << inside a type block must be rejected, not close itself on the next clause's >>"
+    );
+
+    let when_rule_swallow = r###"
+rule r when Resources.One.Type == "AWS::S3::Bucket" {
+    Resources.One.Properties.BucketName == "mybucket" << oops
+    Resources.One.Properties.Encrypted == true << must be encrypted >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(when_rule_swallow)).is_err(),
+        "a rule-level when does not buy the body a different bound: the unterminated << is still rejected"
+    );
+
+    let nested_when_swallow = r###"
+rule r {
+    when Resources.One.Type == "AWS::S3::Bucket" {
+        Resources.One.Properties.BucketName == "mybucket" << oops
+        Resources.One.Properties.Encrypted == true << must be encrypted >>
+    }
+}
+"###;
+    assert!(
+        rules_file(from_str2(nested_when_swallow)).is_err(),
+        "a when block inside a rule body is the third block parser, and it must reject the tag as well"
+    );
+
+    // The legitimate form of each, so none of the three can pass by rejecting whatever it is handed.
+    let type_block_message = r###"
+rule r {
+    AWS::S3::Bucket {
+        Properties.Encrypted == true
+        << Violation: not encrypted
+           Fix: set Encrypted to true >>
+    }
+}
+"###;
+    assert!(
+        rules_file(from_str2(type_block_message))?.is_some(),
+        "a closed multi-line message inside a type block is ordinary and must still parse"
+    );
+
+    let when_rule_message = r###"
+rule r when Resources.One.Type == "AWS::S3::Bucket" {
+    Resources.One.Properties.Encrypted == true << Violation: not encrypted >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(when_rule_message))?.is_some(),
+        "a closed message in the body of a conditional rule is ordinary and must still parse"
+    );
+
+    let nested_when_message = r###"
+rule r {
+    when Resources.One.Type == "AWS::S3::Bucket" {
+        Resources.One.Properties.Encrypted == true << Violation: not encrypted >>
+    }
+}
+"###;
+    assert!(
+        rules_file(from_str2(nested_when_message))?.is_some(),
+        "a closed message inside a nested when block is ordinary and must still parse"
+    );
+    Ok(())
+}
+
 /// A leading space inside `[...]` does not change the query part.
 ///
 /// The named branch of `all_indices` did not skip whitespace, so `[ x ]` fell through to `map_key_lookup`
