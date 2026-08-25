@@ -4,7 +4,7 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
     find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
+    GuardClauseReport, InComparison, Messages, UnaryCheck, UnaryComparison, ValueComparisons,
     ValueUnResolved,
 };
 
@@ -206,18 +206,7 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
                 None => one_line(&blk.context),
             };
             if !rendered.shows(clause) {
-                // Both messages and both bounded, for the same reasons as the clause path: the author's
-                // `<< >>` text is the half a reader can act on, and a block whose query failed at the
-                // document root carries the whole document in its `error_message`.
-                let explanation = [
-                    non_empty_message(&blk.messages.custom_message),
-                    non_empty_message(&blk.messages.error_message),
-                ]
-                .iter()
-                .filter_map(|message| *message)
-                .map(shortened)
-                .collect::<Vec<_>>()
-                .join(" ");
+                let explanation = explanation_of(&blk.messages);
                 if !explanation.is_empty() {
                     out.push((context, explanation));
                 }
@@ -264,12 +253,26 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
     }
 }
 
-/// The longest clause explanation this section prints, in characters.
+/// The longest one recorded message this section prints, in characters.
+///
+/// One message and not one line. An entry's explanation is the author's message and the evaluator's
+/// account joined, each cut to this length on its own, so a line carrying both reaches twice it: 647
+/// characters at the most, since a cut message is this many plus the three of the ellipsis and the two
+/// halves are joined by a space. Measured, a rule whose `<< >>` message is 400 characters against a
+/// twelve-bucket template prints 621, of which the author's half is 323 and the evaluator's 297.
+///
+/// Bounding the joined line instead would have to take the room from one half or the other, and both
+/// carry something: the author's message is the half a reader can act on, and the evaluator's names the
+/// property and the value it traversed to. At a 320-character line an author who writes 320 characters
+/// erases the evaluator's account entirely, and silently -- which is a worse fault than a long line, and
+/// the same class of fault as the ellipsis this cap once printed over content nobody had dropped. So the
+/// cap stays per message and this comment says which.
 ///
 /// A clause's `error_message` embeds the value its query traversed to, and for a query that resolved to
 /// nothing at the document root that value is the whole document -- tens of kilobytes on one line, which
 /// is not a report. The reason is at the front of the message, so a prefix carries it. Chosen to hold the
-/// longest whole message in the fixture corpus.
+/// longest whole message in the fixture corpus. Only that half can carry a document, so bounding each
+/// half bounds the line by a constant rather than by the size of the input, which is what the cap is for.
 ///
 /// Nothing is lost by it: the JSON and YAML reports print the message untruncated and always have.
 ///
@@ -291,9 +294,9 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
 /// alone -- the message in `elasticsearch_application_logging_enabled.guard` at 322 characters as written
 /// and 276 trimmed, and the one in `opensearch_application_logging_enabled.guard` at 326 and 280, each
 /// appearing twice. Median whitespace across all 233 messages is 8 characters and the most is 54.
-const LONGEST_CLAUSE_EXPLANATION: usize = 320;
+const LONGEST_RECORDED_MESSAGE: usize = 320;
 
-/// The explanation, cut to a length a console can show.
+/// One recorded message, cut to a length a console can show.
 ///
 /// Cut at whitespace, so a word is never split in half. That also drops a *compactly serialised* value
 /// whole, because such a value contains no whitespace and is therefore one word -- but only such a value.
@@ -324,21 +327,48 @@ const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 /// The first 320 characters are then all whitespace, the cut at the last whitespace within them leaves 319
 /// spaces, `trim_end` empties what is left, and the line renders as a bare `...` with the author's only word
 /// gone. Nothing about the length of what they wrote put it there.
-fn shortened(explanation: &str) -> String {
-    let collapsed = one_line(explanation);
-    let explanation = collapsed.as_str();
-    let cut = match explanation.char_indices().nth(LONGEST_CLAUSE_EXPLANATION) {
+fn shortened(message: &str) -> String {
+    let collapsed = one_line(message);
+    let message = collapsed.as_str();
+    let cut = match message.char_indices().nth(LONGEST_RECORDED_MESSAGE) {
         Some((at, _)) => at,
-        None => return explanation.to_string(),
+        None => return message.to_string(),
     };
 
-    let kept = &explanation[..cut];
+    let kept = &message[..cut];
     let kept = match kept.rfind(char::is_whitespace) {
         Some(at) => &kept[..at],
         None => kept,
     };
 
     format!("{}...", kept.trim_end())
+}
+
+/// One entry's explanation: the author's message, then the evaluator's account, each bounded on its own.
+///
+/// Both messages, in the order a reader wants them, and both bounded. The author's `<< >>` text is the half
+/// a reader can act on, and the evaluator's names the property and the value the query traversed to -- which
+/// for a query that failed at the document root is the whole document, so it is the half that has to be
+/// bounded. `.or_else` over the two was dead code for its second arm: every clause arm records a non-empty
+/// `error_message`, so the author's message could never win and never appeared here at all, though the
+/// per-resource output prints both.
+///
+/// Bounded per message rather than over the join, so the line is at most `2 * (LONGEST_RECORDED_MESSAGE + 3)
+/// + 1`. Taking the room from one half or the other instead would let an author who writes a long message
+/// erase the evaluator's account, and say nothing about having done it.
+///
+/// One function rather than the same expression in the block arm and the clause arm, which is where the
+/// `Messages` in both cases comes from, so that the bound above has somewhere to be asserted.
+fn explanation_of(messages: &Messages) -> String {
+    [
+        non_empty_message(&messages.custom_message),
+        non_empty_message(&messages.error_message),
+    ]
+    .iter()
+    .filter_map(|message| *message)
+    .map(shortened)
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// Collect `(context, explanation)` for every clause the per-resource output did not render.
@@ -356,11 +386,6 @@ fn shortened(explanation: &str) -> String {
 /// `join_with_message.guard` fixture has exactly that, and it is what fails when the rule-level gate is
 /// simply removed. `Rendered` is what separates the two cases, and by node identity rather than by rendered
 /// text: two clauses that render as the same string are still two findings.
-///
-/// Both messages, in the order a reader wants them: the rule author's `<< >>` text first when there is one,
-/// then the evaluator's account. `.or_else` on the two was dead code for the second half -- every clause arm
-/// records a non-empty `error_message`, so the author's message could never win and never appeared here at
-/// all, though the per-resource output prints both.
 ///
 /// Each entry is labelled with the rule it came from, because without that the section repeats itself for
 /// no reason a reader can see. Two rules that share a clause -- `seven-compliant-rules.guard` has three
@@ -384,15 +409,7 @@ fn collect_clause_explanations<'record, 'value: 'record>(
             if rendered.shows(report) {
                 return;
             }
-            let explanation = [
-                non_empty_message(&messages.custom_message),
-                non_empty_message(&messages.error_message),
-            ]
-            .iter()
-            .filter_map(|message| *message)
-            .map(shortened)
-            .collect::<Vec<_>>()
-            .join(" ");
+            let explanation = explanation_of(messages);
             if !explanation.is_empty() {
                 let labelled = match rule_name {
                     Some(name) => format!("{name}: {context}"),
@@ -1778,8 +1795,61 @@ mod one_line_tests {
 }
 
 #[cfg(test)]
+mod explanation_tests {
+    use super::{explanation_of, LONGEST_RECORDED_MESSAGE};
+    use crate::rules::eval_context::Messages;
+
+    fn messages(custom: &str, error: &str) -> Messages {
+        Messages {
+            custom_message: Some(custom.to_string()),
+            error_message: Some(error.to_string()),
+            location: None,
+        }
+    }
+
+    /// The cap bounds one message, so a line carrying two reaches twice it plus the space between them.
+    /// Asserted here because the constant's own comment says so, and because a reader who trusts the name
+    /// alone would expect 320. Both halves are cut to the cap and marked, so the arithmetic is exact rather
+    /// than an upper bound: two ellipses and one space.
+    #[test]
+    fn a_line_carrying_two_messages_is_twice_the_cap() {
+        let line = explanation_of(&messages(&"a".repeat(500), &"b".repeat(500)));
+
+        assert_eq!(2 * (LONGEST_RECORDED_MESSAGE + 3) + 1, line.chars().count());
+        assert_eq!(647, line.chars().count(), "which is 647 characters");
+    }
+
+    /// And neither half is spent on the other. This is why the cap is per message: the author's text is the
+    /// half a reader can act on, the evaluator's names the property, and a bound over the join would have to
+    /// take one's room from the other -- silently, and by however much the author wrote.
+    #[test]
+    fn a_long_author_message_does_not_erase_the_evaluators_account() {
+        let line = explanation_of(&messages(
+            &"WRITTEN ".repeat(80),
+            "Check was not compliant as property [Name] is missing.",
+        ));
+
+        assert!(line.starts_with("WRITTEN"), "the author's half is first");
+        assert!(
+            line.ends_with("Check was not compliant as property [Name] is missing."),
+            "and the evaluator's account is whole behind it: {}",
+            line
+        );
+    }
+
+    /// One message on its own is not joined to anything, so it carries no trailing separator. A blank
+    /// second message is no message, which is what `non_empty_message` is for.
+    #[test]
+    fn one_message_alone_is_not_joined() {
+        let only = explanation_of(&messages("", "Check was not compliant."));
+
+        assert_eq!("Check was not compliant.", only);
+    }
+}
+
+#[cfg(test)]
 mod shortened_tests {
-    use super::{shortened, LONGEST_CLAUSE_EXPLANATION};
+    use super::{shortened, LONGEST_RECORDED_MESSAGE};
 
     #[test]
     fn leaves_a_message_that_fits_alone() {
@@ -1814,13 +1884,13 @@ mod shortened_tests {
     /// multiple of the cap.
     #[test]
     fn does_not_split_a_multi_byte_character() {
-        let message = "é".repeat(LONGEST_CLAUSE_EXPLANATION * 2);
+        let message = "é".repeat(LONGEST_RECORDED_MESSAGE * 2);
 
         let short = shortened(&message);
 
         assert!(short.ends_with("..."), "it was truncated: {}", short);
         assert!(
-            short.chars().filter(|c| *c == 'é').count() <= LONGEST_CLAUSE_EXPLANATION,
+            short.chars().filter(|c| *c == 'é').count() <= LONGEST_RECORDED_MESSAGE,
             "to no more than the cap in characters: {}",
             short
         );
@@ -1829,9 +1899,9 @@ mod shortened_tests {
     /// No whitespace to cut at leaves the hard limit, which is the point of having one.
     #[test]
     fn still_bounds_a_message_that_is_one_word() {
-        let short = shortened(&"x".repeat(LONGEST_CLAUSE_EXPLANATION * 3));
+        let short = shortened(&"x".repeat(LONGEST_RECORDED_MESSAGE * 3));
 
-        assert_eq!(LONGEST_CLAUSE_EXPLANATION + 3, short.len());
+        assert_eq!(LONGEST_RECORDED_MESSAGE + 3, short.len());
     }
 
     /// One of the four registry messages the cap was cutting on account of its own indentation, verbatim
