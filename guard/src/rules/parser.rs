@@ -2158,6 +2158,35 @@ fn first_duplicate_assignment(assignments: &[LetExpr<'_>]) -> Option<String> {
         .map(|assignment| assignment.var.clone())
 }
 
+/// The diagnostic for a cycle among `let` right-hand sides, shared by the two scopes that look for
+/// one so they cannot drift apart.
+///
+/// The chain is spelled out because the name alone does not say what to change in a longer ring: with
+/// `let a = %b` and `let b = %a`, either declaration is the one to edit and the author has to see
+/// both to pick. No scope phrase, unlike the duplicate-assignment messages -- a duplicate is only a
+/// problem relative to a scope, while a cycle is unresolvable wherever it sits, and the block-level
+/// site carries a span that says where.
+fn let_cycle_message(cycle: &[&str]) -> String {
+    if let [only] = cycle {
+        return format!(
+            "Variable {} is defined in terms of itself. Resolving it recurses until the stack is \
+             exhausted, so the file is rejected rather than run.",
+            only
+        );
+    }
+
+    format!(
+        "Variables {} are defined in terms of each other. Resolving any of them recurses until the \
+         stack is exhausted, so the file is rejected rather than run.",
+        cycle
+            .iter()
+            .chain(cycle.first())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" -> ")
+    )
+}
+
 /// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
 ///
 /// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
@@ -2281,6 +2310,25 @@ where
                      rejected rather than guessed at.",
                     duplicate
                 ),
+            }));
+        }
+
+        // The same argument again, and a worse symptom than either duplicate case. A right-hand side
+        // that reads a name this scope declares recurses with nothing to stop it, and the process
+        // aborts on a stack overflow at exit 134 with a core dump -- outside the documented exit codes,
+        // so a caller checking for 0, 5 or 19 gets neither a pass nor a failure it can report. Both
+        // scopes reach it: `rule r { let a = %a ... }` and the file-level `let a = %a` took the same
+        // route through two copies of `resolve_variable`.
+        //
+        // A cycle check rather than a recursion depth limit, because the cycle is decidable from the
+        // text. This rejects exactly the files that cannot resolve and names the ring, where a depth
+        // limit would turn the crash into an arbitrary failure at an arbitrary depth and would still
+        // reject a legal chain that happened to be longer than the limit.
+        if let Some(cycle) = first_let_cycle(&assignments) {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: let_cycle_message(&cycle),
             }));
         }
 
@@ -2762,6 +2810,11 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
              guessed at.",
             duplicate
         )));
+    }
+
+    // File-level cycles, for the reason given at the block-level check in `block`.
+    if let Some(cycle) = first_let_cycle(&global_assignments) {
+        return Err(Error::ParseError(let_cycle_message(&cycle)));
     }
 
     let mut seen = std::collections::HashSet::new();

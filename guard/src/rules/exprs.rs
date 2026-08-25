@@ -3,7 +3,7 @@ use crate::rules::values::*;
 use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::path_value::PathAwareValue;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -482,6 +482,273 @@ impl<'value, 'loc: 'value> CaptureNames<'value> for WhenGuardClause<'loc> {
             WhenGuardClause::ParameterizedNamedRule(clause) => {
                 for parameter in &clause.parameters {
                     collect_let_value_capture_names(parameter, into);
+                }
+            }
+
+            WhenGuardClause::NamedRule(_) => {}
+        }
+    }
+}
+
+/// Where a name sits in the walk looking for a cycle.
+enum Visit {
+    /// On the path the walk is currently down. Reaching it again is the cycle.
+    OnPath,
+    /// Walked to completion with no cycle under it.
+    Done,
+}
+
+/// The names in the first cycle among a scope's own `let` right-hand sides, in the order they read
+/// each other, or `None` if there is no cycle.
+///
+/// A right-hand side that reads a name the same scope declares makes `resolve_variable` recurse with
+/// nothing to stop it. The memo write in `RootScope::resolve_variable` happens *after* the query it
+/// is memoizing completes, so there is no in-progress marker for the second visit to find, and
+/// `BlockScope::resolve_variable` has the same shape. Every spelling of it exhausted the stack and
+/// aborted the process at exit 134 with a core dump, which is outside the documented exit codes
+/// entirely -- 0, 5 and 19 -- so a caller could read it as neither a pass nor a failure it could act
+/// on:
+///
+/// ```text
+/// let a = %a                             at file level
+/// rule r { let a = %a ... }              in a rule body
+/// let a = %b / let b = %a                a mutual pair
+/// let a = %b / let b = %c / let c = %a   a three-deep ring
+/// let a = Resources.*[ Type == %a ]      through a filter clause
+/// let a = Resources.%a.Type              through an interpolated key
+/// let a = json_parse(%a)                 through a function argument
+/// ```
+///
+/// Edges point only at names *this* scope declares, and that restriction is what makes the check
+/// exact. Resolution starts in the scope holding the declaration and only ever walks outwards:
+/// `BlockScope::resolve_variable` reads its own `variable_queries` first and defers to the parent
+/// only for a name it does not declare, and the parent then resolves with itself as the resolver. So
+/// a chain can leave a scope and never re-enter it, which confines every cycle to one scope's own
+/// declarations. An acyclic chain is untouched however long it is, and an inner `let x` shadowing an
+/// outer one is two nodes in two scopes rather than one node reading itself.
+///
+/// A named rule's body is deliberately not followed. `RootScope::rule_status` evaluates it with the
+/// root scope as its parent whatever the reference site, so a `%name` inside one cannot resolve to a
+/// block-level `let`; and a ring that closes through a rule body is rule recursion rather than a
+/// variable cycle -- `rule a { a }` aborts the same way with no `let` in the file at all. That is a
+/// second missing cycle guard in a different function, and this one is the variable resolver.
+pub(crate) fn first_let_cycle<'value, 'loc: 'value>(
+    assignments: &'value [LetExpr<'loc>],
+) -> Option<Vec<&'value str>> {
+    let declared = assignments
+        .iter()
+        .map(|assignment| assignment.var.as_str())
+        .collect::<BTreeSet<&str>>();
+
+    let mut reads = BTreeMap::new();
+    for assignment in assignments {
+        let mut names = BTreeSet::new();
+        collect_let_value_variable_refs(&assignment.value, &mut names);
+        reads.insert(
+            assignment.var.as_str(),
+            names
+                .into_iter()
+                .filter(|name| declared.contains(name))
+                .collect::<Vec<&str>>(),
+        );
+    }
+
+    // Iterative rather than recursive, because the whole point of this check is that a recursion
+    // with no cycle guard exhausted the stack. A walk deep enough to overflow is exactly the input
+    // this function has to survive in order to report on it.
+    let mut visited = BTreeMap::new();
+    for assignment in assignments {
+        let start = assignment.var.as_str();
+        if visited.contains_key(start) {
+            continue;
+        }
+
+        let mut path = vec![start];
+        let mut stack = vec![(start, 0_usize)];
+        visited.insert(start, Visit::OnPath);
+
+        while let Some((name, next)) = stack.last().copied() {
+            let read = reads.get(name).map(Vec::as_slice).unwrap_or_default();
+            if next == read.len() {
+                visited.insert(name, Visit::Done);
+                path.pop();
+                stack.pop();
+                continue;
+            }
+            stack.last_mut().expect("just read the last entry").1 = next + 1;
+
+            match visited.get(read[next]) {
+                Some(Visit::OnPath) => {
+                    let closes_at = path
+                        .iter()
+                        .position(|on_path| *on_path == read[next])
+                        .expect("a name on the path is in the path");
+                    return Some(path.split_off(closes_at));
+                }
+
+                Some(Visit::Done) => {}
+
+                None => {
+                    visited.insert(read[next], Visit::OnPath);
+                    path.push(read[next]);
+                    stack.push((read[next], 0));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Every `%name` a `let` right-hand side reads.
+///
+/// The parallel of [`collect_let_value_capture_names`] over the same tree, and the two have to grow
+/// together: a query part that can hold a `%name` and is missed here is a cycle the check does not
+/// see, which is a crash rather than a wrong answer.
+fn collect_let_value_variable_refs<'value, 'loc: 'value>(
+    value: &'value LetValue<'loc>,
+    into: &mut BTreeSet<&'value str>,
+) {
+    match value {
+        LetValue::AccessClause(query) => collect_query_variable_refs(&query.query, into),
+        LetValue::FunctionCall(function) => {
+            for parameter in &function.parameters {
+                collect_let_value_variable_refs(parameter, into);
+            }
+        }
+        LetValue::Value(_) => {}
+    }
+}
+
+/// A `%name` in any position counts, not only the first.
+///
+/// `query_retrieval_with_converter` resolves a variable at index 0, and the map arm resolves one
+/// further along as an interpolated key, so `let a = Resources.%a.Type` recurses just as
+/// `let a = %a` does.
+fn collect_query_variable_refs<'value, 'loc: 'value>(
+    query: &'value [QueryPart<'loc>],
+    into: &mut BTreeSet<&'value str>,
+) {
+    for part in query {
+        if let Some(name) = part.variable() {
+            into.insert(name);
+        }
+
+        match part {
+            // A filter's clauses are evaluated with the resolver that is retrieving the query, so a
+            // `%name` inside one resolves in the scope holding the `let`.
+            QueryPart::Filter(_, conjunctions) => {
+                collect_conjunctions_variable_refs(conjunctions, into)
+            }
+
+            QueryPart::MapKeyFilter(_, clause) => {
+                collect_let_value_variable_refs(&clause.compare_with, into)
+            }
+
+            QueryPart::This
+            | QueryPart::Key(_)
+            | QueryPart::Index(_)
+            | QueryPart::AllValues(_)
+            | QueryPart::AllIndices(_) => {}
+        }
+    }
+}
+
+fn collect_access_clause_variable_refs<'value, 'loc: 'value>(
+    clause: &'value AccessClause<'loc>,
+    into: &mut BTreeSet<&'value str>,
+) {
+    collect_query_variable_refs(&clause.query.query, into);
+    if let Some(compare_with) = &clause.compare_with {
+        collect_let_value_variable_refs(compare_with, into);
+    }
+}
+
+fn collect_conjunctions_variable_refs<'value, T>(
+    conjunctions: &'value Conjunctions<T>,
+    into: &mut BTreeSet<&'value str>,
+) where
+    T: VariableRefs<'value>,
+{
+    for disjunctions in conjunctions {
+        for clause in disjunctions {
+            clause.collect_variable_refs(into);
+        }
+    }
+}
+
+/// A nested block's references, minus the ones it answers itself.
+///
+/// A name the nested block declares resolves to that declaration rather than to ours, so it is not
+/// an edge out of the block: `BlockScope::resolve_variable` defers to the parent only for a name it
+/// does not hold. Everything left over does reach us and is an edge.
+fn collect_block_variable_refs<'value, 'loc: 'value, T>(
+    block: &'value Block<'loc, T>,
+    into: &mut BTreeSet<&'value str>,
+) where
+    T: VariableRefs<'value>,
+{
+    let mut inside = BTreeSet::new();
+    for assignment in &block.assignments {
+        collect_let_value_variable_refs(&assignment.value, &mut inside);
+    }
+    collect_conjunctions_variable_refs(&block.conjunctions, &mut inside);
+
+    for declared in block.assignments.iter().map(|each| each.var.as_str()) {
+        inside.remove(declared);
+    }
+    into.extend(inside);
+}
+
+trait VariableRefs<'value> {
+    fn collect_variable_refs(&'value self, into: &mut BTreeSet<&'value str>);
+}
+
+impl<'value, 'loc: 'value> VariableRefs<'value> for GuardClause<'loc> {
+    fn collect_variable_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            GuardClause::Clause(clause) => {
+                collect_access_clause_variable_refs(&clause.access_clause, into)
+            }
+
+            // The block's own query is retrieved with the enclosing resolver
+            // (`eval_guard_block_clause`) and its body is not, so only the body is shadowed.
+            GuardClause::BlockClause(block_clause) => {
+                collect_query_variable_refs(&block_clause.query.query, into);
+                collect_block_variable_refs(&block_clause.block, into);
+            }
+
+            // Same split: `eval_when_condition_block` evaluates the conditions with the enclosing
+            // resolver, before the block's scope exists, so what the block declares does not shadow
+            // them.
+            GuardClause::WhenBlock(conditions, block) => {
+                collect_conjunctions_variable_refs(conditions, into);
+                collect_block_variable_refs(block, into);
+            }
+
+            // The arguments are resolved at the call site, in this scope. The rule's body is not
+            // followed; see [`first_let_cycle`].
+            GuardClause::ParameterizedNamedRule(clause) => {
+                for parameter in &clause.parameters {
+                    collect_let_value_variable_refs(parameter, into);
+                }
+            }
+
+            GuardClause::NamedRule(_) => {}
+        }
+    }
+}
+
+impl<'value, 'loc: 'value> VariableRefs<'value> for WhenGuardClause<'loc> {
+    fn collect_variable_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            WhenGuardClause::Clause(clause) => {
+                collect_access_clause_variable_refs(&clause.access_clause, into)
+            }
+
+            WhenGuardClause::ParameterizedNamedRule(clause) => {
+                for parameter in &clause.parameters {
+                    collect_let_value_variable_refs(parameter, into);
                 }
             }
 

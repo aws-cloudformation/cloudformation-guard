@@ -5753,6 +5753,107 @@ fn a_variable_assigned_twice_in_one_scope_is_rejected() -> Result<(), Error> {
     Ok(())
 }
 
+/// A `let` whose right-hand side reads a name its own scope declares is rejected, and every spelling
+/// of it is.
+///
+/// It used to exhaust the stack and abort the process at exit 134 with a core dump. That is outside
+/// the documented exit codes -- 0, 5 and 19 -- so a caller saw neither a pass nor a failure it could
+/// report, and nothing in the output said which name was at fault. `resolve_variable` writes its memo
+/// after the query it is memoizing completes, so the second visit to the same name finds no
+/// in-progress marker and recurses again; both copies of it, root and block, have that shape.
+///
+/// The last two accepted spellings are the ones that make a depth limit the wrong instrument. An
+/// acyclic chain resolves however long it is, so a limit would have to guess a length no legal file
+/// exceeds; and `let a = json_parse(%a)` is a cycle at depth one, so no useful limit catches it.
+#[test]
+fn a_let_defined_in_terms_of_itself_is_rejected() -> Result<(), Error> {
+    for rules in [
+        // Both scopes, reached through the two copies of `resolve_variable`.
+        "let a = %a\nrule r {\n  %a == 1\n}",
+        "rule r {\n  let a = %a\n  %a == 1\n}",
+        // A ring rather than a self-reference, at two lengths.
+        "let a = %b\nlet b = %a\nrule r {\n  %a == 1\n}",
+        "let a = %b\nlet b = %c\nlet c = %a\nrule r {\n  %a == 1\n}",
+        // The reference does not have to be the whole right-hand side, or even in the first
+        // position: a filter clause, an interpolated key and a function argument all resolve
+        // through the same scope.
+        "let a = Resources.*[ Type == %a ]\nrule r {\n  %a !empty\n}",
+        "let a = Resources.Alpha.Properties.Config[ keys == %a ]\nrule r {\n  %a !empty\n}",
+        "let a = Resources.%a.Type\nrule r {\n  %a !empty\n}",
+        "let a = json_parse(%a)\nrule r {\n  %a !empty\n}",
+        // An inner declaration does not reach the outer one of the same name. The block reads its
+        // own `variable_queries` before deferring to the parent, so this is a cycle and not a read
+        // of the outer `x`, and it aborted like the rest.
+        "let x = 1\nrule r {\n  let x = %x\n  %x == 1\n}",
+        // A name that is a capture in the same block as well as a `let`. This one exited 0 on a
+        // document where the filter captured a key -- `captured` is consulted before
+        // `variable_queries`, so the `let` was never resolved -- and aborted at 134 on a document
+        // where it captured nothing. Rejected rather than left to the data: the file cannot resolve
+        // the name it declares, whichever document it is run against.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = %cfg\n    Properties.Config[ cfg | Enabled == true ] !empty\n    %cfg != 'nope'\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a variable defined in terms of itself must be rejected: {}",
+            rules
+        );
+    }
+
+    // The message names every member of the ring, because either declaration is the one to edit and
+    // the author has to see both to choose.
+    let ring = rules_file(from_str2("let a = %b\nlet b = %a\nrule r {\n  %a == 1\n}"))
+        .expect_err("a ring is rejected")
+        .to_string();
+    assert!(
+        ring.contains("a -> b -> a"),
+        "the ring has to be spelled out: {}",
+        ring
+    );
+
+    let itself = rules_file(from_str2("let a = %a\nrule r {\n  %a == 1\n}"))
+        .expect_err("a self-reference is rejected")
+        .to_string();
+    assert!(
+        itself.contains("Variable a is defined in terms of itself"),
+        "a one-member cycle names the variable rather than a chain: {}",
+        itself
+    );
+
+    // An acyclic chain resolves at any length, in either scope. This is the control that separates a
+    // cycle check from a recursion depth limit: a limit low enough to catch the cycles above would
+    // reject one of these.
+    let mut chain = String::from("let a0 = 1\n");
+    for step in 1..=12 {
+        chain.push_str(&format!("let a{} = %a{}\n", step, step - 1));
+    }
+    chain.push_str("rule r {\n  Resources.R.Properties.Size == %a12\n}");
+    assert!(rules_file(from_str2(&chain))?.is_some(), "{}", chain);
+    assert!(rules_file(from_str2(
+        "rule r {\n  let b1 = 1\n  let b2 = %b1\n  let b3 = %b2\n  let b4 = %b3\n  Resources.R.Properties.Size == %b4\n}"
+    ))?
+    .is_some());
+
+    // A name reused in a nested scope is two declarations, not a cycle.
+    assert!(rules_file(from_str2(
+        "let x = 1\nrule r {\n  let x = 2\n  Resources.R.Properties.Size == %x\n}"
+    ))?
+    .is_some());
+
+    // A property that happens to be spelled like a declared variable is a key, not a reference to
+    // it. Only a leading `%` makes a query part a variable.
+    assert!(rules_file(from_str2(
+        "let alpha = Resources.Alpha.Properties.Config.alpha.Enabled\nrule r {\n  %alpha == true\n}"
+    ))?
+    .is_some());
+
+    // A nested block inside a right-hand side is walked, and walking it does not invent a cycle.
+    assert!(rules_file(from_str2(
+        "let a = Resources.*[ Properties { Size > 0 } ]\nrule r {\n  %a !empty\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
 /// A filter over a property named `keys` parses, and a key filter still does.
 ///
 /// `map_keys_match` committed with `cut` as soon as it had seen `keys`, so a following token that was not
