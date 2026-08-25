@@ -22,6 +22,11 @@ struct SarifTool {
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 struct SarifRun {
     tool: SarifTool,
+    /// Omitted entirely when the run had nothing to report about itself, which keeps a clean run's
+    /// document byte-for-byte what it was. SARIF permits that: `runs.invocations` is not in `run`'s
+    /// required set, and an absent array-valued property defaults to empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    invocations: Vec<SarifInvocation>,
     artifacts: Vec<SarifArtifact>,
     results: SarifResults,
 }
@@ -30,7 +35,7 @@ impl From<&[FileReport<'_>]> for SarifRun {
     fn from(value: &[FileReport<'_>]) -> Self {
         let mut sarif_unique_artifacts: HashSet<&str> = HashSet::new();
 
-        value
+        let mut run = value
             .iter()
             .filter(|report| matches!(report.status, Status::FAIL))
             .fold(SarifRun::default(), |mut runs, report| {
@@ -46,8 +51,52 @@ impl From<&[FileReport<'_>]> for SarifRun {
                 });
 
                 runs
-            })
+            });
+
+        // Outside the fold above, which only visits FAIL reports. A run whose rules did not parse
+        // evaluated nothing, so every report is SKIP and the fold sees none of them -- which is
+        // exactly how an unreadable ruleset came to produce the same document as a clean run.
+        run.invocations = build_invocations(value);
+
+        run
     }
+}
+
+/// The single `invocation` describing this run, when there is something about the run itself to
+/// report. Empty otherwise, so the successful path is unchanged.
+///
+/// A rules file that will not parse is a fact about how the tool was configured rather than a
+/// finding about the template under analysis, and SARIF separates the two. Filing it as a `result`
+/// would make it an alert against the customer's code, which is both wrong and, for a consumer that
+/// tracks alerts across runs, actively misleading.
+fn build_invocations(reports: &[FileReport<'_>]) -> Vec<SarifInvocation> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let notifications = reports
+        .iter()
+        .flat_map(|report| report.rule_file_errors.iter())
+        // `rule_file_errors` is repeated in every file report, because the json and yaml document is
+        // an array of those and has nowhere above them to carry it. One notification per rules file
+        // is what belongs here.
+        .filter(|rule_file_error| seen.insert(&rule_file_error.file_name))
+        .map(|rule_file_error| SarifNotification {
+            level: String::from("error"),
+            message: SarifMessage {
+                text: format!(
+                    "Rules file {} could not be parsed, so none of its rules were evaluated: {}",
+                    rule_file_error.file_name, rule_file_error.error
+                ),
+            },
+        })
+        .collect::<Vec<_>>();
+
+    if notifications.is_empty() {
+        return vec![];
+    }
+
+    vec![SarifInvocation {
+        execution_successful: false,
+        tool_configuration_notifications: notifications,
+    }]
 }
 
 impl SarifRun {
@@ -87,6 +136,41 @@ struct SarifArtifactLocation {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct SarifMessage {
     text: String,
+}
+
+/// SARIF's place for what happened to the tool, as opposed to what the tool found.
+///
+/// `executionSuccessful` is the one member `invocation` requires, and it is the property a consumer
+/// reads to decide whether an empty `results` array means "nothing wrong" or "nothing checked".
+/// `toolConfigurationNotifications` is for "conditions detected by the tool that are relevant to the
+/// tool's configuration", which is what an unreadable rules file is -- the ruleset is Guard's
+/// configuration. Its sibling `toolExecutionNotifications` is for runtime conditions during the
+/// analysis, and a file rejected before any rule was loaded is not one of those.
+///
+/// Source: the SARIF 2.1.0 schema this report already declares in `$schema`,
+/// <https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json>.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SarifInvocation {
+    execution_successful: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tool_configuration_notifications: Vec<SarifNotification>,
+}
+
+/// A `notification`: per SARIF's own terminology a "reporting item that describes a condition
+/// encountered by a tool during its execution", as distinct from a `result`.
+///
+/// `message` is the only required member. `level` is given explicitly because it defaults to
+/// `warning`, and a ruleset that could not be read is an error.
+///
+/// No `locations`. The member exists, but in this code path a rules file is known only by its bare
+/// file name -- `get_file_name(file, file)` reduces it to the basename -- which is not something a
+/// consumer can resolve to an artifact. Naming the file in the message says what is known without
+/// asserting a location that is not.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct SarifNotification {
+    level: String,
+    message: SarifMessage,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

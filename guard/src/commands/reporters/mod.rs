@@ -17,7 +17,7 @@ use crate::{
     rules::{
         self,
         eval::eval_rules_file,
-        eval_context::{root_scope, simplified_json_from_root, Messages},
+        eval_context::{root_scope, simplified_json_from_root, Messages, RuleFileError},
         exprs::RulesFile,
         Status,
     },
@@ -88,6 +88,10 @@ impl<'report> JunitReport<'report> {
 struct JunitReporter<'reporter> {
     rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
     data: Vec<DataFile>,
+    /// Rules files the parser rejected, which never reach `rules` and so would otherwise produce no
+    /// test case at all. Borrowed rather than owned so the names can be lent to `TestCase` without
+    /// tying those borrows to `&self`, which `update_exit_code` needs mutably.
+    rule_file_errors: &'reporter [RuleFileError],
     writer: &'reporter mut crate::utils::writer::Writer,
     exit_code: i32,
 }

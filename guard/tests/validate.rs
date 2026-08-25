@@ -1723,6 +1723,86 @@ mod validate_tests {
         );
     }
 
+    /// A rules file that will not parse must be visible in the document, not only in the exit code.
+    ///
+    /// `StructuredEvaluator::evaluate` wrote the parse error to stderr, set the exit code, and dropped
+    /// the file from `rules`. No reporter ever saw it, so stdout carried what a clean run carries:
+    /// three empty verdict lists in json and yaml, `tests="0" failures="0" errors="0"` in junit, an
+    /// empty `results` array in sarif. The all-pass sarif document and the parse-error sarif document
+    /// were identical.
+    ///
+    /// Exit 5 is not a sufficient defence, because the CI steps that consume these files run
+    /// regardless of exit status -- a junit test reporter, or `upload-sarif` under `if: always()`. A
+    /// junit file reading zero tests renders as a green run, and uploading an empty sarif `results`
+    /// array resolves the alerts the previous run raised. So a typo in a rules file read as "all
+    /// policies now pass".
+    ///
+    /// Each format says it in its own vocabulary, and none of them reuses a verdict: `errors` in
+    /// junit, a `rule_file_errors` field in json and yaml, and `invocations[].executionSuccessful`
+    /// with a `toolConfigurationNotifications` entry in sarif. Reusing `status: SKIP` or one of the
+    /// three verdict lists is what the defect already did.
+    #[rstest::rstest]
+    #[case("json", "rule_file_errors")]
+    #[case("yaml", "rule_file_errors")]
+    #[case("junit", "errors=\"1\"")]
+    #[case::sarif("sarif", "\"executionSuccessful\": false")]
+    fn a_rules_file_that_cannot_be_parsed_is_reported_in_the_document(
+        #[case] output: &str,
+        #[case] expected_marker: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec![
+                "s3-server-side-encryption-template-non-compliant-2.yaml",
+            ])
+            .rules(vec!["unparsable-rule.guard"])
+            .output_format(Some(output))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::PARSING_ERROR,
+            status_code,
+            "the exit code for a rules-file parse error is unchanged; only the document is new"
+        );
+
+        let out = writer.stripped().expect("failed to read the writer");
+
+        assert!(
+            out.contains(expected_marker),
+            "{} must carry {} so a consumer can tell this from a clean run:\n{}",
+            output,
+            expected_marker,
+            out
+        );
+        assert!(
+            out.contains("unparsable-rule.guard"),
+            "{} must name the rules file that could not be read:\n{}",
+            output,
+            out
+        );
+        assert!(
+            out.contains("Unable to find a closing >> tag for message")
+                || out.contains("Unable to find a closing &gt;&gt; tag for message"),
+            "{} must carry the parser's reason, not just the fact of failure:\n{}",
+            output,
+            out
+        );
+
+        // The verdict vocabulary is not borrowed to say this. A rules file that failed to parse is
+        // not a rule that skipped, and it is not a finding about the template either.
+        if output == "sarif" {
+            assert!(
+                out.contains("\"results\": []"),
+                "a tool failure is not a finding about the code under analysis:\n{}",
+                out
+            );
+        }
+    }
+
     /// The same for the JSON, YAML and SARIF path, which shares one evaluator.
     ///
     /// `CommonStructuredReporter` propagated too, so the document a machine reads was replaced by a

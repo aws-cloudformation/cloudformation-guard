@@ -2260,6 +2260,21 @@ fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
 
 pub(crate) type Metadata = HashMap<String, String>;
 
+/// A rules file the parser rejected, named so a machine-readable report can say a policy could not
+/// be read.
+///
+/// A file that fails to parse contributes no rules, so it puts nothing in `not_compliant`,
+/// `not_applicable` or `compliant` -- and those three lists are empty on a clean run too. Without
+/// this the two are the same document, and the exit code is the only thing that tells them apart.
+///
+/// Deliberately not one of the three verdict lists and not a `status`: a rules file that failed to
+/// parse is not a rule that skipped, and filing it as one is the confusion this exists to end.
+#[derive(Clone, Debug, Serialize, Default)]
+pub(crate) struct RuleFileError {
+    pub(crate) file_name: String,
+    pub(crate) error: String,
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 pub(crate) struct FileReport<'value> {
     pub(crate) name: &'value str,
@@ -2274,6 +2289,15 @@ pub(crate) struct FileReport<'value> {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) not_applicable_reasons: BTreeMap<String, String>,
     pub(crate) compliant: BTreeSet<String>,
+    /// Rules files that could not be read at all. See [`RuleFileError`]. Omitted when empty, for
+    /// the same reason `not_applicable_reasons` is: a run whose rules all parsed serialises to
+    /// exactly the document consumers parse today.
+    ///
+    /// Repeated in every record rather than hoisted above them, because the document is an array of
+    /// these and there is nowhere above them to put it. The statement is true per data file anyway:
+    /// this file went unchecked by those rules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rule_file_errors: Vec<RuleFileError>,
 }
 
 impl<'value> FileReport<'value> {
@@ -2288,6 +2312,7 @@ impl<'value> FileReport<'value> {
         self.not_applicable.extend(report.not_applicable);
         self.not_applicable_reasons
             .extend(report.not_applicable_reasons);
+        self.rule_file_errors.extend(report.rule_file_errors);
     }
 }
 
