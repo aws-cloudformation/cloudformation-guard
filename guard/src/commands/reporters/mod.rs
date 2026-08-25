@@ -144,25 +144,41 @@ fn get_test_case<'rule>(
     let tc = match simplified_json_from_root(&root_record) {
         Ok(report) => match status {
             Status::FAIL => {
-                let status = report.not_compliant.iter().fold(
-                    FailingTestCase {
-                        name: None,
-                        messages: vec![],
-                    },
-                    |mut test_case, failure| {
-                        failure.get_message().into_iter().for_each(|e| {
-                            if let rules::eval_context::ClauseReport::Rule(rule) = failure {
-                                let name = match rule.name.contains(".guard/") {
-                                    true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
-                                    false => rule.name,
-                                };
-                                test_case.name = Some(String::from(name));
+                // The failing rule names are accumulated, not assigned. `message` holds one value and
+                // the element body holds every rule's messages, so assigning once per message left the
+                // attribute naming whichever rule happened to be visited last: `message="gamma_fails"`
+                // on a body whose first message belongs to `alpha_fails`, so a reader who trusted the
+                // attribute attributed alpha's and beta's violations to gamma.
+                //
+                // The golden fixtures could not show this. Every rules file in the golden directory
+                // declares at most one rule, and last-rule-wins is always right when there is only one
+                // rule to win.
+                //
+                // A rule contributes its name once per message, hence the containment check. Guard rule
+                // names are identifiers, so order-preserving deduplication by equality is enough, and
+                // the order is the order the reader meets the messages in.
+                let mut rule_names: Vec<&str> = vec![];
+                let mut messages = vec![];
+
+                for failure in report.not_compliant.iter() {
+                    for message in failure.get_message() {
+                        if let rules::eval_context::ClauseReport::Rule(rule) = failure {
+                            let name = match rule.name.contains(".guard/") {
+                                true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
+                                false => rule.name,
                             };
-                            test_case.messages.push(e);
-                        });
-                        test_case
-                    },
-                );
+                            if !rule_names.contains(&name) {
+                                rule_names.push(name);
+                            }
+                        };
+                        messages.push(message);
+                    }
+                }
+
+                let status = FailingTestCase {
+                    name: (!rule_names.is_empty()).then(|| rule_names.join(", ")),
+                    messages,
+                };
 
                 TestCase {
                     id: None,

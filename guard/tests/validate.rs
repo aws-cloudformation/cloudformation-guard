@@ -2809,6 +2809,45 @@ mod validate_tests {
         );
     }
 
+    /// The junit `<failure message>` names every failing rule, not whichever one came last.
+    ///
+    /// `test_case.name` was assigned once per message rather than accumulated, so the attribute held
+    /// whichever rule was visited last while the element body held every rule's messages. Against
+    /// `three-failing-rules.guard` the attribute read `b_second` for a body containing all three
+    /// rules' violations, so a reader who trusted it attributed `c_third`'s and `a_first`'s failures to
+    /// `b_second`.
+    ///
+    /// `test_structured_output`'s golden cannot catch this and needed no update for the fix: every
+    /// rules file in the golden directory declares at most one rule, and last-rule-wins is always
+    /// right when there is one rule to win. This fixture declares three, named out of declaration
+    /// order, so neither sorted order nor last-wins can pass by coincidence.
+    ///
+    /// Full per-message attribution is not what this establishes -- one attribute cannot label four
+    /// messages individually. That belongs to junit reporting one test case per rule instead of one per
+    /// rules file, which is a separate defect.
+    #[test]
+    fn the_junit_failure_message_names_every_failing_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["three-failing-rules.guard"])
+            .output_format(Option::from("junit"))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains(r#"<failure message="c_third, a_first, b_second">"#),
+            "the attribute must name all three failing rules in the order they are reported:\n{}",
+            output
+        );
+    }
+
     /// junit separates the messages inside one `<failure>` instead of running them together.
     ///
     /// `serialize_text_events` wrote one XML text event per message, and adjacent text events
