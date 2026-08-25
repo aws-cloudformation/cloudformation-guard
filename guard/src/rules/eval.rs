@@ -1912,8 +1912,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 // the left exited 19. `%fine == %too_big` and `%too_big == %fine` disagreed about
                 // whether a template that does not fit an i64 is a policy failure or a broken tool.
                 //
-                // Only for an assertion, and a gate still keeps the error, which is the split the
-                // left-hand side and `eval_when_condition_block` already use.
+                // Role-free, like the left-hand side. The pre-`Outcome` version of this fix kept the
+                // error for a gate so the condition site could tell "could not be answered" apart from
+                // "did not match"; the lattice carries that distinction as a value now, and
+                // `to_status` and `closes_gate` at the consumer are where the role is applied.
                 LetValue::AccessClause(acc_querty) => match resolver.query(&acc_querty.query) {
                     Ok(result) => (result, false),
                     Err(e) => {
@@ -1925,10 +1927,6 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        // On this branch the answer is a value and the role is applied by the
-                        // consumer, so this returns `Unevaluatable` role-free rather than splitting on
-                        // `role.is_strict()` as the pre-`Outcome` version did. Same intent: an
-                        // unevaluatable right-hand side fails the clause instead of the run.
                         return match is_unevaluatable(&e) {
                             true => Ok(Outcome::Unevaluatable),
                             false => Err(e),
@@ -1948,10 +1946,6 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        // On this branch the answer is a value and the role is applied by the
-                        // consumer, so this returns `Unevaluatable` role-free rather than splitting on
-                        // `role.is_strict()` as the pre-`Outcome` version did. Same intent: an
-                        // unevaluatable right-hand side fails the clause instead of the run.
                         return match is_unevaluatable(&e) {
                             true => Ok(Outcome::Unevaluatable),
                             false => Err(e),
