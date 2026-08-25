@@ -2850,6 +2850,28 @@ mod validate_tests {
         );
     }
 
+    /// A scalar function argument the data could not supply fails the clause, and does not abort the run.
+    ///
+    /// `bad_function_arguments.yaml` feeds a negative offset and a non-numeric offset to `substring`, a
+    /// number to `join`'s delimiter and a number to `regex_replace`'s pattern. All four were reported as
+    /// `ParseError`, the class the evaluator reserves for a malformed rules file, which is not
+    /// unevaluatable, so the run aborted and exited 255. The rules file is well formed, and the
+    /// `REAL_VIOLATION` rule in the same file reports its finding either way -- so a template author
+    /// could turn their own violation from exit 19 into exit 255 with a `-1` in the right field.
+    #[test]
+    fn a_bad_function_argument_from_the_data_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/bad_function_arguments.guard"])
+            .data(vec!["/functions/data/bad_function_arguments.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
     /// A `count` over a query that named something absent does not answer 0, so a misspelled path in a
     /// rule cannot pass.
     ///

@@ -1721,6 +1721,27 @@ impl Callable for JsonParseFunction {
     }
 }
 
+/// A scalar function argument the input could not supply is `IncompatibleError`, not `ParseError`.
+///
+/// `ParseError` is the class for a malformed rules file, and `is_unevaluatable` does not recognise it,
+/// so it aborted the evaluation with "bailing" and the run exited 255. But these arguments are read from
+/// the *data*: a template that puts `-1` in a field some rule feeds to `substring` is a policy problem,
+/// and 255 says the tool broke. A run over such a template still reports every other rule's finding, so
+/// the only thing wrong was the exit code -- which is what a CI wrapper reads to decide between blocking
+/// a deploy and retrying a broken build. A template author could pick the second branch for their own
+/// violation by choosing the right field value.
+///
+/// `converters.rs` documents this reclassification for the `parse_*` family and the reasoning behind it.
+/// `substring`, `join` and `regex_replace` never got it, and `join` disagreed with itself: a delimiter of
+/// the wrong type was `ParseError` at 255 while an element of the wrong type was already
+/// `IncompatibleError` at 19 (`strings.rs`), both being data-driven type problems in the same call.
+///
+/// Not covered here: a pattern that is a string but does not compile still reports `RegexError` and exits
+/// 255, and its message says "for rules file" even when the pattern came from the data.
+fn incompatible_argument(message: String) -> Error {
+    Error::IncompatibleError(message)
+}
+
 impl Callable for RegexReplaceFunction {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
         let substring_err_msg = |index| {
@@ -1736,17 +1757,17 @@ impl Callable for RegexReplaceFunction {
         let extracted_expr = match args[1].first() {
             Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                 PathAwareValue::String((_, s)) => s,
-                _ => return Err(Error::ParseError(substring_err_msg(2))),
+                _ => return Err(incompatible_argument(substring_err_msg(2))),
             },
-            _ => return Err(Error::ParseError(substring_err_msg(2))),
+            _ => return Err(incompatible_argument(substring_err_msg(2))),
         };
 
         let replaced_expr = match args[2].first() {
             Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                 PathAwareValue::String((_, s)) => s,
-                _ => return Err(Error::ParseError(substring_err_msg(3))),
+                _ => return Err(incompatible_argument(substring_err_msg(3))),
             },
-            _ => return Err(Error::ParseError(substring_err_msg(3))),
+            _ => return Err(incompatible_argument(substring_err_msg(3))),
         };
 
         regex_replace(&args[0], extracted_expr, replaced_expr)
@@ -1776,10 +1797,10 @@ impl Callable for SubstringFunction {
                 // A float bound truncates toward zero, which is what the previous cast did for the
                 // values it did not mangle, so this keeps `substring(s, 1.9, 3)` reading from 1.
                 PathAwareValue::Float((_, n)) if n.is_finite() => *n as i64,
-                _ => return Err(Error::ParseError(substring_err_msg(index))),
+                _ => return Err(incompatible_argument(substring_err_msg(index))),
             };
             usize::try_from(n).map_err(|_| {
-                Error::ParseError(format!(
+                incompatible_argument(format!(
                     "substring function requires the {} argument to be an offset into the string, \
                      which {} is not",
                     match index {
@@ -1794,12 +1815,12 @@ impl Callable for SubstringFunction {
 
         let from = match args[1].first() {
             Some(QueryResult::Literal(r)) | Some(QueryResult::Resolved(r)) => offset(2, r)?,
-            _ => return Err(Error::ParseError(substring_err_msg(2))),
+            _ => return Err(incompatible_argument(substring_err_msg(2))),
         };
 
         let to = match args[2].first() {
             Some(QueryResult::Literal(r)) | Some(QueryResult::Resolved(r)) => offset(3, r)?,
-            _ => return Err(Error::ParseError(substring_err_msg(3))),
+            _ => return Err(incompatible_argument(substring_err_msg(3))),
         };
 
         substring(&args[0], from, to)
@@ -1825,12 +1846,12 @@ impl Callable for JoinFunction {
                 Some(QueryResult::Resolved(r)) | Some(QueryResult::Literal(r)) => match &**r {
                     PathAwareValue::String((_, s)) => join(&args[0], s),
                     PathAwareValue::Char((_, c)) => join(&args[0], &c.to_string()),
-                    _ => return Err(Error::ParseError(String::from(
+                    _ => return Err(incompatible_argument(String::from(
                         "join function requires the second argument to be either a char or string",
                     ))),
                 },
                 _ => {
-                    return Err(Error::ParseError(String::from(
+                    return Err(incompatible_argument(String::from(
                         "join function requires the second argument to be either a char or string",
                     )))
                 }

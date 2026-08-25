@@ -8012,7 +8012,7 @@ fn a_filter_applied_to_an_indexed_value_does_not_panic(#[case] clause: &str) -> 
     Ok(())
 }
 
-/// A scalar function argument whose query selects nothing gets the diagnostic it already had.
+/// A scalar function argument whose query selects nothing fails the rule, and neither panics nor aborts.
 ///
 /// `resolve_function` pushes the query's result verbatim, and an empty result is legitimate -- a filter
 /// that matches no resource produces one. Every scalar-positional argument then indexed `[0]` on it,
@@ -8021,14 +8021,17 @@ fn a_filter_applied_to_an_indexed_value_does_not_panic(#[case] clause: &str) -> 
 ///
 /// The first argument was never affected, because it is passed as a slice rather than indexed, which is
 /// why this went unnoticed.
+///
+/// This asserted the message on the error out of `eval_rules_file`, because the arm reached instead of
+/// the panic reported `ParseError` and that class aborts the run. It is `IncompatibleError` now, which
+/// `is_unevaluatable` recognises, so the clause fails closed and the file keeps reporting -- there is no
+/// error to read the message off. The rule's verdict is the stronger assertion anyway: FAIL covers both
+/// the panic this was written for and the abort that replaced it.
 #[rstest::rstest]
-#[case::substring_from("let r = substring(%s, %empty_sel, 3)", "second")]
-#[case::substring_to("let r = substring(%s, 1, %empty_sel)", "third")]
-#[case::join_separator("let r = join(%s, %empty_sel)", "second")]
-fn a_function_argument_that_selects_nothing_does_not_panic(
-    #[case] call: &str,
-    #[case] which: &str,
-) -> Result<()> {
+#[case::substring_from("let r = substring(%s, %empty_sel, 3)")]
+#[case::substring_to("let r = substring(%s, 1, %empty_sel)")]
+#[case::join_separator("let r = join(%s, %empty_sel)")]
+fn a_function_argument_that_selects_nothing_does_not_panic(#[case] call: &str) -> Result<()> {
     const INPUT: &str = r#"
     { Resources: { One: { Type: 'AWS::S3::Bucket' } } }
     "#;
@@ -8036,18 +8039,11 @@ fn a_function_argument_that_selects_nothing_does_not_panic(
     let rules = "let s = \"hello\"\nlet empty_sel = Resources[ Type == 'AWS::Nonexistent::Type' ]\nrule r {\n    CALL\n    %r == \"unused\"\n}\n"
         .replace("CALL", call);
 
-    let rules_file = RulesFile::try_from(rules.as_str())?;
-    let value = PathAwareValue::try_from(INPUT)?;
-    let mut root = root_scope(&rules_file, Rc::new(value));
-    let outcome = eval_rules_file(&rules_file, &mut root, None);
-
-    let err = outcome.err().map(|e| format!("{}", e)).unwrap_or_default();
-    assert!(
-        err.contains(which),
-        "{} must name the {} argument rather than abort; got {:?}",
-        call,
-        which,
-        err
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "r")?,
+        "{} must fail closed rather than panic or abort",
+        call
     );
 
     Ok(())
