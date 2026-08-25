@@ -369,6 +369,9 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// A scope that does not own captures has nothing to forget, and deliberately does *not* reach up
     /// and clear its parent's -- a rule referenced from inside another rule would otherwise discard the
     /// captures of the rule that referenced it.
+    ///
+    /// Merged keys are forgotten along with captured ones. A merged key is a captured key that has
+    /// left the block that made it; the rule boundary is the same boundary for both.
     fn reset_captures(&mut self) {}
 
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>>;
@@ -387,11 +390,48 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// and from a gate are two different questions.
     fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
+
+    /// Resolve `variable_name` for a lookup that started inside a nested block.
+    ///
+    /// The same as `resolve_variable` except that keys merged out of a block that has already
+    /// finished are withheld. Those keys are a union over that block's iterations, while the clause
+    /// asking is one iteration of another block, so answering from the union lets one resource's key
+    /// satisfy a second resource's clause. A key captured by a filter in a scope whose iteration is
+    /// still running is offered as usual: that key belongs to the iteration doing the asking.
+    ///
+    /// Defaults to `resolve_variable`, which is the same thing for a scope that holds no merged keys.
+    /// A scope that only forwards lookups has to forward this one too, or the distinction is lost at
+    /// that link in the chain.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+    ) -> Result<Vec<QueryResult>> {
+        self.resolve_variable(variable_name)
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()>;
+
+    /// Take a key that a block which has now finished captured.
+    ///
+    /// Kept apart from `add_variable_capture_key` because the two differ in reach rather than in
+    /// content: the first is a key from the iteration that is running, this one a union over the
+    /// iterations of a block that has ended. `resolve_variable_from_nested_block` offers the first
+    /// and withholds this one.
+    ///
+    /// Defaults to `add_variable_capture_key`, so a scope that does not separate the two keeps the
+    /// behaviour it had.
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.add_variable_capture_key(variable_name, key)
+    }
+
     fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }

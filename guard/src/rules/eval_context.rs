@@ -64,6 +64,29 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     /// on evidence from a rule it has nothing to do with -- and renaming one of them changed the other's
     /// verdict, which is the tell that no rule should have to care about.
     captured: HashMap<&'value str, Vec<QueryResult>>,
+    /// Keys handed up by a block that has finished. See `MergedKeys` for why they are not in
+    /// `captured`.
+    merged: HashMap<&'value str, Vec<QueryResult>>,
+}
+
+/// Whether a variable lookup may be answered from keys a finished block handed up.
+///
+/// The two kinds of key have the same content and different reach, so the reach has to be recorded
+/// somewhere; splitting the maps and passing this at the lookup is that record.
+///
+/// A key still in the block that captured it belongs to the iteration that is running, and every
+/// clause under that iteration -- including one in a block nested inside it -- is asking about the
+/// same resource. Once the block ends, `merge_captures_into_parent` hands its keys up as one list,
+/// and that list is a union over the iterations. A clause at the enclosing level reading the name
+/// means the union. A clause inside a *different* iterating block does not: it runs once per
+/// resource and asks about that resource, so the union would let one resource's key answer for
+/// another's.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum MergedKeys {
+    /// The lookup is a clause at the scope's own level.
+    Visible,
+    /// The lookup started inside a nested block.
+    Hidden,
 }
 
 impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
@@ -88,6 +111,72 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             },
         )
     }
+
+    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`, which differ only
+    /// in whether `merged` is one of the places consulted.
+    fn lookup(
+        &mut self,
+        variable_name: &'value str,
+        merged: MergedKeys,
+    ) -> Result<Vec<QueryResult>> {
+        if let Some(val) = self.scope.literals.get(variable_name) {
+            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
+        }
+
+        // Captures before resolved queries, and held in their own map so `reset_captures` can clear
+        // them between rules without discarding anything else.
+        if let Some(values) = self.captured.get(variable_name) {
+            return Ok(values.clone());
+        }
+
+        if merged == MergedKeys::Visible {
+            if let Some(values) = self.merged.get(variable_name) {
+                return Ok(values.clone());
+            }
+        }
+
+        if let Some(values) = self.scope.resolved_variables.get(variable_name) {
+            return Ok(values.clone());
+        }
+
+        if let Some(FunctionExpr {
+            parameters, name, ..
+        }) = self.scope.function_expressions.get(variable_name)
+        {
+            let result = resolve_function(name, parameters, self)?;
+            self.scope
+                .resolved_variables
+                .insert(variable_name, result.clone());
+
+            return Ok(result);
+        }
+
+        let query = match self.scope.variable_queries.get(variable_name) {
+            Some(val) => val,
+            None => {
+                return Err(Error::MissingValue(format!(
+                    "Could not resolve variable by name {} across scopes",
+                    variable_name
+                )))
+            }
+        };
+
+        let match_all = query.match_all;
+
+        let result = query_retrieval(0, &query.query, self.root(), self)?;
+        let result = if !match_all {
+            result
+                .into_iter()
+                .filter(|q| matches!(q, QueryResult::Resolved(_)))
+                .collect()
+        } else {
+            result
+        };
+        self.scope
+            .resolved_variables
+            .insert(variable_name, result.clone());
+        Ok(result)
+    }
 }
 
 pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
@@ -98,6 +187,9 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     /// resolved query result belongs to the iteration and dies with it, while a captured key has to
     /// survive for a clause that reads it after the block.
     captured: HashMap<&'value str, Vec<QueryResult>>,
+    /// Keys handed up by a block nested inside this one, once that block has finished. See
+    /// `MergedKeys`.
+    merged: HashMap<&'value str, Vec<QueryResult>>,
     /// Every name a filter in this block declares as a capture, read from the rule text at
     /// construction rather than learned as keys arrive. See `resolve_variable` for what it is for and
     /// `block_capture_names` for why it cannot be gathered at runtime.
@@ -106,61 +198,158 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
 }
 
 impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
-    /// Hand this iteration's captures to the enclosing scope.
+    /// Hand this iteration's captures to the enclosing scope, as merged keys.
     ///
-    /// Called once the block has been evaluated, which gives a filter capture two different readings
-    /// depending on where it is read, and both are the ones that were wanted:
+    /// Called once the block has been evaluated, which gives a filter capture two readings depending
+    /// on where it is read, and both are the ones that were wanted:
     ///
-    /// - Inside the block, `resolve_variable` finds `captured` first, so a clause sees the keys captured
-    ///   during the iteration it is part of, *provided that iteration captured at least one under that
-    ///   name*. That is what stops one resource's key from satisfying another resource's clause in the
-    ///   ordinary case.
+    /// - Inside the block, `resolve_variable` finds `captured` first, so a clause sees the keys
+    ///   captured during the iteration it is part of. An iteration that captured nothing under a name
+    ///   the block *declares* answers empty instead of reaching the parent, so one resource's key
+    ///   cannot satisfy another resource's clause -- see `resolve_variable` for that arm. Three ways
+    ///   to capture nothing under a declared name: a filter that matched no entry, a capturing clause
+    ///   skipped because an `or` took the other branch, and one inside a `when` block whose condition
+    ///   failed. `a_capture_does_not_leak_from_one_iteration_of_a_block_into_the_next` pins the second
+    ///   and `a_bare_name_capture_does_not_leak_across_iterations_of_a_block` the third.
+    /// - After the block, the keys have been merged upward, so a clause reading the name at the
+    ///   enclosing level sees every iteration's keys -- which is what it saw before any of this and
+    ///   what such a clause means.
     ///
-    ///   It is not a guarantee, and the gap is worth stating rather than implying otherwise. When an
-    ///   iteration captures nothing under the name there is no entry to find, so the lookup falls through
-    ///   to the parent, which by then holds the earlier iterations' merged keys. Three ways to capture
-    ///   nothing: a filter that matched no entry, a capturing clause skipped because an `or` took the
-    ///   other branch, and a capturing clause inside a `when` block whose condition failed. A block of
-    ///   the shape
+    /// They arrive in the parent's `merged` map rather than its `captured` one, because there is a
+    /// third place the name can be read from and it wants the first reading rather than the second: a
+    /// clause inside a *different* iterating block.
     ///
-    ///   ```text
-    ///   Resources.*[ Type == 'AWS::S3::Bucket' ] {
-    ///       Properties.Config[ cfg | Enabled == true ] !empty or
-    ///       Properties.Config[ cfg | Enabled == true ] empty
-    ///       some %cfg == "alpha"
-    ///   }
-    ///   ```
+    /// ```text
+    /// rule r {
+    ///     Resources.*[ Type == 'AWS::S3::Bucket' ] {
+    ///         Properties.Config[ cfg | Enabled == true ] !empty
+    ///     }
+    ///     Resources.*[ Type == 'AWS::S3::Bucket' ] {
+    ///         some %cfg == "alpha"
+    ///     }
+    /// }
+    /// ```
     ///
-    ///   therefore still lets a bucket with no enabled config pass on an earlier bucket's key.
-    ///   Pre-existing rather than introduced here; the two-clause shape above is the reproduction.
-    ///
-    ///   Two separable things are needed, and only the second is a large change:
-    ///
-    ///   1. To stop iteration N seeing iterations 1..N-1, defer the merge to after the loop rather than
-    ///      doing it per iteration. `eval_guard_block_clause` and `eval_type_block_clause` both build a
-    ///      fresh `ValueScope` inside a loop over one shared resolver, so buffering the merges across
-    ///      the loop and flushing once at the end is enough. No knowledge of capture names is required.
-    ///   2. To make such a lookup answer "empty" rather than fail, the block has to know the capture
-    ///      names appearing in its clauses before evaluating them -- a walk of the block's clauses at
-    ///      construction. Without it the lookup is simply unresolvable, which is a file-fatal error
-    ///      rather than a clause that fails closed.
-    ///
-    ///   Doing 1 without 2 turns the false PASS into that error, so they want doing together.
-    /// - After the block, the keys have been merged upward, so a clause reading the name sees every
-    ///   iteration's keys -- which is what it saw before any of this and what such a clause means.
+    /// The second block declares no capture, so its lookup defers past itself, and while these keys
+    /// went into the parent's `captured` map that deferral found the union of the first block's
+    /// iterations. A bucket whose only enabled config is `beta` passed on a different bucket's
+    /// `alpha`, at exit 0, in either document order -- and failed correctly when it was alone in the
+    /// file, which is the shape that makes a rule like this look tested. Splitting the map is what
+    /// lets `resolve_variable_from_nested_block` withhold the union from the second block while a
+    /// clause at the parent's own level still reads it.
     ///
     /// Storing captures in the block and stopping there was the first attempt, and it broke the second
     /// reading: the name died with the block while the rule still referenced it, and an unresolvable
     /// variable is an internal error, so one rule took the whole file's report down at exit 255.
+    ///
+    /// Deferring the merge to after the loop rather than doing it per iteration was considered and is
+    /// not needed. It would stop iteration N seeing iterations 1..N-1, but a name the block declares
+    /// never reaches the parent from inside the block to begin with, and a name it does not declare is
+    /// not one of its own iterations' keys either way.
     pub(in crate::rules) fn merge_captures_into_parent(&mut self) -> Result<()> {
-        for (name, keys) in std::mem::take(&mut self.captured) {
+        // Both maps, and everything arrives in the parent as a merged key. A key a nested block handed
+        // to this one has to keep travelling: it is read by a clause after *this* block, one level
+        // further out again, and it is a union over that nested block's iterations wherever it lands.
+        for (name, keys) in std::mem::take(&mut self.captured)
+            .into_iter()
+            .chain(std::mem::take(&mut self.merged))
+        {
             for key in keys {
                 if let QueryResult::Resolved(value) = key {
-                    self.parent.add_variable_capture_key(name, value)?;
+                    self.parent.add_merged_capture_key(name, value)?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`, which differ only
+    /// in whether `merged` is one of the places consulted.
+    fn lookup(
+        &mut self,
+        variable_name: &'value str,
+        merged: MergedKeys,
+    ) -> Result<Vec<QueryResult>> {
+        if let Some(val) = self.scope.literals.get(variable_name) {
+            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
+        }
+
+        // Before `resolved_variables`, so a clause inside the block sees the keys captured during its
+        // own iteration rather than an accumulation over all of them.
+        if let Some(values) = self.captured.get(variable_name) {
+            return Ok(values.clone());
+        }
+
+        if merged == MergedKeys::Visible {
+            if let Some(values) = self.merged.get(variable_name) {
+                return Ok(values.clone());
+            }
+        }
+
+        if let Some(values) = self.scope.resolved_variables.get(variable_name) {
+            return Ok(values.clone());
+        }
+
+        if let Some(FunctionExpr {
+            parameters, name, ..
+        }) = self.scope.function_expressions.get(variable_name)
+        {
+            let result = resolve_function(name, parameters, self)?;
+            self.scope
+                .resolved_variables
+                .insert(variable_name, result.clone());
+
+            return Ok(result);
+        }
+
+        let query = match self.scope.variable_queries.get(variable_name) {
+            Some(val) => val,
+            None => {
+                // A name this block declares as a capture but did not capture resolves to nothing here,
+                // rather than deferring to the parent.
+                //
+                // Deferring is what let the per-iteration guarantee leak. `merge_captures_into_parent`
+                // hands each iteration's keys up as it exits, so by iteration two the parent holds
+                // iteration one's -- and a resource that captured nothing read its neighbour's key and
+                // passed on it. A silent false PASS at exit 0, and the shape that hides it is that the
+                // non-compliant resource fails correctly when it is the only one in the file.
+                //
+                // Three ways an iteration captures nothing: a filter that matched no entry, a capturing
+                // clause skipped because an `or` took the other branch, and one inside a `when` whose
+                // condition failed. None of them is an error, and none of them is evidence about this
+                // value, so an empty selection is the honest answer -- the clause reading it then fails
+                // with the "resolved to no values" reason rather than passing on somebody else's key.
+                //
+                // A name the block does *not* declare still defers, which is what keeps an outer `let`
+                // resolving from inside a block. The deferral asks for the nested-block reading whatever
+                // this lookup was, because it is leaving a block either way: a name this block does not
+                // declare is not one of its iterations' keys, so the union a finished block left in an
+                // enclosing scope is not an answer about the value being iterated here.
+                if self.capture_names.contains(variable_name) {
+                    return Ok(vec![]);
+                }
+                return self
+                    .parent
+                    .resolve_variable_from_nested_block(variable_name);
+            }
+        };
+
+        let match_all = query.match_all;
+
+        let result = query_retrieval(0, &query.query, self.root(), self)?;
+        let result = if !match_all {
+            result
+                .into_iter()
+                .filter(|q| matches!(q, QueryResult::Resolved(_)))
+                .collect()
+        } else {
+            result
+        };
+        self.scope
+            .resolved_variables
+            .insert(variable_name, result.clone());
+
+        Ok(result)
     }
 }
 
@@ -1366,6 +1555,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         },
         deprecations: BTreeSet::new(),
         captured: HashMap::new(),
+        merged: HashMap::new(),
     }
 }
 
@@ -1389,6 +1579,7 @@ where
             function_expressions,
         },
         captured: HashMap::new(),
+        merged: HashMap::new(),
         parent,
     }
 }
@@ -1550,57 +1741,14 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
-        if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
-        }
+        self.lookup(variable_name, MergedKeys::Visible)
+    }
 
-        // Captures before resolved queries, and held in their own map so `reset_captures` can clear
-        // them between rules without discarding anything else.
-        if let Some(values) = self.captured.get(variable_name) {
-            return Ok(values.clone());
-        }
-
-        if let Some(values) = self.scope.resolved_variables.get(variable_name) {
-            return Ok(values.clone());
-        }
-
-        if let Some(FunctionExpr {
-            parameters, name, ..
-        }) = self.scope.function_expressions.get(variable_name)
-        {
-            let result = resolve_function(name, parameters, self)?;
-            self.scope
-                .resolved_variables
-                .insert(variable_name, result.clone());
-
-            return Ok(result);
-        }
-
-        let query = match self.scope.variable_queries.get(variable_name) {
-            Some(val) => val,
-            None => {
-                return Err(Error::MissingValue(format!(
-                    "Could not resolve variable by name {} across scopes",
-                    variable_name
-                )))
-            }
-        };
-
-        let match_all = query.match_all;
-
-        let result = query_retrieval(0, &query.query, self.root(), self)?;
-        let result = if !match_all {
-            result
-                .into_iter()
-                .filter(|q| matches!(q, QueryResult::Resolved(_)))
-                .collect()
-        } else {
-            result
-        };
-        self.scope
-            .resolved_variables
-            .insert(variable_name, result.clone());
-        Ok(result)
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+    ) -> Result<Vec<QueryResult>> {
+        self.lookup(variable_name, MergedKeys::Hidden)
     }
 
     fn add_variable_capture_key(
@@ -1615,6 +1763,18 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         Ok(())
     }
 
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.merged
+            .entry(variable_name)
+            .or_default()
+            .push(QueryResult::Resolved(Rc::clone(&key)));
+        Ok(())
+    }
+
     /// Forget every key captured by a filter.
     ///
     /// Overrides the trait's no-op, and it has to be here rather than on an inherent impl: the callers
@@ -1623,6 +1783,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     /// and reading correctly.
     fn reset_captures(&mut self) {
         self.captured.clear();
+        self.merged.clear();
     }
 }
 
@@ -2001,12 +2162,32 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.resolve_variable(variable_name)
     }
 
+    /// Forwarded rather than left to the trait's default, which would call this scope's
+    /// `resolve_variable` and so ask the parent for the enclosing-level reading. A `ValueScope` sits
+    /// between a block and the scope it defers to, and dropping the distinction here would put the
+    /// merged union back in reach of every nested block.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+    ) -> Result<Vec<QueryResult>> {
+        self.parent
+            .resolve_variable_from_nested_block(variable_name)
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
+    }
+
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.parent.add_merged_capture_key(variable_name, key)
     }
 }
 
@@ -2049,75 +2230,14 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
-        if let Some(val) = self.scope.literals.get(variable_name) {
-            return Ok(vec![QueryResult::Literal(Rc::clone(val))]);
-        }
+        self.lookup(variable_name, MergedKeys::Visible)
+    }
 
-        // Before `resolved_variables`, so a clause inside the block sees the keys captured during its
-        // own iteration rather than an accumulation over all of them.
-        if let Some(values) = self.captured.get(variable_name) {
-            return Ok(values.clone());
-        }
-
-        if let Some(values) = self.scope.resolved_variables.get(variable_name) {
-            return Ok(values.clone());
-        }
-
-        if let Some(FunctionExpr {
-            parameters, name, ..
-        }) = self.scope.function_expressions.get(variable_name)
-        {
-            let result = resolve_function(name, parameters, self)?;
-            self.scope
-                .resolved_variables
-                .insert(variable_name, result.clone());
-
-            return Ok(result);
-        }
-
-        let query = match self.scope.variable_queries.get(variable_name) {
-            Some(val) => val,
-            None => {
-                // A name this block declares as a capture but did not capture resolves to nothing here,
-                // rather than deferring to the parent.
-                //
-                // Deferring is what let the per-iteration guarantee leak. `merge_captures_into_parent`
-                // hands each iteration's keys up as it exits, so by iteration two the parent holds
-                // iteration one's -- and a resource that captured nothing read its neighbour's key and
-                // passed on it. A silent false PASS at exit 0, and the shape that hides it is that the
-                // non-compliant resource fails correctly when it is the only one in the file.
-                //
-                // Three ways an iteration captures nothing: a filter that matched no entry, a capturing
-                // clause skipped because an `or` took the other branch, and one inside a `when` whose
-                // condition failed. None of them is an error, and none of them is evidence about this
-                // value, so an empty selection is the honest answer -- the clause reading it then fails
-                // with the "resolved to no values" reason rather than passing on somebody else's key.
-                //
-                // A name the block does *not* declare still defers, which is what keeps an outer `let`
-                // resolving from inside a block.
-                if self.capture_names.contains(variable_name) {
-                    return Ok(vec![]);
-                }
-                return self.parent.resolve_variable(variable_name);
-            }
-        };
-
-        let match_all = query.match_all;
-
-        let result = query_retrieval(0, &query.query, self.root(), self)?;
-        let result = if !match_all {
-            result
-                .into_iter()
-                .filter(|q| matches!(q, QueryResult::Resolved(_)))
-                .collect()
-        } else {
-            result
-        };
-        self.scope
-            .resolved_variables
-            .insert(variable_name, result.clone());
-
-        Ok(result)
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+    ) -> Result<Vec<QueryResult>> {
+        self.lookup(variable_name, MergedKeys::Hidden)
     }
 
     /// Captured here rather than delegated to the parent, because this is the scope the capture
@@ -2156,6 +2276,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.captured
+            .entry(variable_name)
+            .or_default()
+            .push(QueryResult::Resolved(Rc::clone(&key)));
+        Ok(())
+    }
+
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.merged
             .entry(variable_name)
             .or_default()
             .push(QueryResult::Resolved(Rc::clone(&key)));

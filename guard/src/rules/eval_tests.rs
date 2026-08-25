@@ -1659,6 +1659,285 @@ fn a_capture_name_that_appears_nowhere_is_still_an_unresolved_variable() -> Resu
     Ok(())
 }
 
+/// Two buckets whose enabled configs are named `alpha` and `beta`.
+const ALPHA_THEN_BETA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+"#;
+
+/// The same two resources as [`ALPHA_THEN_BETA`], in the other order.
+const BETA_THEN_ALPHA: &str = r#"
+Resources:
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// Two buckets that both satisfy `some %cfg == "alpha"` on their own keys.
+const BOTH_ALPHA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketC:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// A block that only reads `%cfg` does not get the keys an earlier block captured.
+///
+/// The third instance of one family. The per-iteration `captured` map stopped iteration two of a block
+/// reading iteration one's key; `capture_names` stopped an iteration that captured nothing under a name
+/// its own block declares from reaching past itself. This is the shape neither covers: a *sibling* block
+/// that declares no capture at all, so its lookup defers, and what it reached was the union
+/// `merge_captures_into_parent` had already handed to the enclosing scope. `BucketB`, whose only enabled
+/// config is `beta`, satisfied `some %cfg == "alpha"` on `BucketA`'s key at exit 0 in either document
+/// order.
+///
+/// The two readings hold different values, which is what makes the verdict say which one was used: the
+/// union is `["alpha", "beta"]` and the second block's own iteration has nothing. Both document orders
+/// are asserted because order independence is the property -- a first-iteration-wins artifact would
+/// answer differently in the two.
+///
+/// The last arrangement is the discriminator, and it is why `BOTH_ALPHA` exists: on a document where
+/// every bucket has its own `alpha`, the same assertion inside a block that *declares* the capture
+/// passes. So the FAILs above are the read resolving to nothing, not the rule being unsatisfiable or
+/// the document being wrong.
+#[test]
+fn a_sibling_block_does_not_read_a_capture_merged_out_of_an_earlier_block() -> Result<()> {
+    let reads_only = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+
+    for (arrangement, document) in [
+        ("the bucket with alpha first", ALPHA_THEN_BETA),
+        ("the bucket with alpha second", BETA_THEN_ALPHA),
+        ("both buckets carrying alpha", BOTH_ALPHA),
+    ] {
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+        let mut scope = root_scope(&reads_only, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&reads_only, &mut scope, None)?,
+            Status::FAIL,
+            "with {}, a block that captures nothing under `cfg` must not read the keys the earlier \
+             block captured",
+            arrangement
+        );
+    }
+
+    let declares_it_too = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&declares_it_too, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&declares_it_too, &mut scope, None)?,
+        Status::PASS,
+        "the same assertion over the same document passes when the reading block captures its own \
+         key, so the failures above are the empty selection rather than an unsatisfiable rule"
+    );
+
+    Ok(())
+}
+
+/// A clause after the block still reads every iteration's keys, and a clause inside a nested block
+/// still reads only its own iteration's.
+///
+/// The two readings that `merge_captures_into_parent` is there to give, asserted over one document so
+/// that they cannot both be the same thing. `alpha` and `beta` are keys of *different* buckets: the
+/// rule-level clause after the block passes on either of them because it means the union, and the
+/// clause inside the nested block fails on `alpha` because `BucketB`'s iteration only has `beta`.
+///
+/// Splitting merged keys out of `captured` had to keep both. Withholding the union from every lookup
+/// would break the first; offering it to a nested block is the defect the split is for.
+#[test]
+fn a_capture_reads_as_the_union_after_its_block_and_per_iteration_inside_a_nested_one() -> Result<()>
+{
+    let after_the_block = |expected_key: &str| {
+        format!(
+            r#"
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }}
+        some %cfg == "{}"
+    }}
+    "#,
+            expected_key
+        )
+    };
+
+    for (key, expected) in [
+        ("alpha", Status::PASS),
+        ("beta", Status::PASS),
+        ("gamma", Status::FAIL),
+    ] {
+        let rules = after_the_block(key);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "a clause after the block reads the union of both iterations, so `{}` must be {:?}",
+            key,
+            expected
+        );
+    }
+
+    let nested = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            Properties {
+                some %cfg == "alpha"
+            }
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::FAIL,
+        "the same document and the same key: a nested block reads the iteration it is inside, so \
+         `BucketB` must not pass on `BucketA`'s alpha"
+    );
+
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::PASS,
+        "a nested block still reads the key its own iteration captured"
+    );
+
+    Ok(())
+}
+
+/// A key captured at rule-body level is readable inside a block, and stays so.
+///
+/// The other half of the precision the split buys. `nm` here is not per-iteration data at all: one
+/// query at rule-body level bound it, the way a `let` would, and the block reading it is asking about
+/// the whole selection rather than about the resource it is iterating. Withholding it would have turned
+/// this rule from a pass into a failure, so the line the split draws is between a key that left the
+/// block that made it and a key no block made.
+#[test]
+fn a_capture_made_at_rule_level_is_still_readable_inside_a_block() -> Result<()> {
+    for (expected_name, expected) in [("BucketA", Status::PASS), ("BucketZ", Status::FAIL)] {
+        let rules = format!(
+            r#"
+    rule buckets_named {{
+        Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            some %nm == "{}"
+        }}
+    }}
+    "#,
+            expected_name
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` read inside the block must be {:?}",
+            expected_name,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
+/// A key captured in a nested block is readable after the block that contains it.
+///
+/// The chain the split has to preserve: the nested block hands its keys to the block around it, and
+/// that block hands them on when it ends. A first version of the split took only `captured` on the way
+/// out, so a key that arrived as a merged one stopped one level short. The clause after the outer block
+/// then read an empty selection -- `capture_names` on the rule body includes names the nested block
+/// declares, so it failed the clause instead of erroring, which is a wrong FAIL and quiet with it.
+#[test]
+fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties {
+                Config[ cfg | Enabled == true ] !empty
+            }
+        }
+        some %cfg == "beta"
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS,
+        "`beta` is BucketB's key, captured two blocks in, and the clause after the outer block reads \
+         the union"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(

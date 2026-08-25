@@ -2147,12 +2147,34 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         }
     }
 
+    /// An argument the call site passed is the same binding whichever depth of block reads it, so this
+    /// answers as `resolve_variable` does and only the onward deferral differs.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+    ) -> Result<Vec<QueryResult>> {
+        match self.resolved_parameters.get(variable_name) {
+            Some(res) => Ok(res.clone()),
+            None => self
+                .parent
+                .resolve_variable_from_nested_block(variable_name),
+        }
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
+    }
+
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.parent.add_merged_capture_key(variable_name, key)
     }
 }
 
