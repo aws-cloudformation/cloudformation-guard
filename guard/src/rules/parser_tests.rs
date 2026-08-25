@@ -4927,6 +4927,20 @@ rule second_rule {
         "an unterminated << must be rejected, not close itself on a later rule's >>"
     );
 
+    // The same defect one scope narrower, and the case the first version of this bound missed: the next
+    // `>>` belongs to the very next clause of the *same* rule, so nothing that scans for a closing brace or
+    // a `rule` line ever sees a boundary. Clause two was swallowed and the rule reported PASS at exit 0.
+    let swallowed_sibling = r###"
+rule r {
+    Resources.Bad.Properties.BucketName == "mybucket" << oops I forgot the closing tag
+    Resources.Bad.Properties.Public == false << buckets must not be public >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(swallowed_sibling)).is_err(),
+        "an unterminated << must not close itself on the next clause's >> either"
+    );
+
     let multi_line = r###"
 rule r {
     Resources.Bad.Properties.Public == false
@@ -4939,6 +4953,26 @@ rule r {
     assert!(
         rules_file(from_str2(multi_line))?.is_some(),
         "a message spanning lines is the ordinary case and must still parse"
+    );
+
+    // And the shape the first version of this bound wrongly rejected. A body that quotes example JSON has a
+    // line starting with `}`, which is what a "Fix: add one, for example ..." message looks like.
+    let quotes_json = r###"
+rule r {
+    Resources.One.Properties.PolicyDocument exists
+    <<
+      Violation: no policy document.
+      Fix: add one, for example
+      {
+        "Version": "2012-10-17",
+        "Statement": []
+      }
+    >>
+}
+"###;
+    assert!(
+        rules_file(from_str2(quotes_json))?.is_some(),
+        "a message body may contain braces at the start of a line: it is quoting JSON, not closing a block"
     );
     Ok(())
 }

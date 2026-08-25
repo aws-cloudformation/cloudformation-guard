@@ -854,25 +854,33 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     ))(input)
 }
 
-/// How far a message body may reach: to the first line that starts a new construct, or to the end.
+/// How far a message body may reach: to the next `<<`, or to the end of the input.
 ///
-/// A line whose first token is `}` closes the block the message sits inside, and a line whose first token is
-/// `rule` starts the next rule. A message cannot legitimately extend past either, because the clause that
-/// carries it is inside that block.
+/// A second message opener inside what is being read as a message body means the first one was never
+/// closed. That is the whole rule, and it is the one that holds in every scope: the next `<<` may belong to
+/// the next clause of the same rule, or to a clause of some later rule, and either way the `>>` after it
+/// closes *that* message rather than this one.
 ///
-/// The first line is exempt: it holds the text that follows `<<` on the clause's own line.
+/// Two narrower bounds were tried and both were wrong in both directions. Stopping at a line whose first
+/// token is `}` or `rule` catches a forgotten tag whose next `>>` lives in a later rule, and misses the one
+/// whose next `>>` is the very next clause of the same rule -- so
+///
+/// ```text
+/// rule r {
+///     Resources.One.Type == "AWS::S3::Bucket" << oops
+///     Resources.One.Properties.Encrypted == true << must be encrypted >>
+/// }
+/// ```
+///
+/// still swallowed the encryption check and reported PASS at exit 0. In the other direction it rejected a
+/// legitimate message: `}` at the start of a line is what a body looks like when it quotes example JSON,
+/// which is exactly what a "Fix: add one, for example ..." message does.
+///
+/// Measured over the 233 messages in the AWS rule registry and this repository's fixtures: none contains a
+/// second `<<`, none has a line starting `}`, and none has a line starting `rule`. All three bounds are
+/// equally safe against real input; only this one is right about which inputs are broken.
 fn message_bound(fragment: &str) -> usize {
-    let mut offset = 0;
-    for line in fragment.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let starts_a_construct =
-            trimmed.starts_with('}') || trimmed.split_whitespace().next() == Some("rule");
-        if offset > 0 && starts_a_construct {
-            return offset;
-        }
-        offset += line.len();
-    }
-    fragment.len()
+    fragment.find("<<").unwrap_or(fragment.len())
 }
 
 /// The message text between `<<` and `>>`.
