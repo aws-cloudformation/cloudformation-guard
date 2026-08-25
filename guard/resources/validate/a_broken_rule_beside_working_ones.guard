@@ -1,6 +1,8 @@
 #
 # The middle rule cannot be evaluated: a filter capture belongs to the rule that made it, so `%nm` does
-# not resolve here. That is a broken ruleset and the run says so with exit 255.
+# not resolve here. That is a broken ruleset and the run says so with exit 5, the code for a rules file
+# cfn-guard cannot use. It said so with 255 until the exit codes were sorted out; 255 is the code for
+# cfn-guard itself failing, which sent the author looking for a bug in the tool.
 #
 # What it must not do is cost the other rules their findings. `every_bucket_is_named_expected` fails for
 # every bucket in the template it is paired with, and those findings were discarded along with the whole

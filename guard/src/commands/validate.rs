@@ -442,9 +442,7 @@ impl Executable for Validate {
                                     writer,
                                 )?;
 
-                                if status != SUCCESS_STATUS_CODE {
-                                    exit_code = status
-                                }
+                                exit_code = more_severe(exit_code, status);
                             }
                         }
                     }
@@ -505,9 +503,7 @@ impl Executable for Validate {
                             writer,
                         )?;
 
-                        if status != SUCCESS_STATUS_CODE {
-                            exit_code = status;
-                        }
+                        exit_code = more_severe(exit_code, status);
                     }
                     exit_code
                 }
@@ -564,6 +560,30 @@ const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format 
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
 const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
 
+/// Fold one rules file's exit code into the code for the run so far, keeping the more severe of the
+/// two.
+///
+/// `ERROR_STATUS_CODE` outranks `FAILURE_STATUS_CODE`: a ruleset that could not be evaluated is a
+/// different and worse answer than a template that failed a rule which *was* evaluated, and a
+/// consumer that treats the two alike will read a broken ruleset as a policy violation it can waive.
+/// `SUCCESS_STATUS_CODE` never lowers a code already set.
+///
+/// Saying this out loud became necessary when an undeclared name stopped returning `Err`. While it
+/// did, the first unevaluatable file ended the whole run, so no later file could overwrite its code
+/// and `exit_code = status` was sufficient. Now that such a file yields a code and the run continues
+/// to the remaining files, a later `FAILURE_STATUS_CODE` would have silently replaced it.
+///
+/// `JunitReporter::update_exit_code` applies the same rule; it delegates here so the two cannot drift.
+pub(crate) fn more_severe(current: i32, candidate: i32) -> i32 {
+    if candidate == ERROR_STATUS_CODE
+        || (candidate == FAILURE_STATUS_CODE && current != ERROR_STATUS_CODE)
+    {
+        candidate
+    } else {
+        current
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn evaluate_rule(
     data_type: Type,
@@ -588,7 +608,7 @@ fn evaluate_rule(
         }
 
         Ok(Some(rule)) => {
-            let status = evaluate_against_data_input(
+            let evaluated = evaluate_against_data_input(
                 data_type,
                 output,
                 extra_data,
@@ -599,7 +619,30 @@ fn evaluate_rule(
                 print_json,
                 summary_type,
                 writer,
-            )?;
+            );
+
+            let status = match evaluated {
+                Ok(status) => status,
+                // A rules file naming something it never declares -- a variable used without a `let`,
+                // most often -- is the author's mistake, and `ERROR_STATUS_CODE` is already what this
+                // function returns for the sibling case of a file the parser rejects, a few lines up.
+                // `?` here instead carried the error to `main` and exited -1, so forgetting a `let`
+                // reported that cfn-guard had broken. Forgetting a `let` is a common mistake, and the
+                // message does not name the variable as the thing to fix, so the exit code was the only
+                // signal and it pointed at the wrong party.
+                //
+                // Whatever the other rules found is already on stdout: `evaluate_against_data_input`
+                // reports before propagating, which is deliberate and explained there.
+                Err(e) if e.is_undeclared_name() => {
+                    writer.write_err(format!(
+                        "Error handling rule file = {}, Error = {e}\n---",
+                        file_name.underline(),
+                    ))?;
+
+                    return Ok(ERROR_STATUS_CODE);
+                }
+                Err(e) => return Err(e),
+            };
 
             if status == Status::FAIL {
                 return Ok(FAILURE_STATUS_CODE);

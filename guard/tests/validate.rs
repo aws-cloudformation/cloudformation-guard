@@ -184,7 +184,13 @@ mod validate_tests {
         vec!["rules-dir/s3_bucket_public_read_prohibited.guard"],
         StatusCode::VALIDATION_ERROR
     )]
-    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::INTERNAL_FAILURE)]
+    // `malformed-rule.guard` parses; every clause reads `%s3_buckets_server_side_encryption_2` and
+    // nothing declares it with a `let`. That is the rules author's mistake, so it is `PARSING_ERROR`
+    // -- the name this repository gives 5 -- and not `INTERNAL_FAILURE`, which is -1 and means
+    // cfn-guard broke. This case asserted -1, so it encoded the defect rather than the requirement:
+    // forgetting a `let` is a common mistake, and being told the tool is broken sends the author
+    // looking in the wrong place.
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::PARSING_ERROR)]
     #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], StatusCode::SUCCESS)]
     #[case(
@@ -1979,8 +1985,14 @@ mod validate_tests {
     /// The same for the JSON, YAML and SARIF path, which shares one evaluator.
     ///
     /// `CommonStructuredReporter` propagated too, so the document a machine reads was replaced by a
-    /// single error line for a file whose other rules had findings. Here the error is still returned
-    /// after the document is written, so the exit code is unchanged and the document is gained.
+    /// single error line for a file whose other rules had findings. The error is still returned after
+    /// the document is written, so the document is gained either way.
+    ///
+    /// This asserted `INTERNAL_FAILURE`, described as "unchanged". It was unchanged *by that commit*,
+    /// which is not the same as correct, and it left this path disagreeing with `-o junit` on the same
+    /// input: `JunitReporter` folds the error into the suite's `errors` total and reaches
+    /// `PARSING_ERROR`, while json, yaml and sarif returned `Err` and exited -1. Now all four formats
+    /// give one answer.
     #[test]
     fn a_rule_that_cannot_be_evaluated_does_not_discard_the_structured_document() {
         let mut reader = Reader::default();
@@ -1995,9 +2007,9 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::INTERNAL_FAILURE,
+            StatusCode::PARSING_ERROR,
             status_code,
-            "the exit code for this path is unchanged; only the document is new"
+            "the structured formats must agree with -o junit on one rules file"
         );
 
         let output = writer.stripped().expect("failed to read the writer");
@@ -2101,9 +2113,13 @@ mod validate_tests {
     /// broken one went unevaluated, and the run printed a single error line: five real findings from a
     /// third rule, discarded because a second rule read a variable that does not exist in it.
     ///
-    /// The exit code is deliberately unchanged. A variable that resolves nowhere is a broken ruleset
-    /// rather than a non-compliant template, and 255 rather than 19 is what says so; the fix is that
-    /// there is now a report to read beside it.
+    /// A variable that resolves nowhere is a broken ruleset rather than a non-compliant template, and
+    /// the exit code has to keep saying so. This asserted `INTERNAL_FAILURE` for that, on the reasoning
+    /// that "255 rather than 19 is what says so" -- true as far as it went, and the wrong half of the
+    /// distinction. `PARSING_ERROR` is also not 19, and unlike 255 it does not additionally claim
+    /// cfn-guard broke: 5 is the code this repository gives a ruleset it cannot use, and -1 is the one
+    /// it gives itself. The requirement that commit was protecting is unchanged and still asserted
+    /// below; only the code that expresses it moves.
     #[test]
     fn a_rule_that_cannot_be_evaluated_does_not_discard_the_other_rules_findings() {
         let mut reader = Reader::default();
@@ -2116,8 +2132,13 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::INTERNAL_FAILURE, status_code,
+            StatusCode::PARSING_ERROR, status_code,
             "a ruleset that cannot be evaluated stays distinguishable from a non-compliant template"
+        );
+        assert_ne!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "and must not be reported as the template merely failing a rule"
         );
 
         let output = writer.stripped().expect("failed to read the writer");

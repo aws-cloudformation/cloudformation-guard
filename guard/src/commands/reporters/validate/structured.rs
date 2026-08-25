@@ -167,6 +167,21 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
         };
 
         match first_error {
+            // Classified the way the single-line path classifies it, and for the same reason: a name
+            // the rules file never declares is the author's mistake, not cfn-guard's. The document is
+            // already written above, so this only decides the code.
+            //
+            // `-o junit` reached `ERROR_STATUS_CODE` for this input already, because `JunitReporter`
+            // folds an eval error into the suite's `errors` total instead of returning `Err`. json,
+            // yaml and sarif came through here and exited -1. So one binary gave two answers about one
+            // rules file depending only on `-o`, and the format that disagreed with the other three
+            // was the one that had been looked at.
+            Some(e) if e.is_undeclared_name() => {
+                self.writer
+                    .write_err(format!("Error handling rule file, Error = {e}\n---"))?;
+
+                Ok(ERROR_STATUS_CODE)
+            }
             Some(e) => Err(e),
             None => Ok(self.exit_code),
         }

@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{
-        reporters::test::structured::TestResult, validate::DataFile, ERROR_STATUS_CODE,
-        FAILURE_STATUS_CODE,
+        reporters::test::structured::TestResult,
+        validate::{more_severe, DataFile},
     },
     rules::{
         self,
@@ -97,13 +97,13 @@ struct JunitReporter<'reporter> {
 }
 
 impl<'reporter> JunitReporter<'reporter> {
-    /// Update exit code only if code takes more precedence than current exit code
+    /// Update exit code only if code takes more precedence than current exit code.
+    ///
+    /// The precedence rule itself lives in `validate::more_severe`, which the single-line path also
+    /// uses. It was stated in both places; this reporter was the only one that had it right, so the
+    /// shared version is this one, moved rather than rewritten.
     fn update_exit_code(&mut self, code: i32) {
-        if code == ERROR_STATUS_CODE
-            || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
-        {
-            self.exit_code = code;
-        }
+        self.exit_code = more_severe(self.exit_code, code);
     }
 }
 
