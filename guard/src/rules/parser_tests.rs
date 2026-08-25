@@ -5683,6 +5683,85 @@ fn a_bare_carriage_return_ends_a_line_like_the_other_two_spellings() -> Result<(
     Ok(())
 }
 
+/// The negation spellings the parser accepts, which is what the grammar block now says.
+///
+/// The grammar had `not_keyword 1*SP other_operators` with `not_keyword` including `!`, which admits `! empty`
+/// and does not admit `!empty`. `!empty` is the only spelling in use: 82 occurrences across this repository's
+/// 95 rules files, 47 across `docs/`, and no occurrence of `!` followed by a space before an operator in
+/// either. So the space belongs to the word spellings, where it is what stops `notempty` reading as a negated
+/// `empty`, and the grammar was corrected to say so rather than the parser widened to match it. This test is
+/// what keeps the two from drifting apart again.
+#[test]
+fn the_negation_spellings_are_the_ones_the_grammar_claims() -> Result<(), Error> {
+    for accepted in [
+        "rule r {\n  A !empty\n}",
+        "rule r {\n  A !EMPTY\n}",
+        "rule r {\n  A !exists\n}",
+        "rule r {\n  A !in [1, 2]\n}",
+        "rule r {\n  A !IS_LIST\n}",
+        "rule r {\n  A not empty\n}",
+        "rule r {\n  A NOT empty\n}",
+        "rule a { A == 1 }\nrule r {\n  !a\n}",
+        "rule a { A == 1 }\nrule r {\n  not a\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(accepted))?.is_some(),
+            "accepted: {}",
+            accepted
+        );
+    }
+
+    for rejected in [
+        "rule r {\n  A ! empty\n}",
+        "rule r {\n  A ! exists\n}",
+        "rule r {\n  A ! in [1, 2]\n}",
+        "rule a { A == 1 }\nrule r {\n  ! a\n}",
+        // and the word spellings still need their space, which is the reason the space is on them
+        "rule r {\n  A notempty\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rejected)).is_err(),
+            "rejected: {}",
+            rejected
+        );
+    }
+    Ok(())
+}
+
+/// A type block needs a space after the type name, which is what the grammar block now says.
+///
+/// It said `type_name *SP [when] "{"`. The parser requires one space, for the block and the clause form
+/// together, and rejects `AWS::S3::Bucket{`. No rules file in this repository or in the AWS rule registry
+/// writes it that way and neither does `docs/`, while 16 write the spaced form; and the zero-space clause form
+/// cannot be written at all, because `type_name` is greedy over alphanumerics and would absorb the property.
+/// So the grammar line was corrected to `1*SP`. The `cut` behind that requirement is what turns a mistake
+/// here into an error against the type block rather than a fall-through, and it still does.
+#[test]
+fn a_type_block_needs_its_space_as_the_grammar_claims() -> Result<(), Error> {
+    for accepted in [
+        "AWS::S3::Bucket {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket\n{\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket   {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket when Properties exists {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket Properties.Encrypted == true",
+    ] {
+        assert!(
+            rules_file(from_str2(accepted))?.is_some(),
+            "accepted: {}",
+            accepted
+        );
+    }
+
+    assert!(
+        rules_file(from_str2(
+            "AWS::S3::Bucket{\n  Properties.Encrypted == true\n}"
+        ))
+        .is_err(),
+        "a type name run straight into the brace is rejected, and the grammar says so"
+    );
+    Ok(())
+}
+
 /// A clause whose first identifier *is* `when` reads as a clause about a property of that name.
 ///
 /// `keyword("when")` rejects a trailing identifier character, which is what fixed `whenCreated`. A trailing

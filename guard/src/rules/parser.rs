@@ -632,10 +632,10 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  access                     = variable_access /
 ///                               property_access
 ///
-///  not_keyword                = "NOT" / "not" / "!"
+///  not_keyword                = "NOT" 1*SP / "not" 1*SP / "!"
 ///  basic_cmp                  = "==" / ">=" / "<=" / ">" / "<"
 ///  other_operators            = "IN" / "EXISTS" / "EMPTY"
-///  not_other_operators        = not_keyword 1*SP other_operators
+///  not_other_operators        = not_keyword other_operators
 ///  not_cmp                    = "!=" / not_other_operators
 ///
 ///  cmp                        = basic_cmp / other_operators / not_cmp
@@ -647,13 +647,28 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  `map_keys_match` handles it. Nothing in `docs/` or the README claims either form, so the grammar was
 ///  the only thing saying they existed.
 ///
+///  Two more lines were corrected against the parser rather than the other way round, and the space after a
+///  negation is the one worth reading twice. `not_keyword` used to be the three spellings alone, with
+///  `not_other_operators` requiring `1*SP` after any of them -- which admits `not empty` and `! empty` and
+///  does not admit `!empty`. `!empty` is the only spelling that exists: 82 occurrences across the 95 rules
+///  files here, every example in `docs/CLAUSES.md` and `docs/COMPLEX_COMPOSITION.md`, and no occurrence of
+///  `! ` before an operator anywhere. So the space belongs to the word spellings, where it is what keeps
+///  `notempty` from reading as a negated `empty`, and `!` needs none because a punctuation mark cannot run
+///  into an identifier. `A ! exists` stays rejected.
+///
+///  `type_block` used to say `*SP` between the type name and what follows it. The parser requires one space
+///  there, for the block and the clause form together -- they share a single requirement, before the optional
+///  `when` -- so `AWS::S3::Bucket{` is rejected. Nothing in the corpus or in `docs/` writes it that way, and
+///  the zero-space *clause* form is unwritable anyway, because `type_name` is greedy over alphanumerics and
+///  would absorb the property. `1*SP` is what the parser means.
+///
 ///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
 ///  rule_clause                = rule_name / not_keyword rule_name / clause
 ///  rule_disjunction_clauses   = rule_clause 1*(or_term 1*(LWSP/comment) rule_clause)
 ///  rule_conjunction_clauses   = rule_clause 1*( (LSWP/comment) rule_clause )
 ///
 ///  type_clause                = type_name 1*SP clause
-///  type_block                 = type_name *SP [when] "{" *(LWSP/comment) 1*clause "}"
+///  type_block                 = type_name 1*SP [when] "{" *(LWSP/comment) 1*clause "}"
 ///
 ///  type_expr                  = type_clause / type_block
 ///
