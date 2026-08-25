@@ -254,8 +254,13 @@ mod test_command_tests {
             .verbose()
             .run(&mut writer, &mut reader);
 
+        // Line 8 of that fixture is `%redshift_clusters.Properties.KmsKeyId == {"Fn::ImportValue":
+        // /{"Fn::Sub":"${pSecretKmsKey}"}}`, and the `/` in the middle of it opens a regular
+        // expression that never closes before the line ends. So the report names the unterminated
+        // regex alongside the alternation it was tried in. It used to name only the alternation,
+        // because the regex error was recoverable and its message was discarded.
         let expected_err_msg = String::from(
-            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
+            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"]/Could not parse regular expression: no closing / before the end of the line, fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
 }
 `
 "#,

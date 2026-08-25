@@ -468,6 +468,19 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
 /// regex early, which leaves an unterminated character class. That file is written `\/` now, which is the
 /// spelling that means what it always meant. There is no reading in which `\\/` both terminates in
 /// `/^x\\/` and does not terminate there -- the fixture and the swallow are one construct.
+///
+/// Both failures are `Failure`, not `Error`, for the reason `parse_float` gives above: a recoverable error
+/// sends `alt` back to the other value productions and the message never reaches the author. Neither of
+/// these did. `Hash == /a(/` reported the generic `expecting either a property access ... or value like
+/// ...` and the engine's `Opening parenthesis without closing parenthesis` appeared nowhere in the output,
+/// and `Hash == /abc` likewise said nothing about a missing delimiter. Both were formatted and discarded.
+///
+/// Nothing is given up by refusing to backtrack here. `parse_regex` is the last arm of
+/// `parse_scalar_value`, so no other value production was going to be tried, and none of them could match
+/// anyway: this function is only reached after `char('/')`, and every other production in the grammar
+/// starts a value with a quote, a digit, a sign, a keyword, `[`, or `{`, while a property access is
+/// alphanumeric or quoted. A literal beginning with `/` is a regular expression or it is nothing, so the
+/// recoverable error bought a worse diagnostic and no second chance.
 fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
     let (consumed, regex) =
         match scan_escaped_literal(input, '/', |escaped, body| match escaped {
@@ -478,10 +491,7 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
             }
         }) {
             Some(found) => found,
-            // `Error`, not `Failure`: the trailing `char('/')` of the `delimited` this replaced produced a
-            // recoverable error, and `parse_regex` is the last arm of the value alternation, so the caller
-            // sees the same error either way without a Failure escaping any enclosing alternation.
-            None => return Err(nom::Err::Error(ParserError {
+            None => return Err(nom::Err::Failure(ParserError {
                 context:
                     "Could not parse regular expression: no closing / before the end of the line"
                         .to_string(),
@@ -492,7 +502,7 @@ fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
 
     match Regex::try_from(regex.as_str()) {
         Ok(_) => Ok((input.take_split(consumed).0, Value::Regex(regex))),
-        Err(e) => Err(nom::Err::Error(ParserError {
+        Err(e) => Err(nom::Err::Failure(ParserError {
             context: format!("Could not parse regular expression: {}", e),
             kind: ErrorKind::RegexpMatch,
             span: input,

@@ -331,29 +331,45 @@ fn test_parse_regex() {
         Ok((cmp, Value::Regex(".*PROD.*".to_string())))
     );
 
+    // A pattern the engine cannot compile. The variant is asserted once, because a recoverable error
+    // is swallowed by the alternation above `parse_regex` and the message below never reaches the
+    // author; the context is then matched by substring so this does not re-break if the variant moves
+    // again. Same shape as `a_float_literal_out_of_range_is_rejected`.
     let improperly_escaped_regular_expression =
         "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
-    let _cmp = unsafe {
+    let err = parse_regex(from_str2(improperly_escaped_regular_expression))
+        .expect_err("a pattern the engine cannot compile must not parse");
+
+    assert!(
+        matches!(err, nom::Err::Failure(_)),
+        "an uncompilable pattern must fail unrecoverably, or `alt` backtracks and reports something else: {:?}",
+        err
+    );
+
+    let context = match &err {
+        nom::Err::Failure(e) | nom::Err::Error(e) => e.context.clone(),
+        nom::Err::Incomplete(_) => String::new(),
+    };
+    assert!(
+        context.contains("Could not parse regular expression: ")
+            && context.contains("Invalid character class"),
+        "the engine's explanation must survive to the author, not merely a rejection: {:?}",
+        context
+    );
+
+    // The span is the pattern itself, taken after the opening delimiter.
+    let span = match &err {
+        nom::Err::Failure(e) | nom::Err::Error(e) => e.span,
+        nom::Err::Incomplete(_) => unreachable!(),
+    };
+    assert_eq!(span, unsafe {
         Span::new_from_raw_offset(
-            11,
             1,
-            ",.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
+            1,
+            "arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
             "",
         )
-    };
-    assert_eq!(
-        parse_regex(from_str2(improperly_escaped_regular_expression)),
-        Err(nom::Err::Error(ParserError {
-                context: "Could not parse regular expression: Parsing error at position 9: Invalid character class".to_string(),
-                kind: ErrorKind::RegexpMatch,
-                span: unsafe { Span::new_from_raw_offset(
-                    1,
-                    1,
-                    "arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
-                    ""
-                ) },
-            }))
-    );
+    });
 
     let properly_escaped_regular_expression = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
     let cmp =
@@ -4953,20 +4969,46 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     Ok(())
 }
 
+/// The three ways a literal reaches the end of its line with no unescaped delimiter, each of which
+/// `scan_escaped_literal` answers with `None`. A lone backslash is the third: it has nothing to escape
+/// and no delimiter follows, so this is the unterminated case rather than the invalid-regex one.
+///
+/// `Failure` rather than `Error` for the reason on `parse_regex_inner`: the message names the missing
+/// delimiter, and a recoverable error means the author is told about a property access instead.
 #[test]
-fn test_parse_regex_inner_when_regex_is_not_valid() {
-    // A lone backslash has nothing to escape and no closing delimiter, so this is the unterminated
-    // case rather than the invalid-regex one, and the message now says which.
-    let invalid = r"\";
-    let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
-    let expected_invalid = Err(nom::Err::Error(ParserError {
-        context: "Could not parse regular expression: no closing / before the end of the line"
-            .to_string(),
-        kind: ErrorKind::RegexpMatch,
-        span: invalid_cmp,
-    }));
+fn test_parse_regex_inner_when_regex_is_not_terminated() {
+    for invalid in [
+        // A backslash with nothing on its line to escape.
+        "\\",
+        // A line ending before any unescaped delimiter, which is the ordinary forgotten-slash typo.
+        "abc\n== 5",
+        "abc\r\n",
+        // End of input before any unescaped delimiter.
+        "abc",
+        // An escaped delimiter does not close, so this one runs to the end of input too.
+        "abc\\/",
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
+        let err =
+            parse_regex_inner(cmp).expect_err("an unterminated regular expression must not parse");
 
-    assert_eq!(expected_invalid, parse_regex_inner(invalid_cmp));
+        assert!(
+            matches!(err, nom::Err::Failure(_)),
+            "{:?} must fail unrecoverably, or `alt` backtracks and reports something else: {:?}",
+            invalid,
+            err
+        );
+
+        let context = match &err {
+            nom::Err::Failure(e) | nom::Err::Error(e) => e.context.clone(),
+            nom::Err::Incomplete(_) => String::new(),
+        };
+        assert_eq!(
+            context, "Could not parse regular expression: no closing / before the end of the line",
+            "{:?} must be named as unterminated",
+            invalid
+        );
+    }
 }
 
 /// What a backslash means inside a regular expression.
