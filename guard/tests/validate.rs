@@ -286,6 +286,172 @@ mod validate_tests {
         );
     }
 
+    /// A data file the user named is read whatever it is called.
+    ///
+    /// `--data` fed every argument through `walk_dir` and then through the extension filter, and
+    /// `walkdir` on a plain file yields that one file, so a file named as an argument was filtered
+    /// as though a walk had discovered it. A name outside the five recognised suffixes was dropped,
+    /// the run had no data left, `evaluate_against_data_input` iterated an empty list and returned
+    /// PASS, and the process exited 0 having written nothing to any channel. A template that
+    /// violates the rule reported compliance because of what it was called.
+    ///
+    /// Exit code is the assertion that matters, because 0 is what a CI gate reads. The output checks
+    /// are here so that a run exiting 19 for an unrelated reason cannot satisfy this.
+    #[test]
+    fn an_explicitly_named_data_file_is_read_whatever_its_extension() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unsupported-extension-template.txt"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the template violates the rule, and naming the file is the user asking for it to be read"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("unsupported-extension-template.txt"),
+            "the file that was read is named in the report:\n{}",
+            output
+        );
+        assert!(
+            output.contains("encrypted_is_true"),
+            "and the rule it violated is reported:\n{}",
+            output
+        );
+    }
+
+    /// A directory walk evaluates the data files it recognises and passes over the rest.
+    ///
+    /// The counterpart to the test above. The extension filter is a discovery heuristic and it still
+    /// governs directory arguments, which is what `--data`'s help text documents and what the
+    /// `dummy.txt` fixtures in data-dir/ and rules-dir/ exist to pin. Without this half, the fix for
+    /// explicitly-named files is also satisfied by reading every file a walk finds, which would try
+    /// to load every README and lockfile sitting in a data directory.
+    ///
+    /// `mixed-extension-dir/README.md` is deliberately not loadable as YAML, so a walk that stopped
+    /// skipping it would fail this test outright rather than merely add a line to the output.
+    #[test]
+    fn a_directory_walk_evaluates_the_templates_and_passes_over_unrelated_files() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["mixed-extension-dir"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "both templates in the directory violate the rule"
+        );
+
+        assert_output_from_str_eq!(
+            indoc! {r#"
+                template.json Status = FAIL
+                FAILED rules
+                encrypted_is_true.guard/encrypted_is_true    FAIL
+                ---
+                Evaluation of rules encrypted_is_true.guard against data template.json
+                --
+                Property [/Resources/B/Properties/Encrypted] in data [template.json] is not compliant with [encrypted_is_true] because provided value [false] did not match expected value [true]. Error Message []
+                --
+                template.yaml Status = FAIL
+                FAILED rules
+                encrypted_is_true.guard/encrypted_is_true    FAIL
+                ---
+                Evaluation of rules encrypted_is_true.guard against data template.yaml
+                --
+                Property [/Resources/B/Properties/Encrypted] in data [template.yaml] is not compliant with [encrypted_is_true] because provided value [false] did not match expected value [true]. Error Message []
+                --
+            "#},
+            writer
+        );
+    }
+
+    /// A file whose extension is recognised but whose content will not load still fails loudly.
+    ///
+    /// Reading explicitly-named files widened what reaches the loader, so the loud path has to stay
+    /// loud: a data file that cannot be parsed aborts the run with the parse error rather than being
+    /// treated as absent. This pins the message as well as the exit code, because a run that failed
+    /// for some other reason would satisfy the code on its own.
+    #[test]
+    fn a_recognised_extension_with_unloadable_content_still_fails_loudly() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["malformed-template.yaml"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INTERNAL_FAILURE,
+            status_code,
+            "a data file that will not load aborts the run"
+        );
+
+        let err = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            err.contains("Error encountered while parsing data file"),
+            "and says on stderr that it could not parse the file:\n{}",
+            err
+        );
+        assert!(
+            err.contains("malformed-template.yaml"),
+            "naming the file it could not parse:\n{}",
+            err
+        );
+    }
+
+    /// A run that evaluated no data at all says so on stderr.
+    ///
+    /// A directory holding nothing a walk recognises leaves the run with an empty data list, and an
+    /// empty list yields no findings, no output and exit 0 -- indistinguishable from a run in which
+    /// every file complied. The notice names each file passed over and states that nothing was
+    /// checked.
+    ///
+    /// The exit code is still 0. Whether a run that checked nothing should fail is a separate
+    /// question, because changing it moves the result for everyone pointing `--data` at a directory
+    /// of mixed content. Asserting 0 here records that the current answer is deliberate rather than
+    /// overlooked, so that changing it has to change this test too.
+    #[test]
+    fn a_run_that_evaluates_no_data_says_so() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["only-unrelated-files-dir"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the exit code for a run that evaluated nothing is unchanged by this commit"
+        );
+
+        let err = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            err.contains("no data files were evaluated"),
+            "a run that checked nothing has to say so:\n{}",
+            err
+        );
+        assert!(
+            err.contains("README.md"),
+            "and name what it passed over, so the reader can tell why:\n{}",
+            err
+        );
+    }
+
     /// A gate written `== true` has to fire for every spelling YAML makes boolean, because when it
     /// does not fire the body never runs and the process exits 0 having checked nothing. Against a
     /// bucket with `Encrypted: false`, `PublicAccess: true` exited 19 and caught the violation
