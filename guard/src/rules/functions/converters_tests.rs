@@ -655,3 +655,67 @@ fn parse_char_measures_length_in_characters_not_bytes() -> crate::rules::Result<
 
     Ok(())
 }
+
+/// `parse_char` given a Char answers a Char, so calling it twice gives what calling it once gives.
+///
+/// That arm pushed a `String`. Its body is character-for-character the same as `parse_str`'s Char arm, which
+/// is where it came from, and every other arm of `parse_char` pushes a `Char`. So the function's output type
+/// depended on its input type, which is the one thing a converter must not do.
+///
+/// It was unexecuted by the suite, which is how it survived. `test_parse_char` looks like it covers it -- it
+/// queries a field declared `Char: '1'` -- but the test itself asserts that the queried value is a
+/// `PathAwareValue::String`, because that is what the YAML `'1'` loads as. The query never produces a Char,
+/// so the call goes down the String arm. Reaching this arm at all takes a Char that did not come from the
+/// document, which is what nesting the call does and what this test does directly.
+#[test]
+fn parse_char_given_a_char_answers_a_char() -> crate::rules::Result<()> {
+    for input in ['a', '1', 'é', '😀'] {
+        let once = convert_one(parse_char, PathAwareValue::Char((Path::root(), input)))?
+            .first()
+            .cloned()
+            .flatten();
+
+        match once {
+            Some(PathAwareValue::Char((_, got))) => assert_eq!(
+                got, input,
+                "parse_char of the char {:?} should be that char",
+                input
+            ),
+            other => panic!(
+                "parse_char of the char {:?} gave {:?}, expected a Char",
+                input, other
+            ),
+        }
+    }
+
+    // Idempotent: the answer to parse_char(parse_char(x)) is the answer to parse_char(x). Before, the
+    // second call turned the first call's Char into a String, so nesting changed the type and a comparison
+    // against a string literal passed where a Char could not have.
+    let from_string = convert_one(
+        parse_char,
+        PathAwareValue::String((Path::root(), String::from("a"))),
+    )?
+    .first()
+    .cloned()
+    .flatten()
+    .expect("a one-character string converts");
+
+    let nested = convert_one(parse_char, from_string.clone())?
+        .first()
+        .cloned()
+        .flatten()
+        .expect("a char converts");
+
+    assert!(
+        matches!(from_string, PathAwareValue::Char((_, 'a'))),
+        "one call should give a Char, got {:?}",
+        from_string
+    );
+    assert!(
+        matches!(nested, PathAwareValue::Char((_, 'a'))),
+        "two calls should give the same Char, got {:?}",
+        nested
+    );
+
+    Ok(())
+}

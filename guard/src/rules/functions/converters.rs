@@ -272,10 +272,22 @@ pub(crate) fn parse_char(
                         None => aggr.push(None),
                     }
                 }
-                PathAwareValue::Char((path, val)) => aggr.push(Some(PathAwareValue::String((
-                    path.clone(),
-                    val.to_string(),
-                )))),
+                // A Char in, the same Char out.
+                //
+                // This pushed a `String`. The body was character-for-character `parse_str`'s Char arm,
+                // which is where it was copied from, and every other arm here pushes a `Char` -- so the
+                // function's output type depended on its input type, which is the one thing a converter
+                // must not do. `parse_char(parse_char(x))` was a String where `parse_char(x)` was a Char,
+                // and a comparison against a string literal passed on the nested form where the single
+                // call could not match.
+                //
+                // The arm was unexecuted by the suite, which is how it survived. `test_parse_char` looks
+                // like it covers it -- it queries a field declared `Char: '1'` -- but that test asserts
+                // the queried value is a String, because that is what the YAML `'1'` loads as, so the
+                // call goes down the String arm above.
+                PathAwareValue::Char((path, val)) => {
+                    aggr.push(Some(PathAwareValue::Char((path.clone(), *val))))
+                }
                 _ => {
                     aggr.push(None);
                 }
