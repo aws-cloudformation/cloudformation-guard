@@ -2850,6 +2850,28 @@ mod validate_tests {
         );
     }
 
+    /// Which side of a comparison an unevaluatable error comes from does not change the exit code.
+    ///
+    /// A clause whose own query could not produce a value fails closed and the run exits 19. The same
+    /// error reached through the right-hand side recorded the clause as failing and then propagated the
+    /// error anyway, so the run aborted with "Error occurred" and exited 255 -- the tool-failure code, on
+    /// a template that is only non-compliant. Both spellings of the right-hand side did it, a variable
+    /// bound to the conversion and the conversion written inline, and
+    /// `unevaluatable_right_hand_side.guard` has one rule for each alongside the left-hand control.
+    #[test]
+    fn an_unevaluatable_right_hand_side_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/unevaluatable_right_hand_side.guard"])
+            .data(vec!["/functions/data/unevaluatable_right_hand_side.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
     /// A value the conversion could not represent is not reported as a number.
     ///
     /// `numbers_that_do_not_fit.guard` asserts that a budget of `1.0e40` *is* 9223372036854775807, and
