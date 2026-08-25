@@ -169,9 +169,18 @@ impl<'record, 'value: 'record> Rendered<'record, 'value> {
 /// constructors of a block report, `MissingBlockValue` sets `unresolved: Some(..)`, and when the query fails
 /// at the *document root* the value it traversed to has an empty path. Such a block was then rendered by
 /// nobody and collected by nobody -- `pprint_clauses` had no bucket for it and this guard skipped it -- so a
-/// rule querying a top-level property against a CloudFormation template exited 19 saying nothing, taking the
-/// author's own `<< >>` message with it. That is the everyday shape of the very defect this section exists
-/// for, in block syntax.
+/// rule querying a top-level property against a CloudFormation template exited 19 saying nothing at all.
+/// That is the everyday shape of the very defect this section exists for, in block syntax.
+///
+/// What it recovers is the evaluator's account and not the author's message, and this comment used to claim
+/// otherwise. A block report's `custom_message` is always absent: three of the four constructors set it to
+/// `None` outright, and the fourth, `MissingBlockValue`, copies a field whose one producer at `eval.rs`
+/// sets `None` as well -- which is why the JSON for `block_query_at_the_document_root.guard` shows the empty
+/// string there rather than a message. `non_empty_message` drops it, so the arm below reads a half that is
+/// never there. Left in place rather than deleted: the block arm's shape is the clause arm's, and carrying
+/// an author's message through to it is a change to what the section prints for every block finding, so it
+/// wants its own commit and its own verification. A `<< >>` written on a clause inside the block is a
+/// different message again, recorded on that clause, and a block whose query fails never runs it.
 ///
 /// Here rather than in one reporter because every reporter that groups findings by resource needs it, and
 /// for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so a reporter
@@ -352,6 +361,9 @@ fn shortened(message: &str) -> String {
 /// bounded. `.or_else` over the two was dead code for its second arm: every clause arm records a non-empty
 /// `error_message`, so the author's message could never win and never appeared here at all, though the
 /// per-resource output prints both.
+///
+/// The author's half arrives from a clause and never from a block, which records no `custom_message` on any
+/// of its four constructors. `collect_unattributed_explanations` says where that is decided.
 ///
 /// Bounded per message rather than over the join, so the line is at most `2 * (LONGEST_RECORDED_MESSAGE + 3)
 /// + 1`. Taking the room from one half or the other instead would let an author who writes a long message
