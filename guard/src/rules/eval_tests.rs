@@ -1008,6 +1008,11 @@ fn block_guard_pass() -> Result<()> {
                                         comparison: (CmpOperator::Eq, true),
                                         from: QueryResult::Resolved(from_q),
                                         to: Some(QueryResult::Resolved(_)),
+                                        // Two comparable strings that were equal under a negated
+                                        // `!=`, so the operator applied and the clause is about the
+                                        // data. `message: None` above already pins that: the
+                                        // comparator records its own text when it cannot compare.
+                                        operands_not_comparable: false,
                                     },
                                 )) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");

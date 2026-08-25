@@ -1,0 +1,17 @@
+#
+# The control for `incomparable_condition_gate.guard`: the same operator over the same left-hand value,
+# against a right-hand value it can be compared with.
+#
+# `Port > 999` against `Port: 80` is a comparison the evaluator makes and finds false. The gate closes
+# and the body is not evaluated, exactly as in the incomparable spelling, and the exit code and the
+# report are the same. Nothing is wrong with this rule, so the run must stay silent.
+#
+# That is what keeps the note off ordinary rulesets. Most gates in most rulesets close because they were
+# written to, and a note that fires on all of them is one nobody reads. Pairing it with the
+# incomparable spelling is also what shows the note is keyed on a comparison that could not be made
+# rather than on the gate closing, which is the mistake worth guarding against: the two runs differ in
+# nothing else.
+#
+rule gate_is_decidably_false when Port > 999 {
+    Name == "definitely_not_this"
+}

@@ -1429,6 +1429,48 @@ fn recorded_clause_reason(record: &EventRecord<'_>) -> Option<String> {
     record.children.iter().find_map(recorded_clause_reason)
 }
 
+/// The reason a comparison under this record could not compare its operands.
+///
+/// Depth-first and first-match like [`recorded_clause_reason`], and for the weaker reason: the caller
+/// wants to know whether such a comparison is down there at all, and any of them answers that. A
+/// condition with two of them is one malformed condition either way.
+///
+/// Filters are not descended into, and that boundary is the whole of what makes this answer about the
+/// condition. A filter's comparisons decide *membership* in a selection, and guard's filter semantics
+/// treat a candidate the comparator could not answer for as one that was not selected -- so the
+/// selection still has a definite size and a condition reading that size was definitely answered.
+/// Measured over aws-guard-rules-registry at 6aca96e: without the boundary, 39 of its 193 rule and test
+/// pairs grew a note, every one of them for `Metadata.guard.SuppressedRules.* != "<RULE_NAME>"` or its
+/// cfn_nag spelling inside the filter that resolves the rule's selection variable. The registry's own
+/// suppression fixtures write a suppression as `- RULE_NAME: reason`, so that query resolves to a map
+/// and the comparison against a string cannot be made -- which excludes the resource, which is exactly
+/// what suppressing it should do. The rules' gates are `%selection !empty`, decidable and decided, and
+/// telling their authors their conditions could not be answered would be false.
+///
+/// Skips a marked comparison that recorded no message and keeps looking, so the answer is always a
+/// reason and never an empty one. One incomparable path does record nothing -- the query-against-query
+/// arm of `each_lhs_compare` discards the comparator's text before building the record -- and giving it
+/// a message would change the report, so a condition holding only that kind of comparison is not
+/// described here rather than described badly.
+fn recorded_incomparable_reason(record: &EventRecord<'_>) -> Option<String> {
+    match &record.container {
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(comparison))) => {
+            if comparison.operands_not_comparable {
+                if let Some(message) = &comparison.message {
+                    return Some(message.clone());
+                }
+            }
+        }
+        Some(RecordType::Filter(_)) => return None,
+        _ => {}
+    }
+
+    record
+        .children
+        .iter()
+        .find_map(recorded_incomparable_reason)
+}
+
 impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     /// The reason recorded under the record that was closed most recently.
     ///
@@ -1454,6 +1496,14 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
             .children
             .last()
             .and_then(recorded_clause_reason)
+    }
+
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
+        self.events
+            .last()?
+            .children
+            .last()
+            .and_then(recorded_incomparable_reason)
     }
 
     fn start_record(&mut self, context: &str) -> Result<()> {
@@ -1993,6 +2043,10 @@ impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
         self.recorder.reason_from_last_closed_record()
     }
 
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
+        self.recorder.incomparable_reason_from_last_closed_record()
+    }
+
     fn start_record(&mut self, context: &str) -> Result<()> {
         self.recorder.start_record(context)
     }
@@ -2046,6 +2100,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'eval, 'loc> {
     fn reason_from_last_closed_record(&self) -> Option<String> {
         self.parent.reason_from_last_closed_record()
+    }
+
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
+        self.parent.incomparable_reason_from_last_closed_record()
     }
 
     fn start_record(&mut self, context: &str) -> Result<()> {
@@ -2203,6 +2261,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'loc, 'eval> {
     fn reason_from_last_closed_record(&self) -> Option<String> {
         self.parent.reason_from_last_closed_record()
+    }
+
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
+        self.parent.incomparable_reason_from_last_closed_record()
     }
 
     fn start_record(&mut self, context: &str) -> Result<()> {
@@ -3016,6 +3078,9 @@ fn report_all_failed_clauses_for_rules<'value>(
                     from,
                     status: Status::FAIL,
                     to,
+                    // Not rendered here either, for the reason recorded at the console reporter's
+                    // matching arm.
+                    ..
                 }) => {
                     let custom_message = custom_message
                         .as_ref()

@@ -200,6 +200,23 @@ pub(crate) struct ComparisonClauseCheck {
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
+    /// True when the comparator could not apply the operator to these operands at all, as against
+    /// applying it and finding the claim false.
+    ///
+    /// The status is `FAIL` either way and that is not changing: an assertion that cannot be
+    /// answered is a failed assertion, and it already reports its reason. What this distinguishes is
+    /// the same operands reached as a `when` condition, where `FAIL` reads as "did not match" and
+    /// closes the gate silently -- the author's operator does not apply to their data and the run
+    /// says nothing. `RecordTracer::incomparable_reason_from_last_closed_record` reads it back so a
+    /// closed gate can say so.
+    ///
+    /// A `bool` beside the message rather than a distinct `ClauseCheck` variant, because every
+    /// reporter renders this record the same way and a new variant would have to be handled in each
+    /// of them to render identically. Skipped by serde for the same reason the notes go to stderr:
+    /// the JSON view of a record is what consumers parse, and this is the evaluator noting how it
+    /// reached a `FAIL` for its own later use, not part of this run's result.
+    #[serde(skip)]
+    pub(crate) operands_not_comparable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -367,6 +384,25 @@ pub(crate) trait RecordTracer<'value> {
     /// Defaults to `None` so a test double need not model the record tree. Only the recorder can answer it;
     /// the scopes forward.
     fn reason_from_last_closed_record(&self) -> Option<String> {
+        None
+    }
+
+    /// The reason a comparison under the record closed most recently could not compare its operands,
+    /// if one of them could not.
+    ///
+    /// Asked by the two gate sites about a whole condition, and existential on purpose, which is what
+    /// makes it safe to ask here rather than per branch. `reason_from_last_closed_record` has to be
+    /// asked per branch because it attributes a reason to one clause and the walk finds whichever was
+    /// written first; this asks whether the condition contains a comparison the evaluator could not
+    /// make at all, and every such comparison answers the same question the same way.
+    ///
+    /// Keyed on [`ComparisonClauseCheck::operands_not_comparable`] rather than on the presence of a
+    /// message. In a gate the two nearly coincide, and relying on that would mean the note fires
+    /// whenever some future clause records a message beside a `FAIL` -- inferring "could not be
+    /// evaluated" from a correlate, which is the mistake the branch already had to unpick once.
+    ///
+    /// Defaults to `None` on the same terms as the accessor above.
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
         None
     }
 }

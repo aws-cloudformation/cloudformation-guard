@@ -332,6 +332,47 @@ fn absorbed_condition_notice(subject: &str, reason: Option<String>) -> String {
     )
 }
 
+/// Note for a gate that closed on a condition whose operands the comparator could not compare.
+///
+/// The other half of the undecidable-operand space, and the same author error as the one
+/// [`absorbed_condition_notice`] covers: the operator does not apply to the operands it was given.
+/// `EMPTY` against a bool raises an error the evaluator classifies as undecidable and answers
+/// [`Outcome::Unevaluatable`]; `>` between a number and a string is answered by the comparator itself
+/// and comes back [`Outcome::Violated`]. Measured before this note existed, against a template with
+/// `Enabled: true` and `Port: 80`: `when Enabled !EMPTY` exits 19 and names the type error, and
+/// `when Port > "abc"` exits 0 with nothing on either stream and the violating body it guards never
+/// evaluated.
+///
+/// A note and not a verdict, and deliberately not by routing the comparator's answer to
+/// `Unevaluatable`. That would be the smaller change and it moves an exit code -- 0 to 19 for the
+/// gate above -- and whether an undecidable gate should fail closed is a question this branch has
+/// left open on purpose. Settling it inside a change to a diagnostic is what this must not do.
+///
+/// Worded without claiming a second condition, which is the one thing it cannot borrow from
+/// [`absorbed_condition_notice`]: this fires for a lone condition as readily as for an absorbed one,
+/// and there the sentence "another condition did not match" would be false.
+///
+/// Overlaps `eval_context::own_skip_reason`, deliberately and not by oversight. That one already names
+/// an incomparable gate, in the SKIP summary, worded as an explanation of the skip. It is reached only
+/// when the operator asked for skipped rules: `--show-summary` defaults to `fail`, so on a default run
+/// the summary does not list the rule at all and nothing anywhere says the checks did not run. This
+/// note is not part of the report, which is why it does not depend on the report's verbosity -- the
+/// same reason the channel writes to stderr. It also says the thing the skip reason does not, that
+/// nothing inside the rule was checked.
+///
+/// The two also disagree about what they detect, and the disagreement is worth knowing before changing
+/// either. `own_skip_reason` keys on any message recorded beside a failed comparison, which covers an
+/// unresolved reference as well as incomparable operands and is right for its looser question. This
+/// keys on [`ComparisonClauseCheck::operands_not_comparable`], because a note that tells an author
+/// their rule is malformed has to be sure it is.
+fn incomparable_condition_notice(subject: &str, reason: &str) -> String {
+    format!(
+        "NOTE: {subject} was not applicable because one of its conditions could not compare its \
+         operands, which is read as not matching, so nothing in it was checked. The comparison: \
+         {reason}"
+    )
+}
+
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
 /// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
@@ -919,7 +960,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
     custom_message: Option<String>,
     eval_context: &'r mut dyn EvalContext<'value, 'loc>,
 ) -> Result<(QueryResult, Outcome)> {
-    let (lhs_value, rhs_value, outcome, reason) = match each_res {
+    let (lhs_value, rhs_value, outcome, reason, not_comparable) = match each_res {
         RhsComparison::Comparable(ComparisonWithRhs {
             outcome,
             pair:
@@ -932,8 +973,18 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             Some(QueryResult::Resolved(Rc::clone(rhs_value))),
             *outcome,
             None,
+            false,
         ),
         //},
+        // The same "the operator does not apply to these operands" as the arm in
+        // `real_binary_operation`, reached through a query-against-query comparison instead of a
+        // single pair. Marked for the same reason and with the same verdict.
+        //
+        // `reason` stays `None`, which means a gate closing on this alone is still silent: this arm
+        // discards `NotComparableWithRhs::reason` and putting it in the message would add an
+        // `Error = [...]` to the report for every such comparison, which is a change to the output
+        // rather than a note about the rule text. Recorded rather than skipped so the field means what
+        // it says, and left as the one incomparable spelling a closed gate cannot explain.
         RhsComparison::NotComparable(NotComparableWithRhs {
             pair:
                 ComparedPair {
@@ -946,6 +997,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             Some(QueryResult::Resolved(Rc::clone(rhs_value))),
             false,
             None,
+            true,
         ),
         //            },
         RhsComparison::UnResolvedRhs(UnResolvedRhs {
@@ -956,6 +1008,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             Some(rhs_query_result.clone()),
             false,
             None,
+            false,
         ), //            }
     };
 
@@ -1005,6 +1058,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 custom_message,
                 message: reason,
                 status: Status::FAIL,
+                operands_not_comparable: not_comparable,
             })),
         )?;
         (lhs_value, Outcome::Violated)
@@ -1301,6 +1355,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::UnResolved(ur.clone()),
                                     to: None,
+                                    operands_not_comparable: false,
                                 },
                             )),
                         )?;
@@ -1403,6 +1458,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                         comparison: cmp,
                                         from: QueryResult::Resolved(Rc::clone(&value)),
                                         to: None,
+                                        // The operator applies; there was nothing on the left to apply it to.
+                                        operands_not_comparable: false,
                                     },
                                 )),
                             )?;
@@ -1549,6 +1606,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::Resolved(Rc::clone(&lhs)),
                                     to: Some(QueryResult::UnResolved(urhs)),
+                                    operands_not_comparable: false,
                                 },
                             )),
                         )?;
@@ -1569,6 +1627,12 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::Resolved(Rc::clone(&nc.pair.lhs)),
                                     to: Some(QueryResult::Resolved(nc.pair.rhs)),
+                                    // The operator did not apply to these operands, which is not the
+                                    // same as applying and finding the claim false. `Violated` is
+                                    // still the answer -- see the note on the field for why it is not
+                                    // `Unevaluatable` -- and the distinction is recorded so a gate
+                                    // that closes on it can say so.
+                                    operands_not_comparable: true,
                                 },
                             )),
                         )?;
@@ -1638,6 +1702,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                         comparison: cmp,
                                         from,
                                         to: Some(to),
+                                        operands_not_comparable: false,
                                     },
                                 )),
                             )?;
@@ -1758,6 +1823,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         comparison: recorded_cmp,
                         from: each.clone(),
                         to: None,
+                        operands_not_comparable: false,
                     })),
                 )?;
                 statues.push((each.clone(), Outcome::Violated));
@@ -2345,19 +2411,26 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
             // closes blocks nothing and still silences everything it guarded, which is the hazard
             // the two predicates exist to keep apart.
             if outcome.closes_gate() {
-                // Same absorbed condition as the one `eval_rule` reports, one nesting level in. The
-                // loss was measured here too: the same conjunction spelled inside `when { }` exits
-                // 19 on this branch's base and 0 here, and only the base names the type error.
+                resolver.end_record(
+                    &when_context,
+                    RecordType::WhenCondition(outcome.to_status(role)),
+                )?;
+                // The same two ways to earn a note as the gate in `eval_rule`, one nesting level in,
+                // in the same order and for the same reasons. The absorbed loss was measured here
+                // too: the same conjunction spelled inside `when { }` exits 19 on this branch's base
+                // and 0 here, and only the base names the type error.
                 if answered.had_unevaluatable_conjunct {
                     resolver.record_diagnostic(absorbed_condition_notice(
                         "A `when` block",
                         answered.unevaluatable_reason,
                     ));
+                } else if let Some(reason) = resolver.incomparable_reason_from_last_closed_record()
+                {
+                    resolver.record_diagnostic(incomparable_condition_notice(
+                        "A `when` block",
+                        &reason,
+                    ));
                 }
-                resolver.end_record(
-                    &when_context,
-                    RecordType::WhenCondition(outcome.to_status(role)),
-                )?;
                 resolver.end_record(
                     &context,
                     RecordType::WhenCheck(BlockCheck {
@@ -3115,17 +3188,40 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // everything it guarded, which is the hazard the two predicates exist to
                 // keep apart.
                 if outcome.closes_gate() {
-                    // The arm above has already taken every answer that *is* undecidable, so a
-                    // conjunct that was undecidable and an answer that is not means the answer
-                    // absorbed it. SKIP is still right and stays; the reason goes to stderr, which
-                    // moves neither the exit code nor the report.
+                    resolver.end_record(&when_context, RecordType::RuleCondition(status))?;
+                    // One note per closed gate, and two ways to earn it. Both say the same thing --
+                    // this rule was not applicable, nothing in it ran, and one of its conditions is
+                    // not answerable as written -- and the verdict is untouched either way: SKIP is
+                    // right, and the note is on stderr, which moves neither the exit code nor the
+                    // report.
+                    //
+                    // The first arm of this match has already taken every answer that *is*
+                    // undecidable, so a conjunct that was undecidable and an answer that is not
+                    // means the answer absorbed it.
+                    //
+                    // The second is the comparator's own "these operands do not compare", which
+                    // answers `Violated` and so never sets that flag. Read from the condition's
+                    // record, which the line above has just closed, and read existentially rather
+                    // than per branch: the question is whether the condition holds a comparison the
+                    // evaluator could not make, and any of them answers it.
+                    //
+                    // Preferred in that order because the undecidable conjunct's reason was
+                    // attributed to a single branch when the fold read it, which is more precise
+                    // than a walk over the whole condition. A condition malformed in both ways gets
+                    // the more precise sentence and one line rather than two.
                     if answered.had_unevaluatable_conjunct {
                         resolver.record_diagnostic(absorbed_condition_notice(
                             &format!("Rule {}", rule.rule_name),
                             answered.unevaluatable_reason,
                         ));
+                    } else if let Some(reason) =
+                        resolver.incomparable_reason_from_last_closed_record()
+                    {
+                        resolver.record_diagnostic(incomparable_condition_notice(
+                            &format!("Rule {}", rule.rule_name),
+                            &reason,
+                        ));
                     }
-                    resolver.end_record(&when_context, RecordType::RuleCondition(status))?;
                     resolver.end_record(
                         &context,
                         RecordType::RuleCheck(NamedStatus {

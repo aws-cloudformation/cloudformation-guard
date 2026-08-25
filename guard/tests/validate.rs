@@ -1421,6 +1421,168 @@ mod validate_tests {
         );
     }
 
+    /// A gate whose operands the comparator could not compare says so, without moving the verdict.
+    ///
+    /// `Port > "abc"` against a numeric `Port` asks for an ordering that does not exist. The comparator
+    /// answers that it could not compare the two and the clause records a `FAIL`, which in a `when`
+    /// condition reads as "did not match" and closes the gate. Measured before this note existed: exit
+    /// 0, nothing on stdout, nothing on stderr, and the violating body it guards never evaluated. The
+    /// same author error spelled `Enabled !EMPTY` exits 19 and names the type error, so which of two
+    /// identical mistakes an author heard about depended on which operator they had misused.
+    ///
+    /// The exit code is asserted first and it is the bound on this change. Routing the comparator's
+    /// answer to `Unevaluatable` would be the smaller fix and would move this to 19; whether an
+    /// undecidable gate should fail closed is a question the branch has left open, and a change to a
+    /// diagnostic is not where it gets settled.
+    #[test]
+    fn a_gate_that_could_not_compare_its_operands_reports_why() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["incomparable-gate-template.yaml"])
+            .rules(vec!["incomparable_condition_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the note must not move the exit code: the comparator's answer still closes the gate, and \
+             making an undecidable gate fail closed is a separate question"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notes: Vec<&str> = stderr.lines().filter(|l| l.starts_with("NOTE:")).collect();
+        assert_eq!(
+            notes.len(),
+            1,
+            "one note for the one condition that could not be answered, got {:?} from stderr {:?}",
+            notes,
+            stderr
+        );
+        // Asserted whole rather than by keyword, as the absorbed-condition note is: it has to name the
+        // rule, say that nothing in it was checked, and not read as a failure. It also must not claim
+        // another condition did not match, which is what the absorbed wording says and what would be
+        // false here -- this gate has one condition.
+        assert!(
+            notes[0].starts_with(
+                "NOTE: Rule gate_cannot_compare_its_operands was not applicable because one of its \
+                 conditions could not compare its operands, which is read as not matching, so \
+                 nothing in it was checked. The comparison: "
+            ),
+            "got {:?}",
+            notes
+        );
+        assert!(
+            notes[0].contains("not comparable"),
+            "the note should carry the comparator's own reason, got {:?}",
+            notes
+        );
+
+        // Same run again, because `stripped` and `err_to_stripped` each consume the writer.
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        ValidateTestRunner::default()
+            .data(vec!["incomparable-gate-template.yaml"])
+            .rules(vec!["incomparable_condition_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("NOTE:") && !stdout.contains("could not compare"),
+            "the note belongs on stderr; nothing about it may reach the report, got {:?}",
+            stdout
+        );
+    }
+
+    /// The control: a gate that closes on a comparison the evaluator could make stays silent.
+    ///
+    /// `Port > 999` against `Port: 80` is the same operator over the same left-hand value as
+    /// `incomparable_condition_gate.guard`, against a right-hand value it can be ordered against. The
+    /// comparison is made, it is false, the gate closes, and the guarded body is skipped -- same
+    /// verdict, same exit code, same report. Nothing is wrong with the rule, so there is nothing to say.
+    ///
+    /// This is what keeps the note off ordinary rulesets, where most gates close because they were
+    /// written to. It is also the assertion that the note is keyed on a comparison that could not be
+    /// made rather than on the gate closing, and the pair differs in nothing else.
+    #[test]
+    fn a_gate_that_is_decidably_false_reports_nothing() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["incomparable-gate-template.yaml"])
+            .rules(vec!["decidable_false_condition_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a gate that did not match is not a failure"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("NOTE:"),
+            "a gate that closed on a comparison the evaluator could make has nothing to report, got \
+             {:?}",
+            stderr
+        );
+    }
+
+    /// The other control: a comparison the evaluator could not make inside a *filter* is not the
+    /// condition's problem, and says nothing.
+    ///
+    /// A filter's comparisons decide membership in a selection, and guard reads a candidate the
+    /// comparator could not answer for as one that was not selected. The selection still has a definite
+    /// size, so a gate asking `%selected !empty` was answered -- it is only the filter that met
+    /// something it could not compare.
+    ///
+    /// This is the boundary the note needed and the registry is what showed it. Measured over
+    /// aws-guard-rules-registry at 6aca96e with the note reading the whole condition subtree: 39 of its
+    /// 193 convention-paired rule and test pairs grew a note, all 39 of them this shape --
+    /// `Metadata.guard.SuppressedRules.* != "<RULE_NAME>"` inside the filter that resolves the rule's
+    /// selection variable, against the registry's own suppression fixtures, which write a suppression as
+    /// `- RULE_NAME: reason` and so resolve that query to a map. Every one of those gates was
+    /// `%selection !empty` and every one of them was answered, so all 39 notes were false.
+    ///
+    /// A fixture rather than a note in the code, because the mechanism is three constructs deep -- a
+    /// variable, a filter over it, and a gate reading its size -- and the version of the walk that got
+    /// this wrong looked completely reasonable.
+    #[test]
+    fn a_comparison_inside_a_filter_is_not_the_condition_that_could_not_be_answered() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["incomparable-inside-filter-template.yaml"])
+            .rules(vec!["incomparable_inside_filter_gate.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the filter selected nothing, so the gate closed and the rule does not apply"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("NOTE:"),
+            "a filter meeting operands it could not compare is the filter's answer about membership, \
+             not a condition that could not be answered, got {:?}",
+            stderr
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
