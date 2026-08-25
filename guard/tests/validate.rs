@@ -2850,6 +2850,44 @@ mod validate_tests {
         );
     }
 
+    /// A `count` over a query that named something absent does not answer 0, so a misspelled path in a
+    /// rule cannot pass.
+    ///
+    /// `count_unresolved.guard` counts `Collectionz`, one letter off the `Collection` the data carries,
+    /// and asserts the count is 0. That used to be satisfied and the run exited 0 while the correctly
+    /// spelled rule found three entries. The verdict is the assertion: SUCCESS before, VALIDATION_ERROR
+    /// after.
+    #[test]
+    fn a_count_of_an_unresolved_selection_does_not_pass_the_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/count_unresolved.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// The control for the test above: a collection that is present and empty still counts 0, so the
+    /// rule passes. Both cases used to arrive as an unresolved result, and this is the one that has to
+    /// keep its answer.
+    #[test]
+    fn a_count_of_an_empty_collection_is_still_zero() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/count_empty_collection.guard"])
+            .data(vec!["/functions/data/empty_collection.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
     /// A `regex_replace` whose pattern does not match returns the input, so the clause around it still
     /// compares the real value and this rule fails.
     ///

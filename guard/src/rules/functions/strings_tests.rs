@@ -34,8 +34,8 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let json = json_parse(&results)?;
@@ -78,8 +78,8 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let replaced = regex_replace(
@@ -186,8 +186,8 @@ fn test_substring() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let replaced = substring(&results, 0, 3)?;

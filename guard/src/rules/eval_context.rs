@@ -1711,7 +1711,7 @@ impl Callable for NowFunction {
 
 impl Callable for CountFunction {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
-        Ok(vec![Some(count(&args[0]))])
+        Ok(vec![count(&args[0])])
     }
 }
 
