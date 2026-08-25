@@ -1,7 +1,8 @@
 use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{
-    get_by_rules, get_status_result, unmatched_expectations, Diagnostics,
+    get_by_rules, get_status_result, unchecked_expectation_message, unmatched_expectation_names,
+    Diagnostics,
 };
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
@@ -127,6 +128,10 @@ pub struct TestCase {
     passed_rules: Vec<PassedRule>,
     failed_rules: Vec<FailedRule>,
     skipped_rules: Vec<SkippedRule>,
+    /// Omitted when empty, so a report over a suite with no unchecked expectation is byte for byte
+    /// what it was before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unchecked_expectations: Vec<UncheckedExpectation>,
     #[serde(skip_serializing)] // NOTE: Only using this for junit
     time: u128,
 }
@@ -182,6 +187,20 @@ impl TestCase {
             })
         }
 
+        // A skip, not a failure: the run's verdict is the maintainers' to change, and a suite that
+        // passes today must keep passing. A case with a `<skipped>` element is counted in `tests`,
+        // so a consumer that reads only the counts still sees that something was not checked.
+        for unchecked in &self.unchecked_expectations {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Skip {
+                    reasons: vec![unchecked_expectation_message(&unchecked.name)],
+                },
+                name: &unchecked.name,
+                time: self.time,
+            })
+        }
+
         test_cases
     }
 }
@@ -194,6 +213,17 @@ pub struct PassedRule {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkippedRule {
+    name: String,
+}
+
+/// An expectation naming a rule the file does not define, so it was never consulted.
+///
+/// Deliberately not folded into `skipped_rules`. That array holds rules the file does define which
+/// the test data gave no expectation for; this holds expectations the test data gave which no rule
+/// answers. The two are opposite directions of the same mismatch, and a consumer that saw one array
+/// could not tell which had happened.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UncheckedExpectation {
     name: String,
 }
 
@@ -278,13 +308,25 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules = get_by_rules(&top);
-                        diagnostics.extend(unmatched_expectations(
+
+                        // Decided once and used twice, so the note on stderr and the report cannot
+                        // disagree about which expectations went unchecked.
+                        let unchecked = unmatched_expectation_names(
                             &each.expectations.rules,
                             &by_rules.keys().copied().collect(),
-                        ));
+                        );
+                        diagnostics.extend(
+                            unchecked
+                                .iter()
+                                .map(|name| unchecked_expectation_message(name)),
+                        );
 
                         let mut test_case = TestCase {
                             name: each.name.to_string(),
+                            unchecked_expectations: unchecked
+                                .into_iter()
+                                .map(|name| UncheckedExpectation { name })
+                                .collect(),
                             ..Default::default()
                         };
 

@@ -18,26 +18,49 @@ pub mod structured;
 /// be ignored.
 pub(crate) type Diagnostics = BTreeSet<String>;
 
-/// Messages for expectations that name a rule the file does not contain.
+/// The expectations that name a rule the file does not contain, by name and in sorted order.
 ///
 /// An expectation for `S3_BUCKET_ENCRYPTED` in a file whose rule is `S3_BUCKET_ENCRYPTION` was
 /// silently ignored: expectations are read per evaluated rule, so one with no rule to attach to is
 /// never consulted, and the run exits 0. A test asserting FAIL on a misspelled name passed while
 /// asserting nothing -- the same shape as the evaluator defects this branch fixes, one layer out.
 ///
+/// Sorted, because `expectations` is a `HashMap` and its key order is reseeded every process. The
+/// messages built from these land in a `BTreeSet` and were ordered by that; the structured reporters
+/// carry the names into a `Vec` in the report itself, where nothing sorts them later.
+pub(crate) fn unmatched_expectation_names(
+    expectations: &HashMap<String, String>,
+    evaluated: &BTreeSet<&str>,
+) -> Vec<String> {
+    let mut names = expectations
+        .keys()
+        .filter(|name| !evaluated.contains(name.as_str()))
+        .cloned()
+        .collect::<Vec<String>>();
+
+    names.sort();
+    names
+}
+
+/// The one place this sentence is written, so the note on stderr and the structured reports cannot
+/// drift apart.
+///
 /// A message, not a failure. Making it a failure would break suites that pass today, and the useful
 /// half is knowing; the reporters already print the mirror case, `No Test expectation was set for
-/// Rule`, when a rule has no expectation.
+/// Rule`, when a rule has no expectation. The structured reporters carry it as a skip for the same
+/// reason.
+pub(crate) fn unchecked_expectation_message(name: &str) -> String {
+    format!("No rule named {name} is in this file, so its expectation was not checked")
+}
+
+/// The messages, for the plaintext reporter, which writes them and keeps no structured record.
 pub(crate) fn unmatched_expectations(
     expectations: &HashMap<String, String>,
     evaluated: &BTreeSet<&str>,
 ) -> Vec<String> {
-    expectations
-        .keys()
-        .filter(|name| !evaluated.contains(name.as_str()))
-        .map(|name| {
-            format!("No rule named {name} is in this file, so its expectation was not checked")
-        })
+    unmatched_expectation_names(expectations, evaluated)
+        .iter()
+        .map(|name| unchecked_expectation_message(name))
         .collect()
 }
 

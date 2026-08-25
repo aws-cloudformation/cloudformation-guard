@@ -682,6 +682,93 @@ mod test_command_tests {
         );
     }
 
+    /// An unchecked expectation reaches json, yaml and junit.
+    ///
+    /// The plaintext reporter said so on stderr and no structured format said it at all. A consumer
+    /// reading the report saw a clean suite over a file where nothing had been checked: with every
+    /// expectation naming a rule that does not exist, the junit document was `tests="0"
+    /// failures="0"` and the run exited 0.
+    ///
+    /// A skip and not a failure. Escalating it would change the exit code of a shipped CLI for
+    /// everyone who has a typo in a test file, which is a decision for the maintainers; making the
+    /// fact visible is not. So the code asserted here is the one this fixture already returned.
+    ///
+    /// The junit case carries a `<skipped>` element, which is what puts it in the `tests` count, so
+    /// a consumer reading only the attributes still sees that something went unchecked while
+    /// `failures` stays 0.
+    ///
+    /// Three expectations in the fixture and two unchecked ones per case, listed in sorted order
+    /// rather than the order the expectations were read: they come from a `HashMap`.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn an_unchecked_expectation_is_reported_in_every_structured_format(#[case] output: &str) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/expectation_for_a_rule_that_does_not_exist.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "reporting an unchecked expectation must not change the verdict"
+        );
+
+        let writer = if output == "junit" {
+            sanitize_junit_writer(writer)
+        } else {
+            writer
+        };
+
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/unchecked_expectation_{output}.out")
+                .as_str(),
+            writer
+        );
+    }
+
+    /// The two directions of an expectation/rule mismatch stay in separate arrays.
+    ///
+    /// `skipped_rules` holds rules the file defines which the test data gave no expectation for.
+    /// `unchecked_expectations` holds expectations the test data gave which no rule answers. Reusing
+    /// the first for the second would leave a consumer unable to tell which of the two had happened,
+    /// so this fixture produces exactly one of each in one case and the report must keep them apart.
+    ///
+    /// Neither is a failure, and the run exits 0.
+    #[test]
+    fn an_unchecked_expectation_is_not_confused_with_a_rule_that_has_no_expectation() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/a_rule_with_no_expectation_beside_an_unchecked_expectation.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format("json")
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a rule with no expectation and an expectation with no rule are both reports, not failures"
+        );
+
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/no_expectation_beside_unchecked_expectation_json.out",
+            writer
+        );
+    }
+
     /// The deprecation notices reach the command rule authors run.
     ///
     /// `validate` printed them and `test` did not, which is backwards. A notice saying a clause's
