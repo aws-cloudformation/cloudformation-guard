@@ -2850,6 +2850,30 @@ mod validate_tests {
         );
     }
 
+    /// An embedded string `json_parse` cannot read fails the clause, and does not abort the run.
+    ///
+    /// `embedded_json_the_parser_rejects.yaml` carries a duplicate key, which JSON readers generally
+    /// accept and `serde_yaml` rejects, and a mapping keyed by a number. Both errors propagated
+    /// unchanged, and neither class is unevaluatable, so the run exited 255 while the `REAL_VIOLATION`
+    /// rule in the same file reported its finding.
+    #[test]
+    fn an_embedded_string_the_parser_rejects_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec![
+                "/functions/rules/embedded_json_the_parser_rejects.guard",
+            ])
+            .data(vec![
+                "/functions/data/embedded_json_the_parser_rejects.yaml",
+            ])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
     /// A scalar function argument the data could not supply fails the clause, and does not abort the run.
     ///
     /// `bad_function_arguments.yaml` feeds a negative offset and a non-numeric offset to `substring`, a
