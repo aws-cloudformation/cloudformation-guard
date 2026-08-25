@@ -4,9 +4,17 @@ use crate::rules::{
     eval_context::eval_context_tests::BasicQueryTesting,
     exprs::AccessQuery,
     functions::converters::{parse_bool, parse_char, parse_float, parse_int, parse_str},
-    path_value::PathAwareValue,
+    path_value::{Path, PathAwareValue},
     EvalContext, QueryResult,
 };
+
+/// One value in, one answer out, for a converter that takes a single argument.
+fn convert_one(
+    f: fn(&[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>>,
+    value: PathAwareValue,
+) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+    f(&[QueryResult::Resolved(Rc::new(value))])
+}
 
 #[test]
 fn test_parse_int() -> crate::rules::Result<()> {
@@ -423,6 +431,147 @@ fn test_parse_char() -> crate::rules::Result<()> {
     }
 
     assert!(parse_char(&results).is_err());
+
+    Ok(())
+}
+
+/// `parse_int` refuses a float that does not fit in an `i64` rather than clamping it to the nearest end.
+///
+/// `*val as i64` saturates in Rust, and nothing reported that it had. `1.0e30` and `1.0e40` differ by ten
+/// orders of magnitude and both came back as 9223372036854775807, so a rule asserting the two are equal
+/// passed and a rule asserting they differ failed. The passing direction is the damaging one: two numbers
+/// that do not match were reported as matching, at exit 0.
+///
+/// Truncation toward zero stays, because `docs/FUNCTIONS.md:362` promises it -- what it does not promise
+/// is that a value too large to represent becomes `i64::MAX`. The same document says the conversion errors
+/// on input it cannot convert, and a value that does not fit is exactly that.
+///
+/// The two bounds are not symmetric, and the boundary rows are here to pin it. `-2^63` is exactly
+/// representable as an `f64`, so the low end is inclusive. `i64::MAX` is `2^63 - 1`, which is *not*
+/// representable, so `i64::MAX as f64` rounds up to `2^63` and the high end has to be exclusive. Getting
+/// that backwards would let `2^63` through to saturate again.
+#[test]
+fn parse_int_does_not_saturate_a_float_that_does_not_fit() -> crate::rules::Result<()> {
+    // The largest f64 below 2^63. Values in [2^62, 2^63) step by 1024, so this is 2^63 - 1024.
+    const LARGEST_BELOW_2_POW_63: f64 = 9223372036854774784.0;
+
+    let allowed: [(f64, i64); 7] = [
+        // Truncation toward zero, which is the documented behaviour.
+        (5.0, 5),
+        (1.9, 1),
+        (-1.9, -1),
+        (0.0, 0),
+        (-0.5, 0),
+        // Both ends of the representable range.
+        (LARGEST_BELOW_2_POW_63, 9223372036854774784),
+        (-9223372036854775808.0, i64::MIN),
+    ];
+
+    for (input, expected) in allowed {
+        match convert_one(parse_int, PathAwareValue::Float((Path::root(), input)))?
+            .first()
+            .cloned()
+            .flatten()
+        {
+            Some(PathAwareValue::Int((_, got))) => {
+                assert_eq!(got, expected, "parse_int({:?})", input)
+            }
+            other => panic!(
+                "parse_int({:?}) gave {:?}, expected {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    let refused: [f64; 7] = [
+        1.0e30,
+        1.0e40,
+        -1.0e40,
+        // 2^63 itself, one step past the top of the range. This is what `i64::MAX as f64` rounds to.
+        9223372036854775808.0,
+        // The first f64 below -2^63. Not -2^63-1: that is not representable and rounds back to -2^63,
+        // which is in range, so it is no test of anything. Magnitudes in [2^63, 2^64) step by 2048.
+        -9223372036854777856.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ];
+
+    for input in refused {
+        let outcome = convert_one(parse_int, PathAwareValue::Float((Path::root(), input)));
+        match outcome {
+            Err(crate::Error::IncompatibleError(message)) => assert!(
+                message.contains("does not fit"),
+                "parse_int({:?}) should say the value does not fit; got {:?}",
+                input,
+                message
+            ),
+            other => panic!("parse_int({:?}) should be refused; got {:?}", input, other),
+        }
+    }
+
+    // NaN cast to i64 was 0, which is a number the input never denoted.
+    match convert_one(parse_int, PathAwareValue::Float((Path::root(), f64::NAN))) {
+        Err(crate::Error::IncompatibleError(_)) => {}
+        other => panic!("parse_int(NaN) should be refused; got {:?}", other),
+    }
+
+    Ok(())
+}
+
+/// `parse_float` refuses a numeric literal too large to represent rather than answering infinity.
+///
+/// `val.parse::<f64>()` returns `Ok(inf)` for an overflowing literal rather than `Err`, so `"1e400"` and
+/// `"9e999"` both became `inf` and compared equal. Same shape as the `parse_int` saturation above, and the
+/// same passing direction: a rule asserting the two are equal is satisfied.
+///
+/// `"NaN"` and `"inf"` spelled out in the data are refused too. Their verdict does not change -- a NaN
+/// already failed every comparison it reached, with `[Float values are not comparable]` -- but the
+/// diagnostic now names the property instead of surfacing as a comparison failure further down. A value
+/// that cannot take part in a comparison is not a float a rule can use.
+#[test]
+fn parse_float_does_not_turn_an_overflowing_literal_into_infinity() -> crate::rules::Result<()> {
+    let allowed: [(&str, f64); 5] = [
+        ("2.5", 2.5),
+        ("-2.5", -2.5),
+        ("0", 0.0),
+        ("2456", 2456.0),
+        // Close to the top of the f64 range and still finite.
+        ("1e308", 1e308),
+    ];
+
+    for (input, expected) in allowed {
+        match convert_one(
+            parse_float,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        )?
+        .first()
+        .cloned()
+        .flatten()
+        {
+            Some(PathAwareValue::Float((_, got))) => {
+                assert_eq!(got, expected, "parse_float({:?})", input)
+            }
+            other => panic!(
+                "parse_float({:?}) gave {:?}, expected {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    // Overflowing literals, and the two non-finite spellings.
+    for input in ["1e400", "9e999", "-1e400", "NaN", "nan", "inf", "-inf"] {
+        let outcome = convert_one(
+            parse_float,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        );
+        match outcome {
+            Err(crate::Error::IncompatibleError(_)) => {}
+            other => panic!(
+                "parse_float({:?}) should be refused; got {:?}",
+                input, other
+            ),
+        }
+    }
 
     Ok(())
 }

@@ -2850,6 +2850,43 @@ mod validate_tests {
         );
     }
 
+    /// A value the conversion could not represent is not reported as a number.
+    ///
+    /// `numbers_that_do_not_fit.guard` asserts that a budget of `1.0e40` *is* 9223372036854775807, and
+    /// that an overflowing `"1e400"` is greater than `1.0e300`. Both passed at exit 0: `parse_int` cast
+    /// the float with `as`, which clamps to `i64::MAX`, and `parse::<f64>()` answers infinity for a
+    /// literal that does not fit. Each rule names the wrong answer it was given, so the assertion here is
+    /// the verdict: SUCCESS before, VALIDATION_ERROR after.
+    #[test]
+    fn numbers_too_large_to_convert_do_not_compare_equal() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/numbers_that_do_not_fit.guard"])
+            .data(vec!["/functions/data/numbers_that_do_not_fit.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// The control for the test above: two ordinary floats that do fit still convert and still compare,
+    /// so truncation toward zero is unaffected. This rule asserts 5 differs from 12, which holds.
+    #[test]
+    fn numbers_that_fit_still_convert_and_compare() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/numbers_that_fit.guard"])
+            .data(vec!["/functions/data/numbers_that_fit.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
     /// An embedded string `json_parse` cannot read fails the clause, and does not abort the run.
     ///
     /// `embedded_json_the_parser_rejects.yaml` carries a duplicate key, which JSON readers generally
