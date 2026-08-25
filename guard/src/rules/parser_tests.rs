@@ -2365,6 +2365,9 @@ fn test_clauses() {
     context: "".to_string(),
     kind: nom::error::ErrorKind::Char, // from comment
 })))]
+// Still a Failure at the same place, and it now says what is missing. The sign is what tells an assignment
+// from a clause about a property named `let`, so the two readings are separated here rather than by a `cut`;
+// see `let_assignment_expr`.
 #[case("let x", Err(nom::Err::Failure(ParserError {
     span: unsafe {
         Span::new_from_raw_offset(
@@ -2374,7 +2377,7 @@ fn test_clauses() {
             ""
             )
     },
-    context: "".to_string(),
+    context: "Expected = or := after let x, as in \"let x = 10\".".to_string(),
     kind: nom::error::ErrorKind::Tag, // from "="
 })))]
 #[case("let x = 10",
@@ -5574,5 +5577,607 @@ fn the_two_forms_the_grammar_no_longer_claims_are_still_rejected() -> Result<(),
     ))?
     .is_some());
     assert!(rules_file(from_str2("rule r {\n  Resources[ keys == /^a/ ] !EMPTY\n}"))?.is_some());
+    Ok(())
+}
+
+/// The parse tree `parse-tree` prints, with one substitution applied to it.
+///
+/// The tests below compare the tree rather than assert that a file parses, because a clause read as something
+/// other than what it says parses too: `[x]` and `[ x ]` both parsed and built different query parts, which is
+/// how the first attempt at the bracket whitespace fix on this branch did its damage. Each caller spells out
+/// its own substitution, because `Key: rule` cannot be shortened to `rule` -- that is a substring of the
+/// tree's own field names, `guard_rules`, `rule_name` and `parameterized_rules`.
+fn parse_tree_of(rules: &str) -> Result<String, Error> {
+    let parsed =
+        rules_file(from_str2(rules))?.expect("these rules files all hold at least one rule");
+    Ok(serde_yaml::to_string(&parsed).expect("a parsed rules file serialises"))
+}
+
+fn parse_tree_with(rules: &str, from: &str, to: &str) -> Result<String, Error> {
+    Ok(parse_tree_of(rules)?.replace(from, to))
+}
+
+/// The same tree, with the line and column of every location blanked out.
+///
+/// `nom_locate` counts lines by `\n`, so every clause in a file whose lines end with a bare CR reports line 1.
+/// That is a property of the position tracking and not of the parse, so comparing a CR-only file against the
+/// LF spelling means comparing everything except the positions: the query parts, the comparators, the
+/// operands, the block structure, the rule names.
+fn parse_tree_without_positions(rules: &str) -> Result<String, Error> {
+    let tree = parse_tree_of(rules)?;
+    Ok(tree
+        .lines()
+        .map(|line| match line.trim_start().split(':').next() {
+            Some("line") | Some("column") => {
+                let indent = line.len() - line.trim_start().len();
+                format!("{}position: blanked", &line[..indent])
+            }
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// A bare CR ends a line in every construct, as it already did in every whitespace position.
+///
+/// `multispace1` accepts `" \t\r\n"`, so a lone CR was whitespace everywhere -- except in two places that
+/// looked for a line ending themselves. `rule_clause` peeked through `newline`, which listed `\n` and `\r\n`
+/// and not `\r`, and everything outside that peek set falls to the `cut` on `custom_message`; and `comment2`
+/// searched for `\n` alone, so a comment ran to the end of the file. Across 25 constructs written three ways, a
+/// CR-only file rejected 6, parsed 1 to *no rules at all*, and read the other 18 as it should. The one that
+/// parsed to nothing is the worst of them: a leading comment consumed every rule in the file, and `validate`
+/// then reported a violating template compliant at exit 0 with nothing on any channel. The grammar block
+/// already said a comment ends at LF or CR.
+#[test]
+fn a_bare_carriage_return_ends_a_line_like_the_other_two_spellings() -> Result<(), Error> {
+    for body in [
+        // the five that a CR-only file could not express, one per mechanism
+        "rule a { A == 1 }@rule b {@  a@}@",
+        "rule a { A == 1 }@rule b {@  !a@}@",
+        "rule a { A == 1 }@rule c { A == 2 }@rule b {@  a or c@}@",
+        "rule r {@  Resources exists # trailing@}@",
+        "# leading@rule r {@  Resources exists@}@",
+        // and shapes that already worked, which must not move
+        "rule r {@  Resources exists@}@",
+        "rule r {@  when Resources exists {@    A == 1@  }@}@",
+        "AWS::S3::Bucket {@  Properties.Encrypted == true@}@",
+        "let x = 5@rule r {@  A == %x@}@",
+    ] {
+        let lf = body.replace('@', "\n");
+        let crlf = body.replace('@', "\r\n");
+        let cr = body.replace('@', "\r");
+        let expected = parse_tree_without_positions(&lf)?;
+        assert_eq!(
+            parse_tree_without_positions(&cr)?,
+            expected,
+            "a CR-only file must parse to what the LF spelling parses to: {}",
+            body
+        );
+        assert_eq!(
+            parse_tree_without_positions(&crlf)?,
+            expected,
+            "and CRLF, which already worked: {}",
+            body
+        );
+    }
+
+    // The one that did not fail loudly, stated on its own. A comment on the first line of a CR-only file
+    // swallowed every rule after it, and an empty rules file is not an error -- so the run passed.
+    let swallowed =
+        "# encryption is mandatory\rrule encrypted {\r  Resources.*.Encrypted == true\r}\r";
+    let parsed =
+        rules_file(from_str2(swallowed))?.expect("a comment must not consume the rules after it");
+    assert_eq!(
+        parsed.guard_rules.len(),
+        1,
+        "the rule after the comment has to survive"
+    );
+
+    // A multi-line message keeps its line endings verbatim, which is the one thing that does differ between
+    // the spellings and is meant to: the reporter prints the message as written.
+    let message = "rule r {\r  Resources exists <<\r  why\r  >>\r}\r";
+    assert!(
+        parse_tree_of(message)?.contains(r#""\r  why\r  ""#),
+        "the message text is verbatim"
+    );
+    Ok(())
+}
+
+/// The negation spellings the parser accepts, which is what the grammar block now says.
+///
+/// The grammar had `not_keyword 1*SP other_operators` with `not_keyword` including `!`, which admits `! empty`
+/// and does not admit `!empty`. `!empty` is the only spelling in use: 82 occurrences across this repository's
+/// 95 rules files, 47 across `docs/`, and no occurrence of `!` followed by a space before an operator in
+/// either. So the space belongs to the word spellings, where it is what stops `notempty` reading as a negated
+/// `empty`, and the grammar was corrected to say so rather than the parser widened to match it. This test is
+/// what keeps the two from drifting apart again.
+#[test]
+fn the_negation_spellings_are_the_ones_the_grammar_claims() -> Result<(), Error> {
+    for accepted in [
+        "rule r {\n  A !empty\n}",
+        "rule r {\n  A !EMPTY\n}",
+        "rule r {\n  A !exists\n}",
+        "rule r {\n  A !in [1, 2]\n}",
+        "rule r {\n  A !IS_LIST\n}",
+        "rule r {\n  A not empty\n}",
+        "rule r {\n  A NOT empty\n}",
+        "rule a { A == 1 }\nrule r {\n  !a\n}",
+        "rule a { A == 1 }\nrule r {\n  not a\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(accepted))?.is_some(),
+            "accepted: {}",
+            accepted
+        );
+    }
+
+    for rejected in [
+        "rule r {\n  A ! empty\n}",
+        "rule r {\n  A ! exists\n}",
+        "rule r {\n  A ! in [1, 2]\n}",
+        "rule a { A == 1 }\nrule r {\n  ! a\n}",
+        // and the word spellings still need their space, which is the reason the space is on them
+        "rule r {\n  A notempty\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rejected)).is_err(),
+            "rejected: {}",
+            rejected
+        );
+    }
+    Ok(())
+}
+
+/// A type block needs a space after the type name, which is what the grammar block now says.
+///
+/// It said `type_name *SP [when] "{"`. The parser requires one space, for the block and the clause form
+/// together, and rejects `AWS::S3::Bucket{`. No rules file in this repository or in the AWS rule registry
+/// writes it that way and neither does `docs/`, while 16 write the spaced form; and the zero-space clause form
+/// cannot be written at all, because `type_name` is greedy over alphanumerics and would absorb the property.
+/// So the grammar line was corrected to `1*SP`. The `cut` behind that requirement is what turns a mistake
+/// here into an error against the type block rather than a fall-through, and it still does.
+#[test]
+fn a_type_block_needs_its_space_as_the_grammar_claims() -> Result<(), Error> {
+    for accepted in [
+        "AWS::S3::Bucket {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket\n{\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket   {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket when Properties exists {\n  Properties.Encrypted == true\n}",
+        "AWS::S3::Bucket Properties.Encrypted == true",
+    ] {
+        assert!(
+            rules_file(from_str2(accepted))?.is_some(),
+            "accepted: {}",
+            accepted
+        );
+    }
+
+    assert!(
+        rules_file(from_str2(
+            "AWS::S3::Bucket{\n  Properties.Encrypted == true\n}"
+        ))
+        .is_err(),
+        "a type name run straight into the brace is rejected, and the grammar says so"
+    );
+    Ok(())
+}
+
+/// A clause whose first identifier *is* `when` reads as a clause about a property of that name.
+///
+/// `keyword("when")` rejects a trailing identifier character, which is what fixed `whenCreated`. A trailing
+/// `.`, `[` or `(` is not an identifier character, so those spellings still matched the keyword, still failed
+/// the whitespace `when_conditions` requires, and the `cut` around that requirement still turned the failure
+/// into a Failure that escaped the alternation reading the line as a clause. A `when` block cannot be spelled
+/// without that space, so moving the requirement out of the `cut` admits nothing else.
+///
+/// CloudFormation permits a property named `when`, so these come from templates rather than from pedantry.
+#[test]
+fn a_clause_whose_first_identifier_is_when_reads_as_that_clause() -> Result<(), Error> {
+    for (spelled, keyword, control) in [
+        (
+            "rule r {\n  when.foo == \"bar\"\n}",
+            "when",
+            "rule r {\n  wibble.foo == \"bar\"\n}",
+        ),
+        (
+            "rule r {\n  when[\"foo\"] == \"bar\"\n}",
+            "when",
+            "rule r {\n  wibble[\"foo\"] == \"bar\"\n}",
+        ),
+        (
+            "rule r {\n  when.foo EXISTS\n}",
+            "when",
+            "rule r {\n  wibble.foo EXISTS\n}",
+        ),
+        ("when.foo == \"bar\"", "when", "wibble.foo == \"bar\""),
+        (
+            "rule r {\n  Resources[ when.foo == \"bar\" ] !EMPTY\n}",
+            "when",
+            "rule r {\n  Resources[ wibble.foo == \"bar\" ] !EMPTY\n}",
+        ),
+        (
+            "AWS::S3::Bucket when.foo == \"bar\"",
+            "when",
+            "AWS::S3::Bucket wibble.foo == \"bar\"",
+        ),
+        (
+            "rule r {\n  WHEN.foo == \"bar\"\n}",
+            "WHEN",
+            "rule r {\n  wibble.foo == \"bar\"\n}",
+        ),
+    ] {
+        assert_eq!(
+            parse_tree_with(spelled, &format!("Key: {}", keyword), "Key: IDENT")?,
+            parse_tree_with(control, "Key: wibble", "Key: IDENT")?,
+            "a clause about a property named {} must read as that clause: {}",
+            keyword,
+            spelled
+        );
+    }
+
+    // And a parameterized rule named `when` can be called, which is the tell the `whenever` fix was named
+    // for: the definition always worked and the call did not. Substituting the bare word here rather than
+    // `Key: when`, because the name appears as `rule_name` and as `dependent_rule` in this tree.
+    assert_eq!(
+        parse_tree_with(
+            "rule when(t) {\n  Resources.*.Type == %t\n}\nrule user {\n  when(\"AWS::S3::Bucket\")\n}",
+            "when",
+            "IDENT",
+        )?,
+        parse_tree_with(
+            "rule wibble(t) {\n  Resources.*.Type == %t\n}\nrule user {\n  wibble(\"AWS::S3::Bucket\")\n}",
+            "wibble",
+            "IDENT",
+        )?,
+        "a parameterized rule named when must be callable"
+    );
+    Ok(())
+}
+
+/// `when` is still the gate keyword in all three positions it appears in.
+///
+/// This is the half of the fix that must not move: the requirement came out of the `cut`, not out of the
+/// grammar, so a `when` followed by a space and conditions still opens a block.
+#[test]
+fn when_is_still_the_gate_keyword() -> Result<(), Error> {
+    let gated = rules_file(from_str2(
+        "rule r when Resources.*.Properties.Size > 10 {\n  Resources.*.Properties.Encrypted == true\n}",
+    ))?
+    .expect("a gated rule");
+    assert!(
+        gated.guard_rules[0].conditions.is_some(),
+        "a rule-level when must still be the rule's condition"
+    );
+
+    for rules in [
+        "rule r {\n  when Resources.Size > 10 {\n    Resources.Encrypted == true\n  }\n}",
+        "when Resources.Size > 10 {\n  Resources.Encrypted == true\n}",
+    ] {
+        let parsed = rules_file(from_str2(rules))?.expect("a rules file with a when block");
+        assert!(
+            matches!(
+                parsed.guard_rules[0].block.conjunctions[0][0],
+                RuleClause::WhenBlock(..)
+            ),
+            "a when block must still be a when block: {}",
+            rules
+        );
+    }
+
+    // What stays rejected, and why it is not part of the fix above: everything after `when` and a space that
+    // is not a condition list. `single_clauses` raises its own Failure for that, and the readings it would
+    // otherwise have to choose between are real ones -- `when` alone is a reference to a rule of that name,
+    // `when == "bar"` is a clause, `when { ... }` is a block clause over a property named `when` -- so a
+    // `when` block that lost its conditions would become a silently different rule rather than an error.
+    // Quoting the key reaches every one of them. If that trade is ever revisited, it is revisited here.
+    for still_rejected in [
+        "when == \"bar\"",
+        "when .foo == \"bar\"",
+        "when [\"foo\"] == \"bar\"",
+        "when {\n  Resources EXISTS\n}",
+        "rule when {\n  Resources EXISTS\n}\nrule user {\n  when\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(still_rejected)).is_err(),
+            "left rejected rather than guessed at: {}",
+            still_rejected
+        );
+    }
+    assert!(rules_file(from_str2("\"when\" == \"bar\""))?.is_some());
+    Ok(())
+}
+
+/// A file-level clause whose first identifier is `rule` reads as a clause about a property of that name.
+///
+/// `cut(var_name)` in both rule-definition parsers said that `rule` and a space is a definition. `rule` is a
+/// legal property name, so it is not: `var_name` failed on the `==` and the Failure escaped `rules_file`'s
+/// alternation before the arm that reads clauses ran. The same clause inside a rule body always parsed,
+/// because a definition is not one of the alternatives a block tries.
+#[test]
+fn a_file_level_clause_whose_first_identifier_is_rule_reads_as_that_clause() -> Result<(), Error> {
+    for (spelled, control) in [
+        ("rule == \"bar\"", "wibble == \"bar\""),
+        ("rule != \"bar\"", "wibble != \"bar\""),
+        ("rule > 10", "wibble > 10"),
+        ("rule.foo == \"bar\"", "wibble.foo == \"bar\""),
+        // A space before the accessor, which `dotted_property` and `predicate_or_index` both allow. These
+        // reach the name check as surely as `==` does, and neither can begin a rule name.
+        ("rule .foo == \"bar\"", "wibble .foo == \"bar\""),
+        ("rule [\"foo\"] == \"bar\"", "wibble [\"foo\"] == \"bar\""),
+        ("rule [0] == \"bar\"", "wibble [0] == \"bar\""),
+    ] {
+        assert_eq!(
+            parse_tree_with(spelled, "Key: rule", "Key: IDENT")?,
+            parse_tree_with(control, "Key: wibble", "Key: IDENT")?,
+            "a clause about a property named rule must read as that clause: {}",
+            spelled
+        );
+    }
+
+    // The commitment moved to the name rather than being dropped, so a name that cannot be one is still an
+    // error -- and now says which of the two readings it was trying.
+    let rejected = rules_file(from_str2("rule 1x {\n  Resources EXISTS\n}")).expect_err("no name");
+    assert!(
+        rejected
+            .to_string()
+            .contains("Expected a name for this rule"),
+        "a malformed rule name says so: {}",
+        rejected
+    );
+    Ok(())
+}
+
+/// `rule` still defines rules, including one named after a comparator.
+///
+/// The commitment moved to the name rather than being dropped, so a malformed name is still an error -- and
+/// now says what is wrong. A rule named `exists` is the case that would break if the fall-through were
+/// decided by looking for a comparator instead of for the name.
+#[test]
+fn rule_still_defines_a_rule() -> Result<(), Error> {
+    let parsed = rules_file(from_str2(
+        "rule plain {\n  Resources EXISTS\n}\nrule exists {\n  Resources EXISTS\n}\n\
+         rule gated when Resources EXISTS {\n  Resources EXISTS\n}\n\
+         rule taking(t) {\n  Resources.*.Type == %t\n}",
+    ))?
+    .expect("four rule definitions");
+    let defined = parsed
+        .guard_rules
+        .iter()
+        .map(|r| r.rule_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(defined, vec!["plain", "exists", "gated"]);
+    assert_eq!(parsed.parameterized_rules[0].rule.rule_name, "taking");
+    assert!(parsed.guard_rules[2].conditions.is_some());
+    Ok(())
+}
+
+/// A clause whose first identifier is `some` reads as a clause about a property of that name.
+///
+/// `opt(some_keyword)` inside `access` commits: once the word and a space have matched, the rest of the clause
+/// is parsed as though the modifier were meant, and what fails afterwards fails for the whole clause. So
+/// `some == "bar"` failed inside `access`, where an operator cannot begin a query, and `some exists` failed one
+/// step later in `clause_with_map`, where `exists` had been taken as the query and no comparator was left.
+/// Neither is ambiguous: the modifier reading of both is a `some` with no clause after it.
+#[test]
+fn a_clause_whose_first_identifier_is_some_reads_as_that_clause() -> Result<(), Error> {
+    for (spelled, keyword, control) in [
+        (
+            "rule r {\n  some == \"bar\"\n}",
+            "some",
+            "rule r {\n  wibble == \"bar\"\n}",
+        ),
+        (
+            "rule r {\n  some EXISTS\n}",
+            "some",
+            "rule r {\n  wibble EXISTS\n}",
+        ),
+        ("SOME == \"bar\"", "SOME", "wibble == \"bar\""),
+        ("some EMPTY", "some", "wibble EMPTY"),
+        // A space before the accessor: the modifier matches, the query after it is the accessor, and there is
+        // no comparator left. Same shape as `some EXISTS`, one step further along.
+        ("some .foo == \"bar\"", "some", "wibble .foo == \"bar\""),
+        (
+            "some [\"foo\"] == \"bar\"",
+            "some",
+            "wibble [\"foo\"] == \"bar\"",
+        ),
+        (
+            "rule r when some == \"bar\" {\n  Resources EXISTS\n}",
+            "some",
+            "rule r when wibble == \"bar\" {\n  Resources EXISTS\n}",
+        ),
+        (
+            "rule r {\n  Resources[ some == \"bar\" ] !EMPTY\n}",
+            "some",
+            "rule r {\n  Resources[ wibble == \"bar\" ] !EMPTY\n}",
+        ),
+    ] {
+        assert_eq!(
+            parse_tree_with(spelled, &format!("Key: {}", keyword), "Key: IDENT")?,
+            parse_tree_with(control, "Key: wibble", "Key: IDENT")?,
+            "a clause about a property named {} must read as that clause: {}",
+            keyword,
+            spelled
+        );
+    }
+    Ok(())
+}
+
+/// `some` is still the modifier, and a rule named `some` is still a rule reference.
+///
+/// The fallback clause parser is tried only after the modifier reading fails, and it succeeds only where a
+/// comparator follows the name -- which is disjoint from what `rule_clause` reads, a bare name followed by a
+/// newline, a comment, `{`, `}` or `or`.
+#[test]
+fn some_is_still_the_any_modifier() -> Result<(), Error> {
+    for rules in [
+        "rule r {\n  some Resources.*.Type == \"AWS::S3::Bucket\"\n}",
+        "rule r {\n  SOME Resources.*.Type == \"AWS::S3::Bucket\"\n}",
+    ] {
+        let parsed = rules_file(from_str2(rules))?.expect("a rule with a modified clause");
+        let clause = match &parsed.guard_rules[0].block.conjunctions[0][0] {
+            RuleClause::Clause(GuardClause::Clause(clause)) => clause,
+            other => panic!("expected a plain clause, got {:?} for {}", other, rules),
+        };
+        assert!(
+            !clause.access_clause.query.match_all,
+            "the modifier must still turn off match_all: {}",
+            rules
+        );
+    }
+
+    let referenced = rules_file(from_str2(
+        "rule some {\n  Resources EXISTS\n}\nrule user {\n  some\n}",
+    ))?
+    .expect("a rule named some and a reference to it");
+    assert!(
+        matches!(
+            referenced.guard_rules[1].block.conjunctions[0][0],
+            RuleClause::Clause(GuardClause::NamedRule(..))
+        ),
+        "a bare name is still a rule reference"
+    );
+    Ok(())
+}
+
+/// A clause whose first identifier is `let` reads as a clause about a property of that name.
+///
+/// `var_name` reads the comparator as the variable being assigned, and the `cut` on the assignment sign then
+/// made the missing sign unrecoverable. Only the unary comparators were affected: `let == "bar"` fails at
+/// `var_name`, which was already recoverable.
+#[test]
+fn a_clause_whose_first_identifier_is_let_reads_as_that_clause() -> Result<(), Error> {
+    for (spelled, control) in [
+        ("rule r {\n  let EXISTS\n}", "rule r {\n  wibble EXISTS\n}"),
+        ("rule r {\n  let EMPTY\n}", "rule r {\n  wibble EMPTY\n}"),
+        (
+            "rule r {\n  let IS_STRING\n}",
+            "rule r {\n  wibble IS_STRING\n}",
+        ),
+        ("let exists", "wibble exists"),
+    ] {
+        assert_eq!(
+            parse_tree_with(spelled, "Key: let", "Key: IDENT")?,
+            parse_tree_with(control, "Key: wibble", "Key: IDENT")?,
+            "a clause about a property named let must read as that clause: {}",
+            spelled
+        );
+    }
+
+    // What the name is decides which reading it is, so an assignment that has lost its sign still says so
+    // rather than falling through to be reported as a malformed clause.
+    for missing_sign in ["let x", "rule r {\n  let x\n}"] {
+        let rejected = rules_file(from_str2(missing_sign)).expect_err("no assignment sign");
+        assert!(
+            rejected
+                .to_string()
+                .contains("Expected = or := after let x"),
+            "an assignment with no sign says so: {} gave {}",
+            missing_sign,
+            rejected
+        );
+    }
+    Ok(())
+}
+
+/// A function call on the right of `keys` builds a key filter, like the other two right-hand sides.
+///
+/// `map_keys_match` accepted a value and an access there and not a function call, so `access` matched the
+/// function's name as a query, `close_array` -- which carries no `cut` -- failed recoverably on the `(`, and
+/// `predicate_filter_clauses` read the same text as an ordinary filter over a child property named `keys`. The
+/// clause parsed either way, which is the whole problem: the query part is what changed, and with it what the
+/// clause asks. See `a_function_call_on_the_right_of_keys_compares_against_the_keys` in eval_tests for the two
+/// verdicts.
+#[test]
+fn a_function_call_on_the_right_of_keys_is_a_key_filter() -> Result<(), Error> {
+    for (spelled, comparator) in [
+        (r#"Tags[ keys == to_lower("ALPHA") ]"#, MapKeyComparator::Eq),
+        (
+            r#"Tags[ keys != to_lower("ALPHA") ]"#,
+            MapKeyComparator::NotEq,
+        ),
+        (r#"Tags[ keys in to_lower("ALPHA") ]"#, MapKeyComparator::In),
+        (
+            r#"Tags[ keys not in to_lower("ALPHA") ]"#,
+            MapKeyComparator::NotIn,
+        ),
+        (r#"Tags[ keys == count(Resources) ]"#, MapKeyComparator::Eq),
+    ] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        match &query[1] {
+            QueryPart::MapKeyFilter(None, clause) => {
+                assert_eq!(
+                    clause.comparator, comparator,
+                    "the comparator a key filter was built with: {}",
+                    spelled
+                );
+                assert!(
+                    matches!(clause.compare_with, LetValue::FunctionCall(..)),
+                    "a function call on the right must stay a function call: {} gave {:?}",
+                    spelled,
+                    clause.compare_with
+                );
+            }
+            other => panic!(
+                "expected a key filter, got {:?} for {} -- a Filter here is the defect",
+                other, spelled
+            ),
+        }
+    }
+
+    // The capture form too, since the name is read before the comparator.
+    let captured = AccessQuery::try_from(r#"Tags[ mk | keys == to_lower("ALPHA") ]"#)?.query;
+    assert!(
+        matches!(&captured[1], QueryPart::MapKeyFilter(Some(name), _) if name == "mk"),
+        "the capture name survives: {:?}",
+        captured.get(1)
+    );
+    Ok(())
+}
+
+/// `keys` still names a property when the comparator is not one a key filter takes.
+///
+/// This is the boundary the earlier `keys` fix on this branch drew, and the new alternative sits inside it: the
+/// four key-filter comparators are what reserve the word, and `EXISTS` is not one of them. A quoted first
+/// token reaches the property reading even for those four.
+#[test]
+fn keys_is_still_a_property_name_outside_a_key_filter() -> Result<(), Error> {
+    for spelled in [
+        "Tags[ keys EXISTS ]",
+        "Tags[ keys EMPTY ]",
+        "Tags[ keys >= 1 ]",
+        r#"Tags[ "keys" == to_lower("ALPHA") ]"#,
+    ] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        assert!(
+            matches!(query.get(1), Some(QueryPart::Filter(..))),
+            "expected an ordinary filter, got {:?} for {}",
+            query.get(1),
+            spelled
+        );
+    }
+
+    // And the two right-hand sides that always worked still build a key filter.
+    for spelled in [r#"Tags[ keys == "alpha" ]"#, "Tags[ keys not in %denied ]"] {
+        let query = AccessQuery::try_from(spelled)?.query;
+        assert!(
+            matches!(query.get(1), Some(QueryPart::MapKeyFilter(..))),
+            "expected a key filter, got {:?} for {}",
+            query.get(1),
+            spelled
+        );
+    }
+    Ok(())
+}
+
+/// `let` still declares a variable in both scopes, with either sign.
+#[test]
+fn let_still_declares_a_variable() -> Result<(), Error> {
+    let parsed = rules_file(from_str2(
+        "let outer = 5\nrule r {\n  let inner := 7\n  Resources.Size == %outer\n}",
+    ))?
+    .expect("two assignments");
+    assert_eq!(parsed.assignments[0].var, "outer");
+    assert_eq!(parsed.guard_rules[0].block.assignments[0].var, "inner");
     Ok(())
 }

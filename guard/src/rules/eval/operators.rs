@@ -275,18 +275,52 @@ where
             }
         }
 
-        Err(Error::NotComparable(reason)) => {
-            ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
-                reason,
-                pair: LhsRhsPair {
-                    lhs: each_lhs,
-                    rhs: each_rhs,
-                },
-            }))
+        Err(err) => not_comparable_because(each_lhs, each_rhs, unanswerable_reason(err)),
+    }
+}
+
+/// Turns a comparator's error into the reason recorded against the clause.
+///
+/// Every way a comparator can fail means the same thing to the caller: this comparison has no
+/// answer. None of them is a reason to stop the run, so none of them may reach a panic. The arm
+/// that was missing was `RegexError`, and the catch-all that used to stand here was
+/// `unreachable!()`, so a rules file with one unevaluatable regex aborted the process at exit 101
+/// and took every other rule's verdict with it.
+///
+/// The two reachable variants today are `NotComparable`, from `compare_values` under all five
+/// comparators, and `RegexError`, from `compare_eq` alone. Anything else still reports rather than
+/// aborts, because a wrong-looking message beats no verdict at all.
+fn unanswerable_reason(err: Error) -> String {
+    match err {
+        Error::NotComparable(reason) => reason,
+
+        // `fancy_regex` returns a `Result` from `is_match` because its backtracking engine gives
+        // up rather than running forever: a pattern holding a lookaround or a backreference cannot
+        // use the linear automaton, and a nested quantifier then makes the number of paths to try
+        // grow with the length of the input. `/(?!zzz)(\w+\s?)+!/` against eighty characters that
+        // hold no `!` exceeds the limit, and the same pattern against fifteen does not, so a rule
+        // that passes review can still fail on a longer `UserData` or policy document.
+        //
+        // `fancy_regex`'s own message is reported rather than `RegexError`'s, which reads "Regex
+        // expression parse error" -- true of a pattern that would not compile, and misleading
+        // about one that compiled and then ran out of backtracking.
+        Error::RegexError(err) => {
+            format!("The regular expression could not be evaluated against the value: {err}")
         }
 
-        _ => unreachable!(),
+        rest => format!("The comparison could not be performed: {rest}"),
     }
+}
+
+fn not_comparable_because(
+    lhs: Rc<PathAwareValue>,
+    rhs: Rc<PathAwareValue>,
+    reason: String,
+) -> ValueEvalResult {
+    ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
+        reason,
+        pair: LhsRhsPair { lhs, rhs },
+    }))
 }
 
 fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
@@ -448,17 +482,62 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // the two that relates a range to an equal range, so asking `compare_eq` alone would
                 // lose `%range_literal in [r[80,90]]`. Everything `eq` decides, it decides the same
                 // way as before; `compare_eq` can only add a match, never remove one.
-                if rhsl
-                    .iter()
-                    .any(|elem| elem == rest || compare_eq(rest, elem).unwrap_or(false))
-                {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::ValueIn(
-                        LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
-                    )))
-                } else {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
-                        LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
-                    )))
+                //
+                // A regex `compare_eq` could not evaluate is read rather than discarded, which is
+                // what makes `Port in [/re/]` answer the same way as `Port == /re/`. Both spellings
+                // reach a regex that cannot be evaluated; the unwrapped one goes through
+                // `match_value` and reports it, and this one used to panic inside `eq` before
+                // `compare_eq` was ever asked. An element that matches still wins over an element
+                // that could not be evaluated, because then the answer did not depend on the one
+                // that failed.
+                //
+                // Only `RegexError` is promoted. `NotComparable` keeps the `unwrap_or(false)`
+                // reading it has always had here, deliberately. `NOT IN` against an operand of a
+                // kind it cannot be compared with currently passes; `docs/KNOWN_ISSUES.md` records
+                // the silent conversion of a suppressed error to `false` as a tracked defect, and
+                // `incomparable_membership` in `eval.rs` emits a deprecation notice for this
+                // spelling so that rule authors hear about the change before a pipeline does.
+                // Failing those cells here would land that change without its notice, and it moves
+                // cells of `every_operator_and_operand_shape_agrees_with_a_stated_oracle`.
+                let mut unanswerable: Option<String> = None;
+                let mut found = false;
+                for elem in rhsl {
+                    if elem == rest {
+                        found = true;
+                        break;
+                    }
+                    match compare_eq(rest, elem) {
+                        Ok(true) => {
+                            found = true;
+                            break;
+                        }
+                        Ok(false) => {}
+                        Err(err @ Error::RegexError(_)) => {
+                            if unanswerable.is_none() {
+                                unanswerable = Some(unanswerable_reason(err));
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+
+                match (found, unanswerable) {
+                    (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                        Compare::ValueIn(LhsRhsPair::new(
+                            Rc::new(rest.clone()),
+                            Rc::clone(&rhs_value),
+                        )),
+                    )),
+
+                    (false, Some(reason)) => {
+                        not_comparable_because(Rc::new(rest.clone()), Rc::clone(&rhs_value), reason)
+                    }
+
+                    (false, None) => {
+                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
+                            LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
+                        )))
+                    }
                 }
             }
 

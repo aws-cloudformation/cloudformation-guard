@@ -1,0 +1,19 @@
+#
+# Embedded strings that the parser behind json_parse refuses. DuplicateKey is accepted by JSON readers
+# generally -- RFC 8259 leaves duplicate names to the implementation and most take the last one -- and
+# rejected by serde_yaml. NonStringKey is a mapping keyed by a number, which YAML allows and cfn-guard
+# does not represent.
+#
+# wideopen is a genuine violation, here so that a run over this file has a real finding to classify while
+# the two embedded strings are being reported.
+#
+Resources:
+  newServer:
+    Type: AWS::New::Service
+    Properties:
+      DuplicateKey: '{"a": 1, "a": 2}'
+      NonStringKey: '{1: 2}'
+  wideopen:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      CidrIp: 0.0.0.0/0

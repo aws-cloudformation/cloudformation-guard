@@ -3418,6 +3418,170 @@ mod validate_tests {
         );
     }
 
+    /// Which side of a comparison an unevaluatable error comes from does not change the exit code.
+    ///
+    /// A clause whose own query could not produce a value fails closed and the run exits 19. The same
+    /// error reached through the right-hand side recorded the clause as failing and then propagated the
+    /// error anyway, so the run aborted with "Error occurred" and exited 255 -- the tool-failure code, on
+    /// a template that is only non-compliant. Both spellings of the right-hand side did it, a variable
+    /// bound to the conversion and the conversion written inline, and
+    /// `unevaluatable_right_hand_side.guard` has one rule for each alongside the left-hand control.
+    #[test]
+    fn an_unevaluatable_right_hand_side_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/unevaluatable_right_hand_side.guard"])
+            .data(vec!["/functions/data/unevaluatable_right_hand_side.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// A value the conversion could not represent is not reported as a number.
+    ///
+    /// `numbers_that_do_not_fit.guard` asserts that a budget of `1.0e40` *is* 9223372036854775807, and
+    /// that an overflowing `"1e400"` is greater than `1.0e300`. Both passed at exit 0: `parse_int` cast
+    /// the float with `as`, which clamps to `i64::MAX`, and `parse::<f64>()` answers infinity for a
+    /// literal that does not fit. Each rule names the wrong answer it was given, so the assertion here is
+    /// the verdict: SUCCESS before, VALIDATION_ERROR after.
+    #[test]
+    fn numbers_too_large_to_convert_do_not_compare_equal() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/numbers_that_do_not_fit.guard"])
+            .data(vec!["/functions/data/numbers_that_do_not_fit.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// The control for the test above: two ordinary floats that do fit still convert and still compare,
+    /// so truncation toward zero is unaffected. This rule asserts 5 differs from 12, which holds.
+    #[test]
+    fn numbers_that_fit_still_convert_and_compare() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/numbers_that_fit.guard"])
+            .data(vec!["/functions/data/numbers_that_fit.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    /// An embedded string `json_parse` cannot read fails the clause, and does not abort the run.
+    ///
+    /// `embedded_json_the_parser_rejects.yaml` carries a duplicate key, which JSON readers generally
+    /// accept and `serde_yaml` rejects, and a mapping keyed by a number. Both errors propagated
+    /// unchanged, and neither class is unevaluatable, so the run exited 255 while the `REAL_VIOLATION`
+    /// rule in the same file reported its finding.
+    #[test]
+    fn an_embedded_string_the_parser_rejects_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec![
+                "/functions/rules/embedded_json_the_parser_rejects.guard",
+            ])
+            .data(vec![
+                "/functions/data/embedded_json_the_parser_rejects.yaml",
+            ])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// A scalar function argument the data could not supply fails the clause, and does not abort the run.
+    ///
+    /// `bad_function_arguments.yaml` feeds a negative offset and a non-numeric offset to `substring`, a
+    /// number to `join`'s delimiter and a number to `regex_replace`'s pattern. All four were reported as
+    /// `ParseError`, the class the evaluator reserves for a malformed rules file, which is not
+    /// unevaluatable, so the run aborted and exited 255. The rules file is well formed, and the
+    /// `REAL_VIOLATION` rule in the same file reports its finding either way -- so a template author
+    /// could turn their own violation from exit 19 into exit 255 with a `-1` in the right field.
+    #[test]
+    fn a_bad_function_argument_from_the_data_fails_the_clause_rather_than_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/bad_function_arguments.guard"])
+            .data(vec!["/functions/data/bad_function_arguments.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// A `count` over a query that named something absent does not answer 0, so a misspelled path in a
+    /// rule cannot pass.
+    ///
+    /// `count_unresolved.guard` counts `Collectionz`, one letter off the `Collection` the data carries,
+    /// and asserts the count is 0. That used to be satisfied and the run exited 0 while the correctly
+    /// spelled rule found three entries. The verdict is the assertion: SUCCESS before, VALIDATION_ERROR
+    /// after.
+    #[test]
+    fn a_count_of_an_unresolved_selection_does_not_pass_the_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/count_unresolved.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
+    /// The control for the test above: a collection that is present and empty still counts 0, so the
+    /// rule passes. Both cases used to arrive as an unresolved result, and this is the one that has to
+    /// keep its answer.
+    #[test]
+    fn a_count_of_an_empty_collection_is_still_zero() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/count_empty_collection.guard"])
+            .data(vec!["/functions/data/empty_collection.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+    }
+
+    /// A `regex_replace` whose pattern does not match returns the input, so the clause around it still
+    /// compares the real value and this rule fails.
+    ///
+    /// It used to return `""`. An empty string is a value and it compares, so the `!=` in
+    /// `regex_replace_no_match.guard` was satisfied and the run exited 0 -- a rule that normalises an
+    /// optional prefix before checking a name reported a pass on the name it was written to catch. The
+    /// verdict is the assertion here, not the text: SUCCESS before, VALIDATION_ERROR after.
+    #[test]
+    fn a_regex_replace_that_matches_nothing_does_not_pass_the_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/regex_replace_no_match.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+    }
+
     #[test]
     fn test_validate_with_failing_complex_rule() {
         let mut reader = Reader::default();

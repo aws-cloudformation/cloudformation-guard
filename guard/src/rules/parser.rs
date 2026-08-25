@@ -107,8 +107,26 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A comment, ending at the end of its line -- and a bare CR ends a line here, as it does everywhere else in
+/// this parser.
+///
+/// `multispace1`, which `white_space_or_comment` reaches for the other half of its alternation, accepts
+/// `" \t\r\n"`, so a lone `\r` is a line ending as far as every whitespace position is concerned. This search
+/// stopped at `\n` alone, so in a file whose lines end with a bare CR a comment ran to the end of the file:
+/// the `}` closing the block the comment sat in was consumed as comment text, and the file was rejected for
+/// having no closing brace. Ten of thirteen constructs parsed in such a file and this was one of the three
+/// that did not, which is the worst shape for it to be in -- whether the file is readable depended on whether
+/// it happened to contain a comment.
+///
+/// A `\r` inside a comment in an otherwise LF file now ends the comment too, and that is the same judgement:
+/// this parser treats a bare CR as a line ending, so text after one is the next line rather than more comment.
+/// No rules file in this repository or in the AWS rule registry contains a CR of either kind.
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
-    delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
+    delimited(
+        char('#'),
+        take_till(|c| c == '\n' || c == '\r'),
+        multispace0,
+    )(input)
 }
 //
 // This function extracts either white-space-CRLF or a comment
@@ -614,10 +632,10 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  access                     = variable_access /
 ///                               property_access
 ///
-///  not_keyword                = "NOT" / "not" / "!"
+///  not_keyword                = "NOT" 1*SP / "not" 1*SP / "!"
 ///  basic_cmp                  = "==" / ">=" / "<=" / ">" / "<"
 ///  other_operators            = "IN" / "EXISTS" / "EMPTY"
-///  not_other_operators        = not_keyword 1*SP other_operators
+///  not_other_operators        = not_keyword other_operators
 ///  not_cmp                    = "!=" / not_other_operators
 ///
 ///  cmp                        = basic_cmp / other_operators / not_cmp
@@ -629,13 +647,28 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  `map_keys_match` handles it. Nothing in `docs/` or the README claims either form, so the grammar was
 ///  the only thing saying they existed.
 ///
+///  Two more lines were corrected against the parser rather than the other way round, and the space after a
+///  negation is the one worth reading twice. `not_keyword` used to be the three spellings alone, with
+///  `not_other_operators` requiring `1*SP` after any of them -- which admits `not empty` and `! empty` and
+///  does not admit `!empty`. `!empty` is the only spelling that exists: 82 occurrences across the 95 rules
+///  files here, every example in `docs/CLAUSES.md` and `docs/COMPLEX_COMPOSITION.md`, and no occurrence of
+///  `! ` before an operator anywhere. So the space belongs to the word spellings, where it is what keeps
+///  `notempty` from reading as a negated `empty`, and `!` needs none because a punctuation mark cannot run
+///  into an identifier. `A ! exists` stays rejected.
+///
+///  `type_block` used to say `*SP` between the type name and what follows it. The parser requires one space
+///  there, for the block and the clause form together -- they share a single requirement, before the optional
+///  `when` -- so `AWS::S3::Bucket{` is rejected. Nothing in the corpus or in `docs/` writes it that way, and
+///  the zero-space *clause* form is unwritable anyway, because `type_name` is greedy over alphanumerics and
+///  would absorb the property. `1*SP` is what the parser means.
+///
 ///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
 ///  rule_clause                = rule_name / not_keyword rule_name / clause
 ///  rule_disjunction_clauses   = rule_clause 1*(or_term 1*(LWSP/comment) rule_clause)
 ///  rule_conjunction_clauses   = rule_clause 1*( (LSWP/comment) rule_clause )
 ///
 ///  type_clause                = type_name 1*SP clause
-///  type_block                 = type_name *SP [when] "{" *(LWSP/comment) 1*clause "}"
+///  type_block                 = type_name 1*SP [when] "{" *(LWSP/comment) 1*clause "}"
 ///
 ///  type_expr                  = type_clause / type_block
 ///
@@ -1121,12 +1154,31 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
             map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
     )(input)?;
+    // Value, then function call, then access -- the order and the set that `clause_with_map` and `let_value`
+    // use. The function call was missing here, and it is the one right-hand side of the three that changed
+    // what a clause means rather than rejecting it. `access` matched the function's name as a query and left
+    // `(...)` behind, `close_array` carries no `cut` so that failed recoverably, and
+    // `predicate_filter_clauses` -- the next branch of `predicate_or_index` -- then read the same text as an
+    // ordinary filter over a property named `keys`. So `Tags[ keys == to_lower("ALPHA") ]` asked whether a
+    // child property called `keys` equalled `alpha`, where the two spellings beside it asked what the author
+    // wrote. Against a document holding one entry keyed `alpha` whose `keys` child is `zulu`, the literal and
+    // the variable spellings pass at exit 0 and the function spelling failed at exit 19, blaming a value it
+    // named as `[null]`.
+    //
+    // Nothing downstream forced the narrower set: `MapKeyFilterClause::compare_with` is a `LetValue`, and the
+    // arm that resolves a `LetValue::FunctionCall` for a key filter is already there in
+    // `eval_context::query_retrieval_with_converter` -- it was unreachable because the parser could not build
+    // one.
     let (input, with) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
             map(parse_value, |value| {
                 LetValue::Value(PathAwareValue::try_from(value).unwrap())
             }),
+            map(
+                preceded(zero_or_more_ws_or_comment, function_expr),
+                LetValue::FunctionCall,
+            ),
             map(
                 preceded(zero_or_more_ws_or_comment, access),
                 LetValue::AccessClause,
@@ -1219,9 +1271,33 @@ fn this_keyword(input: Span) -> IResult<Span, QueryPart> {
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
+    access_query(input, true)
+}
+
+/// `access` with `some` read as a property name rather than as the modifier.
+///
+/// `some` is a legal property name, and `opt(some_keyword)` commits: once the modifier has matched, the
+/// remainder is parsed as though it were meant, and whatever fails afterwards fails for the whole clause.
+/// So `some == "bar"` failed inside `access` -- an operator cannot begin a query -- and `some exists` failed
+/// one step later in `clause_with_map`, where `exists` had already been taken as the query and no comparator
+/// was left. Neither is ambiguous: the modifier reading of both is a `some` with no clause after it.
+/// `someProperty` and `some.foo` were never affected, because `some_keyword` requires a space after the word.
+///
+/// This differs from `access` only when `some` or `SOME` is followed by whitespace, which is the only input
+/// `opt(some_keyword)` consumes anything on. Everywhere else the two are the same parser, so a clause parser
+/// built on this one can be tried after the ordinary one without widening the alternation for any other input.
+fn access_without_some_modifier(input: Span) -> IResult<Span, AccessQuery> {
+    access_query(input, false)
+}
+
+fn access_query(input: Span, some_modifier: bool) -> IResult<Span, AccessQuery> {
+    let (input, any) = match some_modifier {
+        true => opt(some_keyword)(input)?,
+        false => (input, None),
+    };
+    let match_all = any.is_none();
     map(
         tuple((
-            opt(some_keyword),
             alt((
                 this_keyword,
                 map(
@@ -1231,7 +1307,7 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
             )),
             opt(dotted_access),
         )),
-        |(any, first, remainder)| {
+        move |(first, remainder)| {
             let query_parts = match remainder {
                 Some(mut parts) => {
                     parts.insert(0, first.clone());
@@ -1252,7 +1328,7 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
             };
             AccessQuery {
                 query: query_parts,
-                match_all: any.is_none(),
+                match_all,
             }
         },
     )(input)
@@ -1502,11 +1578,27 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
             GuardClause::ParameterizedNamedRule,
         ),
         |i| clause_with(i, access),
+        // Last, and only reached when the reading above failed. `some` is a property name as well as the
+        // modifier, and `access` commits to the modifier as soon as it sees the word and a space, so
+        // `some == "bar"` and `some exists` -- clauses about a property named `some` -- could not be written.
+        // See `access_without_some_modifier`.
+        //
+        // This arm cannot take input `rule_clause` was reading, which is what the enclosing alternations try
+        // after this one: it succeeds only where a comparator follows the name, and `rule_clause` reads a bare
+        // name only when a newline, a comment, `{`, `}` or `or` follows it.
+        |i| clause_with(i, access_without_some_modifier),
     ))(input)
 }
 
 fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
-    clause_with_map(input, access, WhenGuardClause::Clause)
+    match clause_with_map(input, access, WhenGuardClause::Clause) {
+        // The same fallback as the last arm of `clause`, for a condition in a `when`. Only on a recoverable
+        // error: a Failure means something further in committed, and retrying would report the wrong thing.
+        Err(nom::Err::Error(_)) => {
+            clause_with_map(input, access_without_some_modifier, WhenGuardClause::Clause)
+        }
+        result => result,
+    }
 }
 
 //
@@ -1520,17 +1612,30 @@ fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
 //  parsing to see which of these forms is present for the rule clause
 //  to succeed
 //
-//      rule_name[ \t]*\n
+//      rule_name[ \t]*(\n / \r\n / \r)
 //      rule_name[ \t\n]+or[ \t\n]+
-//      rule_name(#[^\n]+)
+//      rule_name(#[^\n\r]+)
 //
 //      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
 //
 //
 //
 
+/// The line endings `rule_clause` peeks for, which has to be the set the rest of the parser accepts.
+///
+/// A bare `\r` was missing. `zero_or_more_ws_or_comment` reaches `multispace1`, which accepts `" \t\r\n"`, so a
+/// lone CR is whitespace at every other position in this parser -- but a rule reference is read by peeking for
+/// one of a fixed set of following tokens, and anything outside that set falls to the `cut` on
+/// `custom_message`, whose Failure escapes the alternation. So in a file whose lines end with a bare CR, a
+/// comparison clause parsed and a rule reference on its own line did not, and the second term of a disjunction
+/// did not either. Measured across thirteen constructs in one such file, ten parsed and three did not, which
+/// makes readability depend on which construct happens to sit at the boundary. A uniform rejection would at
+/// least be predictable; this was not.
+///
+/// Longest first, so `\r\n` is never read as a bare `\r` with a stray `\n` after it. CRLF was already handled
+/// and is unaffected.
 fn newline(input: Span) -> IResult<Span, Span> {
-    alt((tag("\n"), tag("\r\n")))(input)
+    alt((tag("\r\n"), tag("\n"), tag("\r")))(input)
 }
 
 fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
@@ -1726,22 +1831,44 @@ fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
 
 fn let_assignment_expr(input: Span) -> IResult<Span, String> {
     let (input, _let_keyword) = tag("let")(input)?;
-    let (input, (var_name, _eq_sign)) = tuple((
-        //
-        // if we have a pattern like "letproperty" that can be an access keyword
-        // then there is no space in between. This will error out.
-        //
-        preceded(one_or_more_ws_or_comment, var_name),
-        //
-        // if we succeed in reading the form "let <var_name>", it must be be
-        // followed with an assignment sign "=" or ":="
-        //
-        cut(preceded(
-            zero_or_more_ws_or_comment,
-            alt((tag("="), tag(":="))),
-        )),
-    ))(input)?;
-    Ok((input, var_name))
+    //
+    // if we have a pattern like "letproperty" that can be an access keyword
+    // then there is no space in between. This will error out.
+    //
+    let (at_name, _space) = one_or_more_ws_or_comment(input)?;
+    let (after_name, assigned) = var_name(at_name)?;
+
+    // The assignment sign is what identifies an assignment, so that is where the commitment belongs. It was a
+    // `cut`, and `let` is a legal property name: `let EXISTS` is a clause about that property, but `var_name`
+    // above reads the `EXISTS` as the variable being assigned, and the `cut` then made the missing sign a
+    // Failure that escaped the alternation instead of letting `clause` read the line. Every unary comparator
+    // was affected and no binary one was, because `let == "bar"` fails at `var_name`, which was already
+    // recoverable.
+    //
+    // What distinguishes the two readings is the name: `let` and a space followed by a comparator is the whole
+    // of the clause, and followed by anything else it is an assignment that has lost its sign. So only the
+    // first falls through, and `let x` still says what is wrong with it -- which it could not do by falling
+    // through, because the alternation's last error would name the line rather than the missing sign.
+    //
+    // Unlike `rule`, the name here cannot be separated from the construct by looking at what follows it, so
+    // the test is on the name itself.
+    match preceded(zero_or_more_ws_or_comment, alt((tag("="), tag(":="))))(after_name) {
+        Ok((input, _sign)) => Ok((input, assigned)),
+
+        Err(nom::Err::Error(recoverable)) => match peek(value_cmp)(at_name) {
+            Ok(_) => Err(nom::Err::Error(recoverable)),
+            Err(_) => Err(nom::Err::Failure(ParserError {
+                context: format!(
+                    "Expected = or := after let {}, as in \"let {} = 10\".",
+                    assigned, assigned
+                ),
+                kind: ErrorKind::Tag,
+                span: after_name,
+            })),
+        },
+
+        Err(e) => Err(e),
+    }
 }
 
 fn assignment(input: Span) -> IResult<Span, LetExpr> {
@@ -1831,17 +1958,30 @@ where
         //
         let (input, _when_keyword) = preceded(zero_or_more_ws_or_comment, when)(input)?;
 
+        // The space is required, and it is required *outside* the `cut`. That is the fix. `keyword("when")`
+        // rejects a trailing identifier character, so `whenCreated` no longer reaches here, but a trailing
+        // `.`, `[` or operator character is not an identifier character and still does: `when.foo == "bar"`
+        // matched the keyword, failed this requirement, and the `cut` turned that into a Failure that
+        // escaped both the `opt(when_conditions(..))` around it and the `alt` that would have read the line
+        // as a clause about a property named `when`. So half of the `whenever` defect was still live, in the
+        // half of the spellings `keyword` cannot see.
+        //
+        // A `when` block cannot be spelled without this space, so `when.`, `when[` and `when(` have exactly
+        // one reading each and letting them fall through admits nothing new. `some_keyword` and
+        // `let_assignment_expr` already require their space this way.
+        let (input, _space) = one_or_more_ws_or_comment(input)?;
+
         //
         // If there is "when" then parse conditions. It is an error not to have
         // clauses following it
         //
-        cut(
-            //
-            // when keyword must be followed by a space and then clauses. Fail if that
-            // is not the case
-            //
-            preceded(one_or_more_ws_or_comment, |s| condition_parser(s)),
-        )(input)
+        // The conditions stay committed. Once the space is there the line is no longer decidable from the
+        // `when` alone -- `when` on its own line is a reference to a rule of that name, `when == "bar"` is a
+        // clause, and `when { ... }` is a block clause over a property named `when` -- so falling through
+        // would turn a `when` block missing its conditions into a silently different rule rather than an
+        // error. `single_clauses` raises its own Failure for an empty condition list in any case, which is
+        // where those spellings are actually rejected; quoting the key reaches all three of them.
+        cut(|s| condition_parser(s))(input)
     }
 }
 
@@ -2080,6 +2220,46 @@ fn rule_block_clause(input: Span) -> IResult<Span, RuleClause> {
     ))(input)
 }
 
+/// The name in a rule definition, deciding on the way whether the line is a definition at all.
+///
+/// `rule` is a legal property name, so `rule == "bar"` at file level is a clause about that property and has
+/// to reach `default_clauses`. `cut(var_name)` stopped it: `var_name` failed on the `==` and the `cut` made
+/// that a Failure, which escaped `rules_file`'s alternation before the arm that reads clauses ever ran. The
+/// identical clause parses inside a rule body, where a rule definition is not one of the alternatives -- which
+/// is what shows the rejection was the commitment and not the grammar.
+///
+/// What can follow `rule` and a space in a clause is a comparator, or more of the query: `dotted_property`
+/// and `predicate_or_index` both skip leading whitespace, so `rule .foo == 1` and `rule ["foo"] == 1` are
+/// clauses in the same way `wibble .foo == 1` is. Neither can begin a rule name, which is `alpha1` followed by
+/// alphanumerics, so falling through on them cannot cost a definition.
+///
+/// Anything else is a definition whose name is malformed, and saying so here beats letting the alternation
+/// fail: its last error names the start of the line with no context at all, while `rule 1foo {` has one
+/// obvious thing wrong with it.
+fn rule_definition_name(input: Span) -> IResult<Span, String> {
+    match var_name(input) {
+        Ok(parsed) => Ok(parsed),
+
+        Err(nom::Err::Error(recoverable)) => match peek(alt((
+            value((), value_cmp),
+            value((), dotted_access),
+        )))(input)
+        {
+            Ok(_) => Err(nom::Err::Error(recoverable)),
+            Err(_) => Err(nom::Err::Failure(ParserError {
+                context: String::from(
+                    "Expected a name for this rule, as in \"rule my_rule { ... }\". A clause about a \
+                     property named rule needs the name in quotes, as \"rule\".",
+                ),
+                kind: ErrorKind::Alpha,
+                span: input,
+            })),
+        },
+
+        Err(e) => Err(e),
+    }
+}
+
 //
 // rule block
 //
@@ -2090,7 +2270,10 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     let (input, _rule_keyword) = preceded(zero_or_more_ws_or_comment, tag("rule"))(input)?;
     let (input, _space) = one_or_more_ws_or_comment(input)?;
 
-    let (input, rule_name) = cut(var_name)(input)?;
+    // The name is what identifies a definition, so that is where the commitment belongs; see
+    // `rule_definition_name`. `cut(block(..))` below still reports a missing or misplaced brace against the
+    // rule, and `rule <name>` with neither `(`, `when` nor `{` after it is still an error.
+    let (input, rule_name) = rule_definition_name(input)?;
     let (input, conditions) = opt(when_conditions(single_clauses))(input)?;
     let (input, (assignments, conjunctions)) = cut(block(rule_block_clause))(input)?;
 
@@ -2169,7 +2352,9 @@ fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
         one_or_more_ws_or_comment,
     )(input)?;
 
-    let (input, rule_name) = cut(var_name)(input)?;
+    // See `rule_definition_name`. This arm is tried before `rule_block`, so the Failure escaped from here
+    // first and both sites needed the same treatment.
+    let (input, rule_name) = rule_definition_name(input)?;
     let (input, parameter_names) = parameter_names(input)?;
     let (input, (assignments, conjunctions)) = cut(block(rule_block_clause))(input)?;
 

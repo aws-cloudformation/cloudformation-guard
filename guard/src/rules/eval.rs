@@ -1905,6 +1905,15 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 LetValue::Value(rhs_val) => {
                     (vec![QueryResult::Literal(Rc::new(rhs_val.clone()))], true)
                 }
+                // The same treatment the clause's own query gets further down, for the same reason.
+                //
+                // Both arms recorded the clause as failing and then propagated the error regardless, so
+                // an unevaluatable right-hand side aborted the run at 255 while the identical error on
+                // the left exited 19. `%fine == %too_big` and `%too_big == %fine` disagreed about
+                // whether a template that does not fit an i64 is a policy failure or a broken tool.
+                //
+                // Only for an assertion, and a gate still keeps the error, which is the split the
+                // left-hand side and `eval_when_condition_block` already use.
                 LetValue::AccessClause(acc_querty) => match resolver.query(&acc_querty.query) {
                     Ok(result) => (result, false),
                     Err(e) => {
@@ -1916,7 +1925,14 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        return Err(e);
+                        // On this branch the answer is a value and the role is applied by the
+                        // consumer, so this returns `Unevaluatable` role-free rather than splitting on
+                        // `role.is_strict()` as the pre-`Outcome` version did. Same intent: an
+                        // unevaluatable right-hand side fails the clause instead of the run.
+                        return match is_unevaluatable(&e) {
+                            true => Ok(Outcome::Unevaluatable),
+                            false => Err(e),
+                        };
                     }
                 },
                 LetValue::FunctionCall(FunctionExpr {
@@ -1932,7 +1948,14 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        return Err(e);
+                        // On this branch the answer is a value and the role is applied by the
+                        // consumer, so this returns `Unevaluatable` role-free rather than splitting on
+                        // `role.is_strict()` as the pre-`Outcome` version did. Same intent: an
+                        // unevaluatable right-hand side fails the clause instead of the run.
+                        return match is_unevaluatable(&e) {
+                            true => Ok(Outcome::Unevaluatable),
+                            false => Err(e),
+                        };
                     }
                 },
             },

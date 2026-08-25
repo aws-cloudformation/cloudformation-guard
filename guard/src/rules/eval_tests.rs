@@ -10399,3 +10399,280 @@ fn zero_selection_is_asymmetric_by_operand_role() -> Result<()> {
 
     Ok(())
 }
+
+/// A rules file whose lines end with a bare CR still enforces its rules.
+///
+/// `comment2` searched for `\n` alone while `multispace1` treats a lone `\r` as whitespace everywhere else, so
+/// in a CR-only file a comment ran to the end of the file. With the comment on the first line, every rule
+/// after it became comment text, the file parsed to no rules at all, and an empty rules file is not an error --
+/// so a violating template came back compliant at exit 0 with nothing printed on any channel. That is the
+/// shape of the unterminated-message defect fixed earlier on this branch, reached through line endings.
+///
+/// Asserted on the verdict, and on the rule count first so the failure says which of the two went wrong.
+#[test]
+fn a_cr_only_rules_file_still_enforces_its_rules() -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            bucket: { Type: 'AWS::S3::Bucket', Properties: { Encrypted: false } }
+        }
+    }
+    "#;
+
+    let cr = "# encryption is mandatory\rrule encrypted {\r  Resources.*.Properties.Encrypted == true\r}\r";
+    let lf = cr.replace('\r', "\n");
+
+    for (spelling, rules) in [("CR", cr), ("LF", lf.as_str())] {
+        let parsed = crate::rules::parser::rules_file(crate::rules::parser::from_str2(rules))?
+            .unwrap_or_else(|| panic!("{} spelling parsed to no rules at all", spelling));
+        assert_eq!(
+            parsed.guard_rules.len(),
+            1,
+            "{} spelling lost the rule after the comment",
+            spelling
+        );
+        assert_eq!(
+            Status::FAIL,
+            rule_status_in(rules, INPUT, "encrypted")?,
+            "{} spelling must still fail the violating template",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// A function call on the right of `keys` compares against the map's keys, like the other two right-hand sides.
+///
+/// `map_keys_match` took a value and an access there and not a function call, so `access` matched the
+/// function's name as a query, `close_array` failed recoverably on the `(`, and `predicate_filter_clauses` read
+/// the same text as an ordinary filter over a child property named `keys`. Both readings parse, so this is
+/// asserted on the verdict rather than on the tree: the document is built so the two disagree in both
+/// directions. Its one entry is keyed `alpha` and that entry has a child named `keys` whose value is `zulu`, so
+/// a key filter for `alpha` selects the entry and the property reading does not -- and for `zulu` it is the
+/// other way round. Each function case is paired with the literal spelling of the same question, which is the
+/// verdict it has to agree with.
+///
+/// Before the fix, `to_lower("ALPHA")` failed and `to_lower("ZULU")` passed. Both were the property reading
+/// answering a question nobody asked, at exit 19 and exit 0 respectively, with no diagnostic naming the key.
+/// Six of these cases held the opposite verdict before it: the four `==`/`!=` function cases and the `in` and
+/// `not in` ones. The literal spellings and the two quoted-property cases held already and are here as the
+/// references the function spellings have to agree with; `case_is_not_folded` also held already, by arriving at
+/// the same verdict through the wrong reading, and is here to pin that the function is evaluated at all.
+#[rstest::rstest]
+#[case::function_result_matches_the_key(
+    r#"Tags[ keys == to_lower("ALPHA") ] !empty"#,
+    Status::PASS
+)]
+#[case::literal_spelling_of_the_same_question(r#"Tags[ keys == "alpha" ] !empty"#, Status::PASS)]
+#[case::function_result_matches_no_key(r#"Tags[ keys == to_lower("ZULU") ] !empty"#, Status::FAIL)]
+#[case::literal_spelling_agrees_there_too(r#"Tags[ keys == "zulu" ] !empty"#, Status::FAIL)]
+#[case::case_is_not_folded(r#"Tags[ keys == to_upper("alpha") ] !empty"#, Status::FAIL)]
+#[case::not_equal_selects_the_other_key(r#"Tags[ keys != to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::not_equal_excludes_the_only_key(
+    r#"Tags[ keys != to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+#[case::in_takes_a_function_too(r#"Tags[ keys in to_lower("ALPHA") ] !empty"#, Status::PASS)]
+#[case::not_in_takes_one(r#"Tags[ keys not in to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::a_quoted_first_token_is_still_the_property(
+    r#"Tags[ "keys" == to_lower("ZULU") ] !empty"#,
+    Status::PASS
+)]
+#[case::and_the_property_reading_answers_about_the_child(
+    r#"Tags[ "keys" == to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Tags: {
+            alpha: { keys: 'zulu' }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The same regex inside a list literal, which panicked at a second and independent site.
+///
+/// `IN [/re/]` does not reach `compare_eq` first. `contained_in` asks `Vec`-style membership, which
+/// is `PathAwareValue::eq`, and that arm held `regex.is_match(s).unwrap()` under the comment "given
+/// that we have already validated the regular expression". The premise is false: validation at
+/// parse time proves the pattern compiles and says nothing about whether a match completes. So this
+/// spelling aborted at `path_value.rs` while the unwrapped one aborted at `operators.rs`.
+///
+/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- the map
+/// key filter in `QueryResolver::select` decides `keys == /re/` through it. So `eq` answers `false`
+/// and `contained_in` asks `compare_eq` as well, reading the error `eq` had to swallow. That is
+/// what makes these three spellings agree with the four above rather than reporting a plain
+/// mismatch.
+#[rstest::rstest]
+#[case::in_a_list("IN [/(?!x)((a+)+)b/]")]
+#[case::not_in_a_list("NOT IN [/(?!x)((a+)+)b/]")]
+#[case::in_a_mixed_list("IN [/(?!x)((a+)+)b/, 5]")]
+fn a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting(#[case] rhs: &str) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause, and must agree with the unwrapped spelling: one input \
+         answering differently depending on whether the regex is bracketed is its own defect",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should give the same reason the unwrapped spelling gives; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// A regex that cannot be evaluated fails its clause instead of aborting the process.
+///
+/// `fancy_regex` returns a `Result` from `is_match` rather than a `bool`, because a backtracking
+/// engine can run out of budget instead of answering. A pattern needs a lookaround or a
+/// backreference to be put on that engine at all, and then a nested quantifier makes the work grow
+/// with the length of the subject. `compare_eq` passed that error up as `Error::RegexError`, and
+/// `match_value` had arms for `Ok` and for `Error::NotComparable` and met everything else with
+/// `_ => unreachable!()`. So `Size == /(?!x)((a+)+)b/` against thirty characters aborted at exit
+/// 101, and every other rule in the file lost its verdict with it.
+///
+/// The four spellings here are the ones that reach `match_value`. The unwrapped `IN` and `NOT IN`
+/// arrive through `contained_in`'s final arm rather than through `EqOperation`, which is a second
+/// route to the same panic and would not be covered by `==` alone.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the status alone
+/// would not: an aborting build never returns a status to assert on, so the assertion would be
+/// unreachable rather than false.
+#[rstest::rstest]
+#[case::equals("==")]
+#[case::not_equals("!=")]
+#[case::in_bare("IN")]
+#[case::not_in_bare("NOT IN")]
+fn a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting(
+    #[case] operator: &str,
+) {
+    let clause = format!(
+        "Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {operator} {CATASTROPHIC}"
+    );
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause; the comparison has no answer, so neither polarity gets to \
+         claim one",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated, so the author can find the pattern; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("backtracking")),
+        "`{}` should carry fancy_regex's own reason rather than the `RegexError` wrapper's text, \
+         which claims a parse error for a pattern that parsed; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// The control: an ordinary regex is unaffected, in both spellings and both polarities.
+///
+/// The fix reaches every regex comparison, so the ordinary cases need pinning too -- an
+/// unevaluatable pattern reporting correctly is worth nothing if a pattern that matches stopped
+/// matching. `IN [/re/]` is included because it is the spelling whose membership loop was
+/// restructured.
+#[rstest::rstest]
+#[case::equals_matching("== /prod/", Status::PASS)]
+#[case::equals_not_matching("== /nomatch/", Status::FAIL)]
+#[case::not_equals_matching("!= /prod/", Status::FAIL)]
+#[case::not_equals_not_matching("!= /nomatch/", Status::PASS)]
+#[case::in_list_matching("IN [/prod/]", Status::PASS)]
+#[case::in_list_not_matching("IN [/nomatch/]", Status::FAIL)]
+#[case::not_in_list_matching("NOT IN [/prod/]", Status::FAIL)]
+#[case::not_in_list_not_matching("NOT IN [/nomatch/]", Status::PASS)]
+fn an_ordinary_regex_comparison_is_unchanged(#[case] comparison: &str, #[case] expected: Status) {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'prod-volume' } }
+        }
+    }
+    "#;
+
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {comparison}");
+    let (status, _) = status_and_messages(clause.as_str(), INPUT).unwrap();
+
+    assert_eq!(expected, status, "clause: {}", clause);
+}
+
+/// Every comparison message recorded anywhere in the evaluation tree.
+fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
+        if let Some(message) = &check.message {
+            out.push(message.clone());
+        }
+    }
+    for child in &record.children {
+        recorded_comparison_messages(child, out);
+    }
+}
+
+/// Runs one clause and returns the rule's status together with the comparison messages recorded.
+fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_comparison_messages(&root.reset_recorder().extract(), &mut messages);
+    Ok((status, messages))
+}
+
+const CATASTROPHIC: &str = "/(?!x)((a+)+)b/";
+
+const THIRTY_AS: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }
+    }
+}
+"#;

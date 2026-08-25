@@ -632,10 +632,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `regex_replace function requires the second argument to be a string`")
+        String::from("Types or variable assignments are incompatible `regex_replace function requires the second argument to be a string`")
     );
 
     // extracted expr is invalid
@@ -649,10 +649,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `regex_replace function requires the third argument to be a string`")
+        String::from("Types or variable assignments are incompatible `regex_replace function requires the third argument to be a string`")
     );
 
     // first argument is not a string type so res is an Ok(None)
@@ -691,10 +691,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `substring function requires the second argument to be a number`")
+        String::from("Types or variable assignments are incompatible `substring function requires the second argument to be a number`")
     );
 
     // third argument is not a number
@@ -702,10 +702,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `substring function requires the third argument to be a number`")
+        String::from("Types or variable assignments are incompatible `substring function requires the third argument to be a number`")
     );
 
     // join happy path
@@ -741,8 +741,8 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Join.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
-    assert_eq!(err.to_string(), "Parser Error when parsing `join function requires the second argument to be either a char or string`", );
+    assert!(matches!(err, Error::IncompatibleError(_)));
+    assert_eq!(err.to_string(), "Types or variable assignments are incompatible `join function requires the second argument to be either a char or string`", );
 
     Ok(())
 }

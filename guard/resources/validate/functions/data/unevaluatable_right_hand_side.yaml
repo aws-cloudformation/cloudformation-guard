@@ -1,0 +1,14 @@
+#
+# One value that converts and one that does not, so a comparison can be written with the failing
+# conversion on either side of the operator.
+#
+# TooBig does not fit in an i64. Which side of the comparison it lands on decided the process exit code:
+# on the left the clause failed and the run exited 19, on the right the clause also failed but the run
+# aborted at 255.
+#
+Resources:
+  numbers:
+    Type: AWS::New::Service
+    Properties:
+      Fine: 5.0
+      TooBig: 1.0e40
