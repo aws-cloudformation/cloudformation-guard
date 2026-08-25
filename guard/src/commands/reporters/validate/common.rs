@@ -177,14 +177,34 @@ impl<'record, 'value: 'record> Rendered<'record, 'value> {
 /// for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so a reporter
 /// that only walks buckets exits 19 having said nothing. `cfn.rs` grew this first; `tf.rs` had the identical
 /// gap and no fixture reaching it.
+///
+/// Each block is labelled with the rule it came from, which `collect_clause_explanations` says of a clause
+/// in words that hold here unaltered: without the label the section repeats itself for no reason a reader
+/// can see, and two rules spelling the same failing block clause produce byte-identical entries. Threaded
+/// down the same way, from the rule arm rather than read off the block, because a block does not know which
+/// rule contains it and a disjunction between them does not change the answer.
+///
+/// The label was clause-only, so a run could show a labelled clause entry and an unlabelled block entry
+/// under one heading, and three (rules file, rule) pairs over the fixture cross product reported FAIL with
+/// the rule named nowhere below the summary. All three are blocks whose entry read `GuardAccessClause#block
+/// ...` or `GuardBlockAccessClause#Location[...]`, which names the file and line but not the rule.
+///
+/// `<rule>: <context>` and not `rule <rule>`, which the arm below writes. The difference is what the entry
+/// is about. A block and a clause each have a context of their own, and the label answers which rule it sits
+/// in; a rule that failed on its own condition has no clause text to print, so `rule` is there to say that
+/// the entry's subject is the rule itself.
 pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
     clause: &'record ClauseReport<'value>,
+    rule_name: Option<&str>,
     rendered: &Rendered<'record, 'value>,
     out: &mut Vec<(String, String)>,
 ) {
     match clause {
         ClauseReport::Block(blk) => {
-            let context = one_line(&blk.context);
+            let context = match rule_name {
+                Some(name) => format!("{name}: {}", one_line(&blk.context)),
+                None => one_line(&blk.context),
+            };
             if !rendered.shows(clause) {
                 // Both messages and both bounded, for the same reasons as the clause path: the author's
                 // `<< >>` text is the half a reader can act on, and a block whose query failed at the
@@ -233,12 +253,12 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
                 }
             }
             for child in &rule.checks {
-                collect_unattributed_explanations(child, rendered, out);
+                collect_unattributed_explanations(child, Some(rule.name), rendered, out);
             }
         }
         ClauseReport::Disjunctions(ors) => {
             for child in &ors.checks {
-                collect_unattributed_explanations(child, rendered, out);
+                collect_unattributed_explanations(child, rule_name, rendered, out);
             }
         }
     }
@@ -457,7 +477,7 @@ pub(super) fn write_unattributed_explanations<'record, 'value: 'record>(
     let mut undecidable = Vec::new();
     let mut unplaceable = Vec::new();
     for each_rule in not_compliant {
-        collect_unattributed_explanations(each_rule, rendered, &mut undecidable);
+        collect_unattributed_explanations(each_rule, None, rendered, &mut undecidable);
         collect_clause_explanations(each_rule, None, rendered, &mut unplaceable);
     }
 

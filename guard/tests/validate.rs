@@ -2226,6 +2226,52 @@ mod validate_tests {
             "a run that exits 19 has to say which query it could not resolve:\n{}",
             output
         );
+        assert!(
+            output.contains("parameters_are_constrained:"),
+            "and which rule asked for it, since the entry names the file and line but not the rule:\n{}",
+            output
+        );
+    }
+
+    /// Two rules spelling the same failing block clause are told apart.
+    ///
+    /// The section labelled a clause entry with its rule and a block entry with nothing, so a block whose
+    /// context is the same text as another's produced the same line twice: two rules reported FAIL in the
+    /// summary and one entry, repeated, in the detail. Across the fixture cross product it also left seven
+    /// (rules file, rule) pairs reporting FAIL with the rule named nowhere below the summary at all, because
+    /// a block entry's context is `GuardAccessClause#block ...` or `GuardBlockAccessClause#Location[...]`,
+    /// which names the rules file and the line but never the rule.
+    ///
+    /// Labelled rather than deduplicated, for the reason the clause path already gives: that two rules
+    /// failed is the fact the reader is here for, and collapsing the repeat would hide it.
+    #[test]
+    fn two_rules_sharing_a_block_clause_are_told_apart() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["two_rules_that_share_a_block_clause.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the denylist resolves to no values, so both rules fail"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("first_reader_of_the_denylist: GuardAccessClause#block"),
+            "each entry names the rule it came from:\n{}",
+            output
+        );
+        assert!(
+            output.contains("second_reader_of_the_denylist: GuardAccessClause#block"),
+            "including the second, whose clause text is the first's:\n{}",
+            output
+        );
     }
 
     /// A pathless clause beside a placed one is reported, and the placed one is not reported twice.

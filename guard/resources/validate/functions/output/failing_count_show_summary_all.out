@@ -5,5 +5,5 @@ count_with_message.guard/SOME_RULE    FAIL
 Evaluating data template.yaml against rules count_with_message.guard
 Number of non-compliant resources 0
 Could not be evaluated:
-  GuardAccessClause#block %res EQUALS  3
+  SOME_RULE: GuardAccessClause#block %res EQUALS  3
     The comparison could not be performed: the variable on the left-hand side resolved to no values, so there was nothing to compare. If an empty selection is expected here, guard the clause with `when <variable> !empty { ... }` so it is skipped rather than failed.
