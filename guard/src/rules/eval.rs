@@ -3049,6 +3049,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
             // catch it here, which worked and cost a channel. Now the condition says which it is.
             Ok(ConditionOutcome {
                 outcome: Outcome::Unevaluatable,
+                unevaluatable_reason,
                 ..
             }) => {
                 resolver.end_record(
@@ -3059,8 +3060,24 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // rather than an inapplicable rule -- and says nothing about the cause, so on its own it
                 // sends the reader looking for a clause it does not name. The parent branch appended the
                 // cause by interpolating the error, because there the answer was the error. Here the answer
-                // is a value and `Outcome` is `Copy`, so the cause is read back out of the record the line
-                // above has just closed, where the leaf that could not evaluate the clause wrote it.
+                // is a value and `Outcome` is `Copy`, so the cause travels beside it: the fold read it at
+                // the point the undecidable branch's own record closed, and that is the reason bound here.
+                //
+                // Not `reason_from_last_closed_record` at this site, which is what it was. That reads the
+                // whole condition's record and returns the first explanation anywhere underneath, which is
+                // whichever clause was written first rather than whichever clause could not be evaluated.
+                // `Violated or Unevaluatable` answers `Unevaluatable`, and two `Violated` producers record
+                // an explanation of their own -- an incomparable pair and a non-negated assertion over an
+                // empty collection -- so a decided sibling's reason was attached to the undecidable
+                // verdict. Measured over `violated_disjunct_first.guard` and its mirror image: the same two
+                // branches in opposite order, same exit code, and only one of the two reasons named the
+                // clause the sentence was about.
+                //
+                // The positional read stays as the fallback, for a condition that answered `Unevaluatable`
+                // with no branch having recorded a reason -- a clause whose query itself failed records its
+                // message on a block rather than on a comparison, and the walk still finds the leaf
+                // underneath it. There is nothing better to say in that case and this is what was said
+                // before.
                 //
                 // Dropping it was a real loss and not only in the console: the text was absent from the
                 // JSON as well, so nothing downstream could recover it. Found by differencing this branch
@@ -3069,7 +3086,9 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 let verdict =
                     "The rule's condition could not be evaluated, so the rule fails rather \
                                than being treated as not applicable";
-                let message = match resolver.reason_from_last_closed_record() {
+                let message = match unevaluatable_reason
+                    .or_else(|| resolver.reason_from_last_closed_record())
+                {
                     Some(reason) => format!("{verdict}: {reason}"),
                     None => String::from(verdict),
                 };

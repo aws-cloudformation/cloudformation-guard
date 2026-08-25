@@ -1434,7 +1434,14 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     ///
     /// `end_record` pops the finished record and pushes it onto its parent's children, so immediately after
     /// closing one it is the last child of the record still open above it. That is the only moment this is
-    /// meaningful, and the caller is `eval_rule` right after it closes a rule's condition.
+    /// meaningful.
+    ///
+    /// Ask it about one clause, not about a condition. `recorded_clause_reason` walks the whole subtree and
+    /// returns the first explanation it finds, so asking it about a record with several clauses under it
+    /// answers about whichever was written first. The fold in `conjunction_outcome` asks per branch, at the
+    /// point that branch's own record closes, and carries the answer out on `ConditionOutcome`; `eval_rule`
+    /// reads that instead, and reaches this only as a fallback for a condition that could not be evaluated
+    /// with no branch having recorded why.
     ///
     /// This exists because `Outcome` cannot carry it. The parent branch reported *why* a condition could
     /// not be evaluated by interpolating the error into the rule's message, since the answer was the error.

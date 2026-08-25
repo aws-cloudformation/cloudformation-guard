@@ -1,0 +1,17 @@
+#
+# Data for the two mirrored fixtures `violated_disjunct_first.guard` and
+# `undecidable_disjunct_first.guard`, whose conditions each hold `Port > "abc"` beside
+# `Enabled !EMPTY`.
+#
+# `Enabled` is a bool, which is what makes `Enabled !EMPTY` undecidable: EMPTY does not apply to a
+# bool and the evaluator records that as the clause's reason. `Port` is a number, which is what makes
+# `Port > "abc"` decidable and violated -- the comparator cannot order a number against a string, so
+# the comparison does not hold -- and it records a reason of its own. Two reasons under one condition,
+# only one of which belongs to the clause that could not be evaluated.
+#
+# `Name` is what the guarded body checks, and it does not match, so a run that reports the body
+# instead of the condition is visibly wrong rather than silently right.
+#
+Enabled: true
+Port: 80
+Name: keep

@@ -1341,6 +1341,86 @@ mod validate_tests {
         );
     }
 
+    /// A rule that fails because its condition could not be evaluated names the clause that could not
+    /// be evaluated, whichever order the condition's branches were written in.
+    ///
+    /// `Outcome::or` answers `Unevaluatable` for `Violated or Unevaluatable`, so a condition can be
+    /// undecided while still holding a branch that was decided. Two of the evaluator's `Violated`
+    /// producers record an explanation of their own -- an incomparable pair, and a non-negated
+    /// assertion over an empty collection -- so "read the explanation back out of the condition
+    /// record" can return a decided branch's reason and attach it to the undecided verdict.
+    ///
+    /// Measured over exactly this pair of fixtures, which hold the same two branches in opposite
+    /// order. `Port > "abc" or Enabled !EMPTY` reported `PathAwareValues are not comparable int,
+    /// String` -- the branch that *was* evaluated -- while the mirrored spelling reported the EMPTY
+    /// type error. Same verdict and same exit code both ways, and one of the two sentences said the
+    /// condition could not be evaluated and then quoted why a sibling definitely was, sending the
+    /// reader to the wrong clause.
+    ///
+    /// Asserted as symmetry rather than against one expected string. The property is that the reason
+    /// is attributed by identity and not by position, and it takes both orders to show that: either
+    /// order alone passes for the wrong reason half the time.
+    #[test]
+    fn a_condition_reason_names_the_undecidable_clause_in_either_branch_order() {
+        // The reason follows the verdict sentence, which is fixed text ending here.
+        const AFTER_VERDICT: &str = "treated as not applicable: ";
+
+        let reason_for = |rules: &str| -> String {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = ValidateTestRunner::default()
+                .data(vec!["undecidable-beside-violated-template.yaml"])
+                .rules(vec![rules])
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader);
+
+            assert_eq!(
+                StatusCode::VALIDATION_ERROR,
+                status_code,
+                "an undecidable condition fails the rule closed, so {} must exit 19 in both orders",
+                rules
+            );
+
+            let stdout = writer.stripped().expect("failed to read stdout");
+            let line = stdout
+                .lines()
+                .find(|l| l.contains("condition could not be evaluated"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} did not report an undecidable condition, got {:?}",
+                        rules, stdout
+                    )
+                });
+            line.split_once(AFTER_VERDICT)
+                .unwrap_or_else(|| panic!("{} reported no reason at all, got {:?}", rules, line))
+                .1
+                .to_string()
+        };
+
+        let violated_first = reason_for("violated_disjunct_first.guard");
+        let undecidable_first = reason_for("undecidable_disjunct_first.guard");
+
+        assert_eq!(
+            violated_first, undecidable_first,
+            "the same two branches in opposite order must give the same reason; the branch order is \
+             not part of what the condition could not evaluate"
+        );
+        assert!(
+            violated_first.contains("Attempting EMPTY operation on type bool"),
+            "and the reason has to be the undecidable branch's own, not the violated branch's, got \
+             {:?}",
+            violated_first
+        );
+        assert!(
+            !violated_first.contains("not comparable"),
+            "quoting the branch that was decided contradicts the sentence it is attached to, got \
+             {:?}",
+            violated_first
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly
