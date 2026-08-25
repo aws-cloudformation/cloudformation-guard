@@ -575,3 +575,83 @@ fn parse_float_does_not_turn_an_overflowing_literal_into_infinity() -> crate::ru
 
     Ok(())
 }
+
+/// `parse_char` accepts a single character that is not ASCII.
+///
+/// The length guard was `val.len() > 1`, and `String::len()` counts bytes, so `"é"` -- one character, two
+/// bytes -- was refused as too long, and so was any emoji. The line immediately after it already read the
+/// value with `val.chars().next()`, so the function extracted by character and only its guard was in
+/// bytes. `substring` carries a comment about having fixed exactly this confusion; the fix was applied
+/// there and not here.
+///
+/// It fails closed, so this is a wrong rejection rather than a wrong pass, and the message compounded it
+/// by reporting a failed conversion when what happened is that the test used the wrong unit.
+///
+/// Characters here means Unicode scalar values, which is what `chars()` yields and what `substring`
+/// already indexes by. An `e` followed by a combining acute accent is two of those and is still refused,
+/// even though it draws as one glyph -- the two functions agree, which matters more than either answer.
+#[test]
+fn parse_char_measures_length_in_characters_not_bytes() -> crate::rules::Result<()> {
+    // (input, expected character, how many bytes it occupies)
+    let accepted: [(&str, char, usize); 5] = [
+        ("a", 'a', 1),
+        // Two bytes. This is the rejection.
+        ("é", 'é', 2),
+        // Three bytes.
+        ("日", '日', 3),
+        // Four bytes.
+        ("😀", '😀', 4),
+        ("7", '7', 1),
+    ];
+
+    for (input, expected, bytes) in accepted {
+        assert_eq!(input.len(), bytes, "{:?} should be {} bytes", input, bytes);
+        assert_eq!(input.chars().count(), 1, "{:?} should be one char", input);
+
+        match convert_one(
+            parse_char,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        )?
+        .first()
+        .cloned()
+        .flatten()
+        {
+            Some(PathAwareValue::Char((_, got))) => {
+                assert_eq!(got, expected, "parse_char({:?})", input)
+            }
+            other => panic!(
+                "parse_char({:?}) gave {:?}, expected the char {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    // More than one character is still refused, whatever the byte count.
+    for input in ["ab", "aé", "éé", "e\u{0301}"] {
+        assert!(
+            input.chars().count() > 1,
+            "{:?} is supposed to be several characters",
+            input
+        );
+        match convert_one(
+            parse_char,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        ) {
+            Err(crate::Error::IncompatibleError(_)) => {}
+            other => panic!("parse_char({:?}) should be refused; got {:?}", input, other),
+        }
+    }
+
+    // The empty string keeps answering with no value rather than erroring, as it did before.
+    match convert_one(
+        parse_char,
+        PathAwareValue::String((Path::root(), String::new())),
+    )?
+    .first()
+    {
+        Some(None) => {}
+        other => panic!("parse_char(\"\") should yield no value; got {:?}", other),
+    }
+
+    Ok(())
+}

@@ -244,9 +244,27 @@ pub(crate) fn parse_char(
                 }
 
                 PathAwareValue::String((path, val)) => {
-                    if val.len() > 1 {
+                    // Characters, not bytes.
+                    //
+                    // This was `val.len() > 1`, and `String::len()` counts bytes, so a single character
+                    // that is not ASCII was refused as too long: "é" is one character and two bytes, an
+                    // emoji is one and four. The line below already reads the value with
+                    // `val.chars().next()`, so the extraction was by character and only the guard was
+                    // not. `strings.rs` carries a comment about fixing this same confusion in
+                    // `substring`; it was applied there and not here.
+                    //
+                    // Unicode scalar values, which is what `chars()` yields and what `substring` indexes
+                    // by. An `e` followed by a combining accent is two of those and is still refused,
+                    // even though it draws as one glyph -- the two functions agreeing matters more than
+                    // which of the two readings is chosen.
+                    //
+                    // The count goes in the message. The old one reported a failed conversion, which read
+                    // as though the character were at fault rather than the length.
+                    let length = val.chars().count();
+                    if length > 1 {
                         return Err(crate::Error::IncompatibleError(format!(
-                            "failed to convert an string: {val} into a char at {path}"
+                            "failed to convert a string: {val} into a char at {path}, \
+                             it is {length} characters long"
                         )));
                     }
                     match val.chars().next() {
