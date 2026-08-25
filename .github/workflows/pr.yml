@@ -28,7 +28,7 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Build all crates on ${{ matrix.os }}
         run: cargo build --release --verbose
       - name: Run unit tests ${{ matrix.os }}
@@ -38,7 +38,7 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Shellcheck
         run: shellcheck install-guard.sh
 
@@ -46,7 +46,7 @@ jobs:
     name: Formatting check (cargo fmt)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
@@ -60,7 +60,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Testing Install Script (install-guard.sh)
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
@@ -74,7 +74,7 @@ jobs:
     runs-on: windows-latest
     name: Testing Windows Install Script (install-guard.ps1)
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
@@ -87,7 +87,7 @@ jobs:
     name: Linting check (clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
@@ -97,7 +97,7 @@ jobs:
     name: Spell Check with Typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: crate-ci/typos@master
         with:
           files: .
@@ -110,17 +110,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Run Fuzz Checks
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           matcher: false
           rustflags: ""
-      - uses: actions-rs/cargo@v1
-        name: Install cargo-fuzz
-        with:
-          command: install
-          args: cargo-fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
       - name: fuzz ${{ matrix.target }}
         run: |
           cd guard/fuzz
@@ -133,7 +130,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Integration tests against aws-guard-rules-registry
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
@@ -141,7 +138,7 @@ jobs:
         run: |
           cd cloudformation-guard/guard/
           cargo build --release
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout aws-guard-rules-registry
         with:
           repository: aws-cloudformation/aws-guard-rules-registry
@@ -201,7 +198,7 @@ jobs:
     runs-on: windows-latest
     name: Integration tests against aws-guard-rules-registry for Windows
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout cfn-guard
         with:
           path: cloudformation-guard
@@ -209,7 +206,7 @@ jobs:
         run: |
           cd cloudformation-guard/guard/
           cargo build --release
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         name: Checkout aws-guard-rules-registry
         with:
           repository: aws-cloudformation/aws-guard-rules-registry

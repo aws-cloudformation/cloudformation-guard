@@ -31,7 +31,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate branch and semver
         id: version
@@ -68,7 +68,7 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -165,7 +165,7 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -205,7 +205,7 @@ jobs:
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.asset_name }}
           path: "*.tar.gz"
@@ -223,11 +223,11 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -248,7 +248,7 @@ jobs:
 
       - name: Create release
         if: ${{ !inputs.dry_run }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
           name: v${{ env.VERSION }}
@@ -267,7 +267,7 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -323,12 +323,12 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ secrets.AWS_REGION }}
           role-to-assume: ${{ secrets.PUBLISHER_ROLE_NAME }}

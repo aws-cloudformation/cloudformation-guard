@@ -17,7 +17,7 @@ jobs:
       run:
         working-directory: ./action
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4.0.2
         with:
           node-version: "20"
@@ -45,7 +45,7 @@ jobs:
       - if: ${{ failure() && steps.diff.outcome == 'failure' && github.actor != 'dependabot' }}
         name: Upload Artifact
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/
