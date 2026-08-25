@@ -5312,6 +5312,58 @@ fn whitespace_inside_a_nested_numeric_index_does_not_change_the_query_part() -> 
     Ok(())
 }
 
+/// The last bracket form with the omission: a quoted key, in `map_key_lookup`.
+///
+/// `Resources["MyBucket"]` resolves to `Key("MyBucket")`, so a string literal names a property whose
+/// characters a bare identifier cannot spell. `Resources[ "MyBucket" ]` was rejected for the same reason
+/// the numeric index was, one function along: `parse_string` was called on the input directly while
+/// `open_array` and `close_array` skipped whitespace either side of it.
+#[test]
+fn whitespace_inside_a_quoted_key_does_not_change_the_query_part() -> Result<(), Error> {
+    let spellings = [
+        r#"Resources["MyBucket"].Type"#,
+        r#"Resources["MyBucket" ].Type"#,
+        r#"Resources[ "MyBucket"].Type"#,
+        r#"Resources[ "MyBucket" ].Type"#,
+        r#"Resources[  "MyBucket"  ].Type"#,
+    ];
+    let expected = AccessQuery::try_from(spellings[0])?.query;
+    for spelling in &spellings[1..] {
+        assert_eq!(
+            AccessQuery::try_from(*spelling)?.query,
+            expected,
+            "all spellings of a quoted key must parse the same: {}",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// A filter whose first token is a quoted string stays a filter.
+///
+/// Unlike the numeric index, this branch competes for input that already parses: a string literal opens
+/// a clause as readily as it names a key, and `Resources[ "AWS::CloudFormation::Authentication" exists ]`
+/// is a filter in the AWS rule registry. Reading it as a key would change what the rule tests rather than
+/// reject it, so it is asserted rather than left to the sweep. What separates the two is the token after
+/// the string: `map_key_lookup` requires `]` next, and its `close_array` carries no `cut`, so a clause
+/// backtracks into `predicate_filter_clauses` with the string unconsumed.
+#[test]
+fn a_filter_beginning_with_a_quoted_string_is_not_read_as_a_key() -> Result<(), Error> {
+    for spelling in [
+        r#"Resources[ "AWS::CloudFormation::Authentication" exists ]"#,
+        r#"Resources["AWS::CloudFormation::Authentication" exists]"#,
+    ] {
+        let query = AccessQuery::try_from(spelling)?.query;
+        assert!(
+            matches!(query.get(1), Some(QueryPart::Filter(..))),
+            "expected a filter, got {:?} for {}",
+            query.get(1),
+            spelling
+        );
+    }
+    Ok(())
+}
+
 /// A clause whose first identifier starts with `when` is a clause, not a parse failure.
 ///
 /// `tag("when")` matched the first four characters of `whenCreated`, the whitespace `when_conditions`

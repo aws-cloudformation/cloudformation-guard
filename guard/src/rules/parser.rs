@@ -1063,7 +1063,19 @@ fn array_index(input: Span) -> IResult<Span, QueryPart> {
 fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
     let (input, query_part) = alt((
-        map(parse_string, |idx| {
+        // The same omission as `array_index` above, and the last bracket form carrying it. A quoted key
+        // names a property a bare identifier cannot spell -- `Resources["MyBucket"]` is `Key("MyBucket")`
+        // -- and `Resources[ "MyBucket" ]` was rejected, while `Resources["MyBucket" ]` parsed, because
+        // `open_array` and `close_array` skipped whitespace and `parse_string` did not.
+        //
+        // Widening this branch is not the same question as widening the index, because a string literal
+        // opens a clause as readily as it names a key: `[ "AWS::CloudFormation::Authentication" exists ]`
+        // is a filter, and one in the AWS rule registry. What keeps the two apart is `close_array` below
+        // carrying no `cut`. Consuming the string and then not finding `]` is a recoverable error, so a
+        // clause backtracks out of here with the string unconsumed and `predicate_filter_clauses` reads
+        // it. The token after the string decides, which is the same rule as before the change; only the
+        // spelling with spaces now reaches it.
+        map(preceded(zero_or_more_ws_or_comment, parse_string), |idx| {
             let idx = match idx {
                 Value::String(i) => i,
                 _ => unreachable!(),
