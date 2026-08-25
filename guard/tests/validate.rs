@@ -1753,6 +1753,87 @@ mod validate_tests {
         );
     }
 
+    /// Two clauses whose rendered text is identical are both reported.
+    ///
+    /// One is inside a resource block and resolves to a value with a path; the other is at document scope
+    /// and has none. They are separate report nodes and both fail. The rendered set was keyed on the
+    /// trimmed context string, so the placed clause made the pathless one's text count as already shown
+    /// and it was dropped from the console with no section printed at all, while the JSON carried its
+    /// reason. Exit 19 either way, so nothing was misreported -- a real finding was simply missing.
+    ///
+    /// The two messages are what separate the findings: one names the property missing under
+    /// `/Resources/S3Bucket/Properties`, the other the one missing at the document root.
+    #[test]
+    fn two_clauses_that_share_a_context_are_both_reported() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["two_clauses_that_share_a_context.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Resource = S3Bucket"),
+            "the clause with a path is still rendered under its resource:\n{}",
+            output
+        );
+        assert!(
+            output.contains("Findings that belong to no resource:"),
+            "and the one without a path is reported rather than dropped:\n{}",
+            output
+        );
+        assert!(
+            output.contains("[Properties.Tags] is missing"),
+            "with the reason that belongs to it, which is the root query and not the resource one:\n{}",
+            output
+        );
+    }
+
+    /// One comparison the evaluator reported twice is still printed once.
+    ///
+    /// This is the case the rendered set was added for, and the reason the test above cannot simply be
+    /// satisfied by asking whether a clause has a path. For `"a,b" == join(%collection, ",")` the
+    /// evaluator records two clause reports under one context: an `UnResolved` one for the literal on the
+    /// left, whose path is the unlocated root, and an `InResolved` one for the comparison that ran, whose
+    /// path is under `/Resources/`. The second is placed and rendered; the first is not placed, and
+    /// printing it would restate a finding already on screen.
+    ///
+    /// Asserted on the same fixture `test_validate_with_failing_join_and_compare_output` compares against
+    /// a golden file, so the two pin the same behaviour from both directions.
+    #[test]
+    fn one_comparison_reported_twice_is_printed_once() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/join_with_message.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert_eq!(
+            output
+                .matches("a,b EQUALS  join(%collection, \",\")")
+                .count(),
+            1,
+            "the twin shares a context with the entry already on screen and is not repeated:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Findings that belong to no resource:"),
+            "so the section has nothing to say here:\n{}",
+            output
+        );
+    }
+
     /// Resources are reported in a fixed order.
     ///
     /// The reporter aggregated them into a `std::collections::HashMap` and iterated that to write the

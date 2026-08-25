@@ -317,7 +317,7 @@ fn single_line(
     // sets *is* the rendered set. Handing it to the unattributed section lets that section ask the only
     // question that matters -- "did anything show this finding?" -- instead of predicting the answer from a
     // path, which is what it did before and got wrong in both directions.
-    let rendered = super::common::rendered_contexts(by_resources.values());
+    let rendered = super::common::Rendered::of(by_resources.values());
 
     for (_resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;

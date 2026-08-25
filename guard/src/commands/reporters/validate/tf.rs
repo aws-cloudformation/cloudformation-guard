@@ -249,8 +249,8 @@ fn single_line(
         data_file, rules_file
     )?;
     // The same question the CloudFormation reporter asks, gathered before the loop consumes the map: what
-    // is the per-resource output about to render? See `rendered_contexts`.
-    let rendered = super::common::rendered_contexts(by_resources.values());
+    // is the per-resource output about to render? See `Rendered`.
+    let rendered = super::common::Rendered::of(by_resources.values());
 
     let num_of_resources = format!("{}", by_resources.len()).bold();
     writeln!(

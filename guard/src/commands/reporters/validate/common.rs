@@ -48,33 +48,75 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
     message.as_deref().filter(|text| !text.trim().is_empty())
 }
 
-/// Every context the per-resource output is going to render, given the resources it aggregated.
+/// What the per-resource output showed, in the two forms the unattributed section has to ask about.
 ///
 /// `pprint_clauses` renders a clause only when it is in that resource's own set, so the union of those sets
-/// is exactly what gets shown. Collected as context strings rather than node identities because the
-/// comparison wanted downstream is "has this text already been shown", and two clause reports that share a
-/// context are the same finding to a reader even when they are separate nodes -- which is the case the
-/// evaluator produces for a comparison it resolved one way and could not resolve another.
-pub(super) fn rendered_contexts<'a, 'record: 'a, 'value: 'record>(
-    resources: impl Iterator<Item = &'a LocalResourceAggr<'record, 'value>>,
-) -> HashSet<String> {
-    resources
-        .flat_map(|resource| resource.clauses.iter())
-        .filter_map(|held| report_context(held.key))
-        .collect()
+/// is exactly the set of nodes shown, and node identity is what answers "was this finding shown".
+///
+/// This was a set of trimmed context *strings*, which cannot tell one clause from another when the two
+/// render as the same text. `two_clauses_that_share_a_context.guard` is a rule with a placed clause and a
+/// pathless one whose rendered text is byte-identical; the placed one made the pathless one count as
+/// already shown, so it appeared nowhere while the JSON carried its reason. Exit 19 either way, so nothing
+/// was misreported and a real finding was simply missing -- which is the class of fault this section exists
+/// to remove. Counted over the fixture corpus and the AWS rule registry, 2940 rule/data pairs produce 47
+/// groups of clauses sharing a context and exactly one of them mixes a placed member with an unplaced one.
+///
+/// Identity alone is not enough, and `in_comparisons` is why the string set was there. For
+/// `"a,b" == join(%collection, ",")` the evaluator records two reports under one context: an `UnResolved`
+/// one for the literal on the left, whose value is the unlocated document root and which is therefore
+/// placed nowhere, and an `InResolved` one for the comparison that ran, whose value has a path under
+/// `/Resources/`. Only the second is rendered, so by identity the first is unshown, and printing it
+/// restates a finding already on screen. That one group is the mixed one above.
+///
+/// The two cases look alike on every field this code can read -- both are two separate `ClauseReport` nodes,
+/// adjacent siblings of one rule, with identical `context`, identical `custom_message`, differing
+/// `error_message`, one member placed and one not -- and differ only in the check they carry. That
+/// difference is not incidental. An `InResolved` report is produced by one arm of `simplified_json_from_root`
+/// and only for a clause the evaluator ran an in-comparison for, so an `UnResolved` report sharing its
+/// context is that same clause's other half. Two distinct clauses have to render as the same text to
+/// collide, which means they are the same clause text written twice, and each then contributes its own pair.
+pub(super) struct Rendered<'record, 'value: 'record> {
+    nodes: HashSet<IdentityHash<'record, ClauseReport<'value>>>,
+    in_comparisons: HashSet<String>,
 }
 
-/// The context a report would be shown under, for the two kinds that carry one.
-fn report_context(report: &ClauseReport<'_>) -> Option<String> {
-    match report {
-        ClauseReport::Clause(GuardClauseReport::Unary(unary)) => {
-            Some(unary.context.trim().to_string())
+impl<'record, 'value: 'record> Rendered<'record, 'value> {
+    pub(super) fn of<'a>(
+        resources: impl Iterator<Item = &'a LocalResourceAggr<'record, 'value>>,
+    ) -> Self
+    where
+        'record: 'a,
+    {
+        let mut nodes = HashSet::new();
+        let mut in_comparisons = HashSet::new();
+        for resource in resources {
+            for held in &resource.clauses {
+                nodes.insert(held.clone());
+                if let ClauseReport::Clause(GuardClauseReport::Binary(binary)) = held.key {
+                    if matches!(binary.check, BinaryCheck::InResolved(_)) {
+                        in_comparisons.insert(binary.context.trim().to_string());
+                    }
+                }
+            }
         }
-        ClauseReport::Clause(GuardClauseReport::Binary(binary)) => {
-            Some(binary.context.trim().to_string())
+        Rendered {
+            nodes,
+            in_comparisons,
         }
-        ClauseReport::Block(block) => Some(block.context.trim().to_string()),
-        ClauseReport::Rule(_) | ClauseReport::Disjunctions(_) => None,
+    }
+
+    /// Whether the per-resource output already accounted for this finding.
+    fn shows(&self, clause: &'record ClauseReport<'value>) -> bool {
+        if self.nodes.contains(&IdentityHash { key: clause }) {
+            return true;
+        }
+        match clause {
+            ClauseReport::Clause(GuardClauseReport::Binary(binary)) => {
+                matches!(binary.check, BinaryCheck::UnResolved(_))
+                    && self.in_comparisons.contains(binary.context.trim())
+            }
+            _ => false,
+        }
     }
 }
 
@@ -94,15 +136,15 @@ fn report_context(report: &ClauseReport<'_>) -> Option<String> {
 /// for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so a reporter
 /// that only walks buckets exits 19 having said nothing. `cfn.rs` grew this first; `tf.rs` had the identical
 /// gap and no fixture reaching it.
-pub(super) fn collect_unattributed_explanations(
-    clause: &ClauseReport<'_>,
-    rendered: &HashSet<String>,
+pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
+    clause: &'record ClauseReport<'value>,
+    rendered: &Rendered<'record, 'value>,
     out: &mut Vec<(String, String)>,
 ) {
     match clause {
         ClauseReport::Block(blk) => {
             let context = blk.context.trim().to_string();
-            if !rendered.contains(&context) {
+            if !rendered.shows(clause) {
                 // Both messages and both bounded, for the same reasons as the clause path: the author's
                 // `<< >>` text is the half a reader can act on, and a block whose query failed at the
                 // document root carries the whole document in its `error_message`.
@@ -238,9 +280,9 @@ fn shortened(explanation: &str) -> String {
 ///
 /// Deciding per clause on its own would print a second entry for a clause already shown, because the
 /// evaluator emits two reports for one comparison it resolved one way and could not resolve another -- the
-/// `join` fixture has exactly that, and it is what fails when the rule-level gate is simply removed. The
-/// rendered-context set is what separates the two cases: the twin shares its context with the entry already
-/// on screen, and a genuinely unreported sibling does not.
+/// `join_with_message.guard` fixture has exactly that, and it is what fails when the rule-level gate is
+/// simply removed. `Rendered` is what separates the two cases, and by node identity rather than by rendered
+/// text: two clauses that render as the same string are still two findings.
 ///
 /// Both messages, in the order a reader wants them: the rule author's `<< >>` text first when there is one,
 /// then the evaluator's account. `.or_else` on the two was dead code for the second half -- every clause arm
@@ -253,10 +295,10 @@ fn shortened(explanation: &str) -> String {
 /// section printed the same two lines three times over and said nothing about which rules failed.
 /// Deduplicating instead would have hidden that three rules failed rather than one, which is the fact the
 /// reader is here for.
-fn collect_clause_explanations(
-    report: &ClauseReport<'_>,
+fn collect_clause_explanations<'record, 'value: 'record>(
+    report: &'record ClauseReport<'value>,
     rule_name: Option<&str>,
-    rendered: &HashSet<String>,
+    rendered: &Rendered<'record, 'value>,
     out: &mut Vec<(String, String)>,
 ) {
     match report {
@@ -266,7 +308,7 @@ fn collect_clause_explanations(
                 GuardClauseReport::Binary(binary) => (&binary.context, &binary.messages),
             };
             let context = context.trim().to_string();
-            if rendered.contains(&context) {
+            if rendered.shows(report) {
                 return;
             }
             let explanation = [
@@ -347,10 +389,10 @@ fn write_section(
 /// An earlier version asked once per rule and predicted the answer from the findings' paths, which was wrong
 /// in both directions: it suppressed a pathless clause whose rule happened to have a located sibling, and it
 /// could not see a block whose query failed at the document root.
-pub(super) fn write_unattributed_explanations(
+pub(super) fn write_unattributed_explanations<'record, 'value: 'record>(
     writer: &mut dyn Write,
-    not_compliant: &[ClauseReport<'_>],
-    rendered: &HashSet<String>,
+    not_compliant: &'record [ClauseReport<'value>],
+    rendered: &Rendered<'record, 'value>,
 ) -> crate::rules::Result<()> {
     let mut undecidable = Vec::new();
     let mut unplaceable = Vec::new();
