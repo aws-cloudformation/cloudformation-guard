@@ -2809,6 +2809,54 @@ mod validate_tests {
         );
     }
 
+    /// sarif omits `region` for a finding whose position it does not have, rather than reporting
+    /// line 1.
+    ///
+    /// The reporter read a missing position as `(0, 0)` and then raised both numbers to 1, because the
+    /// schema puts `"minimum": 1` on `startLine` and `startColumn`. That converts "unknown" into
+    /// "line 1, column 1", which a code-scanning consumer renders as a real position and annotates the
+    /// first line of the template.
+    ///
+    /// `region` is optional: it is not in `physicalLocation`'s required set, whose only constraint is
+    /// an `anyOf` demanding `address` or `artifactLocation`. So omitting it is well formed and says
+    /// "somewhere in this artifact", which is what is known.
+    ///
+    /// `no-resources-template.yaml` puts `Resources` well down the file behind a header, so line 1 is
+    /// demonstrably not where the finding is. Positions the reporter does have are unaffected, which
+    /// `test_structured_output`'s golden covers -- it still carries `startLine` 4 and 13.
+    #[test]
+    fn sarif_omits_the_region_it_does_not_have_rather_than_reporting_line_one() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["denied_names_from_empty_reference.guard"])
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("\"results\": [") && !output.contains("\"results\": []"),
+            "the case has to produce a result for the region assertion to mean anything:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("\"startLine\": 1"),
+            "a position the reporter does not have must be omitted, not reported as line 1:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("\"startColumn\": 1"),
+            "and a column it does not have must not be reported as column 1:\n{}",
+            output
+        );
+    }
+
     /// Every sarif `artifactLocation.uri` is a resolvable `file://` URI.
     ///
     /// This has its own test because `test_structured_output` cannot have one: `sanitize_sarif_writer`

@@ -220,16 +220,12 @@ impl From<(&ClauseReport<'_>, &str)> for SarifResults {
                     rule_id = extract_rule_id(rule.name)
                 }
 
-                let (start_line, start_column) = match messages.location {
-                    Some(location) => (location.line, location.col),
-                    None => (0, 0),
-                };
-
                 let message = SarifMessage {
                     text: handle_messages(&messages),
                 };
 
-                let locations = generate_sarif_locations(name, start_line, start_column);
+                let locations =
+                    generate_sarif_locations(name, messages.location.and_then(build_region));
 
                 results.push(SarifResult {
                     rule_id,
@@ -247,14 +243,23 @@ impl From<(&ClauseReport<'_>, &str)> for SarifResults {
 #[serde(rename_all = "camelCase")]
 struct SarifPhysicalLocation {
     artifact_location: SarifArtifactLocation,
-    region: SarifRegion,
+    /// Absent when the record carries no position. `region` is not in `physicalLocation`'s required
+    /// set -- its only constraint is an `anyOf` demanding `address` or `artifactLocation`, and this
+    /// always has the latter -- so a location without one is well formed and means "somewhere in this
+    /// artifact".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<SarifRegion>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SarifRegion {
     start_line: usize,
-    start_column: usize,
+    /// Absent when the record's column is 0, Guard's marker for a position it does not have.
+    /// `region`'s `anyOf` is satisfied by `startLine` alone, so a line without a column is well
+    /// formed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_column: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -370,20 +375,40 @@ fn sanitize_path(path: &str) -> String {
     format!("file://{encoded}")
 }
 
-fn generate_sarif_locations(
-    path_string: &str,
-    start_line: usize,
-    start_column: usize,
-) -> Vec<SarifLocation> {
+/// The region for a record that has a position, or `None` for one that does not.
+///
+/// What was here read the position as `(0, 0)` when the record carried none, then raised both to 1
+/// with `.max(1)` to satisfy the schema's `"minimum": 1` on `startLine` and `startColumn`. That
+/// turns "unknown" into "line 1, column 1", which a consumer renders as a real position. Measured on
+/// a template whose `Resources` sits on line 23 behind a long header, every result reported
+/// `{"startLine": 1, "startColumn": 1}` while the message text of the same result located the finding
+/// at `L:22,C:11` -- so code scanning annotated the `AWSTemplateFormatVersion` line for a finding
+/// about `Resources`.
+///
+/// Omitting is the correct alternative rather than a lesser one. A `physicalLocation` with no
+/// `region` says "somewhere in this artifact", which is exactly what is known. A `startLine` of 1
+/// says "here", and it is not here.
+///
+/// A location whose line is 0 is treated as no position for the same reason: `startLine` cannot be 0,
+/// so there is no line to report, and clamping it would be the same fabrication.
+fn build_region(location: crate::rules::path_value::Location) -> Option<SarifRegion> {
+    if location.line < 1 {
+        return None;
+    }
+
+    Some(SarifRegion {
+        start_line: location.line,
+        start_column: (location.col >= 1).then_some(location.col),
+    })
+}
+
+fn generate_sarif_locations(path_string: &str, region: Option<SarifRegion>) -> Vec<SarifLocation> {
     vec![SarifLocation {
         physical_location: SarifPhysicalLocation {
             artifact_location: SarifArtifactLocation {
                 uri: sanitize_path(path_string),
             },
-            region: SarifRegion {
-                start_line: start_line.max(1),
-                start_column: start_column.max(1),
-            },
+            region,
         },
     }]
 }
