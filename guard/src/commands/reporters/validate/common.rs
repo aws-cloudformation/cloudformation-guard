@@ -48,6 +48,47 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
     message.as_deref().filter(|text| !text.trim().is_empty())
 }
 
+/// The text as one line, so that nothing an author wrote can pass for a line this section writes itself.
+///
+/// A `<< >>` message arrives with the author's own line breaks in it, and so does a clause context holding
+/// a quoted literal that spans lines. This section writes an entry as a line of context indented by two
+/// and a line of explanation indented by four, under a heading at column zero. Written raw, a line break
+/// inside either one puts a further line into the output at whatever column the author chose: at column
+/// zero it is shaped exactly like a heading, and at two exactly like an entry's context. A rule whose
+/// message holds
+///
+/// ```text
+/// Could not be evaluated:
+///   some_other_rule: Fabricated EXISTS
+/// ```
+///
+/// therefore printed a heading the tool never emitted, and under it an entry naming a rule that does not
+/// exist and never failed. The same reads back from `Description == "alpha<newline>Could not be
+/// evaluated:"`, where the forgery is in the context rather than in the message.
+///
+/// Collapsed onto one line rather than re-indented, which is the other way to keep the shapes apart.
+/// `emit_messages` re-indents, because a per-resource entry is a brace block with a line per message and
+/// has a shape to re-indent into; an entry here is two lines by construction. Collapsing is also what
+/// every other message writer in these reporters does -- `print_name_info` below, `cfn_reporter`,
+/// `generic_summary`, `console_reporter` -- each replacing a break with a semicolon.
+///
+/// `\r` as well as `\n`. A bare carriage return does not begin a line in a file, but it returns the cursor
+/// to column zero in a terminal and overwrites what was there, which forges a line just as well.
+///
+/// Rule names are not put through this. A name is an identifier, so it cannot hold a line break, and
+/// pretending otherwise would suggest to a reader that it can.
+///
+/// No defence against a terminal control sequence. An author who writes an ANSI cursor movement into a
+/// message can still move the cursor -- here and through every other reporter in this file, none of which
+/// escapes one either. That is a property of the writer rather than of this section.
+fn one_line(text: &str) -> String {
+    text.split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// What the per-resource output showed, in the two forms the unattributed section has to ask about.
 ///
 /// `pprint_clauses` renders a clause only when it is in that resource's own set, so the union of those sets
@@ -143,7 +184,7 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
 ) {
     match clause {
         ClauseReport::Block(blk) => {
-            let context = blk.context.trim().to_string();
+            let context = one_line(&blk.context);
             if !rendered.shows(clause) {
                 // Both messages and both bounded, for the same reasons as the clause path: the author's
                 // `<< >>` text is the half a reader can act on, and a block whose query failed at the
@@ -178,9 +219,17 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
             // on the rule, the JSON reporter has always printed it, and the console reporter printed
             // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
             // not say why.
+            //
+            // Through `shortened` like the other two arms, rather than written as recorded. This was the
+            // one arm that wrote its message neither collapsed onto a line nor bounded, and the text it
+            // writes is not always the evaluator's own: `eval.rs` replaces a called rule's status message
+            // with the calling clause's `<< >>` body, so a rule node here can carry an author's message
+            // with the author's line breaks still in it. Leaving one arm raw is a difference with nothing
+            // behind it. `non_empty_message` for the same reason the arms above use it -- an entry whose
+            // explanation is blank reads as a rendering fault rather than as a message nobody wrote.
             if rule.checks.is_empty() {
-                if let Some(explanation) = &rule.messages.custom_message {
-                    out.push((format!("rule {}", rule.name), explanation.clone()));
+                if let Some(explanation) = non_empty_message(&rule.messages.custom_message) {
+                    out.push((format!("rule {}", rule.name), shortened(explanation)));
                 }
             }
             for child in &rule.checks {
@@ -238,9 +287,12 @@ const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 ///
 /// By character rather than by byte, so a multi-byte character straddling the cut cannot panic.
 ///
-/// Trimmed before it is measured, so an explanation that fits once its indentation is set aside comes out
-/// whole and carries no ellipsis. An ellipsis is a claim that something was dropped, and a message shortened
-/// only because of the spaces around it makes that claim falsely -- the smaller half of the same defect.
+/// Collapsed onto one line by `one_line` before it is measured, which is also what sets the indentation
+/// aside: an explanation that fits once its own whitespace is gone comes out whole and carries no ellipsis.
+/// An ellipsis is a claim that something was dropped, and a message shortened only because of the spaces
+/// around it makes that claim falsely -- the smaller half of the same defect. Measuring the collapsed line
+/// rather than the recorded string is measuring what the section actually prints, which is the only length
+/// a cap on console output can be about.
 ///
 /// Measured against the raw string the leading whitespace is spent from the same budget as the words, and a
 /// message indented far enough spends all of it:
@@ -253,7 +305,8 @@ const LONGEST_CLAUSE_EXPLANATION: usize = 320;
 /// spaces, `trim_end` empties what is left, and the line renders as a bare `...` with the author's only word
 /// gone. Nothing about the length of what they wrote put it there.
 fn shortened(explanation: &str) -> String {
-    let explanation = explanation.trim();
+    let collapsed = one_line(explanation);
+    let explanation = collapsed.as_str();
     let cut = match explanation.char_indices().nth(LONGEST_CLAUSE_EXPLANATION) {
         Some((at, _)) => at,
         None => return explanation.to_string(),
@@ -307,7 +360,7 @@ fn collect_clause_explanations<'record, 'value: 'record>(
                 GuardClauseReport::Unary(unary) => (&unary.context, &unary.messages),
                 GuardClauseReport::Binary(binary) => (&binary.context, &binary.messages),
             };
-            let context = context.trim().to_string();
+            let context = one_line(context);
             if rendered.shows(report) {
                 return;
             }
@@ -345,6 +398,13 @@ fn collect_clause_explanations<'record, 'value: 'record>(
     }
 }
 
+/// One heading at column zero, then two lines per entry: the context indented by two and the explanation
+/// by four.
+///
+/// Both halves of every entry arrive as one line, because the collectors put every context and every
+/// message through `one_line`. That invariant is what makes the indentation mean anything: a further line
+/// at column zero would read as a heading and one at two spaces as another entry's context, and the entry
+/// this function is writing would have written both.
 fn write_section(
     writer: &mut dyn Write,
     heading: &str,
@@ -1637,6 +1697,67 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
 }
 
 #[cfg(test)]
+mod one_line_tests {
+    use super::one_line;
+
+    /// The forgery this exists to stop, in the shape a rule author writes it. Two of the three lines
+    /// are indistinguishable from lines the section writes itself: `Could not be evaluated:` at column
+    /// zero is a heading, and `some_other_rule: Fabricated EXISTS` at two spaces is an entry naming a
+    /// rule. Neither the rule nor the failure is real.
+    #[test]
+    fn a_message_cannot_forge_a_heading_or_an_entry() {
+        let message = "\nCould not be evaluated:\n  some_other_rule: Fabricated EXISTS\n    a reason nobody recorded\n  ";
+
+        let line = one_line(message);
+
+        assert_eq!(
+            "Could not be evaluated:; some_other_rule: Fabricated EXISTS; a reason nobody recorded",
+            line
+        );
+        assert!(!line.contains('\n'), "one line: {}", line);
+    }
+
+    /// A bare carriage return. It begins no line in a file, so a reader of a redirected run sees one
+    /// line either way, but in a terminal it returns the cursor to column zero and what follows
+    /// overwrites what came before -- which is a forged line for the reader who is actually watching.
+    #[test]
+    fn a_carriage_return_is_a_line_break_too() {
+        assert_eq!(
+            "before; Could not be evaluated:",
+            one_line("before\rCould not be evaluated:")
+        );
+        assert_eq!("a; b", one_line("a\r\nb"), "and CRLF is one break, not two");
+    }
+
+    /// Each line's own indentation goes with it. The author of a `<< >>` message indents it to the
+    /// depth of the clause carrying it, and joining those spaces onto the previous sentence would put
+    /// a run of them mid-line for no reason a reader could see.
+    #[test]
+    fn each_line_is_trimmed_and_a_blank_one_is_dropped() {
+        assert_eq!(
+            "Violation: no.; Fix: yes.",
+            one_line("\n    Violation: no.\n\n    Fix: yes.\n  ")
+        );
+    }
+
+    /// A message with nothing in it stays with nothing in it, so that `non_empty_message` and this
+    /// function agree about what counts as a message. An entry whose explanation is a lone `; ` would
+    /// read as a rendering fault.
+    #[test]
+    fn whitespace_alone_collapses_to_nothing() {
+        assert_eq!("", one_line("  \n\n \r\n "));
+    }
+
+    /// The ordinary case is left exactly as it was, which is what keeps this off the output of every
+    /// run that had nothing wrong with it.
+    #[test]
+    fn a_message_already_on_one_line_is_unchanged() {
+        let message = "Check was not compliant as property [Name] is missing.";
+        assert_eq!(message, one_line(message));
+    }
+}
+
+#[cfg(test)]
 mod shortened_tests {
     use super::{shortened, LONGEST_CLAUSE_EXPLANATION};
 
@@ -1699,11 +1820,15 @@ mod shortened_tests {
     /// where the author's sentences are 276. Measured raw, that was cut and given an ellipsis -- a report
     /// that content was dropped when none was.
     ///
-    /// The two length assertions pin the literal to the registry file, so a transcription slip here fails
-    /// as a wrong length rather than passing against a message that is not the one measured.
+    /// The three length assertions pin the literal to the registry file, so a transcription slip here
+    /// fails as a wrong length rather than passing against a message that is not the one measured. The
+    /// third is the length the section prints: the two sentences are one line each in the rule file and
+    /// arrive as one line here, so the 25 characters of break and indentation between them become the
+    /// two of `; `.
     #[test]
-    fn a_message_that_fits_once_trimmed_is_left_whole() {
+    fn a_message_that_fits_on_one_line_is_left_whole() {
         let message = "\n                        Violation: Elasticsearch domains are are configured to send application logs to Amazon CloudWatch Logs\n                        Fix: In LogPublishingOptions.ES_APPLICATION_LOGS, set Enabled to true and CloudWatchLogsLogGroupArn to the ARN of a Amazon CloudWatch Logs log group.\n                    ";
+        let printed = "Violation: Elasticsearch domains are are configured to send application logs to Amazon CloudWatch Logs; Fix: In LogPublishingOptions.ES_APPLICATION_LOGS, set Enabled to true and CloudWatchLogsLogGroupArn to the ARN of a Amazon CloudWatch Logs log group.";
 
         assert_eq!(
             322,
@@ -1713,15 +1838,19 @@ mod shortened_tests {
         assert_eq!(
             276,
             message.trim().chars().count(),
-            "and the part of it the author wrote, which fits under the cap"
+            "the part of it the author wrote"
+        );
+        assert_eq!(
+            253,
+            printed.chars().count(),
+            "and what one line of it is, which fits under the cap"
         );
 
         let short = shortened(message);
 
         assert_eq!(
-            message.trim(),
-            short,
-            "an explanation that fits once trimmed comes out whole"
+            printed, short,
+            "an explanation that fits once collapsed comes out whole"
         );
         assert!(
             !short.ends_with("..."),
@@ -1738,15 +1867,24 @@ mod shortened_tests {
     /// `function's`, the last word of the sentence explaining why the fix is what it is; measured over the
     /// content, that word is inside the cap and survives. Both forms end in an ellipsis, so asserting only
     /// on that would not tell the two apart.
+    ///
+    /// Three sentences on three lines, so collapsing them onto one saves 6 characters of the 22 this is
+    /// over by, and 328 is still over the cap. That is what makes this the control: the message is cut for
+    /// its length and not for the space around it.
     #[test]
-    fn a_message_over_the_cap_after_trimming_is_still_cut() {
+    fn a_message_over_the_cap_on_one_line_is_still_cut() {
         let message = "\n    Violation:  All AWS Lambda Functions must be configured with access to a VPC\n    Fix: set the VpcConfig.SecurityGroupIds and VpcConfig.SubnetIds parameters with a list of security groups and subnets.\n    Lambda creates an elastic network interface for each combination of security group and subnet in the function's VPC configuration.\n  ";
 
         assert_eq!(342, message.chars().count());
         assert_eq!(
             334,
             message.trim().chars().count(),
-            "over the cap even with the indentation set aside"
+            "over the cap even with the outer indentation set aside"
+        );
+        assert_eq!(
+            328,
+            super::one_line(message).chars().count(),
+            "and over it on one line, which is the length the cap is applied to"
         );
 
         let short = shortened(message);
