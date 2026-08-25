@@ -19,7 +19,7 @@ use crate::rules::{
     QueryResult, RecordTracer, RecordType, Status, TypeBlockCheck, UnResolved, UnaryValueCheck,
     ValueCheck,
 };
-use cruet::case::{camel, class, kebab, pascal, snake, title, train};
+use cruet::case::{camel, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -452,10 +452,29 @@ fn check_and_delegate<'value, 'loc: 'value>(
 }
 
 type Converters = &'static [(fn(&str) -> bool, fn(&str) -> String)];
+
 lazy_static! {
+    /// Spellings of a key that name the same property, tried when the key is not in the data as
+    /// written.
+    ///
+    /// Every entry is a case convention and nothing more, which is what makes the fallback safe: a
+    /// query may say `bucket_encryption` for `BucketEncryption` because those are one property under
+    /// two conventions. `cruet`'s "class case" is not one of these. It is Rails' class-name rule,
+    /// PascalCase *and singular*, so `to_class_case("Tags")` is `Tag` -- a different property. It was
+    /// in this list and answered `Properties.Tags.Name` out of `Properties.Tag` with a
+    /// ComparisonError over `/Resources/BucketA/Properties/Tag/Name`, comparing a value the rule
+    /// never named. Only one way round: a query for `Tag` against data holding `Tags` reported the
+    /// missing property correctly, so the disagreement between the two directions was the tell.
+    ///
+    /// Its singularising is also not a plural rule. `to_class_case` strips the trailing s from
+    /// `Status`, and gives `Analysi` for `Analysis` and `Metadatum` for `Metadata`.
+    ///
+    /// Dropping it loses no reach, because `to_pascal_case` is the same function without the
+    /// singularising and is already here. Measured rather than assumed: across the 193 paired
+    /// rule/test pairs in the AWS rule registry, class case won 57 lookups -- `!Ref`, `value`, `key`
+    /// -- and pascal, title and train case each produced the identical string for every one of them.
     static ref CONVERTERS: Converters = &[
         (camel::is_camel_case, camel::to_camel_case),
-        (class::is_class_case, class::to_class_case),
         (kebab::is_kebab_case, kebab::to_kebab_case),
         (pascal::is_pascal_case, pascal::to_pascal_case),
         (snake::is_snake_case, snake::to_snake_case),
