@@ -1,0 +1,23 @@
+###
+# One test file whose expectations name a rule from each of the two rules files beside it.
+#
+# `encryption_tests.yml` is claimed by `encryption.guard` and by nothing else -- the walker reduces
+# the prefix-matching candidates to a single claimant -- so `LOGGING_ON` is never evaluated against
+# this input, and `logging.guard` runs no tests at all. Sharing one test file across two rules files
+# is not something the pairing supports, which is why an expectation for a sibling file's rule is a
+# failure rather than a case to be excused.
+###
+---
+- name: expectations naming a rule from each of two sibling rules files
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: true
+          LoggingConfiguration:
+            DestinationBucketName: logs
+  expectations:
+    rules:
+      ENCRYPTION_ON: PASS
+      LOGGING_ON: PASS

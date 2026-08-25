@@ -12,7 +12,8 @@
       ],
       "unchecked_expectations": [
         {
-          "name": "S3_BUCKET_ENCRYPTED"
+          "name": "S3_BUCKET_ENCRYPTED",
+          "reason": "No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked"
         }
       ]
     }

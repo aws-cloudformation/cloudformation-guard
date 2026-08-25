@@ -13,10 +13,12 @@
       "skipped_rules": [],
       "unchecked_expectations": [
         {
-          "name": "S3_BUCKET_ENCRYPTED"
+          "name": "S3_BUCKET_ENCRYPTED",
+          "reason": "No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked"
         },
         {
-          "name": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE"
+          "name": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE",
+          "reason": "No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked"
         }
       ]
     },
@@ -32,10 +34,12 @@
       "skipped_rules": [],
       "unchecked_expectations": [
         {
-          "name": "S3_BUCKET_ENCRYPTED"
+          "name": "S3_BUCKET_ENCRYPTED",
+          "reason": "No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked"
         },
         {
-          "name": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE"
+          "name": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE",
+          "reason": "No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked"
         }
       ]
     }

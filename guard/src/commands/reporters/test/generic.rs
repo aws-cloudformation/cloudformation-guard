@@ -9,7 +9,8 @@ use crate::{
     commands::{
         files::iterate_over,
         reporters::test::{
-            get_by_rules, get_status_result, unmatched_expectations, write_diagnostics, Diagnostics,
+            get_by_rules, get_status_result, unchecked_expectation_message,
+            unmatched_expectation_names, write_diagnostics, Diagnostics,
         },
         test::TestSpec,
         validate, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
@@ -20,14 +21,22 @@ use crate::{
 };
 use std::io::Write;
 
-/// The expectations a test case could decide, keyed by `PASS`/`FAIL`, and what stopped it deciding the
-/// rest.
+/// The expectations a test case could decide, keyed by `PASS`/`FAIL`; what stopped it deciding the
+/// rest; and the expectations that had no rule to be decided against at all.
 ///
-/// The second half is `None` for the ordinary case. It is `Some` when a rule in the file could not be
+/// The second element is `None` for the ordinary case. It is `Some` when a rule in the file could not be
 /// evaluated at all, which costs that rule its verdict and leaves every other rule's verdict intact --
 /// so both halves are wanted, and returning only the first is what discarded a whole file's expectations
 /// over one unresolvable variable.
-type DecidedExpectations = (HashMap<String, indexmap::IndexSet<String>>, Option<String>);
+///
+/// The third is the names, so the caller can set an exit code from them. The messages go to stderr from
+/// inside, where the rest of the diagnostics are collected; only the fact that there were any has to
+/// come back out.
+type DecidedExpectations = (
+    HashMap<String, indexmap::IndexSet<String>>,
+    Option<String>,
+    Vec<String>,
+);
 
 pub struct GenericReporter<'report> {
     pub(crate) test_data: &'report [PathBuf],
@@ -80,9 +89,14 @@ impl<'report> GenericReporter<'report> {
                         // because since `eval_rules_file` evaluates every rule before returning an error,
                         // the record holds the other rules' verdicts and there is no reason to throw them
                         // away.
-                        let (by_result, eval_error) = self.get_by_result(each, &mut diagnostics)?;
+                        let (by_result, eval_error, unchecked) =
+                            self.get_by_result(each, &mut diagnostics)?;
 
-                        if by_result.get("FAIL").is_some() {
+                        // Guarded, rather than assigned outright: an expectation that could not be
+                        // evaluated outranks one that was not met, and the two can come from different
+                        // cases of the same file. Without the guard a later failing case demoted an
+                        // earlier case's error to a failure.
+                        if by_result.get("FAIL").is_some() && exit_code != TEST_ERROR_STATUS_CODE {
                             exit_code = TEST_FAILURE_STATUS_CODE;
                         }
 
@@ -91,6 +105,17 @@ impl<'report> GenericReporter<'report> {
                         // `TEST_ERROR_STATUS_CODE` rather than `TEST_FAILURE_STATUS_CODE` is what says so.
                         if let Some(e) = eval_error {
                             writeln!(self.writer, "  Error: {e}")?;
+                            exit_code = TEST_ERROR_STATUS_CODE;
+                        }
+
+                        // An expectation naming a rule that produced no verdict is the same answer by the
+                        // same argument: there was nothing to compare it against, so it was not met or
+                        // unmet, it was not evaluated. It used to be a note on stderr and exit 0, which
+                        // is how a rule renamed without its test file kept a suite green.
+                        //
+                        // The names are already on stderr with the reason for each. What is added here is
+                        // only that the run says so in its exit code.
+                        if !unchecked.is_empty() {
                             exit_code = TEST_ERROR_STATUS_CODE;
                         }
 
@@ -166,13 +191,20 @@ impl<'report> GenericReporter<'report> {
             }
         }
 
-        diagnostics.extend(unmatched_expectations(&spec.expectations.rules, &evaluated));
+        // Decided once and used twice, as in the structured reporter: the note on stderr and the exit
+        // code have to be answering the same question.
+        let unchecked = unmatched_expectation_names(&spec.expectations.rules, &evaluated);
+        diagnostics.extend(
+            unchecked
+                .iter()
+                .map(|name| unchecked_expectation_message(&self.rules, name)),
+        );
 
         if self.verbose {
             validate::print_verbose_tree(&top, self.writer);
         }
 
-        Ok((by_result, eval_error))
+        Ok((by_result, eval_error, unchecked))
     }
 
     fn print_test_case_report(&mut self, by_result: &HashMap<String, indexmap::IndexSet<String>>) {
