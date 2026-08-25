@@ -287,18 +287,38 @@ impl PartialEq for PathAwareValue {
 
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
 
+            // `unwrap_or(false)` rather than `unwrap`, and the difference is a process abort.
+            //
+            // The `unwrap` carried the comment "given that we have already validated the regular
+            // expression", which is a false premise. Validation at parse time proves the pattern
+            // *compiles*; it says nothing about whether a match *completes*. `fancy_regex` returns
+            // a `Result` from `is_match` because a pattern with a lookaround or a backreference
+            // runs on its backtracking engine, and a nested quantifier can then exceed the
+            // backtrack limit on a long value -- `/(?!zzz)(\w+\s?)+!/` against eighty characters
+            // holding no `!` did it, at exit 101, for the whole file.
+            //
+            // `false` is a compromise and not the honest answer, so it is worth being plain about
+            // what it costs. `PartialEq` returns `bool` and cannot report anything, and the arms
+            // cannot simply go: the map key filter in `QueryResolver::select` decides
+            // `Metadata[ keys == /^aws/ ]` through them, which `aws_meta_appender` relies on, and
+            // five tests fail if they stop matching. So through `eq` a regex that cannot be
+            // evaluated reads as "not equal", and a key filter selects nothing for that key --
+            // indistinguishable from a pattern that genuinely did not match.
+            //
+            // Where a verdict can be reported, it is. The comparison operators do not come through
+            // here: `X == /re/` asks `compare_eq`, and `X in [/re/]` reaches `contained_in`, which
+            // asks `compare_eq` as well and reports its error. Both fail the clause and name the
+            // reason instead of guessing.
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,

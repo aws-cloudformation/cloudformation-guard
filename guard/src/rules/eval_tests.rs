@@ -8610,3 +8610,174 @@ fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
 
     Ok(())
 }
+
+/// The same regex inside a list literal, which panicked at a second and independent site.
+///
+/// `IN [/re/]` does not reach `compare_eq` first. `contained_in` asks `Vec`-style membership, which
+/// is `PathAwareValue::eq`, and that arm held `regex.is_match(s).unwrap()` under the comment "given
+/// that we have already validated the regular expression". The premise is false: validation at
+/// parse time proves the pattern compiles and says nothing about whether a match completes. So this
+/// spelling aborted at `path_value.rs` while the unwrapped one aborted at `operators.rs`.
+///
+/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- the map
+/// key filter in `QueryResolver::select` decides `keys == /re/` through it. So `eq` answers `false`
+/// and `contained_in` asks `compare_eq` as well, reading the error `eq` had to swallow. That is
+/// what makes these three spellings agree with the four above rather than reporting a plain
+/// mismatch.
+#[rstest::rstest]
+#[case::in_a_list("IN [/(?!x)((a+)+)b/]")]
+#[case::not_in_a_list("NOT IN [/(?!x)((a+)+)b/]")]
+#[case::in_a_mixed_list("IN [/(?!x)((a+)+)b/, 5]")]
+fn a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting(#[case] rhs: &str) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause, and must agree with the unwrapped spelling: one input \
+         answering differently depending on whether the regex is bracketed is its own defect",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should give the same reason the unwrapped spelling gives; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// A regex that cannot be evaluated fails its clause instead of aborting the process.
+///
+/// `fancy_regex` returns a `Result` from `is_match` rather than a `bool`, because a backtracking
+/// engine can run out of budget instead of answering. A pattern needs a lookaround or a
+/// backreference to be put on that engine at all, and then a nested quantifier makes the work grow
+/// with the length of the subject. `compare_eq` passed that error up as `Error::RegexError`, and
+/// `match_value` had arms for `Ok` and for `Error::NotComparable` and met everything else with
+/// `_ => unreachable!()`. So `Size == /(?!x)((a+)+)b/` against thirty characters aborted at exit
+/// 101, and every other rule in the file lost its verdict with it.
+///
+/// The four spellings here are the ones that reach `match_value`. The unwrapped `IN` and `NOT IN`
+/// arrive through `contained_in`'s final arm rather than through `EqOperation`, which is a second
+/// route to the same panic and would not be covered by `==` alone.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the status alone
+/// would not: an aborting build never returns a status to assert on, so the assertion would be
+/// unreachable rather than false.
+#[rstest::rstest]
+#[case::equals("==")]
+#[case::not_equals("!=")]
+#[case::in_bare("IN")]
+#[case::not_in_bare("NOT IN")]
+fn a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting(
+    #[case] operator: &str,
+) {
+    let clause = format!(
+        "Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {operator} {CATASTROPHIC}"
+    );
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause; the comparison has no answer, so neither polarity gets to \
+         claim one",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated, so the author can find the pattern; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("backtracking")),
+        "`{}` should carry fancy_regex's own reason rather than the `RegexError` wrapper's text, \
+         which claims a parse error for a pattern that parsed; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// The control: an ordinary regex is unaffected, in both spellings and both polarities.
+///
+/// The fix reaches every regex comparison, so the ordinary cases need pinning too -- an
+/// unevaluatable pattern reporting correctly is worth nothing if a pattern that matches stopped
+/// matching. `IN [/re/]` is included because it is the spelling whose membership loop was
+/// restructured.
+#[rstest::rstest]
+#[case::equals_matching("== /prod/", Status::PASS)]
+#[case::equals_not_matching("== /nomatch/", Status::FAIL)]
+#[case::not_equals_matching("!= /prod/", Status::FAIL)]
+#[case::not_equals_not_matching("!= /nomatch/", Status::PASS)]
+#[case::in_list_matching("IN [/prod/]", Status::PASS)]
+#[case::in_list_not_matching("IN [/nomatch/]", Status::FAIL)]
+#[case::not_in_list_matching("NOT IN [/prod/]", Status::FAIL)]
+#[case::not_in_list_not_matching("NOT IN [/nomatch/]", Status::PASS)]
+fn an_ordinary_regex_comparison_is_unchanged(#[case] comparison: &str, #[case] expected: Status) {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'prod-volume' } }
+        }
+    }
+    "#;
+
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {comparison}");
+    let (status, _) = status_and_messages(clause.as_str(), INPUT).unwrap();
+
+    assert_eq!(expected, status, "clause: {}", clause);
+}
+
+/// Every comparison message recorded anywhere in the evaluation tree.
+fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
+        if let Some(message) = &check.message {
+            out.push(message.clone());
+        }
+    }
+    for child in &record.children {
+        recorded_comparison_messages(child, out);
+    }
+}
+
+/// Runs one clause and returns the rule's status together with the comparison messages recorded.
+fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_comparison_messages(&root.reset_recorder().extract(), &mut messages);
+    Ok((status, messages))
+}
+
+const CATASTROPHIC: &str = "/(?!x)((a+)+)b/";
+
+const THIRTY_AS: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }
+    }
+}
+"#;
