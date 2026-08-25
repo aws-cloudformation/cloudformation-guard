@@ -775,15 +775,23 @@ fn evaluate_against_data_input<'r>(
     Ok(overall)
 }
 
+fn data_file_is_empty(name: &str) -> Error {
+    Error::ParseError(format!(
+        "Unable to parse a template from data file: {name} is empty"
+    ))
+}
+
 fn build_data_file(content: String, name: String) -> Result<DataFile> {
     if content.trim().is_empty() {
-        return Err(Error::ParseError(format!(
-            "Unable to parse a template from data file: {name} is empty"
-        )));
+        return Err(data_file_is_empty(&name));
     }
 
     let path_value = match crate::rules::values::read_from(&content) {
         Ok(value) => PathAwareValue::try_from(value)?,
+        // A file that parses but holds no document -- one that is all comments, say -- has nothing
+        // more in it to validate than a file of no bytes, and is reported the same way. The check
+        // above cannot answer this on the text alone, so the loader is what decides it.
+        Err(Error::MissingDocument) => return Err(data_file_is_empty(&name)),
         Err(e) => {
             if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
                 return Err(Error::ParseError(e.to_string()));

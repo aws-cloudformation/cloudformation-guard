@@ -43,6 +43,11 @@ pub enum Error {
     ConversionError(#[from] Infallible),
     #[error("The path `{0}` does not exist")]
     FileNotFoundError(String),
+    /// The YAML stream parsed cleanly but held no document -- a file of nothing but comments, for
+    /// one. Distinct from `ParseError` so that the caller, which is the only place that knows the
+    /// file's name, can report it the same way it reports a file with no bytes in it.
+    #[error("no YAML document was found in the data")]
+    MissingDocument,
     #[error(transparent)]
     Errors(#[from] Errors),
     #[error("{0}")]

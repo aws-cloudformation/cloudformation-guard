@@ -257,6 +257,35 @@ mod validate_tests {
         assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
     }
 
+    /// A data file with no document in it -- nothing but comments -- used to abort the process at
+    /// `guard/src/rules/libyaml/event.rs` with `not implemented`, exit 101. An empty file and a
+    /// whitespace-only file were already reported as empty, so this asserts the message as well as
+    /// the exit code: the requirement is that a file holding no document is reported the same way
+    /// one holding no bytes is, not merely that it fails somehow.
+    #[rstest::rstest]
+    #[case::a_single_comment_line("# just a comment\n")]
+    #[case::a_comment_with_no_trailing_newline("# just a comment")]
+    #[case::comments_separated_by_blank_lines("\n# a\n\n#  b\n")]
+    #[case::a_fully_commented_out_template(
+        "# Resources:\n#   B:\n#     Properties:\n#       Encrypted: true\n"
+    )]
+    fn test_a_data_file_with_no_document_is_reported_as_empty(#[case] input: &str) {
+        let bytes = input.as_bytes();
+        let mut reader = Reader::new(ReadCursor(Cursor::new(bytes.to_vec())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["s3_bucket_server_side_encryption_enabled_2.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        assert_eq!(
+            "Error occurred Parser Error when parsing `Unable to parse a template from data file: STDIN is empty`\n",
+            writer.err_to_stripped().expect("failed to read stderr")
+        );
+    }
+
     /// A clause that fails because its reference resolved to nothing must say so in the output.
     ///
     /// Exit code alone is not enough, and asserting only the exit code is how this was missed: the

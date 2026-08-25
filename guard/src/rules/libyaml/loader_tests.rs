@@ -446,3 +446,71 @@ fn a_finite_scalar_is_still_a_float(#[case] scalar: &str, #[case] expected: f64)
 
     Ok(())
 }
+
+/// A file holding no document at all -- nothing but comments -- aborted the process:
+///
+/// ```text
+/// thread 'main' panicked at guard/src/rules/libyaml/event.rs:63:14:
+/// not implemented
+/// ```
+///
+/// `load` returns only on `DocumentEnd`, so a stream with no document in it had no exit from the
+/// loop. It ran past `StreamEnd`, libyaml answered the next pull with `YAML_NO_EVENT`, and the
+/// wildcard arm of `convert_event` met that with `unimplemented!()`. An empty file and a
+/// whitespace-only file were both already reported as empty, so the degenerate case was handled
+/// and this one was not.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the returned
+/// `Err` alone would not: an aborting build never returns a value to assert on, so the assertion
+/// would be unreachable rather than false, which is how the vacuous `if let` in
+/// `test_handle_bool_happy_path` hid a defect for so long.
+#[rstest::rstest]
+#[case::a_single_comment_line("# just a comment\n")]
+#[case::a_comment_with_no_trailing_newline("# just a comment")]
+#[case::comments_separated_by_blank_lines("\n# a\n\n#  b\n")]
+#[case::a_fully_commented_out_template(
+    "# Resources:\n#   B:\n#     Properties:\n#       Encrypted: true\n"
+)]
+fn a_stream_with_no_document_is_an_error_and_not_a_panic(#[case] content: &str) {
+    let owned = content.to_string();
+    let outcome = std::panic::catch_unwind(move || Loader::new().load(owned));
+
+    let loaded = match outcome {
+        Ok(loaded) => loaded,
+        Err(..) => panic!(
+            "loading {:?} panicked instead of returning an error",
+            content
+        ),
+    };
+
+    assert!(
+        matches!(loaded, Err(Error::MissingDocument)),
+        "loading {:?} gave {:?}, not the missing-document error",
+        content,
+        loaded
+    );
+}
+
+/// The control for the case above. Comments are not the problem and must still be skipped when
+/// there is a document underneath them, so the fix cannot be "reject anything with a comment".
+#[test]
+fn comments_around_a_real_document_are_still_skipped() -> Result<()> {
+    let docs = "# leading\nEncrypted: true\n# trailing\n";
+
+    let mut loader = Loader::new();
+    let value = loader.load(String::from(docs))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(true, ..)),
+        "the document under the comments loaded as {:?}",
+        loaded
+    );
+
+    Ok(())
+}

@@ -35,7 +35,13 @@ impl Loader {
             let (event, location) = parser.next()?;
             {
                 match event {
-                    Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
+                    Event::StreamStart | Event::DocumentStart => {}
+                    // `DocumentEnd` below is the only arm that leaves the loop, so reaching the end
+                    // of the stream means no document was ever started -- a file of nothing but
+                    // comments is the ordinary way to get here. Treating it as a no-op left the
+                    // loop pulling events past the end of the stream, where libyaml answers with
+                    // `YAML_NO_EVENT`, and that used to abort the process in `convert_event`.
+                    Event::StreamEnd => return Err(Error::MissingDocument),
                     Event::DocumentEnd => {
                         self.documents.push(self.stack.pop().unwrap());
                         self.stack.clear();
