@@ -733,11 +733,12 @@ fn evaluate_against_data_input<'r>(
         };
 
         // Written to stderr, and read before `reset_recorder` consumes the scope. Stderr rather than
-        // the report because the report on stdout is what pipelines parse, and a notice about a future
-        // release is not part of this run's result -- adding it there would change the document for
-        // every consumer in order to tell them about something that has not happened yet.
-        for notice in root_scope.deprecations() {
-            write_output.write_err(notice.clone())?;
+        // the report because the report on stdout is what pipelines parse, and neither a notice about
+        // a future release nor a note about a condition that could not be evaluated is part of this
+        // run's result -- adding either there would change the document for every consumer in order
+        // to tell them something about the rule text.
+        for note in root_scope.diagnostics() {
+            write_output.write_err(note.clone())?;
         }
 
         let root_record = root_scope.reset_recorder().extract();

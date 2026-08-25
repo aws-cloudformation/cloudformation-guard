@@ -1,0 +1,23 @@
+#
+# Three resources, so the undecidable conjunct of
+# `absorbed_undecidable_condition_per_resource.guard` records its type error three times. The note is
+# about the condition rather than about any one resource, so one line is right and three is not.
+#
+Name: keep
+Enabled: true
+Resources:
+  first:
+    Type: AWS::S3::Bucket
+    Properties:
+      Enabled: true
+      MustBeTrue: false
+  second:
+    Type: AWS::S3::Bucket
+    Properties:
+      Enabled: true
+      MustBeTrue: false
+  third:
+    Type: AWS::S3::Bucket
+    Properties:
+      Enabled: true
+      MustBeTrue: false

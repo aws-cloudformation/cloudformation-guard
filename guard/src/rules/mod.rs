@@ -360,8 +360,8 @@ pub(crate) trait RecordTracer<'value> {
 
     /// The explanation a clause recorded under the record closed most recently, if it recorded one.
     ///
-    /// Read-only and read-back, which is the opposite of `record_deprecation` and deliberately so: a
-    /// deprecation notice must never influence a verdict, and this must never *be* a verdict. It supplies
+    /// Read-only and read-back, which is the opposite of `record_diagnostic` and deliberately so: a
+    /// diagnostic must never influence a verdict, and this must never *be* a verdict. It supplies
     /// text for a message that has already been decided.
     ///
     /// Defaults to `None` so a test double need not model the record tree. Only the recorder can answer it;
@@ -417,13 +417,17 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         Ok(())
     }
 
-    /// Note that a clause took a path whose answer is going to change, without changing this run's
-    /// answer.
+    /// Note something the author should know that this run's answer does not carry.
     ///
-    /// Deliberately returns nothing, so a notice cannot influence a verdict: the evaluator can only
+    /// Two kinds so far: a clause took a path whose answer is going to change, and a condition that
+    /// could not be evaluated was absorbed by one that decided the gate on its own. Neither belongs
+    /// in the report, for the same reason -- the report on stdout is this run's result, and both of
+    /// these are about the rule text rather than about the input.
+    ///
+    /// Deliberately returns nothing, so a note cannot influence a verdict: the evaluator can only
     /// deposit a string, and no evaluation path reads one back. Defaulted to a no-op because the
     /// nested scopes forward it and the test doubles do not care.
-    fn record_deprecation(&mut self, _notice: String) {}
+    fn record_diagnostic(&mut self, _note: String) {}
 }
 
 pub(crate) trait EvaluationContext {

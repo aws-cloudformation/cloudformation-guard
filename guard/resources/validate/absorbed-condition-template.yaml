@@ -1,0 +1,16 @@
+#
+# `Name` is not "nope", so the second conjunct of the gate in
+# `absorbed_undecidable_condition.guard` decides the rule on its own and absorbs the first. `Enabled`
+# is a bool, which is what makes `Enabled !EMPTY` a type error rather than a false condition.
+#
+# `MustBeTrue: false` would fail the guarded clause, so a run that reports nothing has genuinely
+# checked nothing.
+#
+Name: keep
+Enabled: true
+Resources:
+  bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Enabled: true
+      MustBeTrue: false

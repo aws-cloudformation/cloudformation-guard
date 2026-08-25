@@ -309,6 +309,29 @@ fn incomparable_membership_notice(context: &str) -> String {
     )
 }
 
+/// Note for a gate that closed on one condition while another could not be evaluated at all.
+///
+/// Written as a note and not as a failure, because the verdict it accompanies is correct: the author
+/// asked for every condition, one of them decidably did not match, so the gate is shut and the checks
+/// it guards were rightly not run. What is wrong is the rule text, which only the author can fix, and
+/// the reason for it is the half [`Outcome::and`] discards on the way to the right answer. Saying
+/// "failed" would send the reader looking for a violation that is not there.
+///
+/// `subject` names what did not apply. A rule's own gate names the rule; a nested `when` block names
+/// only itself, because reaching that site with a rule name would mean threading one through
+/// `eval_guard_clause` and every clause evaluator under it. Little is lost: `reason` carries the path
+/// and position of the value the clause could not read, which locates it more precisely than a name.
+fn absorbed_condition_notice(subject: &str, reason: Option<String>) -> String {
+    let undecided = match reason {
+        Some(reason) => format!("One of its conditions could not be evaluated: {reason}"),
+        None => String::from("One of its conditions could not be evaluated"),
+    };
+    format!(
+        "NOTE: {subject} was not applicable because another condition did not match, so nothing in \
+         it was checked. {undecided}"
+    )
+}
+
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
 /// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
@@ -1148,7 +1171,7 @@ fn binary_operation<'value, 'loc: 'value>(
     // so the extra comparisons cost nothing on any other clause.
     if cmp.1 && cmp.0 == CmpOperator::In {
         if let Some(notice) = incomparable_membership(&lhs, rhs, &context) {
-            eval_context.record_deprecation(notice);
+            eval_context.record_diagnostic(notice);
         }
     }
     let results = cmp.compare(&lhs, rhs)?;
@@ -2278,7 +2301,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
     resolver.start_record(&context)?;
     let when_context = format!("{}/When", context);
     resolver.start_record(&when_context)?;
-    let block = match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
+    let block = match conjunction_outcome(conditions, resolver, eval_when_clause) {
         // A condition that could not be answered is not a condition that did not match. This is the
         // distinction the error channel used to carry: skipping here disarms every check inside the
         // block, which is the direction that turns a violation into exit 0, so the block is answered
@@ -2288,7 +2311,10 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
         // wrong; this says nothing was established about the input. The two differ where it matters:
         // a rule reached as a gate sees `Unevaluatable` and fails closed, where `Violated` would
         // read as an ordinary non-matching condition and make the rule inapplicable.
-        Ok(Outcome::Unevaluatable) => {
+        Ok(ConditionOutcome {
+            outcome: Outcome::Unevaluatable,
+            ..
+        }) => {
             resolver.end_record(
                 &when_context,
                 RecordType::WhenCondition(Outcome::Unevaluatable.to_status(role)),
@@ -2311,13 +2337,23 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
             return Ok(Outcome::Unevaluatable);
         }
 
-        Ok(outcome) => {
+        Ok(answered) => {
+            let outcome = answered.outcome;
             // `closes_gate`, not `status != PASS`. This is the branch that makes a block
             // inapplicable and drops every check inside it, so "did the gate close" is the
             // question being asked, and it is deliberately not `Outcome::blocks`: a gate that
             // closes blocks nothing and still silences everything it guarded, which is the hazard
             // the two predicates exist to keep apart.
             if outcome.closes_gate() {
+                // Same absorbed condition as the one `eval_rule` reports, one nesting level in. The
+                // loss was measured here too: the same conjunction spelled inside `when { }` exits
+                // 19 on this branch's base and 0 here, and only the base names the type error.
+                if answered.had_unevaluatable_conjunct {
+                    resolver.record_diagnostic(absorbed_condition_notice(
+                        "A `when` block",
+                        answered.unevaluatable_reason,
+                    ));
+                }
                 resolver.end_record(
                     &when_context,
                     RecordType::WhenCondition(outcome.to_status(role)),
@@ -3002,7 +3038,7 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
     let block = if let Some(conditions) = &rule.conditions {
         let when_context = format!("Rule#{}/When", context);
         resolver.start_record(&when_context)?;
-        match eval_conjunction_clauses(conditions, resolver, eval_when_clause) {
+        match conjunction_outcome(conditions, resolver, eval_when_clause) {
             // The distinction this PR exists to make. A condition that could not be answered is not
             // a condition that did not match, and only one of the two may leave the guarded body
             // unevaluated at exit 0.
@@ -3011,7 +3047,10 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
             // rule-level SKIP, so an undecidable gate silenced its body exactly as a non-matching
             // one does. The fix was to route the undecidable case through the error channel and
             // catch it here, which worked and cost a channel. Now the condition says which it is.
-            Ok(Outcome::Unevaluatable) => {
+            Ok(ConditionOutcome {
+                outcome: Outcome::Unevaluatable,
+                ..
+            }) => {
                 resolver.end_record(
                     &when_context,
                     RecordType::RuleCondition(Outcome::Unevaluatable.to_status(role)),
@@ -3045,7 +3084,8 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 return Ok(Outcome::Unevaluatable);
             }
 
-            Ok(outcome) => {
+            Ok(answered) => {
+                let outcome = answered.outcome;
                 let status = outcome.to_status(role);
                 // `closes_gate`, not `status != PASS`. Identical in behaviour --
                 // `from_status` maps PASS to Satisfied and both FAIL and SKIP to variants
@@ -3056,6 +3096,16 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 // everything it guarded, which is the hazard the two predicates exist to
                 // keep apart.
                 if outcome.closes_gate() {
+                    // The arm above has already taken every answer that *is* undecidable, so a
+                    // conjunct that was undecidable and an answer that is not means the answer
+                    // absorbed it. SKIP is still right and stays; the reason goes to stderr, which
+                    // moves neither the exit code nor the report.
+                    if answered.had_unevaluatable_conjunct {
+                        resolver.record_diagnostic(absorbed_condition_notice(
+                            &format!("Rule {}", rule.rule_name),
+                            answered.unevaluatable_reason,
+                        ));
+                    }
                     resolver.end_record(&when_context, RecordType::RuleCondition(status))?;
                     resolver.end_record(
                         &context,
@@ -3229,7 +3279,45 @@ fn disjunction_type_name<T>() -> &'static str {
     }
 }
 
-#[allow(clippy::never_loop)]
+/// What a conjunction answered, and whether that answer buried a conjunct nothing could decide.
+///
+/// [`Outcome::and`] absorbs [`Outcome::Violated`], which is right and is not changing: Kleene has the
+/// same table, and a gate whose author asked for two conditions where one decidably did not match
+/// does not apply. But absorption discards the other conjunct, and when that conjunct was
+/// [`Outcome::Unevaluatable`] the discarded thing was the explanation of a defect in the rule text:
+///
+/// ```text
+/// rule r when Enabled !EMPTY
+///             Name == "nope" {
+/// ```
+///
+/// `Enabled !EMPTY` against `Enabled: true` is a type error in the rule -- EMPTY does not apply to a
+/// bool -- and says so. Against a template with `Name: nope` the fold answers `Unevaluatable`, the
+/// rule fails, and the author reads the type error. Against one with any other `Name` the second
+/// conjunct answers `Violated`, absorbs the first, and the author reads nothing at exit 0. Whether a
+/// malformed rule is reported should not depend on which template it was run against, so the fact and
+/// the reason are carried out here and go to stderr, leaving both the verdict and the report alone.
+///
+/// Carried beside [`Outcome`] rather than inside it, for the reason recorded on
+/// [`RecordTracer::reason_from_last_closed_record`]: a payload would break `Copy` and force `and` and
+/// `or` to choose between two reasons.
+#[derive(Debug)]
+struct ConditionOutcome {
+    /// The fold's answer. Nothing else on this struct changes it.
+    outcome: Outcome,
+
+    /// True when some conjunct answered [`Outcome::Unevaluatable`].
+    ///
+    /// Read only by the gate branches, and there it means the answer buried it: every pairing of an
+    /// unevaluatable conjunct with something other than `Violated` maps to `Unevaluatable` itself, so
+    /// a caller that has already matched that arm away and still sees this flag is looking at a
+    /// `Violated` answer standing in for a condition nothing could decide.
+    had_unevaluatable_conjunct: bool,
+
+    /// The first such conjunct's own recorded explanation, when it recorded one.
+    unevaluatable_reason: Option<String>,
+}
+
 /// Conjunctions of disjunctions, folded through [`Outcome`] rather than counted.
 ///
 /// The counting version could not express one of the four answers. It tallied passes and fails, read
@@ -3249,6 +3337,9 @@ fn disjunction_type_name<T>() -> &'static str {
 ///
 /// The other is that a disjunction of undecidable branches is `Unevaluatable` rather than `FAIL`.
 /// Reporting a violation there blames the input for a reference that never resolved.
+///
+/// Callers that gate a block on the answer want [`conjunction_outcome`] instead, which is this fold
+/// and also says whether the answer absorbed a conjunct nothing could decide.
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -3257,8 +3348,25 @@ pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
 where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Outcome>,
 {
+    conjunction_outcome(conjunctions, resolver, eval_fn).map(|answered| answered.outcome)
+}
+
+/// [`eval_conjunction_clauses`], keeping what the fold absorbed on the way to its answer.
+///
+/// See [`ConditionOutcome`] for why the extra half exists and who reads it.
+#[allow(clippy::never_loop)]
+fn conjunction_outcome<'value, 'loc: 'value, T, E>(
+    conjunctions: &'value Conjunctions<T>,
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+    eval_fn: E,
+) -> Result<ConditionOutcome>
+where
+    E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Outcome>,
+{
     let context = format!("{}#disjunction", disjunction_type_name::<T>());
     let mut conjoined = Outcome::identity();
+    let mut had_unevaluatable_conjunct = false;
+    let mut unevaluatable_reason = None;
 
     for conjunction in conjunctions {
         let multiple_ors_present = conjunction.len() > 1;
@@ -3267,9 +3375,22 @@ where
         }
 
         let mut disjoined = Outcome::identity();
+        let mut disjoined_reason = None;
         for disjunction in conjunction {
             match eval_fn(disjunction, resolver) {
                 Ok(outcome) => {
+                    // Read here rather than once after the fold, because
+                    // `reason_from_last_closed_record` answers about the record just closed and this
+                    // is the only point at which that record is *this* branch's. Asking afterwards
+                    // returns the first explanation anywhere under the condition, and a violated
+                    // sibling carries one of its own -- an incomparable pair and an empty collection
+                    // both record a reason while answering `Violated` -- so on the conjunction this
+                    // exists for it would quote the wrong clause and call a violation undecidable.
+                    if let Outcome::Unevaluatable = outcome {
+                        if disjoined_reason.is_none() {
+                            disjoined_reason = resolver.reason_from_last_closed_record();
+                        }
+                    }
                     disjoined = disjoined.or(outcome);
                     // Satisfied absorbs, so the remaining branches cannot change the answer. The
                     // counting version stopped here too, and stopping keeps the records to the
@@ -3311,10 +3432,24 @@ where
             )?;
         }
 
+        // Judged on the conjunct's answer, not on any branch's. A disjunction holding an undecidable
+        // branch beside a satisfied one *was* decided -- `or` absorbs only `Satisfied`, deliberately --
+        // and nothing about it was buried, so the flag stays down and the guarded block still runs.
+        if let Outcome::Unevaluatable = disjoined {
+            had_unevaluatable_conjunct = true;
+            if unevaluatable_reason.is_none() {
+                unevaluatable_reason = disjoined_reason;
+            }
+        }
+
         conjoined = conjoined.and(disjoined);
     }
 
-    Ok(conjoined)
+    Ok(ConditionOutcome {
+        outcome: conjoined,
+        had_unevaluatable_conjunct,
+        unevaluatable_reason,
+    })
 }
 
 #[cfg(test)]

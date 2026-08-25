@@ -1182,6 +1182,165 @@ mod validate_tests {
         }
     }
 
+    /// A gate that closed on one condition while another could not be evaluated says why, without
+    /// moving the verdict.
+    ///
+    /// `Outcome::and` absorbs `Violated`, so `Enabled !EMPTY` -- a type error in the rule, since EMPTY
+    /// does not apply to a bool -- is discarded by `Name == "nope"` deciding the gate on its own. The
+    /// verdict is right and is not what this pins: the author asked for both conditions and one of them
+    /// decidably did not match, so the rule does not apply, and reverting to fail-closed would report a
+    /// violation for a rule that genuinely does not apply.
+    ///
+    /// What was lost with the absorbed conjunct was the reason. Measured against this branch's base
+    /// over two templates differing only in `Name`: the base exits 19 and names the type error for
+    /// both, this branch exits 19 and names it for `Name: nope` and exits 0 silently for any other
+    /// name. So whether the author learns their rule is malformed depended on the template they
+    /// happened to run it against.
+    ///
+    /// On stderr for the reason the deprecation notices are: stdout is the report pipelines parse, and
+    /// this is about the rule text rather than about this run's result. The assertions cover the exit
+    /// code and the report as well as the note, because a note that moves either is not a note.
+    #[test]
+    fn an_absorbed_undecidable_condition_still_reports_why() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["absorbed-condition-template.yaml"])
+            .rules(vec!["absorbed_undecidable_condition.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the note must not move the exit code: the gate closed on a condition that decided, so \
+             the rule does not apply and nothing failed"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notes: Vec<&str> = stderr.lines().filter(|l| l.starts_with("NOTE:")).collect();
+        assert_eq!(
+            notes.len(),
+            1,
+            "one note for the one absorbed condition, got {:?} from stderr {:?}",
+            notes,
+            stderr
+        );
+        // The sentence this change owns, asserted whole rather than by keyword: it has to name the
+        // rule, say that nothing was checked, and not read as a failure, and all three are properties
+        // of this exact wording. The reason after it comes from the clause and is asserted separately,
+        // so a change to the evaluator's error text cannot make this look like a wording regression.
+        assert!(
+            notes[0].starts_with(
+                "NOTE: Rule buckets_flagged_and_named was not applicable because another condition \
+                 did not match, so nothing in it was checked. One of its conditions could not be \
+                 evaluated: "
+            ),
+            "got {:?}",
+            notes
+        );
+        assert!(
+            notes[0].contains("Attempting EMPTY operation on type bool"),
+            "the note should carry the reason the condition could not be evaluated, which is the half \
+             absorption discards, got {:?}",
+            notes
+        );
+
+        // Same run again, because `stripped` and `err_to_stripped` each consume the writer and one run
+        // cannot be read for both.
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        ValidateTestRunner::default()
+            .data(vec!["absorbed-condition-template.yaml"])
+            .rules(vec!["absorbed_undecidable_condition.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains("Status = SKIP")
+                && stdout.contains("buckets_flagged_and_named    SKIP"),
+            "the report should be the one a closed gate has always produced, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("NOTE:") && !stdout.contains("could not be evaluated"),
+            "the note belongs on stderr; nothing about it may reach the report, got {:?}",
+            stdout
+        );
+    }
+
+    /// The control: a gate that closes with nothing absorbed stays silent.
+    ///
+    /// One conjunct, decided, false. This is what most gates in most rulesets do, so a note here would
+    /// fire on the ordinary case and be one nobody reads. It is also the assertion that the note is
+    /// keyed on a conjunct that could not be evaluated rather than on the gate closing.
+    #[test]
+    fn a_plainly_false_condition_stays_quiet() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["absorbed-condition-template.yaml"])
+            .rules(vec!["plainly_false_condition.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a gate that did not match is not a failure"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("NOTE:"),
+            "a gate that closed with every condition decided has nothing to report, got {:?}",
+            stderr
+        );
+    }
+
+    /// The note belongs to the condition, not to the resource.
+    ///
+    /// `Resources.*.Properties.Enabled !EMPTY` records its type error once per matched resource, so the
+    /// record tree holds three explanations for a three-resource template while the clause contributes
+    /// one answer to the fold. Reporting per resource would turn one malformed condition into as many
+    /// lines as the template has resources, which is how the deprecation notices earned their set.
+    #[test]
+    fn an_absorbed_condition_is_reported_once_and_not_once_per_resource() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["absorbed-condition-three-resources-template.yaml"])
+            .rules(vec!["absorbed_undecidable_condition_per_resource.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the resource count must not change the verdict either"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notes: Vec<&str> = stderr.lines().filter(|l| l.starts_with("NOTE:")).collect();
+        assert_eq!(
+            notes.len(),
+            1,
+            "one condition could not be evaluated, so one note, whatever the template holds three of. \
+             Got {:?} from stderr {:?}",
+            notes,
+            stderr
+        );
+    }
+
     /// The report lists failing rules in a fixed order.
     ///
     /// The failing set arrives at the console reporter as a `HashMap`, so iterating it directly

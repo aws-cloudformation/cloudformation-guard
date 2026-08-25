@@ -126,7 +126,7 @@ impl<'report> GenericReporter<'report> {
             .map(|e| e.to_string());
 
         // Read before `reset_recorder` consumes the scope, as in `validate`.
-        diagnostics.extend(root_scope.deprecations().cloned());
+        diagnostics.extend(root_scope.diagnostics().cloned());
 
         let top = root_scope.reset_recorder().extract();
 
