@@ -2809,6 +2809,64 @@ mod validate_tests {
         );
     }
 
+    /// junit separates the messages inside one `<failure>` instead of running them together.
+    ///
+    /// `serialize_text_events` wrote one XML text event per message, and adjacent text events
+    /// concatenate with nothing between them. A custom message ending `...must be Enabled` followed by
+    /// `Check was not compliant...` came out as the non-word `must be EnabledCheck`, and the committed
+    /// junit golden carried `].Check` five times over. With several failing rules in one test case
+    /// there was no boundary a consumer could split on either, so which message belonged to which rule
+    /// was not recoverable from the document.
+    ///
+    /// The sibling `Skipped` arm already joined its reasons for exactly this reason, with a comment
+    /// saying so. Only the `Failure` arm was left.
+    ///
+    /// Not fixed here, and measured as unchanged: junit orders the pair custom-then-error while sarif
+    /// orders it error-then-custom, so the two still render the same finding's text differently. There
+    /// is no correctness argument for either order, so picking one would churn a golden for nothing.
+    #[test]
+    fn junit_separates_the_messages_inside_one_failure() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("junit"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("].\nCheck was not compliant"),
+            "consecutive messages must be separated:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("].Check was not compliant"),
+            "and must not run together, which is what produced `].Check`:\n{}",
+            output
+        );
+        // The messages are joined, not merely emitted one after another, so an empty custom message --
+        // which is `Some("")` for most clauses rather than `None` -- must not become a blank line or a
+        // newline straight after the opening tag.
+        assert!(
+            !output.contains("\">\nCheck was not compliant"),
+            "a dropped empty message must not leave a newline after the <failure> tag:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("].\n\nCheck was not compliant"),
+            "nor a blank line between two error messages:\n{}",
+            output
+        );
+    }
+
     /// sarif omits `region` for a finding whose position it does not have, rather than reporting
     /// line 1.
     ///

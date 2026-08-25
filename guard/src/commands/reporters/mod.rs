@@ -377,12 +377,23 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     let name = failure.name.as_ref();
                     let event = match failure.messages.is_empty() {
                         false => {
+                            // `custom_message` is `Some("")` rather than `None` for a clause with no
+                            // custom message, which is most of them. That was invisible while each
+                            // message was written as its own XML text event, because an empty event
+                            // writes nothing; once the messages are joined with a separator an empty
+                            // one becomes a blank line, and a leading empty one puts a newline
+                            // immediately after the `<failure>` tag. Dropping them here rather than at
+                            // the join also makes the emptiness test above mean what it says.
                             let messages = failure.messages.iter().fold(vec![], |mut acc, msg| {
                                 if let Some(custom_message) = &msg.custom_message {
-                                    acc.push(custom_message);
+                                    if !custom_message.is_empty() {
+                                        acc.push(custom_message);
+                                    }
                                 }
                                 if let Some(error_message) = &msg.error_message {
-                                    acc.push(error_message);
+                                    if !error_message.is_empty() {
+                                        acc.push(error_message);
+                                    }
                                 }
                                 acc
                             });
@@ -446,9 +457,19 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
     ) -> crate::rules::Result<()> {
         match self {
             EventType::Failure(Failure { messages, .. }) => {
-                for message in messages {
-                    writer.write_event(Event::Text(BytesText::new(message)))?;
-                }
+                // One text event with explicit separators, for the reason the `Skipped` arm below
+                // gives: adjacent text events concatenate with nothing between them. A custom message
+                // and the error message that follows it ran together into a non-word, so
+                // `...must be Enabled` plus `Check was not compliant...` read as `must be
+                // EnabledCheck was not compliant`, and the committed junit golden carried `].Check`
+                // five times over. With several failing rules in one test case there was also no
+                // boundary a consumer could split on to recover which message belonged to which.
+                let joined = messages
+                    .iter()
+                    .map(|message| message.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                writer.write_event(Event::Text(BytesText::new(&joined)))?;
             }
             EventType::Skipped(reasons) => {
                 // One text event with explicit separators, not one event per reason. Adjacent text
