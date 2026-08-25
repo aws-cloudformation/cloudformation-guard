@@ -694,6 +694,93 @@ fn test_range_type_failures() {
     );
 }
 
+/// A range whose lower bound is above its upper admits nothing, so a clause over it cannot fail for
+/// any input in one direction and cannot pass for any input in the other. Each of these parsed
+/// before, and the span is the literal rather than what follows it.
+#[test]
+fn test_range_type_rejects_reversed_bounds() {
+    for s in ["r[20,10]", "r(20,10)", "r[20,10)", "r(20,10]", "r[-1,-9]"] {
+        let err = parse_range(from_str2(s));
+        let span = unsafe { Span::new_from_raw_offset(0, 1, s, "") };
+        match err {
+            Err(nom::Err::Failure(e)) => {
+                assert_eq!(e.span, span, "span must be the literal for {}", s);
+                assert_eq!(e.kind, ErrorKind::IsNot);
+                assert!(
+                    e.context.contains("no value can satisfy it"),
+                    "{} gave {}",
+                    s,
+                    e.context
+                );
+                assert!(e.context.contains("20") || e.context.contains("-1"));
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+
+    // The same emptiness through a float and through a char, with the bound named as written.
+    for (s, bounds) in [
+        ("r[2.0,1.0]", "2.0 is above the upper bound 1.0"),
+        ("r[z,a]", "'z' is above the upper bound 'a'"),
+    ] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => {
+                assert!(e.context.contains(bounds), "{} gave {}", s, e.context)
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+}
+
+/// Equal bounds split on whether the range admits its one value. `r[15,15]` is 15 and is kept; the
+/// three spellings that open an end of it admit nothing and go with the reversed ranges.
+#[test]
+fn test_range_type_equal_bounds() {
+    let s = "r[15,15]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    let v = parse_range(from_str2(s));
+    assert_eq!(
+        v,
+        Ok((
+            cmp,
+            Value::RangeInt(RangeType {
+                upper: 15,
+                lower: 15,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE
+            })
+        ))
+    );
+    let r = match v.unwrap().1 {
+        Value::RangeInt(val) => val,
+        _ => unreachable!(),
+    };
+    assert!(15.is_within(&r));
+    assert!(!14.is_within(&r));
+    assert!(!16.is_within(&r));
+
+    assert!(matches!(
+        parse_range(from_str2("r[1.5,1.5]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+    assert!(matches!(
+        parse_range(from_str2("r[m,m]")),
+        Ok((_, Value::RangeChar(_)))
+    ));
+
+    for s in ["r(15,15)", "r[15,15)", "r(15,15]"] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => assert!(
+                e.context.contains("both bounds are 15")
+                    && e.context.contains("no value can satisfy it"),
+                "{} gave {}",
+                s,
+                e.context
+            ),
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+}
+
 //
 // test with comments
 //

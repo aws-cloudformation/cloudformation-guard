@@ -1,6 +1,6 @@
 use fancy_regex::Regex;
 use std::convert::TryFrom;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
@@ -518,6 +518,76 @@ fn range_value(input: Span) -> IResult<Span, Value> {
     )(input)
 }
 
+/// Does the range admit any value at all?
+///
+/// A lower bound below the upper admits the values between them, whatever the two ends are. Equal
+/// bounds admit exactly that one value, and only when both ends are closed: `r[15,15]` is 15 and
+/// nothing else, while `r(15,15)`, `r[15,15)` and `r(15,15]` are empty. A lower bound above the
+/// upper is empty for every spelling.
+///
+/// Bounds that do not order against each other answer `false` and are therefore refused. No such
+/// bound reaches here today, because `parse_float` rejects the non-finite literals first, so this
+/// is the safe direction rather than a reachable case.
+fn range_admits_a_value<T: PartialOrd>(lower: &T, upper: &T, inclusive: u8) -> bool {
+    const BOTH_CLOSED: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    if lower < upper {
+        return true;
+    }
+    lower == upper && inclusive & BOTH_CLOSED == BOTH_CLOSED
+}
+
+/// Refuse a range that no value can satisfy, naming both bounds.
+///
+/// `Failure`, not `Error`, for the reason given on `parse_float` above: a recoverable error sends
+/// `alt` back to the other value productions, and the author is told about a stray fragment instead
+/// of about the range they wrote.
+/// The bounds are named through `Debug` rather than `Display`, so that a float keeps its point and a
+/// char is quoted. `Display` prints the `2.0` of `r[2.0,1.0]` as `2`, which does not match what the
+/// author wrote.
+fn reject_empty_range<'a, T: PartialOrd + Debug>(
+    lower: &T,
+    upper: &T,
+    inclusive: u8,
+    input: Span<'a>,
+) -> Result<(), nom::Err<ParserError<'a>>> {
+    if range_admits_a_value(lower, upper, inclusive) {
+        return Ok(());
+    }
+    let context = match lower == upper {
+        true => format!(
+            "Range literal is empty: both bounds are {lower:?} and at least one end is exclusive, so no value can satisfy it"
+        ),
+        false => format!(
+            "Range literal is empty: the lower bound {lower:?} is above the upper bound {upper:?}, so no value can satisfy it"
+        ),
+    };
+    Err(nom::Err::Failure(ParserError {
+        context,
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
+/// The four range forms, each over a lower and an upper bound.
+///
+/// Nothing compared the two bounds, so a transposed pair parsed and became a clause that no
+/// document can move. `Resources.SG.Properties.Size not in r[20,10]` exits 0 against every
+/// template, and the entire output at the default summary level is a two-line PASS banner: no
+/// clause, no range, nothing to notice. Turned around, `in r[20,10]` exits 19 against every
+/// template just as vacuously. Floats and chars transpose the same way, `r[2.0,1.0]` and `r[z,a]`,
+/// and `r(15,15)` reaches the same emptiness through equal bounds rather than through a swap.
+///
+/// The argument for refusing this rather than tolerating it is the one already made on
+/// `parse_float` above, where a non-finite literal is rejected because `Size < 1e999` cannot fail
+/// for any input and `Size > 1e999` cannot pass for any input. An empty range has that property,
+/// reached by a transposition typo instead of by an exponent. `docs/CLAUSES.md:189-192` defines all
+/// four forms in terms of a `<lower_limit>` and an `<upper_limit>` with the inequalities spelled
+/// out, so a range whose lower bound is above its upper is not one of the documented forms.
+///
+/// Equal bounds are treated on the same measure and split: `r[15,15]` admits exactly 15, which is a
+/// usable thing to write, and it is kept. The three spellings that put an open end on equal bounds
+/// admit nothing, so they go with the reversed ones. That line is drawn on purpose in
+/// `range_admits_a_value` rather than falling out of whichever comparison happened to be written.
 fn parse_range(input: Span) -> IResult<Span, Value> {
     let parsed = preceded(
         char('r'),
@@ -531,23 +601,32 @@ fn parse_range(input: Span) -> IResult<Span, Value> {
     let mut inclusive: u8 = if open == '[' { LOWER_INCLUSIVE } else { 0u8 };
     inclusive |= if close == ']' { UPPER_INCLUSIVE } else { 0u8 };
     let val = match (start, end) {
-        (Value::Int(s), Value::Int(e)) => Value::RangeInt(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Int(s), Value::Int(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeInt(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Float(s), Value::Float(e)) => Value::RangeFloat(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Float(s), Value::Float(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Char(s), Value::Char(e)) => Value::RangeChar(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Char(s), Value::Char(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeChar(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
         _ => {
             return Err(nom::Err::Failure(ParserError {
