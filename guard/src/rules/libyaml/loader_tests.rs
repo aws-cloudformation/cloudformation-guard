@@ -28,6 +28,11 @@ fn yaml_loader() -> Result<()> {
     Ok(())
 }
 
+/// The assertion below has to be unconditional. It used to sit inside an
+/// `if let MarkedValue::Bool(..)`, so every spelling the loader read as a string satisfied the case
+/// by never reaching the assertion, and 14 of the 22 cases passed while asserting nothing. This
+/// file has named the whole YAML 1.1 set as the intended one since the cases were written; a test
+/// that could not fail is what let the capitalised spellings go on being strings anyway.
 #[rstest::rstest]
 #[case::standard_lowercase_true("true", true)]
 #[case::standard_capitalized_true("True", true)]
@@ -52,20 +57,23 @@ fn yaml_loader() -> Result<()> {
 #[case::yaml_n_lowercase("n", false)]
 #[case::yaml_n_uppercase("N", false)]
 fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Result<()> {
-    let docs = format!("check: {arg}");
-
     let mut loader = Loader::new();
-    match loader.load(String::from(docs))? {
-        MarkedValue::Map(map, ..) => {
-            assert!(map.len() == 1);
-            let (.., result) = map.first().unwrap();
+    let value = loader.load(format!("check: {arg}"))?;
 
-            if let MarkedValue::Bool(result, ..) = *result {
-                assert_eq!(result, expected);
-            }
-        }
-        _ => unreachable!("this isn't possible"),
-    }
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    assert_eq!(1, map.len());
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(b, ..) if *b == expected),
+        "{} loaded as {:?}, not the boolean {}",
+        arg,
+        loaded,
+        expected
+    );
 
     Ok(())
 }
@@ -510,6 +518,78 @@ fn comments_around_a_real_document_are_still_skipped() -> Result<()> {
         matches!(loaded, MarkedValue::Bool(true, ..)),
         "the document under the comments loaded as {:?}",
         loaded
+    );
+
+    Ok(())
+}
+
+/// The other half of `test_handle_bool_happy_path`: widening the boolean set must not sweep in
+/// everything that looks like one. YAML 1.1 admits three casings of each word -- all lowercase,
+/// initial capital, all uppercase -- so a mixed-case spelling is a string, and so is a word that
+/// merely contains one. Without these cases a `to_lowercase` or a `starts_with` would pass the set
+/// above while making `tRuE` a boolean, which no schema does.
+#[rstest::rstest]
+#[case::mixed_case_true("tRuE")]
+#[case::mixed_case_yes("yES")]
+#[case::mixed_case_off("oFf")]
+#[case::a_word_outside_the_set("enabled")]
+#[case::a_single_letter_outside_the_set("t")]
+#[case::a_word_that_starts_with_one("TRUE_VALUE")]
+#[case::a_word_that_ends_with_one("NOT_TRUE")]
+fn a_scalar_outside_the_boolean_set_is_still_a_string(#[case] scalar: &str) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+        "{} loaded as {:?}, but no YAML schema resolves it to a boolean",
+        scalar,
+        loaded
+    );
+
+    Ok(())
+}
+
+/// An explicit `!!bool` tag went through `str::parse::<bool>`, which takes `true` and `false` and
+/// nothing else, so the tagged path was stricter than the untagged one it should agree with:
+/// `!!bool yes` loaded as the string "yes" while a bare `yes` was already a boolean, and
+/// `!!bool True` loaded as the string "True". Both paths now read the same set.
+#[rstest::rstest]
+#[case::lowercase("true", true)]
+#[case::capitalized("True", true)]
+#[case::uppercase("TRUE", true)]
+#[case::yaml_yes("yes", true)]
+#[case::yaml_on("On", true)]
+#[case::yaml_y("y", true)]
+#[case::lowercase_false("false", false)]
+#[case::capitalized_false("False", false)]
+#[case::yaml_no("NO", false)]
+#[case::yaml_off("off", false)]
+fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
+    #[case] scalar: &str,
+    #[case] expected: bool,
+) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: !!bool {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(b, ..) if *b == expected),
+        "!!bool {} loaded as {:?}, not the boolean {}",
+        scalar,
+        loaded,
+        expected
     );
 
     Ok(())

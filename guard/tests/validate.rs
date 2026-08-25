@@ -286,6 +286,105 @@ mod validate_tests {
         );
     }
 
+    /// A gate written `== true` has to fire for every spelling YAML makes boolean, because when it
+    /// does not fire the body never runs and the process exits 0 having checked nothing. Against a
+    /// bucket with `Encrypted: false`, `PublicAccess: true` exited 19 and caught the violation
+    /// while `PublicAccess: True` and `TRUE` exited 0 and left it unchecked. `yes` and `on` exited
+    /// 19, so the loader was reading a YAML 1.1 vocabulary with the capitalised spellings missing
+    /// out of it.
+    ///
+    /// The false spellings are here for the same reason the true ones are. Without them the true
+    /// half is also satisfied by reading every spelling as true, which would fire the gate on
+    /// `PublicAccess: false` and fail a compliant template. Exit code is the assertion that
+    /// matters, because 0 is what a CI gate reads and a gate that never fires is indistinguishable
+    /// in the output from one that correctly did not apply.
+    #[rstest::rstest]
+    #[case::lowercase_true("true", StatusCode::VALIDATION_ERROR)]
+    #[case::capitalized_true("True", StatusCode::VALIDATION_ERROR)]
+    #[case::uppercase_true("TRUE", StatusCode::VALIDATION_ERROR)]
+    #[case::lowercase_yes("yes", StatusCode::VALIDATION_ERROR)]
+    #[case::capitalized_yes("Yes", StatusCode::VALIDATION_ERROR)]
+    #[case::uppercase_yes("YES", StatusCode::VALIDATION_ERROR)]
+    #[case::lowercase_on("on", StatusCode::VALIDATION_ERROR)]
+    #[case::capitalized_on("On", StatusCode::VALIDATION_ERROR)]
+    #[case::uppercase_on("ON", StatusCode::VALIDATION_ERROR)]
+    #[case::lowercase_y("y", StatusCode::VALIDATION_ERROR)]
+    #[case::uppercase_y("Y", StatusCode::VALIDATION_ERROR)]
+    #[case::lowercase_false("false", StatusCode::SUCCESS)]
+    #[case::capitalized_false("False", StatusCode::SUCCESS)]
+    #[case::uppercase_false("FALSE", StatusCode::SUCCESS)]
+    #[case::lowercase_no("no", StatusCode::SUCCESS)]
+    #[case::capitalized_no("No", StatusCode::SUCCESS)]
+    #[case::uppercase_no("NO", StatusCode::SUCCESS)]
+    #[case::lowercase_off("off", StatusCode::SUCCESS)]
+    #[case::capitalized_off("Off", StatusCode::SUCCESS)]
+    #[case::uppercase_off("OFF", StatusCode::SUCCESS)]
+    #[case::lowercase_n("n", StatusCode::SUCCESS)]
+    #[case::uppercase_n("N", StatusCode::SUCCESS)]
+    fn test_a_gate_on_a_boolean_fires_for_every_spelling_yaml_makes_boolean(
+        #[case] spelling: &str,
+        #[case] expected_status_code: i32,
+    ) {
+        let data = format!(
+            indoc! {r#"
+                Resources:
+                  B:
+                    Type: "AWS::S3::Bucket"
+                    Properties:
+                      PublicAccess: {}
+                      Encrypted: false
+            "#},
+            spelling
+        );
+        let mut reader = Reader::new(ReadCursor(Cursor::new(data.into_bytes())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["public_access_gate_on_encryption.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(expected_status_code, status_code);
+    }
+
+    /// The control for the case above, and the reason the set is the 22 spellings rather than
+    /// anything that looks like one. A scalar YAML resolves to a string stays a string and stays
+    /// incomparable to a boolean, so widening the boolean set does not quietly answer comparisons
+    /// that have no answer. Asserting the reported reason and not only the exit code is what
+    /// separates this from a clause that failed on the merits.
+    #[rstest::rstest]
+    #[case::mixed_case_true("tRuE")]
+    #[case::a_word_outside_the_set("enabled")]
+    fn test_a_non_boolean_string_is_still_not_comparable_to_a_boolean(#[case] spelling: &str) {
+        let data = format!(
+            indoc! {r#"
+                Resources:
+                  B:
+                    Type: "AWS::S3::Bucket"
+                    Properties:
+                      PublicAccess: {}
+            "#},
+            spelling
+        );
+        let mut reader = Reader::new(ReadCursor(Cursor::new(data.into_bytes())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["public_access_equals_true.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+        let output = writer.stripped().expect("failed to read stdout");
+        assert!(
+            output.contains("PathAwareValues are not comparable String, bool"),
+            "{} was compared to a boolean without reporting the type mismatch:\n{}",
+            spelling,
+            output
+        );
+    }
+
     /// A clause that fails because its reference resolved to nothing must say so in the output.
     ///
     /// Exit code alone is not enough, and asserting only the exit code is how this was missed: the
