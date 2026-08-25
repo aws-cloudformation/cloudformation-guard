@@ -5962,14 +5962,27 @@ fn negation_composes_with_operator_not_flag() -> Result<()> {
 //
 // `not <rule>` where the dependent rule SKIPped.
 //
-// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
-// must not report compliance. It previously returned PASS -- and because the
-// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
-// the check had never run.
+// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it must not
+// report compliance. It once returned PASS -- and because the enclosing rule then reported
+// PASS rather than SKIP, the output gave no hint that the check had never run.
 //
-// In a `when` CONDITION the same shape is intentional ("apply this rule when that
-// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
-// that behavior is deliberately preserved here.
+// This asserted FAIL for a while, on the reasoning that only failing closed prevents the
+// bypass. That over-corrected: FAIL does not merely withhold compliance, it reports a
+// violation, and there is none -- the input below holds one S3 bucket and no KMS key, so
+// `inner` is about nothing. Reporting a violation for an absent resource type is the same
+// false positive that `an_inapplicable_dependent_rule_does_not_fail_the_reference` covers
+// for the non-negated spelling, and it is the reason the assertion here is now SKIP.
+//
+// SKIP is not compliance, which is the property the FAIL was reaching for: the enclosing
+// rule reports SKIP rather than PASS, so the omission is still visible in the output, and
+// `find_skip_reason` names the rule that did not apply. What SKIP gives up is the exit code
+// -- 0 rather than 19 -- and that is the deliberate trade. A dependent rule that did not
+// apply is not applicable in either polarity, which is what makes it the identity of a
+// conjunction rather than something a rule can fail on.
+//
+// In a `when` CONDITION the same shape is intentional ("apply this rule when that other
+// rule did not apply"), is covered by cross_rule_clause_when_checks, and is deliberately
+// preserved -- see the test immediately below.
 //
 #[test]
 fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
@@ -6000,11 +6013,11 @@ fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> 
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // FAIL specifically. Before the fix this was PASS, manufactured from a dependent
-    // rule that never ran. "Not PASS" would also admit SKIP, and a SKIP would mean
-    // the negated reference had been made merely inert rather than fail-closed --
-    // still exit 0, so still a gate bypass. FAIL is the property that matters.
-    assert_eq!(status, Status::FAIL);
+    // SKIP specifically, asserted rather than "not PASS". PASS is the original defect --
+    // compliance manufactured from a dependent rule that never ran. FAIL is the
+    // over-correction -- a violation reported against a template that has no KMS key to
+    // violate anything. SKIP is the only answer that is neither.
+    assert_eq!(status, Status::SKIP);
 
     Ok(())
 }
@@ -6041,6 +6054,120 @@ fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()
 
     // The gate opens and the body (`Type exists`) holds, so this passes.
     assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+/// A reference to a rule that did not apply must not fail the referencing rule.
+///
+/// Decomposing a ruleset over disjoint resource types is the natural way to write one: a helper
+/// per type, each guarded by a `when` on its own type, and an aggregate that references them all.
+/// On any real template most helpers do not apply, and the aggregate used to fail once for every
+/// one of them -- exit 19, reason "dependent rule [H_B] did not PASS", against a template that
+/// violates nothing. That made the decomposition unusable, and neither workaround is
+/// behaviour-preserving: `H_A H_B` fails whenever any type is absent, and `H_A OR H_B` passes as
+/// soon as any single helper passes, which is a false negative in a compliance rule.
+///
+/// The clause path already answered this correctly -- a clause whose query selects nothing SKIPs,
+/// and `eval_conjunction_clauses` absorbs a SKIP. The reference path asked instead whether the
+/// dependent rule's status was PASS, and SKIP is not PASS.
+///
+/// All four combinations are asserted, not just the one that changed. The three unchanged ones are
+/// the point: a fix that made an inapplicable reference inert must not also make a *violated* one
+/// inert, or a reference would guarantee nothing at all.
+///
+/// Both spellings are asserted for the same reason as
+/// `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`:
+/// `eval_parameterized_rule_call` carries its own copy of this arm, the two have drifted apart
+/// before, and a single-spelling test would pass against half a fix. The parameterized helpers
+/// reach inapplicability through their body rather than a `when`, because the parser does not
+/// accept a condition on a parameterized rule.
+#[test]
+fn an_inapplicable_dependent_rule_does_not_fail_the_reference() -> Result<()> {
+    let plain = r###"
+    rule H_A when Resources.*[ Type == 'AWS::IAM::Role' ] !empty {
+        Resources.*[ Type == 'AWS::IAM::Role' ].Properties.RoleName not exists
+    }
+    rule H_B when Resources.*[ Type == 'AWS::DynamoDB::Table' ] !empty {
+        Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A
+        H_B
+    }
+    "###;
+
+    let parameterized = r###"
+    rule H_A(kind) {
+        Resources.*[ Type == %kind ].Properties.RoleName not exists
+    }
+    rule H_B(kind) {
+        Resources.*[ Type == %kind ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A('AWS::IAM::Role')
+        H_B('AWS::DynamoDB::Table')
+    }
+    "###;
+
+    const CLEAN_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } } } }"#;
+    const NAMED_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } } } }"#;
+    const NAMED_ROLE_CLEAN_TABLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+    const CLEAN_BOTH: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+
+    let scenarios = [
+        (
+            "H_A holds and H_B does not apply",
+            CLEAN_ROLE,
+            Status::PASS,
+            "the reference to an inapplicable H_B contributes nothing, so MAIN is decided by \
+             H_A alone -- this is the case that used to FAIL with nothing violated",
+        ),
+        (
+            "H_A is violated and H_B does not apply",
+            NAMED_ROLE,
+            Status::FAIL,
+            "an inapplicable H_B must not rescue a violated H_A",
+        ),
+        (
+            "H_A is violated and H_B holds",
+            NAMED_ROLE_CLEAN_TABLE,
+            Status::FAIL,
+            "a reference to a rule that FAILs must still fail, which is the whole point of a \
+             reference",
+        ),
+        (
+            "both hold",
+            CLEAN_BOTH,
+            Status::PASS,
+            "unchanged, and the control for the other three",
+        ),
+    ];
+
+    for (spelling, rules) in [
+        ("plain reference", plain),
+        ("parameterized call", parameterized),
+    ] {
+        for (scenario, input, expected, why) in &scenarios {
+            let rules_file = RulesFile::try_from(rules)?;
+            let value = PathAwareValue::try_from(*input)?;
+            let mut root = root_scope(&rules_file, Rc::new(value));
+            assert_eq!(
+                eval_rules_file(&rules_file, &mut root, None)?,
+                *expected,
+                "{}, {}: {}",
+                spelling,
+                scenario,
+                why
+            );
+        }
+    }
 
     Ok(())
 }

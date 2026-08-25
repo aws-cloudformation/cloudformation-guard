@@ -1710,13 +1710,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 /// Evaluates a reference to another rule by name.
 ///
-/// `role` distinguishes the two contexts this is reached from:
-///
-/// - [`ClauseRole::Assertion`] -- the reference is in a rule body, so a SKIPped
-///   dependent rule must not satisfy it in either polarity. Failing closed here is
-///   what stops `not <rule>` from reporting compliance for a check that never ran.
-/// - [`ClauseRole::Gate`] -- the reference is a `when` condition, where gating on a
-///   rule that did not apply is deliberate and covered by existing tests.
+/// A dependent rule that did not apply contributes nothing to the referencing rule's
+/// verdict: the reference answers SKIP and `eval_conjunction_clauses` absorbs it, which
+/// is what an inapplicable clause already does one level down. `role` changes that for
+/// exactly one shape -- a negated `when` condition -- and the `Status::SKIP` arm below
+/// says why.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -1736,53 +1734,58 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     }
                 }
 
-                // A dependent rule that SKIPped never ran, so it is not evidence in
-                // either direction. Where this reference is an assertion in a rule
-                // body, a negated reference to it must not report compliance on the
-                // strength of a check that was never performed: `not <rule>` used to
-                // fall into the `_` arm below and yield PASS, and because the
-                // enclosing rule then reported PASS rather than SKIP, nothing in the
-                // output hinted at the omission.
-                //
-                // In a `when` condition the same shape is deliberate and tested --
-                // `rule r when !other { ... }` is how a ruleset says "apply this
-                // when that other rule did not apply" (see
-                // cross_rule_clause_when_checks). Gating on a SKIP there is not a
-                // compliance claim, so it keeps the existing behavior.
-                Status::SKIP if role.is_strict() => Status::FAIL,
-
-                // A gate whose dependent rule did not apply stays SKIP rather than
-                // falling into the `_` arm below, which turns a non-negated reference
-                // into FAIL. `eval_conjunction_clauses` counts a FAIL and absorbs a
-                // SKIP, and answers FAIL before PASS, so one inapplicable gate
-                // condition returning FAIL outranks the sibling conditions that passed
-                // and drops a body those siblings would have enforced -- at exit 0,
-                // which is precisely what `ClauseRole::Gate` exists to prevent.
-                //
-                // `eval_parameterized_rule_call` already does this and its comment
-                // claims to mirror this function, but the two spellings of the same
-                // gate disagreed: `when skipper` plus a passing sibling condition
-                // reported SKIP for the whole file and enforced nothing, while
-                // `when skipper(...)` plus the same sibling reported FAIL and exited
-                // 19. Pinned by
-                // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
-                //
-                // Negated references keep falling through, and for a gate the PASS the `_` arm
-                // returns is the intended outcome, not an oversight: `rule r when not other { ... }`
-                // is how a ruleset says "apply this when that other rule did not apply", so the
-                // gate opens and the guarded body runs. Pinned by
-                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
-                // *assertion* never reaches that arm -- `role.is_strict()` above already failed it
-                // closed -- so failing the fallthrough closed would only break the gate idiom.
-                Status::SKIP if !gnc.negation => Status::SKIP,
-
-                _ => {
+                Status::FAIL => {
                     if gnc.negation {
                         Status::PASS
                     } else {
                         Status::FAIL
                     }
                 }
+
+                // A dependent rule that SKIPped never ran, so it is evidence in neither
+                // direction and the reference contributes nothing. That is the answer an
+                // inapplicable clause already gives one level down, and the answer that keeps
+                // "not applicable" the identity it is in a conjunction rather than something a
+                // rule can fail on.
+                //
+                // Both arms this replaces answered FAIL for an assertion, which manufactured a
+                // violation out of an absence. Decomposing a ruleset over disjoint resource types
+                // is the natural way to write one; each helper is guarded by a `when` on its own
+                // type, so on any real template most helpers do not apply -- and the aggregate
+                // failed once per inapplicable helper. `rule MAIN { H_A H_B }` against a clean
+                // IAM role and no DynamoDB table exited 19 reporting "dependent rule [H_B] did
+                // not PASS" for a template that violates nothing. Pinned by
+                // `an_inapplicable_dependent_rule_does_not_fail_the_reference`.
+                //
+                // Negation does not change it. `not R` asks whether R does not hold; if R never
+                // ran then "R holds" is neither true nor false, so neither is its negation. The
+                // arm this replaces failed a negated assertion closed, reasoning that `not R`
+                // must not report compliance for a check that never ran -- true, and a SKIP is
+                // not compliance: the referencing rule reports SKIP, so the omission is visible.
+                // FAIL went a step further and reported a violation instead, so
+                // `rule deny when Resources.*.Type exists { not inner }` failed on a template
+                // holding one S3 bucket and no KMS key. Same false positive, with a `not` in
+                // front of it. Pinned by
+                // `negated_reference_to_skipped_rule_does_not_pass_in_rule_body`.
+                //
+                // The single carve-out is a negated gate. `rule r when not other { ... }` is how
+                // a ruleset says "apply this when that other rule did not apply", so the gate has
+                // to open; answering SKIP there closes a gate that currently opens and silently
+                // disables the guarded rule. A gate is not making a compliance claim, so it may
+                // read "did not apply" as a condition that is met; an assertion is, so it may not.
+                // Pinned by `negated_reference_to_skipped_rule_still_gates_a_when_condition` and
+                // `cross_rule_clause_when_checks`.
+                //
+                // A non-negated gate takes the SKIP branch for its own reason:
+                // `eval_conjunction_clauses` counts a FAIL and absorbs a SKIP, and answers FAIL
+                // before PASS, so one inapplicable gate condition returning FAIL would outrank
+                // the sibling conditions that passed and drop a body those siblings would have
+                // enforced -- at exit 0, which is what `ClauseRole::Gate` exists to prevent.
+                // Pinned by `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
+                Status::SKIP => match (role, gnc.negation) {
+                    (ClauseRole::Gate, true) => Status::PASS,
+                    _ => Status::SKIP,
+                },
             };
             match status {
                 Status::PASS => {
@@ -1810,6 +1813,10 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // reads the message off it, so the rule-level SKIP it produces is
                 // explained rather than bare. A `DependentRule` record would have been
                 // reported as a failing clause -- that arm has no status guard.
+                //
+                // The wording says "referenced" rather than "a condition referenced": this arm is
+                // now reached from a rule body as well as from a `when`, and naming the wrong one
+                // is worse than naming neither.
                 Status::SKIP => {
                     resolver.end_record(
                         &context,
@@ -1817,7 +1824,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                             status: Status::SKIP,
                             at_least_one_matches: false,
                             message: Some(format!(
-                                "the rule did not apply because a condition referenced rule [{}], which did not apply to this input",
+                                "the rule did not apply because it referenced rule [{}], which did not apply to this input",
                                 gnc.dependent_rule
                             )),
                         }),
@@ -2276,17 +2283,10 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // invoked rule's status unchanged, so the `not` was silently discarded and
     // `not r(...)` behaved identically to `r(...)`.
     //
-    // Mirrors eval_guard_named_clause so both spellings agree: PASS inverts to FAIL
-    // under negation, a SKIPped rule fails closed wherever the reference is an
-    // assertion, and otherwise the negation flips the outcome.
-    //
-    // The fail-closed arm has no negation guard, so it covers both polarities, and for a
-    // plain `r(...)` that is a change in outcome rather than a fix to the negation: main
-    // returned the invoked rule's SKIP and exited 0, this returns FAIL and exits 19. That
-    // is deliberate -- a rule body asserting `r(...)` claims that `r` holds, and a rule
-    // that never ran is not evidence that it does -- but it is the arm to look at first if
-    // a ruleset starts failing on a rule it used to skip. Gate references are unaffected;
-    // they take the SKIP arm below.
+    // Mirrors eval_guard_named_clause arm for arm, and the mirroring is the property: the two
+    // spellings of one reference must not disagree, and they have already drifted apart once
+    // (see `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`). Read the SKIP arm
+    // in that function for the reasoning; only the differences are noted here.
     Ok(match status {
         Status::PASS => {
             if call_rule.named_rule.negation {
@@ -2296,34 +2296,29 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
             }
         }
 
-        Status::SKIP if role.is_strict() => Status::FAIL,
-
-        // A gate whose invoked rule did not apply stays SKIP rather than falling into the
-        // `_` arm below, which would turn a non-negated call into FAIL.
-        //
-        // Both are non-PASS, so with a single condition the two are indistinguishable --
-        // `eval_rule` drops the guarded body either way. The difference shows up with more
-        // than one condition: `eval_conjunction_clauses` absorbs SKIP (`Status::SKIP => {}`)
-        // but counts a FAIL, so one inapplicable gate condition returning FAIL poisons the
-        // whole `when` and drops a body that the remaining conditions would have enforced.
-        //
-        // That is exactly what `ClauseRole::Gate` is documented to prevent -- "the block it
-        // guards is still decided by the remaining conditions" -- so returning FAIL here
-        // defeated the role propagation this branch added for parameterized calls.
-        //
-        // Negated calls keep falling through, and for a gate the PASS the `_` arm returns is the
-        // intended outcome: `when not r(...)` opens the gate when `r` did not apply. A negated
-        // assertion never reaches that arm, because the `role.is_strict()` arm above already failed
-        // it closed. Same reasoning, and the same arm order, as `eval_guard_named_clause`.
-        Status::SKIP if !call_rule.named_rule.negation => Status::SKIP,
-
-        _ => {
+        Status::FAIL => {
             if call_rule.named_rule.negation {
                 Status::PASS
             } else {
                 Status::FAIL
             }
         }
+
+        // An invoked rule that did not apply contributes nothing, in both polarities, except for
+        // a negated gate -- `when not r(...)` opens when `r` did not apply, same idiom as the
+        // unparameterized spelling.
+        //
+        // The arm this replaces failed an assertion call closed, and its comment said so
+        // deliberately: "main returned the invoked rule's SKIP and exited 0, this returns FAIL
+        // and exits 19". That was the same false positive the plain spelling had, reached through
+        // `r(...)`: `rule MAIN { H_A skipper(1) }` on a template with a clean IAM role and no
+        // DynamoDB table exited 19 with nothing violated. Pinned alongside the plain spelling by
+        // `an_inapplicable_dependent_rule_does_not_fail_the_reference`, which asserts both so a
+        // future change to one of them cannot pass on a single-spelling test.
+        Status::SKIP => match (role, call_rule.named_rule.negation) {
+            (ClauseRole::Gate, true) => Status::PASS,
+            _ => Status::SKIP,
+        },
     })
 }
 
