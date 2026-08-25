@@ -324,6 +324,219 @@ where
     names
 }
 
+/// A name one scope both assigns and declares as a filter capture, with a description of the scope.
+///
+/// The same root cause as a name assigned twice in one scope, which `first_duplicate_assignment`
+/// refuses, reaching the one map that check does not look at. A scope's runtime object files an
+/// assignment's value under its kind -- literal, query or function call -- and holds a capture's keys in
+/// a map of their own, and `resolve_variable` consults them in a fixed order with the captures between
+/// the literals and the queries. So a name in both resolves by the *kind* of the assignment rather than
+/// by anything the author wrote: over a bucket whose enabled config is named `alpha`, in one block,
+///
+/// ```text
+/// let cfg = "fromlet"          + Properties.Config[ cfg | Enabled == true ]   ->  %cfg is "fromlet"
+/// let cfg = Properties.Name    + Properties.Config[ cfg | Enabled == true ]   ->  %cfg is "alpha"
+/// ```
+///
+/// and writing the `let` after the capturing clause instead of before it changes neither.
+///
+/// The line is drawn on *lexical* nesting: a scope's captures are the ones declared by the text written
+/// directly in it, and a capture written inside a nested `{ ... }` belongs to that nested scope. So an
+/// assignment in an enclosing scope with a capture in a nested block is ordinary shadowing and is
+/// accepted -- the more local declaration wins, which is what every other pair of nested bindings in
+/// this language does and is the one rule an author can carry between them.
+///
+/// An earlier version of this check drew the line on where a block's keys land at runtime instead, using
+/// `block_capture_names`, which descends into nested blocks because that is where their merged keys
+/// arrive. It made two files an author cannot tell apart disagree: a rule-body `let` with a capture in a
+/// block inside the rule was refused, while the same capture with the `let` moved out to the file level
+/// was accepted. Both are "an assignment outside, a capture in a block inside".
+///
+/// What that costs is one case, and it is a real one rather than a theoretical one. A rule-body
+/// assignment still decides by kind against the keys a nested block merges up, for a clause reading the
+/// name at rule-body level *after* the block:
+///
+/// ```text
+/// rule r {
+///     let cfg = <value>
+///     Resources.*[ Type == 'AWS::S3::Bucket' ] { Properties.Config[ cfg | Enabled == true ] !empty }
+///     %cfg == ...
+/// }
+/// ```
+///
+/// with `let cfg = "fromlet"` the read is `"fromlet"` and with `let cfg = Properties.Name` it is the
+/// captured key. Accepted anyway, because refusing it is what made the check unexplainable, and because
+/// the reading that matters -- `%cfg` from inside the block -- is the capture's under both spellings.
+///
+/// The file level is a scope too, and a rule's `when` conditions are written at the rule's head, outside
+/// the body's braces, so they are lexically part of it. Measured rather than assumed, since the
+/// conditions could have belonged to the rule's own scope: see
+/// `a_name_both_assigned_and_captured_in_one_scope_is_rejected` for the two spellings and what each
+/// resolved to. A rule *body* is its own scope, so a capture inside one is not the file level's.
+pub(crate) fn first_name_assigned_and_captured(file: &RulesFile<'_>) -> Option<(String, String)> {
+    let rules = || {
+        file.guard_rules
+            .iter()
+            .chain(file.parameterized_rules.iter().map(|p| &p.rule))
+    };
+
+    let mut file_captures = BTreeSet::new();
+    for assignment in &file.assignments {
+        collect_let_value_capture_names(&assignment.value, &mut file_captures);
+    }
+    for rule in rules() {
+        if let Some(conditions) = &rule.conditions {
+            collect_conjunctions_capture_names(conditions, &mut file_captures);
+        }
+    }
+    if let Some(name) = first_assigned_and_captured(&file.assignments, &file_captures) {
+        return Some((name, "at the file level".to_string()));
+    }
+
+    for rule in rules() {
+        if let Some(name) = first_in_rule_block(&rule.block) {
+            return Some((name, format!("in rule {}", rule.rule_name)));
+        }
+    }
+
+    None
+}
+
+fn first_assigned_and_captured(
+    assignments: &[LetExpr<'_>],
+    captures: &BTreeSet<&str>,
+) -> Option<String> {
+    assignments
+        .iter()
+        .find(|assignment| captures.contains(assignment.var.as_str()))
+        .map(|assignment| assignment.var.clone())
+}
+
+/// This block, then every block nested inside it. Each is its own scope, so each is checked against its
+/// own assignments and its own captures rather than against an outer scope's.
+fn first_in_rule_block<'value, 'loc: 'value>(
+    block: &'value Block<'loc, RuleClause<'loc>>,
+) -> Option<String> {
+    let mut captures = BTreeSet::new();
+    for assignment in &block.assignments {
+        collect_let_value_capture_names(&assignment.value, &mut captures);
+    }
+    for disjunctions in &block.conjunctions {
+        for clause in disjunctions {
+            match clause {
+                RuleClause::Clause(guard_clause) => {
+                    collect_own_guard_clause_capture_names(guard_clause, &mut captures)
+                }
+
+                // The conditions are written outside the braces, so they are this scope's; the block
+                // they guard is its own.
+                RuleClause::WhenBlock(conditions, _) => {
+                    collect_conjunctions_capture_names(conditions, &mut captures)
+                }
+
+                // Likewise, and the type block's query selects the resources at this level.
+                RuleClause::TypeBlock(type_block) => {
+                    collect_query_capture_names(&type_block.query, &mut captures);
+                    if let Some(conditions) = &type_block.conditions {
+                        collect_conjunctions_capture_names(conditions, &mut captures);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(name) = first_assigned_and_captured(&block.assignments, &captures) {
+        return Some(name);
+    }
+
+    for disjunctions in &block.conjunctions {
+        for clause in disjunctions {
+            let found = match clause {
+                RuleClause::Clause(guard_clause) => first_in_guard_clause(guard_clause),
+                RuleClause::WhenBlock(_, inner) => first_in_guard_block(inner),
+                RuleClause::TypeBlock(type_block) => first_in_guard_block(&type_block.block),
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+    }
+
+    None
+}
+
+fn first_in_guard_block<'value, 'loc: 'value>(
+    block: &'value Block<'loc, GuardClause<'loc>>,
+) -> Option<String> {
+    let mut captures = BTreeSet::new();
+    for assignment in &block.assignments {
+        collect_let_value_capture_names(&assignment.value, &mut captures);
+    }
+    for disjunctions in &block.conjunctions {
+        for clause in disjunctions {
+            collect_own_guard_clause_capture_names(clause, &mut captures);
+        }
+    }
+    if let Some(name) = first_assigned_and_captured(&block.assignments, &captures) {
+        return Some(name);
+    }
+
+    for disjunctions in &block.conjunctions {
+        for clause in disjunctions {
+            if let Some(name) = first_in_guard_clause(clause) {
+                return Some(name);
+            }
+        }
+    }
+
+    None
+}
+
+/// The capture names a clause declares in the scope it is *written* in, without descending into a block
+/// it opens.
+///
+/// The counterpart of `GuardClause::collect_capture_names`, which does descend, because the two answer
+/// different questions: that one asks which names a block might have to answer for, this one asks which
+/// names share a scope with an assignment. A `[ cfg | ... ]` filter written on a block clause's query is
+/// this scope's, since the query is evaluated here; the clauses inside that block's braces are not.
+fn collect_own_guard_clause_capture_names<'value, 'loc: 'value>(
+    clause: &'value GuardClause<'loc>,
+    into: &mut BTreeSet<&'value str>,
+) {
+    match clause {
+        GuardClause::Clause(clause) => {
+            collect_access_clause_capture_names(&clause.access_clause, into)
+        }
+
+        GuardClause::BlockClause(block_clause) => {
+            collect_query_capture_names(&block_clause.query.query, into)
+        }
+
+        GuardClause::WhenBlock(conditions, _) => {
+            collect_conjunctions_capture_names(conditions, into)
+        }
+
+        GuardClause::ParameterizedNamedRule(clause) => {
+            for parameter in &clause.parameters {
+                collect_let_value_capture_names(parameter, into);
+            }
+        }
+
+        GuardClause::NamedRule(_) => {}
+    }
+}
+
+fn first_in_guard_clause<'value, 'loc: 'value>(
+    clause: &'value GuardClause<'loc>,
+) -> Option<String> {
+    match clause {
+        GuardClause::BlockClause(block_clause) => first_in_guard_block(&block_clause.block),
+        GuardClause::WhenBlock(_, block) => first_in_guard_block(block),
+        GuardClause::Clause(_)
+        | GuardClause::NamedRule(_)
+        | GuardClause::ParameterizedNamedRule(_) => None,
+    }
+}
+
 fn collect_conjunctions_capture_names<'value, T>(
     conjunctions: &'value Conjunctions<T>,
     into: &mut BTreeSet<&'value str>,

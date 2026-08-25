@@ -1938,6 +1938,51 @@ fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()
     Ok(())
 }
 
+/// A capture shadows a same-named assignment in an *enclosing* scope, and the parser accepts that.
+///
+/// The half of the assigned-and-captured collision that is left alone, and it needs asserting because
+/// the parser now refuses the other half: a name assigned and captured in one scope is rejected, since
+/// there the winner is decided by the kind of the assigned value. Across scopes the more local
+/// declaration wins, which is the one rule an author can carry between every other pair of nested
+/// bindings, so this file is accepted and `%cfg` reads the captured key.
+///
+/// Asserted with its mirror, because the two candidate values differ: the capture holds `alpha` and the
+/// file-level assignment holds `"fromlet"`, and only one of the two clauses can pass.
+#[rstest::rstest]
+#[case::the_capture_wins("alpha", Status::PASS)]
+#[case::the_enclosing_assignment_does_not("fromlet", Status::FAIL)]
+fn a_capture_shadows_an_enclosing_assignment_of_the_same_name(
+    #[case] expected_key: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let cfg = "fromlet"
+
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "{}"
+        }}
+    }}
+    "#,
+        expected_key
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`%cfg` inside the block is the captured key, so `{}` must be {:?}",
+        expected_key,
+        expected
+    );
+
+    Ok(())
+}
+
 /// One bucket and one instance, so that two filters over `Resources` select different keys.
 const BUCKET_AND_INSTANCE: &str = r#"
 Resources:

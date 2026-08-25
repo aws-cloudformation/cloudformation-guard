@@ -6602,3 +6602,88 @@ fn let_still_declares_a_variable() -> Result<(), Error> {
     assert_eq!(parsed.guard_rules[0].block.assignments[0].var, "inner");
     Ok(())
 }
+
+/// A name that one scope both assigns and declares as a filter capture is rejected, for the same reason
+/// as a name assigned twice there.
+///
+/// The check above compares assignment names to each other. A filter's capture name is a variable
+/// defined in the scope as well -- it is read back as `%name` like any other -- and a name that is both
+/// resolved by kind precedence in exactly the way that check refuses to guess at. The scope holds the
+/// assignment's value under its kind and the capture's keys in a map of their own, and
+/// `resolve_variable` reads the captures after the literals and before the queries, so over a bucket
+/// whose enabled config is named `alpha`, in one block:
+///
+///     let cfg = "fromlet"        + Properties.Config[ cfg | ... ]   ->  %cfg was "fromlet", exit 0
+///     let cfg = Properties.Name  + Properties.Config[ cfg | ... ]   ->  %cfg was "alpha",   exit 0
+///
+/// Both silent, and writing the `let` after the capturing clause changed neither -- so declaration
+/// order, the one cue an author would look for, carried nothing.
+///
+/// The line is lexical: a capture written inside a nested `{ ... }` belongs to that nested scope, so an
+/// assignment outside it and a capture inside it are ordinary shadowing and accepted. Drawing the line on
+/// where a block's keys land at runtime instead made two files an author cannot tell apart disagree -- a
+/// rule-body `let` with a capture in a block inside the rule was refused while the same capture with the
+/// `let` moved out to the file level was accepted, and both read as "assignment outside, capture inside".
+///
+/// A rule's `when` conditions are the one case the text does not settle, since they sit at the rule's
+/// head: outside the body's braces, but attached to the rule. Measured rather than reasoned about. With
+/// one bucket `Alpha` whose `Properties.Name` is `fromquery`, and the file
+///
+///     let cfg = <value>
+///     rule r when Resources[ cfg | Type == 'AWS::S3::Bucket' ] !EMPTY { %cfg == ... }
+///
+///     let cfg = "fromlet"                             -> %cfg was "fromlet", the assignment
+///     let cfg = Resources.Alpha.Properties.Name       -> %cfg was "Alpha",   the capture
+///
+/// Each was run in both polarities and the failing one named the value it read, so this is what `%cfg`
+/// held rather than a clause that could not fail. The literal winning and the query losing is kind
+/// precedence within one scope -- `resolve_variable` reads literals, then captures, then queries -- and
+/// two scopes could not produce it, because a more local capture would win against both. So the
+/// conditions are the file scope's and this stays rejected.
+#[test]
+fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Error> {
+    for rules in [
+        // The literal spelling, where the assignment used to win.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = \"fromlet\"\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The query spelling, where the capture used to win. Same position, opposite winner.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = Properties.Name\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The assignment written after the capturing clause, which changed nothing.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    let cfg = \"fromlet\"\n    some %cfg == \"alpha\"\n  }\n}",
+        // A capture on a block clause's own query, which is evaluated in the scope the clause is written
+        // in rather than inside the braces it opens.
+        "rule r {\n  let cfg = \"fromlet\"\n  Resources.*[ cfg | Type == 'AWS::S3::Bucket' ] {\n    Properties.Size > 0\n  }\n}",
+        // The file level, against a capture in a rule's `when` condition. See the measurement above.
+        "let cfg = \"fromlet\"\nrule r when Resources[ cfg | Type == 'AWS::S3::Bucket' ] !EMPTY {\n  %cfg == \"fromlet\"\n}",
+        // One statement doing both.
+        "let cfg = Resources[ cfg | Type == 'AWS::S3::Bucket' ]\nrule r {\n  %cfg !EMPTY\n}",
+    ] {
+        let error = rules_file(from_str2(rules))
+            .expect_err("a name both assigned and captured in one scope must be rejected");
+        assert!(
+            error.to_string().contains("cfg"),
+            "the diagnostic has to name the variable, got: {} for {}",
+            error,
+            rules
+        );
+    }
+
+    // An assignment outside a block and a capture inside it are shadowing, at either depth, and the
+    // depth is what the earlier version of this check got wrong: it accepted the first of these and
+    // refused the second. `a_capture_shadows_an_enclosing_assignment_of_the_same_name` asserts which
+    // value the block reads.
+    for rules in [
+        // The assignment at the file level.
+        "let cfg = \"fromlet\"\nrule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The same, with the assignment in the rule body instead. Indistinguishable to an author.
+        "rule r {\n  let cfg = \"fromlet\"\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // No assignment at all.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules))?.is_some(),
+            "a capture inside a block and a binding outside it are ordinary shadowing: {}",
+            rules
+        );
+    }
+    Ok(())
+}

@@ -2832,11 +2832,30 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
         }
     }
 
-    Ok(Some(RulesFile {
+    let rules_file = RulesFile {
         assignments: global_assignments,
         guard_rules: named_rules,
         parameterized_rules,
-    }))
+    };
+
+    // The same argument as the duplicate-assignment checks above, over the one namespace those two do
+    // not compare against. They match assignment names to each other; a filter's capture name is a
+    // variable defined in that scope as well -- it is read back as `%name` like any other -- and a name
+    // that is both resolves by kind precedence in exactly the way the check above refuses to guess at.
+    //
+    // Checked here rather than in `block`, because the scopes have to be enumerated one at a time and
+    // that function is generic over its clause type, which leaves it unable to walk them.
+    if let Some((name, scope)) = first_name_assigned_and_captured(&rules_file) {
+        return Err(Error::ParseError(format!(
+            "Variable {name} is both assigned and declared as a filter capture {scope}. Which one \
+             {name} resolves to depends on the kind of the assigned value rather than on their order, \
+             so the file is rejected rather than guessed at. Rename one of them.",
+            name = name,
+            scope = scope
+        )));
+    }
+
+    Ok(Some(rules_file))
 }
 
 //
