@@ -81,6 +81,83 @@ fn test_embedded_string_parsing() {
     );
 }
 
+/// What a backslash means inside a string literal, at every position it can appear in.
+///
+/// The escapes that existed before this were the quote alone, decided by whether the text in front of a
+/// quote ended in a backslash. `\\` was read backwards by that test -- as one backslash plus an escaped
+/// quote -- so every spelling of a string ending in a backslash was rejected. `\\` resolves to one
+/// backslash now, which is the change that makes those spellings mean something, and which changes
+/// `"a\\b"` from two backslashes to one.
+#[test]
+fn test_parse_string_backslash_escapes() {
+    for (source, expected) in [
+        // The escapes that existed before, unchanged.
+        (r"'it\'s'", "it's"),
+        (r#""say \"hi\"""#, r#"say "hi""#),
+        // A backslash before anything that is not the active delimiter or another backslash is not an
+        // escape and stays in the value, so a regex written as a string keeps its own escapes.
+        (r#""a\bc""#, r"a\bc"),
+        (r#""^arn:(\w+):(\d+)$""#, r"^arn:(\w+):(\d+)$"),
+        // Only the quote that opened the literal is escapable; the other one needs no escape and a
+        // backslash in front of it is retained.
+        (r#""it\'s""#, r"it\'s"),
+        (r#"'say \"hi\"'"#, r#"say \"hi\""#),
+        // `\\` is one backslash. Each of these was rejected outright before.
+        (r"'x\\'", r"x\"),
+        (r#""x\\""#, r"x\"),
+        (r#""C:\\""#, r"C:\"),
+        (r#""x\\\\""#, r"x\\"),
+        (r#""a\\b""#, r"a\b"),
+        // A `#` in a string is part of the string, not the start of a comment.
+        (r"'a # b'", "a # b"),
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(source.len(), 1, "", "") };
+        assert_eq!(
+            parse_string(from_str2(source)),
+            Ok((cmp, Value::String(expected.to_string()))),
+            "{source} is the string {expected}"
+        );
+    }
+}
+
+/// A string with no closing quote on its line is an error, and the error says so.
+///
+/// This is the half of the defect that silently deleted rules. `'x\'` escapes its own closing quote, so
+/// the literal had the rest of the file to look through for another one, and it ended at an apostrophe in
+/// a comment two lines down. Every clause in between was absorbed into the value -- not evaluated and not
+/// reported -- and the run exited 0. Ending the literal at the line ending keeps the mistake where the
+/// author made it. `'x\\'` is the spelling that means `x` followed by a backslash.
+#[test]
+fn test_parse_string_does_not_cross_a_line_ending() {
+    let swallow = "'x\\' }\nrule b { Encrypted == true  # don'\n}";
+    let result = parse_string(from_str2(swallow));
+    assert!(
+        result.is_err(),
+        "an escaped closing quote leaves the literal unterminated, got {:?}",
+        result
+    );
+    if let Err(nom::Err::Failure(e)) = &result {
+        assert!(
+            e.context.contains("not terminated"),
+            "the error names the problem, got {}",
+            e.context
+        );
+    } else {
+        panic!(
+            "expected a Failure so the value alternation cannot report someone else's complaint, got {:?}",
+            result
+        );
+    }
+
+    for unterminated in [r"'abc", r"'C:\'", r#""C:\""#, "'abc\n'"] {
+        assert!(
+            parse_string(from_str2(unterminated)).is_err(),
+            "{} is unterminated",
+            unterminated
+        );
+    }
+}
+
 #[test]
 fn test_parse_string_rest() {
     let hi = "\"Hi there\"";
@@ -4703,15 +4780,83 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
 
 #[test]
 fn test_parse_regex_inner_when_regex_is_not_valid() {
+    // A lone backslash has nothing to escape and no closing delimiter, so this is the unterminated
+    // case rather than the invalid-regex one, and the message now says which.
     let invalid = r"\";
     let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
     let expected_invalid = Err(nom::Err::Error(ParserError {
-        context: "Could not parse regular expression".to_string(),
+        context: "Could not parse regular expression: no closing / before the end of the line"
+            .to_string(),
         kind: ErrorKind::RegexpMatch,
         span: invalid_cmp,
     }));
 
     assert_eq!(expected_invalid, parse_regex_inner(invalid_cmp));
+}
+
+/// What a backslash means inside a regular expression.
+///
+/// `\/` stands for a plain `/`; every other backslash reaches the regex engine as written, because the
+/// engine has an escape layer of its own. `\\` is the case the old scan got backwards: it read the second
+/// backslash as escaping the delimiter behind it, so `/^x\\/` ran past its own closing slash and ended at
+/// the next `/` in the file. An escaped slash immediately before the delimiter was rejected for the
+/// opposite reason -- the old scan needed a character after the escape and there was none.
+#[test]
+fn test_parse_regex_backslash_escapes() {
+    for (source, expected) in [
+        // An escaped delimiter, including at the very end, where these were rejected before.
+        (r"/a\//", "a/"),
+        (r"/\//", "/"),
+        (r"/^\/dev\/ebs-/", "^/dev/ebs-"),
+        (r"/\/32/", "/32"),
+        // `\\` is two characters to the regex engine, and it closes, so the `/` behind it ends the regex.
+        (r"/^x\\/", r"^x\\"),
+        // Everything else arrives intact. All three of these are in the AWS rule registry.
+        (
+            r"/{{resolve\:secretsmanager\:.*}}/",
+            r"{{resolve\:secretsmanager\:.*}}",
+        ),
+        (r"/^\d{12}$/", r"^\d{12}$"),
+        (r"/^[a-zA-Z0-9]*:\*$/", r"^[a-zA-Z0-9]*:\*$"),
+        // A character class holding a `/` needs the slash escaped, since the scan does not know about
+        // classes. This is `advanced_regex_negative_lookbehind_rule.guard`, which was written `\\/` and
+        // only parsed because the old scan misread it.
+        (
+            r"/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}/",
+            "(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}",
+        ),
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(source.len(), 1, "", "") };
+        assert_eq!(
+            parse_regex(from_str2(source)),
+            Ok((cmp, Value::Regex(expected.to_string()))),
+            "{source} is the regex {expected}"
+        );
+    }
+}
+
+/// A regex stops at its own delimiter instead of reading on to the next one in the file.
+///
+/// `/^x\\/` followed by a comment containing a URL used to produce one clause where the author wrote two,
+/// and the run exited 0 with the second rule absorbed into the regex.
+#[test]
+fn test_parse_regex_does_not_run_past_its_delimiter() {
+    let source = "/^x\\\\/ }\nrule b { Encrypted == true  # see aws/ docs\n}";
+    let (rest, value) = parse_regex(from_str2(source)).unwrap();
+    assert_eq!(value, Value::Regex(r"^x\\".to_string()));
+    assert!(
+        rest.fragment().starts_with(" }"),
+        "the regex ends at its own slash, leaving {:?}",
+        rest.fragment()
+    );
+
+    for unterminated in [r"/abc", "/abc\n/"] {
+        assert!(
+            parse_regex(from_str2(unterminated)).is_err(),
+            "{} is unterminated",
+            unterminated
+        );
+    }
 }
 
 #[test]

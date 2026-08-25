@@ -38,7 +38,7 @@
                 - true
       - Clause:
           Binary:
-            context: ' NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/"'
+            context: ' NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"'
             messages:
               custom_message: ''
               error_message: Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={"Resources":{"MyBucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketEncryption":{"ServerSideEncryptionConfiguration":[{"ServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]},"VersioningConfiguration":{"Status":"Enabled"}}}}}].

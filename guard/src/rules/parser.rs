@@ -4,8 +4,8 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::bytes::complete::{tag, take_till};
+use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{alpha1, space1};
 use nom::character::complete::{anychar, digit1, one_of};
 use nom::character::complete::{char, multispace0, multispace1, space0};
@@ -20,7 +20,7 @@ use nom::number::complete::double;
 use nom::sequence::{delimited, preceded};
 use nom::sequence::{pair, terminated};
 use nom::sequence::{separated_pair, tuple};
-use nom::{InputTake, Slice};
+use nom::InputTake;
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
@@ -245,32 +245,94 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     Ok((remaining, value))
 }
 
+/// Walks a delimited literal and returns its body along with the number of bytes it occupies, closing
+/// delimiter included.
+///
+/// The question a scanner has to answer at every delimiter is whether that delimiter is escaped, and the
+/// last byte of the text in front of it cannot answer it: `\` and `\\` both end in a backslash and mean
+/// opposite things there. Both `parse_string_inner` and `parse_regex_inner` decided from that last byte,
+/// so they got `\\` backwards -- they read the second backslash as escaping the delimiter, pushed the
+/// delimiter into the value, and carried on reading from after it. The literal then ended at the next
+/// matching character anywhere in the file, which for a rules file means an apostrophe in a comment or a
+/// slash in a URL. Everything between was absorbed into a value, so the clauses and rules written there
+/// were not evaluated, not reported, and the run exited 0.
+///
+/// Walking forward settles it: a backslash consumes the character after it whichever character that is,
+/// so a delimiter inside such a pair can never close the literal and one outside every pair always does.
+///
+/// `resolve` is handed the character a backslash consumed and appends what the pair contributes to the
+/// body. That is the whole of the escape vocabulary, and it is where strings and regular expressions
+/// differ.
+///
+/// `None` means the literal is not terminated -- the text ran to the end of its line, or to the end of
+/// input, with no unescaped delimiter. A backslash immediately before a line ending is the same answer,
+/// because there is no character on that line for it to escape. Stopping at the line ending is what
+/// keeps one missing delimiter from reaching the rest of the file, and it is the only reason a runaway
+/// literal is now loud rather than silent: a literal free to cross lines has every following clause
+/// available to swallow.
+fn scan_escaped_literal(
+    input: Span,
+    delimiter: char,
+    mut resolve: impl FnMut(char, &mut String),
+) -> Option<(usize, String)> {
+    let mut body = String::new();
+    let mut chars = input.fragment().char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, escaped)) if escaped != '\n' && escaped != '\r' => {
+                    resolve(escaped, &mut body)
+                }
+                _ => return None,
+            },
+            '\n' | '\r' => return None,
+            _ if c == delimiter => return Some((at + c.len_utf8(), body)),
+            _ => body.push(c),
+        }
+    }
+    None
+}
+
+/// A string literal understands two escapes: `\\` for a backslash, and a backslash before the quote that
+/// opened the literal for that quote. A backslash before anything else is not an escape and stays in the
+/// value, which is what lets a regular expression written as a string -- `"^arn:(\w+):(\d+)$"`, the shape
+/// of all three such literals in this repository -- keep its own escapes without doubling them.
+///
+/// `\\` is the addition. With the quote as the only escape, a backslash's meaning depended on what came
+/// after it: `"a\\b"` was two literal backslashes, while those same two characters in front of the
+/// closing quote were one backslash plus an escaped quote. So no spelling produced a string ending in a
+/// backslash. `"x\\"`, `'C:\'`, `"C:\"` and `"x\\\\"` were all rejected, and the diagnostic named the
+/// right-hand side rather than the quote, which is the least useful place to look. Resolving `\\` here
+/// makes `'x\\'` mean `x\`.
+///
+/// It also changes `"a\\b"` from two backslashes to one. That is deliberate and it is user-visible. It is
+/// the same trade every language with a backslash escape has made, and it is what makes a backslash's
+/// meaning independent of its position. No rules file in this repository or in the AWS rule registry
+/// writes `\\` inside a string literal, and none writes a backslash before a quote, so no existing file
+/// changes meaning.
 fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
     move |input: Span| {
-        let mut completed = String::new();
         let (input, _begin) = char(ch)(input)?;
-        let mut span = input;
-        loop {
-            let (remainder, upto) = take_while(|c| c != ch)(span)?;
-            let frag = *upto.fragment();
-            if frag.ends_with('\\') {
-                completed.push_str(frag.slice(0..frag.len() - 1));
-                completed.push(ch);
-
-                if remainder.is_empty() {
-                    return Err(nom::Err::Error(ParserError {
-                        context: String::from("Could not parse string"),
-                        kind: ErrorKind::Char,
-                        span: input,
-                    }));
-                }
-
-                span = remainder.slice(1..);
-                continue;
+        match scan_escaped_literal(input, ch, |escaped, body| match escaped {
+            '\\' => body.push('\\'),
+            c if c == ch => body.push(ch),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            completed.push_str(frag);
-            let (remainder, _end) = cut(char(ch))(remainder)?;
-            return Ok((remainder, Value::String(completed)));
+        }) {
+            Some((consumed, value)) => Ok((input.take_split(consumed).0, Value::String(value))),
+            // `Failure`, because `cut(char(ch))` already made an unterminated string one and nothing
+            // else in the value alternation starts with a quote. Falling through could only produce some
+            // later parser's complaint about text that is plainly a string, which is what the old
+            // diagnostic did.
+            None => Err(nom::Err::Failure(ParserError {
+                context: format!(
+                    "String literal is not terminated: no closing {ch} before the end of the line. A backslash escapes the character after it, so write \\\\ for a literal backslash"
+                ),
+                kind: ErrorKind::Char,
+                span: input,
+            })),
         }
     }
 }
@@ -386,47 +448,62 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     }))
 }
 
+/// A regular expression understands one escape: a backslash before the `/` delimiter, which stands for a
+/// plain `/`, since `fancy_regex` does not need that character escaped. A backslash before anything else
+/// is left exactly as written, backslash included, because the body is handed to a regex engine that has
+/// an escape layer of its own -- the `\d`, `\.`, `\-` and `\:` in the AWS rule registry have to arrive
+/// intact.
+///
+/// `\\` is left alone too, and reaches the engine as the two characters that mean one literal backslash
+/// there. What changes is that the pair now closes itself, so a `/` after it ends the regex instead of
+/// being read as one more escaped delimiter. `/^x\\/` used to run past its own closing slash.
+///
+/// The same reading makes `/a\//` and `/\//` parse. They were rejected -- `is_not("/")` needed at least
+/// one character and after the escape the cursor sat on the closing delimiter with none left -- so an
+/// escaped slash was writable everywhere in a regex except immediately before its end.
+///
+/// One construct in the corpus depended on the old misreading: `[A-Za-z0-9\\/+=]`, in this repository's
+/// `advanced_regex_negative_lookbehind_rule.guard` and a copy of it under `guard/ts-lib`, reached the
+/// engine as `[A-Za-z0-9\/+=]`. Under a scan that walks, the `\\` closes and the `/` behind it ends the
+/// regex early, which leaves an unterminated character class. That file is written `\/` now, which is the
+/// spelling that means what it always meant. There is no reading in which `\\/` both terminates in
+/// `/^x\\/` and does not terminate there -- the fixture and the swallow are one construct.
 fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
-    let mut regex = String::new();
-    let parser = is_not("/");
-    let mut span = input;
-    loop {
-        let (remainder, content) = parser(span)?;
-        let fragment = *content.fragment();
-
-        //
-        // if the last one has an escape, then we need to continue
-        //
-        if !fragment.is_empty() && fragment.ends_with('\\') {
-            regex.push_str(&fragment[0..fragment.len() - 1]);
-            regex.push('/');
-
-            if remainder.is_empty() {
-                return Err(nom::Err::Error(ParserError {
-                    context: "Could not parse regular expression".to_string(),
-                    kind: ErrorKind::RegexpMatch,
-                    span: input,
-                }));
+    let (consumed, regex) =
+        match scan_escaped_literal(input, '/', |escaped, body| match escaped {
+            '/' => body.push('/'),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            span = remainder.take_split(1).0;
-            continue;
-        }
-
-        regex.push_str(fragment);
-
-        return match Regex::try_from(regex.as_str()) {
-            Ok(_) => Ok((remainder, Value::Regex(regex))),
-            Err(e) => Err(nom::Err::Error(ParserError {
-                context: format!("Could not parse regular expression: {}", e),
+        }) {
+            Some(found) => found,
+            // `Error`, not `Failure`: the trailing `char('/')` of the `delimited` this replaced produced a
+            // recoverable error, and `parse_regex` is the last arm of the value alternation, so the caller
+            // sees the same error either way without a Failure escaping any enclosing alternation.
+            None => return Err(nom::Err::Error(ParserError {
+                context:
+                    "Could not parse regular expression: no closing / before the end of the line"
+                        .to_string(),
                 kind: ErrorKind::RegexpMatch,
                 span: input,
             })),
         };
+
+    match Regex::try_from(regex.as_str()) {
+        Ok(_) => Ok((input.take_split(consumed).0, Value::Regex(regex))),
+        Err(e) => Err(nom::Err::Error(ParserError {
+            context: format!("Could not parse regular expression: {}", e),
+            kind: ErrorKind::RegexpMatch,
+            span: input,
+        })),
     }
 }
 
 fn parse_regex(input: Span) -> IResult<Span, Value> {
-    delimited(char('/'), parse_regex_inner, char('/'))(input)
+    // `preceded`, not `delimited`: the scan consumes the closing delimiter itself, because it is the
+    // thing that decided which delimiter closes the literal.
+    preceded(char('/'), parse_regex_inner)(input)
 }
 
 fn parse_char(input: Span) -> IResult<Span, Value> {
@@ -681,9 +758,17 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  key_part                   = string / var_name
 ///  value                      = primitives / map_type / list_type
 ///
-///  string                     = DQUOTE <any char not DQUOTE> DQUOTE /
-///                               "'" <any char not '> "'"
-///  regex                      = "/" <any char not / or escaped by \/> "/"
+///  ; This said `<any char not DQUOTE>` for a string and gave the escape to the regex alone. Both have
+///  ; had one all along, and the disagreement is what let two defects sit here: see
+///  ; `scan_escaped_literal`. A backslash consumes the character after it, so an escaped delimiter never
+///  ; closes the literal. In a string `\\` resolves to one backslash, and a backslash before the quote
+///  ; that opened the literal resolves to that quote; every other backslash stays in the value together
+///  ; with the character it escaped. In a regex only `\/` resolves, to `/`, and every other backslash
+///  ; reaches the regex engine as written. Neither literal may cross a line ending.
+///  string                     = DQUOTE *( <any char not DQUOTE, \, LF or CR> / escape ) DQUOTE /
+///                               "'" *( <any char not ', \, LF or CR> / escape ) "'"
+///  regex                      = "/" *( <any char not /, \, LF or CR> / escape ) "/"
+///  escape                     = "\" <any char not LF or CR>
 ///
 ///  comment                    =  "#" *CHAR (LF/CR)
 ///  assignment                 = "let" one_or_more_ws  var_name zero_or_more_ws
