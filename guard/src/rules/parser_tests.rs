@@ -7162,3 +7162,74 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
         other => unreachable!("no generator for {}", other),
     }
 }
+
+/// A block clause's body and a type block's body each carry a rule reference, in two spellings, and a
+/// cycle through either is reported.
+///
+/// This is the pair of `RuleRefs` arms whose doc comment used to call them unreachable -- "their clause
+/// parsers take access clauses only" -- and offer that as the reason they recurse rather than being
+/// folded into the `Clause(_)` catch-all. The claim was false: both bodies take `block(clause)`, and
+/// `clause` admits a nested `block_clause`, a `when_block` and a `parameterized_rule_call_clause`
+/// alongside its two access-clause arms. Nothing pinned these two positions, so a reader who trusted the
+/// comment and deleted the recursion would have found every test still passing.
+///
+/// The controls are what make the cases non-vacuous. `rule a { Resources { a } }` really is a syntax
+/// error, which is the half of the comment that was right, and an `is_err()` assertion cannot tell that
+/// apart from a cycle -- so every case here asserts the message.
+#[test]
+fn a_cycle_through_a_block_clause_or_type_block_body_is_reported() {
+    for rules in [
+        // The call spelling, directly in each kind of body.
+        "rule a(t) {\n  Resources {\n    a(%t)\n  }\n}\nrule MAIN {\n  a(1)\n}",
+        "rule a(t) {\n  AWS::EC2::Volume {\n    a(%t)\n  }\n}\nrule MAIN {\n  a(1)\n}",
+        // The plain spelling, as the condition of a `when` block nested inside each kind of body. This
+        // is the one rj-grammar's report did not have: it concluded only that the call spelling gets
+        // there.
+        "rule a {\n  Resources {\n    when a {\n      Type exists\n    }\n  }\n}\nrule MAIN {\n  a\n}",
+        "rule a {\n  AWS::EC2::Volume {\n    when a {\n      Encrypted == true\n    }\n  }\n}\nrule MAIN {\n  a\n}",
+    ] {
+        let error = rules_file(from_str2(rules))
+            .expect_err("a cycle through a nested body has to be rejected")
+            .to_string();
+        assert!(
+            error.contains("Rule a references itself"),
+            "the cycle has to be named rather than the file failing for some other reason: {} \
+             for {}",
+            error,
+            rules
+        );
+    }
+
+    // The control for the live cases: the same two spellings, naming a different rule, parse. The call
+    // spelling has to stay a call here -- `rule a(t) { Resources { b } }` with a bare `b` is a syntax
+    // error, which is the half of the old comment that was right, and writing that as the control makes
+    // the control fail for the reason the cases exist to distinguish.
+    for rules in [
+        "rule b(t) { Type == %t }\nrule a(t) {\n  Resources {\n    b(%t)\n  }\n}",
+        "rule b { Type exists }\nrule a {\n  Resources {\n    when b {\n      Type exists\n    }\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_ok(),
+            "a reference to another rule from a nested body is not a cycle: {}",
+            rules
+        );
+    }
+
+    // The control for the half of the old comment that was true: the *direct* plain spelling is absent
+    // from `clause`, so these are syntax errors and not cycles. Asserted by message, because an
+    // `is_err()` here would be satisfied by either outcome.
+    for rules in [
+        "rule a {\n  Resources {\n    a\n  }\n}",
+        "rule a {\n  AWS::EC2::Volume {\n    a\n  }\n}",
+    ] {
+        let error = rules_file(from_str2(rules))
+            .expect_err("a bare rule name is not a clause inside these bodies")
+            .to_string();
+        assert!(
+            !error.contains("references itself"),
+            "this one is a syntax error, not a cycle: {} for {}",
+            error,
+            rules
+        );
+    }
+}

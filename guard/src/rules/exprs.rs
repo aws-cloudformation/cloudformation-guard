@@ -1032,14 +1032,23 @@ impl<'value, 'loc: 'value> RuleReference<'value, 'loc> {
 /// A parameterized call's arguments are not walked, because a `LetValue` holds a value, a query or a
 /// function call and none of the three can name a rule.
 ///
-/// Which arms carry a reference today, measured rather than assumed. A rule body reaches one directly,
-/// through a rule-level `when`, through a nested `when` block, and through a type block's `when`
-/// conditions. The *bodies* of a type block and of a block clause cannot: their clause parsers take
-/// access clauses only, so `rule a { AWS::EC2::Volume { a } }` and `rule a { Resources { a } }` are
-/// both syntax errors. Those two arms recurse anyway rather than being folded into a catch-all,
-/// because the type permits what the parser does not produce -- a `Block<GuardClause>` can hold a
-/// `NamedRule` -- and a grammar change that admitted one would otherwise make a cycle invisible here
-/// instead of failing to compile.
+/// Every arm that recurses carries a reference today, this file's own bodies included, so none of them is
+/// a tripwire for a hypothetical grammar change. A rule body reaches one directly, through a rule-level
+/// `when`, through a nested `when` block, and through a type block's `when` conditions. The *bodies* of a
+/// type block and of a block clause reach one in two spellings: both take `block(clause)`, and `clause`
+/// is an alternation of five arms of which three are not access clauses -- a nested `block_clause`, a
+/// `when_block`, and `parameterized_rule_call_clause`. So
+///
+/// ```text
+/// rule a(t) { Resources { a(%t) } }                  the call, directly in the body
+/// rule a { Resources { when a { Type exists } } }    the plain name, as a nested `when`'s condition
+/// ```
+///
+/// are both reported as cycles, and `rule a { Resources { when b { .. } } }` for some other rule `b`
+/// parses. What those bodies cannot hold is a `GuardClause::NamedRule` *directly*, because `clause` has
+/// no arm for it: `rule a { Resources { a } }` and `rule a { AWS::EC2::Volume { a } }` are syntax errors,
+/// at the `{`. That one absent spelling is the whole of it, and folding either recursing arm into the
+/// `Clause(_)` catch-all as unreachable would lose both live cases above.
 trait RuleRefs<'value, 'loc: 'value> {
     fn collect_rule_refs(&'value self, into: &mut Vec<RuleReference<'value, 'loc>>);
 }
