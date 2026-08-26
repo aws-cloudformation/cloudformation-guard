@@ -1692,6 +1692,29 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 /// introduce it somewhere else. So a pair with no reverse arm keeps the order it arrived in, and its
 /// reason still reads left-to-right.
 ///
+/// One consequence the caller list above does not spell out, and it is the widest thing the swap did.
+/// `EqOperation`'s literal-on-the-left branch has a `single_value` arm that unwraps a right-hand `List`
+/// and compares the left operand against **each element** (`eval/operators.rs:636-658`). With a range on
+/// the left that arm now answers `%range == <query yielding a list>` element-wise, so a clause a reader
+/// parses as "these two are the same thing" answers "every one of these is inside the range". It refused
+/// before, at exit 19.
+///
+/// Deliberately left as it is, because the alternatives are worse in both directions. The mirror --
+/// `<query yielding a list> == %range` -- has distributed element-wise since before this swap, through
+/// the same unwrapping in the opposite branch, so refusing on this side would restore the asymmetry the
+/// swap exists to remove and `impl Eq for PathAwareValue` calls a bug. Nor is the new answer a rubber
+/// stamp: it discriminates. `r[0,10]` against a query yielding `[1, 99]` fails, and against one yielding
+/// `[1, "x"]` fails in both polarities. It is also the same comparison as
+/// `%range == <query yielding a scalar>`, which is squarely what the swap is for, and a one-element list
+/// answers the same way a bare scalar does.
+///
+/// What remains open, and is not this function's to settle: the literal spelling of the same clause,
+/// `%range == [1, 2]`, still refuses -- on both sides of the round and in both operand orders. So the
+/// language answers a list-against-range comparison when the list arrives through a query and refuses
+/// when it is written out. That axis pre-dates the swap; the swap widened it by one cell. Closing it
+/// means deciding whether `list == range` should have meant membership in the first place, which is the
+/// same question as whether `Char` belongs in the value space, and neither is a change to make from here.
+///
 /// Two ranges are left alone as well. `compare_eq` relates them structurally and is already symmetric
 /// there, and swapping would only change which of the two the message names first.
 pub(crate) fn compare_eq_symmetric(
