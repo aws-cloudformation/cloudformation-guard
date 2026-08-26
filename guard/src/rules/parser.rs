@@ -123,8 +123,8 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// nested `when` blocks     when Type == "x" { when ... { } }      parses 2000, aborts 4000
 /// nested map literals      Type == {k: {k: ... } }                parses 2000, aborts 4000
 /// nested list literals     Type == [[[ ... ]]]                    parses 4000, aborts 8000
-/// nested query filters     A[ A[ ... ] exists ]                   parses 1105, aborts 1108
-/// the same under a `let`   let q = A[ A[ ... ] exists ]           parses 1105, aborts 1108
+/// nested query filters     A[ A[ ... ] exists ]                   parses 1105, aborts 1107
+/// the same under a `let`   let q = A[ A[ ... ] exists ]           parses 1105, aborts 1107
 /// nested key filters       Tags[ keys == a[ keys == a ] ]         parses  129, aborts 2000
 /// a call in an assignment  let x = f(f( ... ))                    parses 2000, aborts 3000
 /// a call as an argument    b(f(f( ... )))                         parses 2000, aborts 3000
@@ -132,9 +132,14 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// ```
 ///
 /// (Some rows are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter for a bound
-/// an order of magnitude or more below it. The two filter rows are bisected rather than laddered, because
-/// their threshold is the nearest of all ten to 128 and because "parses" means something weaker there:
-/// 1105 does not abort, but it does not finish either. See the note on their running time below.) The ten
+/// an order of magnitude or more below it. The two filter rows are bisected rung by rung instead, because
+/// their threshold is the nearest of all ten to 128. Two caveats on them. "Parses" means something weaker
+/// than in the other rows: 1105 does not abort, but it does not finish either, for the reason below. And
+/// the boundary is one rung wide -- **1106 is unrepeatable**, measured three times as abort, abort, hang,
+/// while 1105 never aborts and 1107 always does. Stack-start jitter, from environment size and ASLR; it is
+/// not affected by how stdout is handled, which was checked over twelve depths with the output discarded
+/// and piped and agreed at every one. Anyone re-deriving these numbers should expect the same one-rung
+/// band, and should not read a single run at the boundary as the boundary.) The ten
 /// spellings share no single
 /// function, which is why the count is kept per open construct in a thread-local rather than passed down
 /// as a parameter. Six functions open a level, one per construct that can contain another:
@@ -161,8 +166,8 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// 7.66, 15.46, 30.67 at level 21. An earlier version of this comment argued from that time cost that a
 /// filter "never gets deep enough to abort because it becomes unusable first", and left it unbounded.
 /// That is false, and the measurement that refutes it is that wall time is not monotonic in the depth:
-/// on the pre-bound binary, depth 1105 ran past a 40-second timeout while depth 1108 aborted with a stack
-/// overflow in 2.85 seconds. Two mechanisms are in play, and the recursive descent is the faster of them
+/// on the pre-bound binary, depth 1105 ran past a 45-second timeout while depth 1107 aborted with a stack
+/// overflow in 2.9 seconds. Two mechanisms are in play, and the recursive descent is the faster of them
 /// -- it exhausts the stack before the backtracking that makes moderate depths slow ever begins. So the
 /// depth bound does fire on this path, and it fires during the descent: the refusal is a `Failure`, which
 /// nom propagates out of `alt`, `opt` and `fold_many1` without retrying, so a 2000-deep filter is refused
