@@ -1152,3 +1152,107 @@ fn test_operator_not_eq() -> crate::rules::Result<()> {
 
     Ok(())
 }
+
+/// `!=` between a left operand carrying the root path and a document query, over values that are
+/// comparable and unequal. Must pass.
+///
+/// `test_operator_not_eq` above cannot reach this: both its operands are document queries, so both
+/// carry a path, `EqOperation` takes the left-hand diff and the negation wrapper's premise holds. The
+/// case that broke is the one where the left operand's unmatched values are all unreportable -- every
+/// `parse_int` / `parse_char` / `parse_string` result, and every rule parameter -- because
+/// `EqOperation` then takes the *right-hand* diff for the report while the left still has unmatched
+/// values, and the wrapper was reversing against that diff. `lhs \ rhs_unmatched` for two disjoint
+/// operand sets is all of `lhs`, so `!=` failed.
+///
+/// Built from a hand-made `QueryResult::Resolved` rather than from a rules file, because that is what a
+/// converter function produces: a bare `let x = 7` arrives as `QueryResult::Literal` and short circuits
+/// through `is_literal` before any diff is computed, which is why the obvious fixture passes either way.
+#[test]
+fn not_eq_passes_for_an_unreportable_left_operand() -> crate::rules::Result<()> {
+    let to_port = AccessQuery::try_from(
+        r#"Resources[ Type == "AWS::EC2::SecurityGroupEgress" ].Properties.ToPort"#,
+    )?;
+
+    let value = PathAwareValue::try_from(crate::rules::values::read_from(RESOURCES)?)?;
+    let mut evaluator = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+
+    // ToPort is 56, and it carries a document path.
+    let resolved_to = evaluator.query(&to_port.query)?;
+    assert_eq!(resolved_to.len(), 1);
+
+    // A function result: resolved, so it reaches the query-versus-query branch, but built with
+    // `Path::root()`, so the reporter cannot place it.
+    let rootless = |i: i64| {
+        vec![QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+            Path::root(),
+            i,
+        ))))]
+    };
+
+    let unequal = rootless(7);
+    let equal = rootless(56);
+
+    // The defect: `7 != 56` must pass.
+    let result = match (CmpOperator::Eq, true).compare(&unequal, &resolved_to)? {
+        EvalResult::Result(v) => v,
+        _ => unreachable!(),
+    };
+    assert_eq!(result.len(), 1);
+    assert!(
+        matches!(
+            result[0],
+            ValueEvalResult::ComparisonResult(ComparisonResult::Success(_))
+        ),
+        "!= must pass for two comparable, unequal values: {:?}",
+        result[0]
+    );
+
+    // The polarity control: `56 != 56` must still fail. A fix that made the wrapper always succeed
+    // would pass the assertion above and this one catches it.
+    let result = match (CmpOperator::Eq, true).compare(&equal, &resolved_to)? {
+        EvalResult::Result(v) => v,
+        _ => unreachable!(),
+    };
+    assert_eq!(result.len(), 1);
+    assert!(
+        matches!(
+            result[0],
+            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(_))
+        ),
+        "!= must fail for two equal values: {:?}",
+        result[0]
+    );
+
+    // The `==` control, which is also what pins the reporting choice the diff side exists for. `==` on
+    // the unequal pair fails, the diff is taken from the right so that the finding names a value the
+    // reader can place, and the diff holds that document value rather than the rootless one.
+    let result = match (CmpOperator::Eq, false).compare(&unequal, &resolved_to)? {
+        EvalResult::Result(v) => v,
+        _ => unreachable!(),
+    };
+    assert_eq!(result.len(), 1);
+    match &result[0] {
+        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(qin))) => {
+            assert_eq!(qin.diff_from, DiffFrom::Rhs);
+            assert_eq!(qin.diff.len(), 1);
+            assert_eq!(&*qin.diff[0], &PathAwareValue::Int((Path::root(), 56)));
+            assert!(
+                !qin.diff[0].self_path().0.is_empty(),
+                "the reported value must be one the reporter can place"
+            );
+            // And the left operand's unmatched value is carried alongside, which is what the negation
+            // above reversed against.
+            assert_eq!(qin.lhs_unmatched.len(), 1);
+            assert_eq!(
+                &*qin.lhs_unmatched[0],
+                &PathAwareValue::Int((Path::root(), 7))
+            );
+        }
+        other => panic!("== must fail with a query-versus-query diff: {:?}", other),
+    }
+
+    Ok(())
+}

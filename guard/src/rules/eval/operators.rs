@@ -31,6 +31,13 @@ pub(crate) enum DiffFrom {
 #[derive(Clone, Debug)]
 pub(crate) struct QueryIn {
     pub(crate) diff: Vec<Rc<PathAwareValue>>,
+    /// The left-hand values that found no equal on the right.
+    ///
+    /// Equal to `diff` whenever `diff_from` is [`DiffFrom::Lhs`], which is every `IN` spelling and most
+    /// of `==`. It is a separate field because `diff` answers "what should the report name" and this
+    /// answers "which left-hand values failed", and [`DiffFrom::Rhs`] is the case where those two are
+    /// not the same set. The negation wrapper needs the second question and only ever had the first.
+    pub(crate) lhs_unmatched: Vec<Rc<PathAwareValue>>,
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
     pub(crate) diff_from: DiffFrom,
@@ -38,8 +45,8 @@ pub(crate) struct QueryIn {
 
 impl QueryIn {
     /// The ordinary case: the diff holds left-hand values that found nothing to match on the right.
-    /// Every `IN` spelling produces this, and so does `==` whenever the left operand has an unmatched
-    /// value at all.
+    /// Every `IN` spelling produces this, and so does `==` whenever the reporter can place a left-hand
+    /// value.
     fn new(
         diff: Vec<Rc<PathAwareValue>>,
         lhs: Vec<Rc<PathAwareValue>>,
@@ -48,16 +55,24 @@ impl QueryIn {
         QueryIn {
             lhs,
             rhs,
+            lhs_unmatched: diff.clone(),
             diff,
             diff_from: DiffFrom::Lhs,
         }
     }
 
-    /// `==` only, and only when every left-hand value did find a match and the right-hand operand has
-    /// values besides. The two operand sets still differ, so the clause fails, and the right-hand
-    /// extras are the only evidence there is.
+    /// `==` only, and only when the reporter would have nothing to say about the left operand: either
+    /// every left-hand value found a match and the right-hand operand has values besides, or the left
+    /// operand contributed only rule literals, which have no path to file a finding against. The
+    /// right-hand values are then the evidence a reader can act on.
+    ///
+    /// `lhs_unmatched` is passed separately and is **not** the diff. In the second case above the left
+    /// operand does have unmatched values -- they are just unreportable -- and the negation wrapper has
+    /// to negate against those rather than against the right-hand extras. Deriving it from the diff is
+    /// what made `%literal != %document_query` fail for two values that are comparable and unequal.
     fn from_rhs(
         diff: Vec<Rc<PathAwareValue>>,
+        lhs_unmatched: Vec<Rc<PathAwareValue>>,
         lhs: Vec<Rc<PathAwareValue>>,
         rhs: Vec<Rc<PathAwareValue>>,
     ) -> QueryIn {
@@ -65,6 +80,7 @@ impl QueryIn {
             lhs,
             rhs,
             diff,
+            lhs_unmatched,
             diff_from: DiffFrom::Rhs,
         }
     }
@@ -809,8 +825,10 @@ impl Comparator for EqOperation {
                     lhs_unmatched.is_empty()
                 };
 
+                // `lhs_unmatched` travels with the diff either way, because it is what `!=` negates
+                // against and the two are the same set only when the diff was taken from the left.
                 let query_in = if take_rhs {
-                    QueryIn::from_rhs(rhs_unmatched, lhs_selected, rhs_selected)
+                    QueryIn::from_rhs(rhs_unmatched, lhs_unmatched, lhs_selected, rhs_selected)
                 } else {
                     QueryIn::new(lhs_unmatched, lhs_selected, rhs_selected)
                 };
@@ -946,22 +964,34 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            // Always against the left operand. This used to take the
-                                            // right one for `Eq` when `rhs.len() >= lhs.len()`,
-                                            // mirroring the operand-set-size choice `EqOperation` made
-                                            // when it built the diff. That choice is gone -- the diff
-                                            // is the left operand's values whenever it has any -- so
-                                            // the special case would now pick the wrong side, and the
-                                            // reversed diff is what `!=` reports.
+                                            // Against `lhs_unmatched`, not against `diff`. What `!=`
+                                            // reports is the left-hand values that *did* find an equal
+                                            // on the right, since those are the ones that collide, and
+                                            // removing the unmatched ones from the left operand is how
+                                            // that set is computed.
                                             //
-                                            // Correct in the fallback case too, where the diff holds
-                                            // right-hand values because the left had no unmatched
-                                            // ones. Every left value then has an equal on the right, so
-                                            // none of them appears in that diff and all of them survive
-                                            // the filter -- which is the honest answer for `!=`: if the
-                                            // left operand's values are all present on the right, every
-                                            // one of them collides.
-                                            let reverse_diff = reverse_diff(qin.diff, &qin.lhs);
+                                            // `diff` is not that set whenever `diff_from` is `Rhs`.
+                                            // This used to read `reverse_diff(qin.diff, &qin.lhs)` on
+                                            // the stated premise that a right-hand diff means "the left
+                                            // had no unmatched ones", so every left value would survive
+                                            // the filter. `EqOperation` also takes the right-hand diff
+                                            // when the left operand's unmatched values are all rule
+                                            // literals and so unreportable -- which is exactly what a
+                                            // parameterized rule's `%expected != %query` is -- and then
+                                            // the premise is false. `lhs \ rhs_unmatched` for two
+                                            // disjoint operand sets is all of `lhs`, so `!=` reported
+                                            // Fail for two values that are comparable and unequal:
+                                            // `parse_int("7") != 1` failed at exit 19, and the reason
+                                            // read that `[[L:0,C:0]]` "was not present in" the document
+                                            // value.
+                                            //
+                                            // Unchanged where the premise did hold. With every left
+                                            // value matched, `lhs_unmatched` is empty and the filter
+                                            // keeps all of `lhs` -- the same answer the old expression
+                                            // gave, because a right-hand value with no equal on the left
+                                            // cannot be equal to a left-hand value either.
+                                            let reverse_diff =
+                                                reverse_diff(qin.lhs_unmatched, &qin.lhs);
 
                                             if reverse_diff.is_empty() {
                                                 ValueEvalResult::ComparisonResult(
