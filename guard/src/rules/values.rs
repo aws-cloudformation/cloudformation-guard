@@ -500,9 +500,9 @@ where
 /// This is the serde-backed loader's half of `libyaml::loader::stringify_scalar_key`, and it has to
 /// move with it: refusing an unquoted account id, port or file mode under `Mappings` refuses templates
 /// CloudFormation accepts, since a template is converted to JSON before deployment and JSON has no key
-/// but a string. Until this landed, `validate` read the five keys of a `Mappings` block written that
-/// way and `guard test` refused the same bytes outright, which is the shape of divergence the two
-/// loaders exist under a pin to prevent.
+/// but a string. Until this landed, a `Mappings` block written that way loaded under `validate` and was
+/// refused outright under `guard test` at exit 255 -- the shape of divergence the two loaders exist
+/// under a pin to prevent.
 ///
 /// Every spelling is checked against the other loader in
 /// `both_loaders_resolve_the_same_document_to_the_same_value`. `serde_yaml` resolves the same scalars
@@ -535,19 +535,25 @@ fn scalar_key_name(key: &serde_yaml::Value) -> crate::rules::Result<String> {
 }
 
 /// The text a numeric key stands for, rendered as `stringify_scalar_key` renders the same number.
+///
+/// Written as a chain of `as_*` rather than the `is_*`/`as_*.unwrap()` pair the value arm above uses,
+/// so there is no arm that can hand back a default: a key silently rendered "0" is a lookup that
+/// misses, which is the class of defect this function exists to close. `serde_yaml::Number`'s own
+/// `Display` is the last resort and is exact for all three of its variants.
 fn number_key_name(num: &serde_yaml::Number) -> String {
-    if num.is_i64() {
-        // `as_i64` is `Some` under `is_i64`.
-        return num.as_i64().unwrap_or_default().to_string();
+    if let Some(int) = num.as_i64() {
+        return int.to_string();
     }
 
-    if num.is_u64() {
+    if let Some(uint) = num.as_u64() {
         // Above `i64::MAX`. The libyaml loader keeps the literal for an integer this wide, and
         // `u64::to_string` is the same digits.
-        return num.as_u64().unwrap_or_default().to_string();
+        return uint.to_string();
     }
 
-    let float = num.as_f64().unwrap_or_default();
+    let Some(float) = num.as_f64() else {
+        return num.to_string();
+    };
 
     if !float.is_finite() {
         non_finite_spelling(float)
