@@ -56,6 +56,16 @@ pub struct Loader {
     stack: Vec<MarkedValue>,
     last_container_index: Vec<usize>,
     func_support_index: Vec<(usize, (String, Location))>,
+    /// Stack indices of the scalars that are merge keys, recorded by `handle_scalar_event`.
+    ///
+    /// The merge type is resolved from the **plain** scalar only: `tag:yaml.org,2002:merge` is an
+    /// implicit resolution, and implicit resolution applies to the plain style. So `"<<"` is an
+    /// ordinary key whose name happens to be `<<`, which is the documented way to write one.
+    ///
+    /// It has to be recorded here because the style is gone by `handle_mapping_end`: a non-plain
+    /// scalar becomes `MarkedValue::String` and so does a plain `<<`, so both spellings arrive there
+    /// as the same `String("<<")` and testing the resolved name cannot tell them apart.
+    merge_key_index: Vec<usize>,
 }
 
 impl Loader {
@@ -114,6 +124,7 @@ impl Loader {
                         self.stack.clear();
                         self.last_container_index.clear();
                         self.func_support_index.clear();
+                        self.merge_key_index.clear();
                     }
                     Event::MappingStart(mapping_start) => {
                         self.enter_container(&location)?;
@@ -172,6 +183,8 @@ impl Loader {
             Ok(s) => s.to_string(),
             Err(_) => "".to_string(),
         };
+        // See `merge_key_index`. Decided here because this is the last place the style is known.
+        let is_merge_key = tag.is_none() && style == ScalarStyle::Plain && val == MERGE_KEY;
 
         let path_value = if let Some(tag) = tag {
             let handle = tag.get_handle();
@@ -235,6 +248,9 @@ impl Loader {
         };
 
         self.stack.push(path_value);
+        if is_merge_key {
+            self.merge_key_index.push(self.stack.len() - 1);
+        }
     }
 
     fn handle_sequence_end(&mut self) {
@@ -246,7 +262,17 @@ impl Loader {
             _ => unreachable!(),
         }
 
+        self.forget_merge_keys_above(array_idx);
         self.close_tagged_container(array_idx);
+    }
+
+    /// Drops the recorded merge-key indices for a container that has just closed.
+    ///
+    /// Everything the container held has left the stack, so an index above its own is no longer live
+    /// and would otherwise be read as a merge key of whichever mapping next occupies that index. A
+    /// `<<` written as a *sequence item* rather than as a key is the shape that leaves one behind.
+    fn forget_merge_keys_above(&mut self, container_idx: usize) {
+        self.merge_key_index.retain(|idx| *idx <= container_idx);
     }
 
     /// Moves a container that a `!Foo` tag wrapped under its long function name.
@@ -314,14 +340,27 @@ impl Loader {
     fn handle_mapping_end(&mut self) -> crate::rules::Result<()> {
         let map_index = self.last_container_index.pop().unwrap();
         let mut key_values: Vec<MarkedValue> = self.stack.drain(map_index + 1..).collect();
+        // Which of this mapping's entries are merge keys, as offsets into `key_values`: its element
+        // `i` was at stack index `map_index + 1 + i`. Read out before `map` borrows the stack.
+        let merge_key_offsets: HashSet<usize> = self
+            .merge_key_index
+            .iter()
+            .filter_map(|idx| idx.checked_sub(map_index + 1))
+            .filter(|offset| *offset < key_values.len())
+            .collect();
+        self.forget_merge_keys_above(map_index);
+
         let mut merges: Vec<MarkedValue> = vec![];
         let map = match self.stack.last_mut().unwrap() {
             MarkedValue::Map(map, _) => map,
             _ => unreachable!(),
         };
+        let mut offset = 0;
         while !key_values.is_empty() {
             let key = key_values.remove(0);
             let value = key_values.remove(0);
+            let key_offset = offset;
+            offset += 2;
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
                 // A scalar key becomes the text CloudFormation would give it. A template is
@@ -348,7 +387,11 @@ impl Loader {
 
             // Held back rather than inserted. The keys it brings must not override the ones this
             // mapping writes for itself, so they can only be added once every explicit key is in.
-            if key_str.0 == MERGE_KEY {
+            //
+            // Tested by position rather than by name: `merge_key_index` records the scalars the
+            // *document* wrote as a plain `<<`, and `key_str.0 == MERGE_KEY` was also true of a
+            // quoted `"<<"`, which YAML says is an ordinary key.
+            if merge_key_offsets.contains(&key_offset) {
                 merges.push(value);
                 continue;
             }

@@ -1179,6 +1179,64 @@ fn a_merge_key_folds_its_value_into_the_mapping(
     Ok(())
 }
 
+/// A *quoted* `<<` is an ordinary key whose name happens to be `<<`, and is not merged.
+///
+/// The merge type is an implicit resolution -- `tag:yaml.org,2002:merge` -- and implicit resolution
+/// applies to the plain style, so quoting is the documented way to write a key literally named `<<`.
+/// The test ran on the resolved key string, by which point `"<<"` and `<<` are the same
+/// `String("<<")`, so both spellings were merged. `"<<": plain string value` -- a perfectly ordinary
+/// pair -- was refused at exit 5 for not being a mapping, which also removed the only escape hatch
+/// for the name.
+///
+/// PyYAML on the same bytes gives `{"A": {"<<": "plain string value"}}` for the quoted spelling and
+/// merges the plain one, which is the pair of answers asserted here.
+#[rstest::rstest]
+#[case::double_quoted("\"<<\": { a: kept }")]
+#[case::single_quoted("'<<': { a: kept }")]
+fn a_quoted_merge_key_is_an_ordinary_key(#[case] body: &str) -> Result<()> {
+    let value = Loader::new().load(format!("outer:\n  {body}\n"))?;
+
+    let outer = match &value {
+        MarkedValue::Map(m, ..) => match m.first().expect("outer is present").1 {
+            MarkedValue::Map(inner, ..) => inner,
+            other => panic!("outer held {:?}", other),
+        },
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+
+    assert!(
+        outer.keys().any(|(name, _)| name == "<<"),
+        "{:?} lost the quoted key, giving {:?}",
+        body,
+        outer
+    );
+    assert!(
+        !outer.keys().any(|(name, _)| name == "a"),
+        "{:?} merged a quoted key, giving {:?}",
+        body,
+        outer
+    );
+
+    Ok(())
+}
+
+/// The same pair through the whole loader: a quoted `<<` given a scalar loads, a plain one is refused.
+///
+/// This is the shape the defect was found on. The two documents differ in nothing but the quotes, and
+/// before this they got the same answer.
+#[test]
+fn quoting_the_merge_key_decides_whether_an_unmergeable_value_is_refused() {
+    let quoted = Loader::new().load("outer:\n  \"<<\": plain string value\n".to_string());
+    let plain = Loader::new().load("outer:\n  <<: plain string value\n".to_string());
+
+    assert!(quoted.is_ok(), "the quoted key was refused: {:?}", quoted);
+    assert!(
+        matches!(plain, Err(Error::UnsupportedDocument(ref m)) if m.contains("merge key")),
+        "the plain key gave {:?}, not the merge-value error",
+        plain
+    );
+}
+
 /// A merge key whose value cannot be merged is refused rather than folded into nothing. The spec
 /// requires a mapping or a sequence of mappings, and there is no sensible reading of anything else.
 #[rstest::rstest]
