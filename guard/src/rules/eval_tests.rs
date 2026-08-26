@@ -5996,8 +5996,8 @@ fn literal_lhs_against_empty_reference_fails_without_panicking() -> Result<()> {
 //
 // Clause-level negation on a BINARY comparison.
 //
-// `not <query> == <value>` parses (parser.rs:969 accepts a leading not before the
-// query) and is stored as GuardAccessClause::negation, but the binary evaluation
+// `not <query> == <value>` parses (`parser::clause_with_map` accepts a leading not
+// before the query) and is stored as GuardAccessClause::negation, but the binary evaluation
 // path used to drop it, so the clause evaluated as its un-negated self -- the exact
 // inverse of the author's intent -- while the report still displayed the `not`.
 //

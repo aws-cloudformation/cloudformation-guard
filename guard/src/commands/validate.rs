@@ -154,7 +154,7 @@ pub struct Validate {
     //
     // One value is also the smallest number that can mean anything: there is no reading of `--rules`
     // with nothing after it. `ValidateBuilder::try_build` already rejects the same state for library
-    // callers (`guard/src/lib.rs:185`), so this makes the two agree rather than inventing a rule.
+    // callers, so this makes the two agree rather than inventing a rule.
     //
     // `--data` keeps `num_args=0..` on purpose: an empty `data` is a supported state that means "read
     // the data from stdin", which is what an absent `--data` also means.
@@ -659,8 +659,7 @@ impl Validate {
             //   `--rules` takes `num_args=1..`, so `self.rules` cannot be empty while `--payload` is
             //   absent. Widening either back would make this a panic again -- it was one, at exit 101,
             //   while `--rules` took `num_args=0..`.
-            // - Library: `ValidateBuilder::try_build` rejects `!payload && rules.is_empty()`
-            //   (`guard/src/lib.rs:185`).
+            // - Library: `ValidateBuilder::try_build` rejects `!payload && rules.is_empty()`.
             unreachable!(
                 "validate requires --rules with at least one value or --payload; \
                  the clap argument group and ValidateBuilder::try_build both enforce it"

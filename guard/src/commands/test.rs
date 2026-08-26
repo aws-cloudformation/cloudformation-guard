@@ -213,8 +213,8 @@ impl Executable for Test {
             }
         } else {
             // Not `unwrap()`. The `RULES_AND_TEST_FILE` group requires the two together, so the CLI
-            // cannot reach here with either missing -- but `TestBuilder` (`guard/src/lib.rs:372`)
-            // does not require them, so the library can, and it panicked at exit 101 when it did.
+            // cannot reach here with either missing -- but `TestBuilder::try_build` does not require
+            // them, so the library can, and it panicked at exit 101 when it did.
             // A panic is never the right answer to an argument list, and the caller that can still
             // get here is a Rust caller who needs the reason rather than a backtrace.
             let (file, data) = match (self.rules.as_ref(), self.test_data.as_ref()) {

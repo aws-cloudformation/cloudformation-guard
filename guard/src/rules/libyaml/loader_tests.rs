@@ -450,7 +450,9 @@ fn a_finite_scalar_is_still_a_float(#[case] scalar: &str, #[case] expected: f64)
     Ok(())
 }
 
-/// A file holding no document at all -- nothing but comments -- aborted the process:
+/// A file holding no document at all -- nothing but comments -- aborted the process. Quoted verbatim,
+/// so the `event.rs` line number in it is the one the panic printed at the time and not a reference to
+/// today's tree:
 ///
 /// ```text
 /// thread 'main' panicked at guard/src/rules/libyaml/event.rs:63:14:

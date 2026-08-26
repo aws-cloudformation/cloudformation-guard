@@ -1604,11 +1604,11 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
         //
         // **No input can reach it as the tree stands, and it is kept anyway.** When this was written the
         // scenario was live: a `Float(NaN)` did arrive from a document. It cannot now, because the serde
-        // loader gained a finiteness gate afterwards (`values.rs:317`, which stringifies a non-finite
-        // float to `.nan` / `.inf` / `-.inf`), and every other way a `Float` is built from input already
-        // had one: the libyaml loader at `libyaml/loader.rs:215`, the rules-file float literal at
-        // `parser.rs:427`, which is a parse error, and `parse_float` at `functions/converters.rs:40`,
-        // which yields no value. `serde_json::Number` cannot hold a NaN in the first place -- JSON has
+        // loader gained a finiteness gate afterwards (in `impl TryFrom<&serde_yaml::Value> for Value`,
+        // which stringifies a non-finite float to `.nan` / `.inf` / `-.inf`), and every other way a
+        // `Float` is built from input already had one: `libyaml::loader::Loader::handle_scalar_event`,
+        // the rules-file float literal in `rules::parser::parse_float`, where it is a parse error, and
+        // the `to_float` function's own `functions::converters::parse_float`, which yields no value. `serde_json::Number` cannot hold a NaN in the first place -- JSON has
         // no spelling for one, and `1e400` in a JSON data file loads as the string `"1e400"` through the
         // YAML reader rather than as an infinity.
         //
@@ -1694,7 +1694,7 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 ///
 /// One consequence the caller list above does not spell out, and it is the widest thing the swap did.
 /// `EqOperation`'s literal-on-the-left branch has a `single_value` arm that unwraps a right-hand `List`
-/// and compares the left operand against **each element** (`eval/operators.rs:636-658`). With a range on
+/// and compares the left operand against **each element** (`impl Comparator for EqOperation`). With a range on
 /// the left that arm now answers `%range == <query yielding a list>` element-wise, so a clause a reader
 /// parses as "these two are the same thing" answers "every one of these is inside the range". It refused
 /// before, at exit 19.

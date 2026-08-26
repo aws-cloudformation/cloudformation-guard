@@ -858,7 +858,7 @@ impl Comparator for EqOperation {
                 //
                 // Two results rather than one reason carried on the diff. `InComparisonCheck` does have
                 // a `message` field, and putting the reason there gives one finding per value with the
-                // reason on the right one -- but `common.rs:871` maps that field to `NameInfo.message`,
+                // reason on the right one -- but `extract_name_info_from_record` maps that field to `NameInfo.message`,
                 // the author's custom-message slot, where the `Comparison` variant beside it maps to
                 // `NameInfo.error`. Measured: the reason then disappears from the human output *and*
                 // from `--output-format json --structured`, which is `7df7617`'s whole point undone.

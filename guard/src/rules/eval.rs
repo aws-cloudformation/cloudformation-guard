@@ -1576,15 +1576,15 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 )));
             }
         };
-        // Clause-level negation (a leading `not`/`!`, parser.rs:969) must be applied
+        // Clause-level negation (a leading `not`/`!`, read by `parser::clause_with_map`) must be applied
         // here. The unary path takes it as an argument, but this path previously
         // dropped it entirely, so `not <query> == <value>` evaluated as plain
         // `== <value>` -- the exact inverse of the author's intent -- while the
         // report still displayed the `not`.
         //
         // `comparator.1` is the operator's own not-flag (from `!=` / `not in`).
-        // The two negations compose by XOR, matching invert_closure in the
-        // superseded evaluator (evaluate.rs:293-307), which applies `clause_not`
+        // The two negations compose by XOR, matching `invert_closure` in the
+        // superseded evaluator, which applies `clause_not`
         // and `not` as independent flips.
         let comparator = (
             gac.access_clause.comparator.0,
