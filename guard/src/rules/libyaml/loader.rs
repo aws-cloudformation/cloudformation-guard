@@ -95,21 +95,24 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// a template, and `rulegen` refuses it at n = 1 with "Unable to read the template", so that shape never
 /// exercised the limit it was cited for.
 ///
-/// And it is far above anything real. Measured by this loader's own counting: set
-/// this constant to N, rebuild, and run `validate --data` over every `.yaml`, `.yml`, `.json` and
-/// `.template` file in both corpora, 382 of them, taking a file's level count to be the smallest N that
-/// accepts it.
+/// And it is far above anything real. Measured by this loader's own counting: set this constant to N,
+/// rebuild, and run `validate --data` over every `.yaml`, `.yml`, `.json` and `.template` file in both
+/// corpora, taking a file's level count to be the smallest N that accepts it.
 ///
 /// ```text
-/// rules registry snapshot, 256 files    14   kms_no_wildcard_principal_tests.yml, and two others
-///   its embedded `input:` templates     12
-/// this repository, 126 files            23   parse-tree/output-dir/test_rule_with_this_keyword.yaml
-///   excluding `output-dir/` fixtures    11   apigateway-restapi-tests.yaml, and two others
+/// rules registry snapshot            14   kms_no_wildcard_principal_tests.yml, and two others
+///   its embedded `input:` templates  12
+/// this repository                    23   parse-tree/output-dir/test_rule_with_this_keyword.yaml
+///   excluding `output-dir/` fixtures 11   apigateway-restapi-tests.yaml, and two others
 /// ```
 ///
-/// The 23 needs reading carefully, because it is not a template. Every file here deeper than 11 levels --
-/// six of them -- sits under an `output-dir/`, and those are cfn-guard's own expected *output*, serialized
-/// parse trees and validate reports, which this loader never reads. Nothing in either corpus that is
+/// No file counts in that table on purpose: see the note in `parser::MAX_NESTING_DEPTH`, which carried
+/// three of them and had all three invalidated by a later commit in the same pull request that wrote them.
+/// The depths are what the bound rests on and they are stable; the denominators were not.
+///
+/// The 23 needs reading carefully, because it is not a template. Every file here deeper than 11 levels sits
+/// under an `output-dir/`, and those are cfn-guard's own expected *output*, serialized parse trees and
+/// validate reports, which this loader never reads. Nothing in either corpus that is
 /// actually shaped like a CloudFormation template passes 12. The registry holds no template files at all,
 /// in fact: its data files are `test` specs whose `input:` blocks carry the templates, and those blocks
 /// are read by the serde loader rather than by this one.
