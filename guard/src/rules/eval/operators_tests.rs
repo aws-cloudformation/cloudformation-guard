@@ -1056,6 +1056,19 @@ fn test_operator_in_scalar_literal_to_query_ok_with_unresolved() -> crate::rules
     Ok(())
 }
 
+/// `==` and `IN` between the same two queries, which do not answer the same way.
+///
+/// The left query selects `[10, 20, 30]` and `10`; the right selects `[10, 20, 30]`. `IN` is satisfied
+/// because every left value has a match on the right -- the list against itself, and `10` inside the
+/// list. `==` is not, because the scalar `10` and the list `[10, 20, 30]` are not equal values.
+///
+/// `==` used to report that as `Fail` and now reports `NotComparable`. The pairing that decides it is
+/// `Int(10)` against `List([10, 20, 30])`, and `compare_eq` has no arm for it: this branch compares
+/// whole values and does not decompose a list the way the literal-operand branches do. The verdict
+/// was reached by `Vec::contains`, which is `PartialEq`, which has to turn an error it cannot report
+/// into `false` -- so the clause failed for a reason no report ever named, and `!=` on the same two
+/// queries passed at exit 0. The branch now asks the comparator directly and reports what comes back.
+/// Both are a failing clause; only one of them says why.
 #[test]
 fn test_operator_eq_vs_in_from_queries() -> crate::rules::Result<()> {
     let custom =
@@ -1076,10 +1089,19 @@ fn test_operator_eq_vs_in_from_queries() -> crate::rules::Result<()> {
     };
     assert_eq!(result.len(), 1);
     let eval_result = &result[0];
-    assert!(matches!(
-        eval_result,
-        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(_))
-    ));
+    match eval_result {
+        ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(nc)) => {
+            // Named, not just typed: the reason has to identify the pair that could not be compared,
+            // because the whole point of reporting it is that a reader can see which operand shapes
+            // disagreed.
+            assert!(
+                nc.reason.contains("int") && nc.reason.contains("array"),
+                "the refusal did not name the two kinds: {}",
+                nc.reason
+            );
+        }
+        rest => panic!("expected NotComparable, got {:?}", rest),
+    }
 
     let result = (CmpOperator::In, false).compare(&lhs_answers, &rhs_answers)?;
     let result = match result {

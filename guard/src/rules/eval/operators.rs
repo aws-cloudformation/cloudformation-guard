@@ -16,20 +16,57 @@ impl LhsRhsPair {
     }
 }
 
+/// Which operand a [`QueryIn`]'s `diff` was taken from.
+///
+/// The reporter files every element of the diff as the finding's subject and prints the *other* operand
+/// as what it was compared with, so it has to know which side is which. Without that it printed one set
+/// on both sides: for a diff taken from the right, `eval.rs` still used `qin.rhs` as the comparison set,
+/// and the finding read "property B was not present in [B]" -- a claim refuted by the set it names.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DiffFrom {
+    Lhs,
+    Rhs,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct QueryIn {
     pub(crate) diff: Vec<Rc<PathAwareValue>>,
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
+    pub(crate) diff_from: DiffFrom,
 }
 
 impl QueryIn {
+    /// The ordinary case: the diff holds left-hand values that found nothing to match on the right.
+    /// Every `IN` spelling produces this, and so does `==` whenever the left operand has an unmatched
+    /// value at all.
     fn new(
         diff: Vec<Rc<PathAwareValue>>,
         lhs: Vec<Rc<PathAwareValue>>,
         rhs: Vec<Rc<PathAwareValue>>,
     ) -> QueryIn {
-        QueryIn { lhs, rhs, diff }
+        QueryIn {
+            lhs,
+            rhs,
+            diff,
+            diff_from: DiffFrom::Lhs,
+        }
+    }
+
+    /// `==` only, and only when every left-hand value did find a match and the right-hand operand has
+    /// values besides. The two operand sets still differ, so the clause fails, and the right-hand
+    /// extras are the only evidence there is.
+    fn from_rhs(
+        diff: Vec<Rc<PathAwareValue>>,
+        lhs: Vec<Rc<PathAwareValue>>,
+        rhs: Vec<Rc<PathAwareValue>>,
+    ) -> QueryIn {
+        QueryIn {
+            lhs,
+            rhs,
+            diff,
+            diff_from: DiffFrom::Rhs,
+        }
     }
 }
 
@@ -469,19 +506,15 @@ impl Comparator for InOperation {
 
                     if diff.is_empty() {
                         results.push(ValueEvalResult::ComparisonResult(
-                            ComparisonResult::Success(Compare::QueryIn(QueryIn {
+                            ComparisonResult::Success(Compare::QueryIn(QueryIn::new(
                                 diff,
+                                vec![Rc::clone(l)],
                                 rhs,
-                                lhs: vec![Rc::clone(l)],
-                            })),
+                            ))),
                         ));
                     } else {
                         results.push(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
-                            Compare::QueryIn(QueryIn {
-                                diff,
-                                rhs,
-                                lhs: vec![Rc::clone(l)],
-                            }),
+                            Compare::QueryIn(QueryIn::new(diff, vec![Rc::clone(l)], rhs)),
                         )));
                     }
                 } else {
@@ -692,28 +725,108 @@ impl Comparator for EqOperation {
                     Vec::push,
                 );
 
-                let diff = if lhs_selected.len() > rhs_selected.len() {
-                    lhs_selected
-                        .iter()
-                        .filter(|e| !rhs_selected.contains(*e))
-                        .cloned()
-                        .collect::<Vec<_>>()
+                // `compare_eq_symmetric` per pair, not `Vec::contains`.
+                //
+                // `contains` decides with `PartialEq`, which returns `bool` and so has to turn a
+                // comparison it cannot answer into `false` -- the suppression `docs/KNOWN_ISSUES.md`
+                // records. On this branch that made `==` and `!=` between two queries the only
+                // spellings that never reported it: with `Num: 1` and `Str: "x"`, `Num == "x"` refused
+                // and named `not comparable int, String`, while `Num == Str` failed with no reason at
+                // all and `Num != Str` **passed, exit 0, nothing in the report**. `<` behaved the same
+                // in both forms, which is what isolates this to the two operators routed through
+                // `PartialEq` here. Asking the comparator directly is what lets the error be reported.
+                //
+                // The reason is only consulted when the clause is going to fail. A pair that could not
+                // be compared on the way to a match that was found afterwards did not decide anything,
+                // so `%q == %r` over two sets that do match must not start refusing because some
+                // unrelated pairing inside it had no answer.
+                let mut unanswerable: Option<(Rc<PathAwareValue>, Rc<PathAwareValue>, String)> =
+                    None;
+                let mut without_a_match =
+                    |from: &[Rc<PathAwareValue>], against: &[Rc<PathAwareValue>]| {
+                        let mut unmatched = Vec::with_capacity(from.len());
+                        'each: for each in from {
+                            for other in against {
+                                match compare_eq_symmetric(each, other) {
+                                    Ok(true) => continue 'each,
+                                    Ok(false) => {}
+                                    Err(err) => {
+                                        if unanswerable.is_none() {
+                                            unanswerable = Some((
+                                                Rc::clone(each),
+                                                Rc::clone(other),
+                                                unanswerable_reason(err),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            unmatched.push(Rc::clone(each));
+                        }
+                        unmatched
+                    };
+
+                // Both directions, because `==` between two queries asks whether the operand sets
+                // denote the same values, and one direction alone cannot see an extra value on the
+                // other side. Picking the direction by operand-set size -- which is what stood here --
+                // reads as set equality and is not: `A` selecting `[1, 2]` against `B` selecting
+                // `[1, 1]` are the same length, so only `B \ A` was checked, it was empty, and the
+                // clause passed on two operands that plainly differ.
+                let lhs_unmatched = without_a_match(&lhs_selected, &rhs_selected);
+                let rhs_unmatched = without_a_match(&rhs_selected, &lhs_selected);
+
+                // The left operand's values, and `eval.rs` files every element of this diff as `from` --
+                // which the reporter renders as the clause's subject: its `PropertyPath`, its `Value`,
+                // the resource it groups the finding under, and the source excerpt it prints. Taking
+                // the diff from the right-hand side blamed the right-hand property for every
+                // one-value-against-one-value clause, the ordinary case. For
+                // `Resources.R1.Properties.A == Resources.S.Properties.B` with `A: 1` and `B: 2` the
+                // finding named `/Resources/S/Properties/B`, printed `Value = 2` and
+                // `ComparedWith = [2]`, filed itself under `Resource = S` and quoted S's lines. `A`
+                // appeared nowhere, and the reason read that `B` "was not present in" a set that
+                // visibly contained `B`.
+                //
+                // Qualified by whether the reporter can place the value at all. A rule literal is built
+                // with `Path::root()`, so its path is `""`: it has no resource to group under and no
+                // line to quote, and a finding filed against one lands in "Findings that belong to no
+                // resource" reading `property [[L:0,C:0]]`. When the left operand contributed only
+                // literals and the right holds a value from the document -- which is what
+                // `%expected == %replaced` is, with `%expected` a rule parameter -- the document value
+                // is the one a reader can act on. `from_rhs` records the side, so the reporter compares
+                // against the *left* operand and the message stays true; the alternative, keeping
+                // `qin.rhs` as the comparison set, is what made it say "B was not present in [B]".
+                //
+                // Preferring the left otherwise is F10's rule, and it decides every clause where both
+                // operands come from the document.
+                let placeable = |values: &[Rc<PathAwareValue>]| {
+                    values.iter().any(|v| !v.self_path().0.is_empty())
+                };
+                let take_rhs = if placeable(&lhs_unmatched) {
+                    false
+                } else if placeable(&rhs_unmatched) {
+                    true
                 } else {
-                    rhs_selected
-                        .iter()
-                        .filter(|e| !lhs_selected.contains(*e))
-                        .cloned()
-                        .collect::<Vec<_>>()
+                    lhs_unmatched.is_empty()
                 };
 
-                results.push(if diff.is_empty() {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
-                    )))
+                let query_in = if take_rhs {
+                    QueryIn::from_rhs(rhs_unmatched, lhs_selected, rhs_selected)
                 } else {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
-                    )))
+                    QueryIn::new(lhs_unmatched, lhs_selected, rhs_selected)
+                };
+
+                results.push(match (query_in.diff.is_empty(), unanswerable) {
+                    (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                        Compare::QueryIn(query_in),
+                    )),
+
+                    (false, Some((each, other, reason))) => {
+                        not_comparable_because(each, other, reason)
+                    }
+
+                    (false, None) => ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                        Compare::QueryIn(query_in),
+                    )),
                 });
             }
         }
@@ -833,13 +946,22 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            let reverse_diff = if rhs.len() >= lhs.len()
-                                                && matches!(self.0, crate::rules::CmpOperator::Eq)
-                                            {
-                                                reverse_diff(qin.diff, &qin.rhs)
-                                            } else {
-                                                reverse_diff(qin.diff, &qin.lhs)
-                                            };
+                                            // Always against the left operand. This used to take the
+                                            // right one for `Eq` when `rhs.len() >= lhs.len()`,
+                                            // mirroring the operand-set-size choice `EqOperation` made
+                                            // when it built the diff. That choice is gone -- the diff
+                                            // is the left operand's values whenever it has any -- so
+                                            // the special case would now pick the wrong side, and the
+                                            // reversed diff is what `!=` reports.
+                                            //
+                                            // Correct in the fallback case too, where the diff holds
+                                            // right-hand values because the left had no unmatched
+                                            // ones. Every left value then has an equal on the right, so
+                                            // none of them appears in that diff and all of them survive
+                                            // the filter -- which is the honest answer for `!=`: if the
+                                            // left operand's values are all present on the right, every
+                                            // one of them collides.
+                                            let reverse_diff = reverse_diff(qin.diff, &qin.lhs);
 
                                             if reverse_diff.is_empty() {
                                                 ValueEvalResult::ComparisonResult(

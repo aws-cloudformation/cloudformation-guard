@@ -345,15 +345,20 @@ impl PartialEq for PathAwareValue {
             // `IN`/`NOT IN` cases of `an_ordinary_regex_comparison_is_unchanged`, of which only the
             // first reaches the error path.
             //
-            // The compromise survives because `eq` is not the last word on that path.
-            // `contained_in` asks `compare_eq` for each element `eq` turned down, and `compare_eq`
-            // returns `Error::RegexError` rather than a verdict; `contained_in` promotes that to
-            // `NotComparable` and carries the reason out. So a regex that cannot be evaluated reads
-            // as "not equal" here and is named one line later.
+            // Where a verdict can be reported, it is, and the list of spellings that reach a reporting
+            // comparator is worth keeping honest. `X == /re/` asks `compare_eq`. `X in [/re/]` reaches
+            // `contained_in`, which asks `compare_eq` as well and reports its error. `%q == %r` and
+            // `%q != %r` between two queries used to be the exception -- `EqOperation`'s
+            // both-operands-are-queries branch decided with `Vec::contains`, which is this `eq`, so the
+            // error was swallowed here where nothing could report it, and `!=` on two incomparable
+            // properties passed at exit 0 with nothing in the report. That branch now asks
+            // `compare_eq_symmetric` per pair and reports what comes back.
             //
-            // The unwrapped spelling does not arrive here at all: `X == /re/` asks `compare_eq`
-            // directly, which is why the `==`/`!=` cases of that same test stay clear of these arms
-            // while the `IN` ones do not.
+            // So no comparison *verdict* is decided through this arm any more. `eq` is still reached
+            // from the two operators' machinery, by `Vec::contains` inside `reverse_diff`, but that
+            // asks whether a value is one of the ones already put in a diff rather than what the clause
+            // answers. Claiming "the comparison operators do not come through here" without that
+            // qualification is what stopped a reviewer looking, twice.
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
                 match Regex::new(r.as_str()) {
                     Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),

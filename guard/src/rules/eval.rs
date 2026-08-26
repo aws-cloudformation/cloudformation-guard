@@ -1358,8 +1358,18 @@ fn binary_operation<'value, 'loc: 'value>(
                         }
 
                         operators::Compare::QueryIn(qin) => {
-                            let rhs = qin
-                                .rhs
+                            // The diff is compared against the operand it did *not* come from. Every
+                            // element of it is filed below as `from`, and the message reads
+                            // "property [from] was not present in [to]" -- so with the diff taken from
+                            // the right-hand operand and `to` also the right-hand operand, the finding
+                            // asserted that a value was absent from a set that visibly contained it.
+                            // `==` between two queries can produce either side, so which one this is
+                            // has to be read from the result rather than assumed.
+                            let compared_with = match qin.diff_from {
+                                operators::DiffFrom::Lhs => &qin.rhs,
+                                operators::DiffFrom::Rhs => &qin.lhs,
+                            };
+                            let rhs = compared_with
                                 .iter()
                                 .cloned()
                                 .map(QueryResult::Resolved)
