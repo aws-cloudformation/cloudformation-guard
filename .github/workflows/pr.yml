@@ -177,7 +177,18 @@ jobs:
         with:
           repository: aws-cloudformation/aws-guard-rules-registry
           path: aws-guard-rules-registry
-          ref: main
+          # Pinned to a SHA rather than tracking `main`. A moving ref means a commit in another
+          # repository can turn this repository's CI red with no change here, and by the time anyone
+          # looks the corpus has moved on again, so the failure is not reproducible. This SHA is the
+          # `main` commit these integration tests were last measured against.
+          #
+          # Read it as a lock on a known state, not on a green one. `cfn-guard test -d rules` exits
+          # 1 at this commit: 30 expectations across 11 distinct rule names in
+          # rules/aws/aws_cloudformation name a rule their file never defines, so those expectations
+          # get no verdict. Pinning makes that failure deterministic and reproducible; it does not
+          # fix it. The fix is aws-cloudformation/aws-guard-rules-registry#288 -- once that merges,
+          # move this SHA forward to a commit that contains it, here and in the Windows job below.
+          ref: 7f7340c26ae5d5e8874651dbffeb12e0e9f505b6
       - name: Run integration tests using test command
         run: |
           if cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules; then
@@ -245,7 +256,12 @@ jobs:
         with:
           repository: aws-cloudformation/aws-guard-rules-registry
           path: aws-guard-rules-registry
-          ref: main
+          # The same pin as the linux/macos job above, and it has to stay in step with it: a SHA
+          # here and `main` there would have the two jobs testing different corpora, which is the
+          # one thing worse than both being wrong. See that job for why this commit is a known
+          # failing state, and for the PR that releases the pin
+          # (aws-cloudformation/aws-guard-rules-registry#288).
+          ref: 7f7340c26ae5d5e8874651dbffeb12e0e9f505b6
       # `if (<command>)` does not test a command's exit code in PowerShell. The parenthesized
       # expression captures the command's stdout, and `if` coerces that to a boolean, where a
       # collection of more than one element is always true. `cfn-guard test -d` prints thousands of
