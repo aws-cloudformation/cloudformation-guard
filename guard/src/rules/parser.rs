@@ -256,8 +256,12 @@ thread_local! {
     /// one, because it is computed from the guarded build rather than from an unguarded ceiling the shipped
     /// parser never has.
     ///
-    /// At 128 that leaves the tests about 2.3x of headroom (290/128) rather than the 8.7x the CLI figures
-    /// imply -- **optimized**. Unoptimized it is not headroom at all. The same query-filter ladder against
+    /// At 128 that leaves the tests about 2.3x of headroom (290/128) rather than the far larger margin the
+    /// CLI's own figures imply, where the nearest abort is 1107 -- **optimized**. (Stated as its input
+    /// rather than as a ratio on purpose. That comparison read "8.7x" until this revision, computed from an
+    /// abort depth of 1108 that a later bisect moved to 1107; the bisect corrected the depth in three places
+    /// and the ratio derived from it survived, which is the fifth derived value in this comment to go stale
+    /// that way.) Unoptimized it is not headroom at all. The same query-filter ladder against
     /// a 2 MB stack on this tree gives **67 ok, 68 aborts**, three runs per rung, so a debug build tops out
     /// at about half the bound instead of 2.3x above it: a level costs about 28 KB unoptimized against
     /// about 7 KB optimized, and 128 filter levels need 3648 KB against 927 KB. That is why plain
