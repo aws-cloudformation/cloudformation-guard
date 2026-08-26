@@ -7219,9 +7219,9 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
             "[ keys == a".repeat(inner),
             " ]".repeat(inner)
         ),
-        // `Type == f(f( ... ))`: a function call, which recurses `function_expr` -> `call_expr` ->
-        // `let_value` -> `function_expr`. This is the clause right-hand side spelling; the two other
-        // routes into `call_expr` are covered by
+        // `Type == to_upper(to_upper( ... ))`: a function call, which recurses `function_expr` ->
+        // `call_expr` -> `let_value` -> `function_expr`. This is the clause right-hand side spelling; the
+        // two other routes into `call_expr` are covered by
         // `the_other_two_routes_to_a_function_call_are_bounded_and_say_so`.
         "function_calls" => format!(
             "rule a {{\n  Type == {}\"x\"{}\n}}\n",

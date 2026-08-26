@@ -126,16 +126,20 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// nested query filters     A[ A[ ... ] exists ] exists            parses 1105, aborts 1107  <- nearest
 /// the same under a `let`   let q = A[ A[ ... ] exists ]           parses 1105, aborts 1107
 /// nested key filters       Tags[ keys == a[ keys == a ] ] exists  parses  129, aborts 2000
-/// a call in an assignment  let x = f(f( ... ))                    parses 2000, aborts 3000
-/// a call as an argument    b(f(f( ... )))                         parses 2000, aborts 3000
-/// a call as a right side   Type == f(f( ... ))                    parses 2000, aborts 3000
+/// a call in an assignment  let x = to_upper(to_upper( ... ))      parses 2000, aborts 3000
+/// a call as an argument    b(to_upper(to_upper( ... )))           parses 2000, aborts 3000
+/// a call as a right side   Type == to_upper(to_upper( ... ))      parses 2000, aborts 3000
 /// ```
 ///
-/// Every shape above is written so that it parses as it stands, which two of them did not: the query-filter
-/// and key-filter rows each dropped the trailing `exists`, and a filter query with no operator after the
-/// closing bracket is a syntax error rather than a deep file. Anyone re-deriving these numbers renders the
-/// row, gets "There were no clauses present", and concludes the construct does not exist. The `let` row
-/// needs no trailing operator, because a `let` value is a query. Render the row, do not paraphrase it.
+/// Every shape above is written so that it parses as it stands, which five of them did not. The
+/// query-filter and key-filter rows each dropped the trailing `exists`, and a filter query with no operator
+/// after the closing bracket is a syntax error rather than a deep file: anyone re-deriving these numbers
+/// renders the row, gets "There were no clauses present", and concludes the construct does not exist. The
+/// three function-call rows spelled the function `f`, which is not one -- `FunctionName::try_from` accepts
+/// fifteen names and rejects the rest -- so those rows were refused at 5 on the `(`, `access` having taken
+/// `f` as a query, with a fragment in the message where a reader expects a depth. `to_upper` is a real name
+/// and the one `nested_rules_file` generates. The `let` row needs no trailing operator, because a `let`
+/// value is a query. Render the row, do not paraphrase it.
 ///
 /// (Some rows are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter for a bound
 /// an order of magnitude or more below it. The query-filter rows are bisected rung by rung instead, because
@@ -2455,11 +2459,11 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
                 // Fall through to an access only on a *recoverable* error, which is the same rule
                 // `single_clause` follows: a `Failure` means something inside the call committed, and
                 // reading the same text as a property access instead reports whatever that fails on.
-                // The depth bound is one such commitment, and it showed: `let x = f(f( ... ))` past the
-                // bound was refused -- correctly, at 5 -- with a `ParserError` whose context was the
-                // empty string, because the message that named the depth had been thrown away here and
-                // `access` failed on the `(` with nothing to say. The `cut` that used to wrap this call
-                // could not prevent that: it turned a recoverable error into a `Failure` and the arm
+                // The depth bound is one such commitment, and it showed: `let x = to_upper(to_upper( ... ))`
+                // past the bound was refused -- correctly, at 5 -- with a `ParserError` whose context was
+                // the empty string, because the message that named the depth had been thrown away here
+                // and `access` failed on the `(` with nothing to say. The `cut` that used to wrap this
+                // call could not prevent that: it turned a recoverable error into a `Failure` and the arm
                 // below then caught it, so it changed no outcome at all.
                 Err(nom::Err::Error(_)) => {
                     let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))(input)?;
