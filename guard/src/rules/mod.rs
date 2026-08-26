@@ -20,6 +20,7 @@ use colored::*;
 use lazy_static::lazy_static;
 use nom::lib::std::convert::TryFrom;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::rc::Rc;
@@ -499,9 +500,24 @@ pub(crate) trait Evaluate {
     ) -> Result<Status>;
 }
 
-pub fn short_form_to_long(fn_ref: &str) -> &'static str {
-    match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
-        Some(fn_ref) => fn_ref,
-        _ => unreachable!(),
+/// The long name a `!Foo` short form stands for.
+///
+/// CloudFormation's rule is that `!Foo` is the short form of `Fn::Foo`, with `Ref` and `Condition`
+/// the two names that carry no `Fn::` prefix; `SHORT_FORM_TO_LONG_MAPPING` is that pair plus the
+/// names spelled out. The `Fn::` fallback is what makes this total, and total is what it has to be:
+/// this replaced a `short_form_to_long` whose miss arm was `unreachable!()`, which was only true
+/// because every caller checked one of two hand-written sets first, and those sets had gone stale.
+/// Cidr, ForEach, GetStackOutput, Length, ToJsonString, Transform and ValueOfAll are all in the
+/// Template Reference and were in neither set, so their short forms lost their tags entirely.
+///
+/// A name AWS has not published resolves the same way, which is the deliberate consequence: the
+/// alternative is to keep a list that has already fallen behind once, and a tag this function cannot
+/// name is a tag the loader would otherwise drop. Preserving it under the name CloudFormation would
+/// give it is wrong for no template AWS accepts, and right for every intrinsic added after this
+/// commit.
+pub fn long_form_of(short: &str) -> Cow<'static, str> {
+    match SHORT_FORM_TO_LONG_MAPPING.get(short) {
+        Some(long) => Cow::Borrowed(long),
+        None => Cow::Owned(format!("Fn::{short}")),
     }
 }

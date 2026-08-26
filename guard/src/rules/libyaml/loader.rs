@@ -5,13 +5,13 @@ use crate::rules::{
     self,
     errors::{Error, InternalError::InvalidKeyType},
     libyaml::{
-        event::{Event, Scalar, ScalarStyle, SequenceStart},
+        event::{Event, MappingStart, Scalar, ScalarStyle, SequenceStart},
         parser::Parser,
+        tag::Tag,
     },
+    long_form_of,
     path_value::Location,
-    short_form_to_long,
     values::MarkedValue,
-    SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
 };
 
 const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
@@ -112,9 +112,9 @@ impl Loader {
                         self.last_container_index.clear();
                         self.func_support_index.clear();
                     }
-                    Event::MappingStart(..) => {
+                    Event::MappingStart(mapping_start) => {
                         self.enter_container(&location)?;
-                        self.handle_mapping_start(location)
+                        self.handle_mapping_start(mapping_start, location)
                     }
                     Event::MappingEnd => self.handle_mapping_end()?,
                     Event::SequenceStart(sequence_start) => {
@@ -174,9 +174,8 @@ impl Loader {
             let handle = tag.get_handle();
             let suffix = tag.get_suffix(handle.len());
 
-            if handle == "!" {
-                handle_single_value_func_ref(val.clone(), location.clone(), suffix.as_ref())
-                    .map_or(MarkedValue::String(val, location), std::convert::identity)
+            if handle == "!" && !suffix.is_empty() {
+                wrap_tagged_scalar(val, location, suffix.as_ref())
             } else if suffix.starts_with(TYPE_REF_PREFIX) {
                 handle_type_ref(val, location, suffix.as_ref())
             } else {
@@ -233,37 +232,67 @@ impl Loader {
             _ => unreachable!(),
         }
 
-        if self
-            .func_support_index
-            .last()
-            .map_or(false, |(idx, _)| *idx == array_idx - 1)
-        {
-            let (_, fn_ref) = self.func_support_index.pop().unwrap();
-            let array = self.stack.pop().unwrap();
-            let map = self.stack.last_mut().unwrap();
-            match map {
-                MarkedValue::Map(map, _) => {
-                    let _ = map.insert(fn_ref, array);
-                }
-                MarkedValue::BadValue(..) => {}
-                _ => unreachable!(),
+        self.close_tagged_container(array_idx);
+    }
+
+    /// Moves a container that a `!Foo` tag wrapped under its long function name.
+    ///
+    /// `push_tag_wrapper` left a single-entry map immediately below the container it tagged, so the
+    /// wrapper is at `container_idx - 1` and the finished container is on top. Shared by the sequence
+    /// and mapping ends, which differ only in how they built the container.
+    fn close_tagged_container(&mut self, container_idx: usize) {
+        // `container_idx > 0` before the subtraction. A wrapper is only ever pushed below a
+        // container, so index 0 cannot have one, and reading it as an invariant rather than
+        // checking it is how an underflow becomes a panic when the set of wrapped shapes grows.
+        let wrapped = container_idx > 0
+            && self
+                .func_support_index
+                .last()
+                .map_or(false, |(idx, _)| *idx == container_idx - 1);
+
+        if !wrapped {
+            return;
+        }
+
+        let (_, fn_ref) = self.func_support_index.pop().unwrap();
+        let container = self.stack.pop().unwrap();
+        let map = self.stack.last_mut().unwrap();
+        match map {
+            MarkedValue::Map(map, _) => {
+                let _ = map.insert(fn_ref, container);
             }
+            MarkedValue::BadValue(..) => {}
+            _ => unreachable!(),
         }
     }
 
-    fn handle_sequence_start(&mut self, event: SequenceStart, location: Location) {
-        if let Some(tag) = &event.tag {
-            let handle = tag.get_handle();
-            let suffix = tag.get_suffix(handle.len());
-            if handle == "!" {
-                if let Some(value) = handle_sequence_value_func_ref(location.clone(), &suffix) {
-                    self.stack.push(value);
-                    let fn_ref = short_form_to_long(&suffix);
-                    self.func_support_index
-                        .push((self.stack.len() - 1, (fn_ref.to_owned(), location.clone())));
-                }
-            }
+    /// Pushes the wrapper for a `!Foo`-tagged sequence or mapping, so its contents end up under the
+    /// long function name once the container closes.
+    ///
+    /// A bare `!` is skipped. It is YAML's non-specific tag rather than a function name, and
+    /// `long_form_of("")` would name the key "Fn::".
+    fn push_tag_wrapper(&mut self, tag: Option<&Tag>, location: &Location) {
+        let Some(tag) = tag else { return };
+
+        let handle = tag.get_handle();
+        if handle != "!" {
+            return;
         }
+
+        let suffix = tag.get_suffix(handle.len());
+        if suffix.is_empty() {
+            return;
+        }
+
+        let fn_ref = long_form_of(&suffix).into_owned();
+        self.stack
+            .push(tagged_container_wrapper(location.clone(), &fn_ref));
+        self.func_support_index
+            .push((self.stack.len() - 1, (fn_ref, location.clone())));
+    }
+
+    fn handle_sequence_start(&mut self, event: SequenceStart, location: Location) {
+        self.push_tag_wrapper(event.tag.as_ref(), &location);
         self.stack.push(MarkedValue::List(vec![], location));
         self.last_container_index.push(self.stack.len() - 1);
     }
@@ -300,10 +329,17 @@ impl Loader {
             map.insert(key_str, value);
         }
 
-        apply_merges(map, merges)
+        apply_merges(map, merges)?;
+        self.close_tagged_container(map_index);
+
+        Ok(())
     }
 
-    fn handle_mapping_start(&mut self, location: Location) {
+    fn handle_mapping_start(&mut self, event: MappingStart, location: Location) {
+        // The tag was never read here, so a tagged *mapping* lost it unconditionally -- including for
+        // names the loader did support. `!ToJsonString { a: 1 }` and `!Transform { Name: ... }` are
+        // mappings, and both arrived as bare maps with no function around them.
+        self.push_tag_wrapper(event.tag.as_ref(), &location);
         self.stack
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
@@ -546,21 +582,29 @@ fn is_bool_false(s: &str) -> bool {
     matches!(s, "false" | "False" | "FALSE")
 }
 
-fn handle_single_value_func_ref(val: String, loc: Location, fn_ref: &str) -> Option<MarkedValue> {
-    if SINGLE_VALUE_FUNC_REF.contains(fn_ref) {
-        let mut map = indexmap::IndexMap::new();
-        let payload = if fn_ref == "GetAtt" {
-            getatt_payload(val, &loc)
-        } else {
-            MarkedValue::String(val, loc.clone())
-        };
-        let fn_ref = short_form_to_long(fn_ref);
-        map.insert((fn_ref.to_string(), loc.clone()), payload);
+/// Wraps a `!Foo`-tagged scalar as `{ "Fn::Foo": payload }`.
+///
+/// This used to consult `SINGLE_VALUE_FUNC_REF` and, on a miss, discard the tag and keep only the
+/// payload. So the short form of any intrinsic the set did not list became something else entirely:
+/// `!Transform { ... }` was indistinguishable from a plain mapping and a rule forbidding the macro
+/// passed at exit 0, where the long `Fn::Transform` spelling of the same template failed. That is the
+/// opposite of how `!!`-tags behave -- `!!int abc` becomes a `BadValue` and is reported -- so a bad
+/// type tag was loud and an unknown function tag was silent.
+///
+/// Every `!Foo` is wrapped now, and `long_form_of` supplies the name. The two hand-written sets no
+/// longer gate this, which also removes the position trap they created: `GetAtt` was in both sets but
+/// `GetAZs` was in only the scalar one and `Select` in only the sequence one, so a name used in the
+/// other position lost its tag even though the loader knew it.
+fn wrap_tagged_scalar(val: String, loc: Location, short: &str) -> MarkedValue {
+    let mut map = indexmap::IndexMap::new();
+    let payload = if short == "GetAtt" {
+        getatt_payload(val, &loc)
+    } else {
+        MarkedValue::String(val, loc.clone())
+    };
+    map.insert((long_form_of(short).into_owned(), loc.clone()), payload);
 
-        return Some(MarkedValue::Map(map, loc));
-    }
-
-    None
+    MarkedValue::Map(map, loc)
 }
 
 /// The payload of a `!GetAtt`, normalised to the list shape the other two spellings produce.
@@ -599,19 +643,19 @@ fn getatt_payload(val: String, loc: &Location) -> MarkedValue {
     }
 }
 
-fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedValue> {
-    if SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
-        let mut map = indexmap::IndexMap::new();
-        let fn_ref = short_form_to_long(fn_ref);
-        map.insert(
-            (fn_ref.to_string(), loc.clone()),
-            MarkedValue::Null(loc.clone()),
-        );
+/// The wrapper a `!Foo`-tagged sequence or mapping is nested under.
+///
+/// The payload is a placeholder: the container is still being read when this is pushed, and
+/// `close_tagged_container` replaces the entry once it closes. `fn_ref` is the long name, already
+/// resolved by the caller.
+fn tagged_container_wrapper(loc: Location, fn_ref: &str) -> MarkedValue {
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        (fn_ref.to_string(), loc.clone()),
+        MarkedValue::Null(loc.clone()),
+    );
 
-        return Some(MarkedValue::Map(map, loc));
-    }
-
-    None
+    MarkedValue::Map(map, loc)
 }
 
 fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {

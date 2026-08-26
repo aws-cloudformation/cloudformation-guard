@@ -11,9 +11,9 @@ use nom::lib::std::fmt::Formatter;
 use crate::rules::{
     errors::{Error, InternalError},
     libyaml::loader::Loader,
+    long_form_of,
     parser::Span,
     path_value::Location,
-    short_form_to_long, SEQUENCE_VALUE_FUNC_REF, SINGLE_VALUE_FUNC_REF,
 };
 
 use serde::{Deserialize, Serialize};
@@ -466,16 +466,38 @@ where
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
 }
 
+/// Wraps a `!Foo`-tagged value as `{ "Fn::Foo": payload }`.
+///
+/// This is the serde-backed loader's half of the same two fixes the libyaml loader carries, and it has
+/// to move with it: `guard test` and the public `run_checks` read documents through here, so a
+/// disagreement means a rule proved correct under `guard test` behaves differently under `validate` on
+/// the same bytes.
+///
+/// It used to check the union of two hand-written name sets and, on a miss, discard the tag and keep
+/// only the payload -- so the short form of Cidr, ForEach, GetStackOutput, Length, ToJsonString,
+/// Transform or ValueOfAll became something else. `long_form_of` supplies the name for any `!Foo`
+/// instead, by CloudFormation's own rule that `!Foo` is `Fn::Foo`.
+///
+/// `GetAtt` also gets its dotted payload split, for the reason given on `libyaml::loader::getatt_payload`:
+/// AWS documents `!GetAtt Resource.Attr` as the short form of the two-element list, and JSON has no
+/// other shape for it, so leaving the dotted form a string gives one reference two incomparable shapes.
 fn handle_tagged_value(val: serde_yaml::Value, fn_ref: &str) -> crate::rules::Result<Value> {
-    if SINGLE_VALUE_FUNC_REF.contains(fn_ref) || SEQUENCE_VALUE_FUNC_REF.contains(fn_ref) {
-        let mut map = indexmap::IndexMap::new();
-        let fn_ref = short_form_to_long(fn_ref);
-        map.insert(fn_ref.to_string(), Value::try_from(val)?);
+    let payload = Value::try_from(val)?;
+    let payload = match (fn_ref, &payload) {
+        ("GetAtt", Value::String(reference)) => match reference.split_once('.') {
+            Some((resource, attribute)) => Value::List(vec![
+                Value::String(resource.to_string()),
+                Value::String(attribute.to_string()),
+            ]),
+            None => payload,
+        },
+        _ => payload,
+    };
 
-        return Ok(Value::Map(map));
-    }
+    let mut map = indexmap::IndexMap::new();
+    map.insert(long_form_of(fn_ref).into_owned(), payload);
 
-    Value::try_from(val)
+    Ok(Value::Map(map))
 }
 
 #[cfg(test)]

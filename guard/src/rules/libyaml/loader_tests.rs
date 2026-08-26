@@ -1196,3 +1196,81 @@ fn a_merge_key_given_something_unmergeable_is_refused(#[case] content: &str) {
         loaded
     );
 }
+
+/// A `!Foo` tag is preserved under the long function name whatever shape its payload is and whether
+/// or not the loader has heard of the name.
+///
+/// The tag used to be checked against two hand-written sets and, on a miss, discarded -- so the short
+/// form of an intrinsic neither set listed became a bare value. `!Transform { ... }` was
+/// indistinguishable from a plain mapping, and a rule forbidding the macro passed at exit 0 where the
+/// long `Fn::Transform` spelling of the same template failed. That is the opposite of how `!!`-tags
+/// behave: `!!int abc` becomes a `BadValue` and is reported, so a bad *type* tag was loud while an
+/// unknown *function* tag was silent.
+///
+/// The sets had gone stale, which is why enumeration was the wrong mechanism: Cidr, ForEach,
+/// GetStackOutput, Length, ToJsonString, Transform and ValueOfAll are all in the CloudFormation
+/// Template Reference and were in neither. They also created a position trap -- `GetAZs` was in the
+/// scalar set only and `Select` in the sequence set only, so a known name used in the other position
+/// lost its tag too.
+///
+/// The mapping cases are the ones no set could have covered: `handle_mapping_start` never looked at
+/// the tag at all, so a tagged mapping lost it even for a name both sets listed.
+#[rstest::rstest]
+#[case::a_known_scalar_name("v: !Ref Param", "Ref")]
+#[case::a_known_sequence_name("v: !Select [0, [a, b]]", "Fn::Select")]
+#[case::a_known_name_in_the_other_position("v: !GetAZs [us-east-1]", "Fn::GetAZs")]
+#[case::an_unlisted_scalar_name("v: !Length x", "Fn::Length")]
+#[case::an_unlisted_sequence_name("v: !Cidr [\"10.0.0.0/16\", 6, 5]", "Fn::Cidr")]
+#[case::an_unlisted_mapping_name("v: !ToJsonString { a: 1 }", "Fn::ToJsonString")]
+#[case::a_known_mapping_name("v: !Transform { Name: AWS::Include }", "Fn::Transform")]
+#[case::a_name_aws_has_not_published("v: !SomethingNew x", "Fn::SomethingNew")]
+#[case::the_other_prefixless_name("v: !Condition IsProd", "Condition")]
+fn a_tagged_value_keeps_its_function_name(
+    #[case] content: &str,
+    #[case] expected: &str,
+) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let wrapper = match map.first().expect("v is present").1 {
+        MarkedValue::Map(inner, ..) => inner,
+        other => panic!(
+            "{:?} lost its tag and loaded the payload alone as {:?}",
+            content, other
+        ),
+    };
+    let ((name, ..), _) = wrapper.first().expect("the function is present");
+
+    assert_eq!(expected, name, "{:?} named the function {}", content, name);
+
+    Ok(())
+}
+
+/// A bare `!` is YAML's non-specific tag, not a function name, so it is not wrapped. Without this the
+/// `Fn::` fallback would name the key "Fn::".
+#[rstest::rstest]
+#[case::a_bare_tag_on_a_scalar("v: ! plain")]
+#[case::a_bare_tag_on_a_sequence("v: ! [a]")]
+fn a_bare_non_specific_tag_is_not_a_function(#[case] content: &str) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let (.., payload) = map.first().expect("v is present");
+
+    if let MarkedValue::Map(inner, ..) = payload {
+        let ((name, ..), _) = inner.first().expect("non-empty");
+        assert!(
+            !name.starts_with("Fn::"),
+            "a bare `!` was read as the function {:?}",
+            name
+        );
+    }
+
+    Ok(())
+}

@@ -2941,6 +2941,12 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
     Ok(())
 }
 
+/// The `Fn::GetAtt` literals in the rule below are two-element lists because that is the shape the
+/// template's `!GetAtt 'Master.PrivateIp'` loads as. They used to be the dotted string, which is what
+/// the loaders used to produce and what CloudFormation does not: the Template Reference gives
+/// `!GetAtt logicalName.attributeName` as the short form of `{"Fn::GetAtt": [logicalName, attributeName]}`,
+/// and JSON has no other shape for it. Quoting the payload does not change that, which is why the
+/// single-quoted spelling here still splits.
 #[rstest::rstest]
 #[case("SubdomainMaster", "Master.PrivateIp", Status::PASS)]
 #[case("SubdomainInternal", "Master.PrivateIp", Status::PASS)]
@@ -2977,7 +2983,7 @@ fn test_in_comparison_operator_for_list_of_lists(
     rule aws_route53_recordset when %aws_route53_recordset_resources !empty {
       let targets = [{"Fn::Join": ["",[{"Ref": "SubdomainMaster"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainWild"},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": 'SubdomainInternal'},".", {"Ref": "HostedZoneName"}]]}, {"Fn::Join": ["",[{"Ref": "SubdomainDefault"},".", {"Ref": "HostedZoneName"}]]}]
       %aws_route53_recordset_resources.Properties.Comment == "DNS name for my instance."
-      %aws_route53_recordset_resources.Properties.ResourceRecords IN [[{"Fn::GetAtt": "Master.PrivateIp"}], [{"Fn::GetAtt": "Infra1.PrivateIp"}]]
+      %aws_route53_recordset_resources.Properties.ResourceRecords IN [[{"Fn::GetAtt": ["Master", "PrivateIp"]}], [{"Fn::GetAtt": ["Infra1", "PrivateIp"]}]]
       %aws_route53_recordset_resources.Properties.Name IN %targets
       %aws_route53_recordset_resources.Properties.Type == "A"
       %aws_route53_recordset_resources.Properties.TTL == "900"
