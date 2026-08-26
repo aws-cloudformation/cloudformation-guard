@@ -141,11 +141,13 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// an order of magnitude or more below it. The query-filter rows are bisected rung by rung instead, because
 /// theirs is the **nearest** abort to 128 of all ten and so the one the bound has to clear. Three caveats.
 /// "Parses" means something weaker there than in the other rows: 1105 does not abort, but it does not
-/// finish either, for the reason below. The boundary is one rung wide -- **1106 is unrepeatable**, measured
-/// three times as abort, abort, hang, while 1105 never aborts and 1107 always does. That is stack-start
-/// jitter, from environment size and ASLR, and it is *not* affected by how stdout is handled, which was
-/// checked over twelve depths with the output discarded and piped and agreed at every one. So do not read a
-/// single run at the boundary as the boundary.
+/// finish either, for the reason below. The boundary is one rung wide -- **1106 is unrepeatable**, while
+/// 1105 never aborts and 1107 always does. Six runs across two independently written harnesses put two
+/// aborts at 1106: one measured abort/abort/hang, the other hang/hang/hang. That is stack-start jitter,
+/// from environment size and ASLR, and it is *not* affected by how stdout is handled, which was checked
+/// over twelve depths with the output discarded and piped and agreed at every one. So do not read a single
+/// run at the boundary as the boundary -- three of the values this line has carried came from doing
+/// exactly that.
 ///
 /// And the number moves with the backtracking fix, in the direction that makes the bound safer rather than
 /// less so. The two filter rows are the depths on a build with the exponential filter cost still present.
