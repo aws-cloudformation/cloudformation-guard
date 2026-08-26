@@ -2197,6 +2197,33 @@ fn let_cycle_message(cycle: &[&str]) -> String {
     )
 }
 
+/// The diagnostic for a cycle among rule references, the sibling of [`let_cycle_message`].
+///
+/// Worded to match it, because the two say the same thing about two namespaces and an author who has
+/// seen one should recognise the other. The ring is spelled out for the reason given there: with
+/// `rule a { b }` and `rule b { a }`, either definition is the one to edit and the author has to see
+/// both to pick.
+fn rule_cycle_message(cycle: &[&str]) -> String {
+    if let [only] = cycle {
+        return format!(
+            "Rule {} references itself. Evaluating it recurses until the stack is exhausted, so the \
+             file is rejected rather than run.",
+            only
+        );
+    }
+
+    format!(
+        "Rules {} reference each other. Evaluating any of them recurses until the stack is exhausted, \
+         so the file is rejected rather than run.",
+        cycle
+            .iter()
+            .chain(cycle.first())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" -> ")
+    )
+}
+
 /// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
 ///
 /// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
@@ -2863,6 +2890,23 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
             name = name,
             scope = scope
         )));
+    }
+
+    // The other half of the crash the `let` cycle check above catches, and the half that needs no `let`
+    // in the file at all. `rule loop { loop }` and `rule loop(n) { loop(%n) }` both exhausted the stack
+    // and aborted at 134, outside the documented exit codes entirely, so a caller checking for 0, 5 or
+    // 19 got neither a pass nor a failure it could report -- and the abort happens before any finding
+    // is written, so a file with one accidental cycle said nothing about the other rules in it either.
+    //
+    // Checked here rather than in `block`, because a rule reference resolves against the whole file's
+    // rule namespace and no smaller scope holds enough to decide it. Checked over `rules_file` rather
+    // than over the two rule lists so a cycle can close through either spelling, or one of each; see
+    // `first_rule_reference_cycle` for why one graph rather than a guard in each evaluation path.
+    //
+    // After the duplicate-name check above on purpose: that check is what makes a rule name unique, and
+    // this one keys a graph by it.
+    if let Some(cycle) = first_rule_reference_cycle(&rules_file) {
+        return Err(Error::ParseError(rule_cycle_message(&cycle)));
     }
 
     Ok(Some(rules_file))

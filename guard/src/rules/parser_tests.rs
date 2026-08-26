@@ -5896,6 +5896,118 @@ fn a_let_defined_in_terms_of_itself_is_rejected() -> Result<(), Error> {
     Ok(())
 }
 
+/// A rule that references itself is rejected, in both spellings of a reference and at both ends of a
+/// ring.
+///
+/// Every case below aborted the process on a stack overflow at exit 134, outside the documented exit
+/// codes -- 0, 5 and 19 -- so a caller saw neither a pass nor a failure it could report; and the abort
+/// happens before any finding is written, so the file said nothing about its other rules either.
+/// `RootScope::rule_status` writes its memo after `eval_rule` returns, so a reference reaching a rule
+/// already in progress finds no marker and evaluates it again -- the same shape as the `let` cycle in
+/// `a_let_defined_in_terms_of_itself_is_rejected`, one namespace over.
+///
+/// Both spellings are asserted here rather than in two tests on purpose. They do not share an
+/// evaluation path -- `eval_parameterized_rule_call` calls `eval_rule` directly instead of going
+/// through `rule_status` -- so a change that reintroduced the crash in one of them would pass a test
+/// covering only the other. The mixed pair is what pins that they are one graph and not two.
+///
+/// The 12-deep chains are the control that separates a cycle check from a recursion depth limit: an
+/// acyclic chain of references resolves at any length, so a limit low enough to catch
+/// `rule loop { loop }` -- a cycle at depth one -- would reject every one of them.
+#[test]
+fn a_rule_that_references_itself_is_rejected() -> Result<(), Error> {
+    for rules in [
+        // The plain spelling, self and mutual.
+        "rule loop {\n  loop\n}\nrule MAIN {\n  loop\n}",
+        "rule a {\n  b\n}\nrule b {\n  a\n}\nrule MAIN {\n  a\n}",
+        // The parameterized spelling of the same two.
+        "rule loop(n) {\n  loop(%n)\n}\nrule MAIN {\n  loop(1)\n}",
+        "rule a(n) {\n  b(%n)\n}\nrule b(n) {\n  a(%n)\n}\nrule MAIN {\n  a(1)\n}",
+        // A ring closing through one of each. Parameterized rules share the rule namespace, so a
+        // cycle does not have to stay in one spelling.
+        "rule a {\n  b(\"x\")\n}\nrule b(n) {\n  a\n}\nrule MAIN {\n  a\n}",
+        // A rule's own `when` conditions are evaluated by `eval_rule` as its body is, so a reference
+        // there recurses the same way.
+        "rule a when b {\n  Resources !empty\n}\nrule b {\n  a\n}\nrule MAIN {\n  a\n}",
+        // A type block's conditions, one level further in.
+        "rule a {\n  AWS::EC2::Volume when b {\n    Encrypted == true\n  }\n}\nrule b {\n  a\n}\nrule MAIN {\n  a\n}",
+        // A nested `when` block inside a body. This is the case a depth limit would have had to
+        // guess about, because whether it recurses at all is decided by the document.
+        "rule a {\n  when Resources !empty {\n    a\n  }\n}\nrule MAIN {\n  a\n}",
+        // A negated reference recursed identically; the `not` is applied to the status the recursion
+        // never returns.
+        "rule a {\n  not a\n}\nrule MAIN {\n  a\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a rule that references itself must be rejected: {}",
+            rules
+        );
+    }
+
+    // The message names every member of the ring, because either definition is the one to edit.
+    let ring = rules_file(from_str2(
+        "rule a {\n  b\n}\nrule b {\n  a\n}\nrule MAIN {\n  a\n}",
+    ))
+    .expect_err("a ring is rejected")
+    .to_string();
+    assert!(
+        ring.contains("a -> b -> a"),
+        "the ring has to be spelled out: {}",
+        ring
+    );
+
+    let itself = rules_file(from_str2("rule loop {\n  loop\n}\nrule MAIN {\n  loop\n}"))
+        .expect_err("a self-reference is rejected")
+        .to_string();
+    assert!(
+        itself.contains("Rule loop references itself"),
+        "a one-member cycle names the rule rather than a chain: {}",
+        itself
+    );
+
+    // An acyclic chain of references resolves at any length, in either spelling and in a chain that
+    // alternates between them. A depth limit catching the cycles above would reject all three.
+    let mut plain = String::from("rule r12 {\n  Resources !empty\n}\n");
+    let mut parameterized = String::from("rule p12(n) {\n  Resources !empty\n}\n");
+    let mut mixed = String::from("rule m12 {\n  Resources !empty\n}\n");
+    for step in (0..12).rev() {
+        plain.push_str(&format!("rule r{} {{\n  r{}\n}}\n", step, step + 1));
+        parameterized.push_str(&format!("rule p{}(n) {{\n  p{}(%n)\n}}\n", step, step + 1));
+        // Even steps take no parameter, odd ones take one, so every edge crosses the two spellings.
+        mixed.push_str(&match (step % 2 == 0, (step + 1) % 2 == 0) {
+            (true, _) => format!("rule m{} {{\n  m{}(\"x\")\n}}\n", step, step + 1),
+            (false, true) => format!("rule m{}(n) {{\n  m{}\n}}\n", step, step + 1),
+            (false, false) => format!("rule m{}(n) {{\n  m{}(%n)\n}}\n", step, step + 1),
+        });
+    }
+    plain.push_str("rule MAIN {\n  r0\n}");
+    parameterized.push_str("rule MAIN {\n  p0(1)\n}");
+    mixed.push_str("rule MAIN {\n  m0\n}");
+    for chain in [&plain, &parameterized, &mixed] {
+        assert!(rules_file(from_str2(chain))?.is_some(), "{}", chain);
+    }
+
+    // A diamond reaches one rule down two paths without a cycle, and the walk marks a completed
+    // subtree `Done` rather than treating the second arrival as a ring.
+    assert!(rules_file(from_str2(
+        "rule leaf {\n  Resources !empty\n}\nrule left {\n  leaf\n}\nrule right {\n  leaf\n}\nrule MAIN {\n  left\n  right\n}"
+    ))?
+    .is_some());
+
+    // A reference to a rule the file does not declare is not an edge. It stays the undeclared-name
+    // path, which reports the missing rule by name and already exits 5.
+    assert!(rules_file(from_str2("rule MAIN {\n  nosuchrule\n}"))?.is_some());
+
+    // A clause about a property that happens to be spelled like a rule in the file is a clause, not
+    // a reference to that rule.
+    assert!(rules_file(from_str2(
+        "rule Resources {\n  Resources !empty\n}\nrule MAIN {\n  Resources\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
 /// A filter over a property named `keys` parses, and a key filter still does.
 ///
 /// `map_keys_match` committed with `cut` as soon as it had seen `keys`, so a following token that was not

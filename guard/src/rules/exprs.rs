@@ -711,6 +711,64 @@ enum Visit {
     Done,
 }
 
+/// The names in the first cycle reachable from `starts`, in the order they read each other, or `None`
+/// if there is no cycle.
+///
+/// Shared by [`first_let_cycle`] and [`first_rule_reference_cycle`], which differ only in what an edge
+/// is. Both crashes have one shape -- a resolver that memoizes after it returns, so a second visit to a
+/// name already in progress finds no marker and recurses -- and one answer, so one walk. Written out
+/// twice it would be two subtle iterative depth-first searches to keep in step.
+///
+/// Iterative rather than recursive, because the whole point of both checks is that a recursion with no
+/// cycle guard exhausted the stack. A walk deep enough to overflow is exactly the input this function
+/// has to survive in order to report on it.
+fn first_cycle<'value>(
+    starts: &[&'value str],
+    edges: &BTreeMap<&'value str, Vec<&'value str>>,
+) -> Option<Vec<&'value str>> {
+    let mut visited = BTreeMap::new();
+    for start in starts.iter().copied() {
+        if visited.contains_key(start) {
+            continue;
+        }
+
+        let mut path = vec![start];
+        let mut stack = vec![(start, 0_usize)];
+        visited.insert(start, Visit::OnPath);
+
+        while let Some((name, next)) = stack.last().copied() {
+            let read = edges.get(name).map(Vec::as_slice).unwrap_or_default();
+            if next == read.len() {
+                visited.insert(name, Visit::Done);
+                path.pop();
+                stack.pop();
+                continue;
+            }
+            stack.last_mut().expect("just read the last entry").1 = next + 1;
+
+            match visited.get(read[next]) {
+                Some(Visit::OnPath) => {
+                    let closes_at = path
+                        .iter()
+                        .position(|on_path| *on_path == read[next])
+                        .expect("a name on the path is in the path");
+                    return Some(path.split_off(closes_at));
+                }
+
+                Some(Visit::Done) => {}
+
+                None => {
+                    visited.insert(read[next], Visit::OnPath);
+                    path.push(read[next]);
+                    stack.push((read[next], 0));
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// The names in the first cycle among a scope's own `let` right-hand sides, in the order they read
 /// each other, or `None` if there is no cycle.
 ///
@@ -743,8 +801,8 @@ enum Visit {
 /// A named rule's body is deliberately not followed. `RootScope::rule_status` evaluates it with the
 /// root scope as its parent whatever the reference site, so a `%name` inside one cannot resolve to a
 /// block-level `let`; and a ring that closes through a rule body is rule recursion rather than a
-/// variable cycle -- `rule a { a }` aborts the same way with no `let` in the file at all. That is a
-/// second missing cycle guard in a different function, and this one is the variable resolver.
+/// variable cycle -- `rule a { a }` aborts the same way with no `let` in the file at all. That one is
+/// [`first_rule_reference_cycle`], and this one is the variable resolver.
 pub(crate) fn first_let_cycle<'value, 'loc: 'value>(
     assignments: &'value [LetExpr<'loc>],
 ) -> Option<Vec<&'value str>> {
@@ -766,51 +824,188 @@ pub(crate) fn first_let_cycle<'value, 'loc: 'value>(
         );
     }
 
-    // Iterative rather than recursive, because the whole point of this check is that a recursion
-    // with no cycle guard exhausted the stack. A walk deep enough to overflow is exactly the input
-    // this function has to survive in order to report on it.
-    let mut visited = BTreeMap::new();
-    for assignment in assignments {
-        let start = assignment.var.as_str();
-        if visited.contains_key(start) {
-            continue;
+    let starts = assignments
+        .iter()
+        .map(|assignment| assignment.var.as_str())
+        .collect::<Vec<&str>>();
+    first_cycle(&starts, &reads)
+}
+
+/// The rule names in the first cycle among a file's rule references, in the order they reference each
+/// other, or `None` if there is no cycle.
+///
+/// The other half of the crash [`first_let_cycle`] describes, and the half that needs no `let` in the
+/// file at all. `RootScope::rule_status` writes its memo after `eval_rule` returns, so a reference
+/// reaching a rule already in progress finds no marker and evaluates it again; every spelling of it
+/// exhausted the stack and aborted the process at exit 134:
+///
+/// ```text
+/// rule loop { loop }                              a plain self-reference
+/// rule a { b } / rule b { a }                     a plain mutual pair
+/// rule loop(n) { loop(%n) }                       the parameterized spelling of the first
+/// rule a(n) { b(%n) } / rule b(n) { a(%n) }       and of the second
+/// ```
+///
+/// One graph over both spellings, which is the property worth keeping. A parameterized rule shares the
+/// rule namespace -- `rules_file` rejects `rule r` beside `rule r(x)` for that reason -- so a cycle can
+/// close through either form, or through one of each. The two spellings also do not share an evaluation
+/// path: `eval_parameterized_rule_call` calls `eval_rule` directly rather than going through
+/// `rule_status`, so a guard placed in `rule_status` would have caught the plain spelling and missed the
+/// parameterized one, leaving two mechanisms to keep in step. Here they are the same edges.
+///
+/// A rule's `when` conditions count as well as its body. Both are evaluated by `eval_rule`, and a
+/// condition referencing the rule it guards recurses exactly as a body reference does.
+///
+/// Edges point only at names the file declares, which is what keeps this from overlapping the
+/// undeclared-name path: a reference to a rule that does not exist is `Error::MissingValue` from
+/// `rule_status` or `find_parameterized_rule`, already reported as a rules-file error, and it is not a
+/// cycle.
+///
+/// A static check rather than a recursion depth limit, for the reason [`first_let_cycle`] gives: an
+/// acyclic chain of references resolves at any length, so a limit would have to guess a length no legal
+/// file exceeds, and `rule loop { loop }` is a cycle at depth one that no useful limit catches.
+///
+/// Known limitation, and the one case this rejects that runs today. A self-reference behind a `when`
+/// whose condition does not hold terminates, because the guarded block never runs:
+///
+/// ```text
+/// rule a { when Resources.Nope exists { a } }
+/// ```
+///
+/// It is rejected anyway. Nothing in a rules file can make a recursion terminate: the root value is
+/// fixed for the whole run, `rule_status` keys its memo on `(name, role)` so there are two states rather
+/// than a changing one, and a parameterized rule's arguments are re-resolved against that same root. So
+/// a guarded self-reference either never recurses at all or recurses forever, decided by the document
+/// rather than by the file -- the same "left to the data" case `first_let_cycle` rejects for a `let`
+/// whose name is also a capture, and for the same reason.
+pub(crate) fn first_rule_reference_cycle<'value, 'loc: 'value>(
+    file: &'value RulesFile<'loc>,
+) -> Option<Vec<&'value str>> {
+    let rules = || {
+        file.guard_rules
+            .iter()
+            .chain(file.parameterized_rules.iter().map(|each| &each.rule))
+    };
+
+    let declared = rules()
+        .map(|rule| rule.rule_name.as_str())
+        .collect::<BTreeSet<&str>>();
+
+    let mut references = BTreeMap::new();
+    for rule in rules() {
+        let mut names = BTreeSet::new();
+        if let Some(conditions) = &rule.conditions {
+            collect_conjunctions_rule_refs(conditions, &mut names);
         }
+        collect_conjunctions_rule_refs(&rule.block.conjunctions, &mut names);
+        references.insert(
+            rule.rule_name.as_str(),
+            names
+                .into_iter()
+                .filter(|name| declared.contains(name))
+                .collect::<Vec<&str>>(),
+        );
+    }
 
-        let mut path = vec![start];
-        let mut stack = vec![(start, 0_usize)];
-        visited.insert(start, Visit::OnPath);
+    let starts = rules()
+        .map(|rule| rule.rule_name.as_str())
+        .collect::<Vec<&str>>();
+    first_cycle(&starts, &references)
+}
 
-        while let Some((name, next)) = stack.last().copied() {
-            let read = reads.get(name).map(Vec::as_slice).unwrap_or_default();
-            if next == read.len() {
-                visited.insert(name, Visit::Done);
-                path.pop();
-                stack.pop();
-                continue;
+/// Every rule a clause references, at any nesting depth.
+///
+/// Unlike the capture-name and variable walks, nothing here shadows: rule names are one flat namespace
+/// for the whole file, so a nested block cannot redeclare one and every reference means the same rule
+/// wherever it sits.
+///
+/// A parameterized call's arguments are not walked, because a `LetValue` holds a value, a query or a
+/// function call and none of the three can name a rule.
+///
+/// Which arms carry a reference today, measured rather than assumed. A rule body reaches one directly,
+/// through a rule-level `when`, through a nested `when` block, and through a type block's `when`
+/// conditions. The *bodies* of a type block and of a block clause cannot: their clause parsers take
+/// access clauses only, so `rule a { AWS::EC2::Volume { a } }` and `rule a { Resources { a } }` are
+/// both syntax errors. Those two arms recurse anyway rather than being folded into a catch-all,
+/// because the type permits what the parser does not produce -- a `Block<GuardClause>` can hold a
+/// `NamedRule` -- and a grammar change that admitted one would otherwise make a cycle invisible here
+/// instead of failing to compile.
+trait RuleRefs<'value> {
+    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>);
+}
+
+fn collect_conjunctions_rule_refs<'value, T>(
+    conjunctions: &'value Conjunctions<T>,
+    into: &mut BTreeSet<&'value str>,
+) where
+    T: RuleRefs<'value>,
+{
+    for disjunctions in conjunctions {
+        for clause in disjunctions {
+            clause.collect_rule_refs(into);
+        }
+    }
+}
+
+impl<'value, 'loc: 'value> RuleRefs<'value> for GuardClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            GuardClause::NamedRule(named) => {
+                into.insert(named.dependent_rule.as_str());
             }
-            stack.last_mut().expect("just read the last entry").1 = next + 1;
 
-            match visited.get(read[next]) {
-                Some(Visit::OnPath) => {
-                    let closes_at = path
-                        .iter()
-                        .position(|on_path| *on_path == read[next])
-                        .expect("a name on the path is in the path");
-                    return Some(path.split_off(closes_at));
+            GuardClause::ParameterizedNamedRule(call) => {
+                into.insert(call.named_rule.dependent_rule.as_str());
+            }
+
+            GuardClause::BlockClause(block_clause) => {
+                collect_conjunctions_rule_refs(&block_clause.block.conjunctions, into)
+            }
+
+            GuardClause::WhenBlock(conditions, block) => {
+                collect_conjunctions_rule_refs(conditions, into);
+                collect_conjunctions_rule_refs(&block.conjunctions, into);
+            }
+
+            GuardClause::Clause(_) => {}
+        }
+    }
+}
+
+impl<'value, 'loc: 'value> RuleRefs<'value> for RuleClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            RuleClause::Clause(clause) => clause.collect_rule_refs(into),
+
+            RuleClause::WhenBlock(conditions, block) => {
+                collect_conjunctions_rule_refs(conditions, into);
+                collect_conjunctions_rule_refs(&block.conjunctions, into);
+            }
+
+            RuleClause::TypeBlock(type_block) => {
+                if let Some(conditions) = &type_block.conditions {
+                    collect_conjunctions_rule_refs(conditions, into);
                 }
-
-                Some(Visit::Done) => {}
-
-                None => {
-                    visited.insert(read[next], Visit::OnPath);
-                    path.push(read[next]);
-                    stack.push((read[next], 0));
-                }
+                collect_conjunctions_rule_refs(&type_block.block.conjunctions, into);
             }
         }
     }
+}
 
-    None
+impl<'value, 'loc: 'value> RuleRefs<'value> for WhenGuardClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+        match self {
+            WhenGuardClause::NamedRule(named) => {
+                into.insert(named.dependent_rule.as_str());
+            }
+
+            WhenGuardClause::ParameterizedNamedRule(call) => {
+                into.insert(call.named_rule.dependent_rule.as_str());
+            }
+
+            WhenGuardClause::Clause(_) => {}
+        }
+    }
 }
 
 /// Every `%name` a `let` right-hand side reads.
