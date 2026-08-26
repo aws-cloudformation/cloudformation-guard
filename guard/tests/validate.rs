@@ -463,9 +463,16 @@ mod validate_tests {
     /// A gate written `== true` has to fire for every spelling YAML makes boolean, because when it
     /// does not fire the body never runs and the process exits 0 having checked nothing. Against a
     /// bucket with `Encrypted: false`, `PublicAccess: true` exited 19 and caught the violation
-    /// while `PublicAccess: True` and `TRUE` exited 0 and left it unchecked. `yes` and `on` exited
-    /// 19, so the loader was reading a YAML 1.1 vocabulary with the capitalised spellings missing
-    /// out of it.
+    /// while `PublicAccess: True` and `TRUE` exited 0 and left it unchecked.
+    ///
+    /// The set is the YAML 1.2 core schema's six spellings, which is also what
+    /// `rules::parser::parse_bool` accepts for a literal written in a rule. The cases used to
+    /// include YAML 1.1's `yes`, `on`, `y` and their false counterparts; those are now strings, and
+    /// they live in `test_a_non_boolean_string_is_still_not_comparable_to_a_boolean` below, which
+    /// asserts the reported reason. They cannot stay here even with the expectation flipped to
+    /// SUCCESS: `no` and `off` exited 0 before this change because the gate evaluated *false*, and
+    /// exit 0 after it because the comparison is *undecidable*, so a case asserting only the exit
+    /// code would pass for a reason it does not name.
     ///
     /// The false spellings are here for the same reason the true ones are. Without them the true
     /// half is also satisfied by reading every spelling as true, which would fire the gate on
@@ -476,25 +483,9 @@ mod validate_tests {
     #[case::lowercase_true("true", StatusCode::VALIDATION_ERROR)]
     #[case::capitalized_true("True", StatusCode::VALIDATION_ERROR)]
     #[case::uppercase_true("TRUE", StatusCode::VALIDATION_ERROR)]
-    #[case::lowercase_yes("yes", StatusCode::VALIDATION_ERROR)]
-    #[case::capitalized_yes("Yes", StatusCode::VALIDATION_ERROR)]
-    #[case::uppercase_yes("YES", StatusCode::VALIDATION_ERROR)]
-    #[case::lowercase_on("on", StatusCode::VALIDATION_ERROR)]
-    #[case::capitalized_on("On", StatusCode::VALIDATION_ERROR)]
-    #[case::uppercase_on("ON", StatusCode::VALIDATION_ERROR)]
-    #[case::lowercase_y("y", StatusCode::VALIDATION_ERROR)]
-    #[case::uppercase_y("Y", StatusCode::VALIDATION_ERROR)]
     #[case::lowercase_false("false", StatusCode::SUCCESS)]
     #[case::capitalized_false("False", StatusCode::SUCCESS)]
     #[case::uppercase_false("FALSE", StatusCode::SUCCESS)]
-    #[case::lowercase_no("no", StatusCode::SUCCESS)]
-    #[case::capitalized_no("No", StatusCode::SUCCESS)]
-    #[case::uppercase_no("NO", StatusCode::SUCCESS)]
-    #[case::lowercase_off("off", StatusCode::SUCCESS)]
-    #[case::capitalized_off("Off", StatusCode::SUCCESS)]
-    #[case::uppercase_off("OFF", StatusCode::SUCCESS)]
-    #[case::lowercase_n("n", StatusCode::SUCCESS)]
-    #[case::uppercase_n("N", StatusCode::SUCCESS)]
     fn test_a_gate_on_a_boolean_fires_for_every_spelling_yaml_makes_boolean(
         #[case] spelling: &str,
         #[case] expected_status_code: i32,
@@ -521,14 +512,23 @@ mod validate_tests {
         assert_eq!(expected_status_code, status_code);
     }
 
-    /// The control for the case above, and the reason the set is the 22 spellings rather than
-    /// anything that looks like one. A scalar YAML resolves to a string stays a string and stays
-    /// incomparable to a boolean, so widening the boolean set does not quietly answer comparisons
-    /// that have no answer. Asserting the reported reason and not only the exit code is what
-    /// separates this from a clause that failed on the merits.
+    /// The control for the case above, and the reason the set is six spellings rather than anything
+    /// that looks like one. A scalar YAML resolves to a string stays a string and stays incomparable
+    /// to a boolean, so the boolean set does not quietly answer comparisons that have no answer.
+    /// Asserting the reported reason and not only the exit code is what separates this from a clause
+    /// that failed on the merits -- which is exactly the distinction the YAML 1.1 spellings need,
+    /// since `PublicAccess: no` used to make this clause decide false and now makes it undecidable.
     #[rstest::rstest]
     #[case::mixed_case_true("tRuE")]
     #[case::a_word_outside_the_set("enabled")]
+    #[case::yaml_1_1_yes("yes")]
+    #[case::yaml_1_1_yes_uppercase("YES")]
+    #[case::yaml_1_1_on("on")]
+    #[case::yaml_1_1_y("y")]
+    #[case::yaml_1_1_no("no")]
+    #[case::yaml_1_1_off("off")]
+    #[case::yaml_1_1_n("n")]
+    #[case::yaml_1_1_n_uppercase("N")]
     fn test_a_non_boolean_string_is_still_not_comparable_to_a_boolean(#[case] spelling: &str) {
         let data = format!(
             indoc! {r#"

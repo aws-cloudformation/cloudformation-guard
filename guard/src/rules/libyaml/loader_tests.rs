@@ -28,34 +28,20 @@ fn yaml_loader() -> Result<()> {
     Ok(())
 }
 
-/// The assertion below has to be unconditional. It used to sit inside an
-/// `if let MarkedValue::Bool(..)`, so every spelling the loader read as a string satisfied the case
-/// by never reaching the assertion, and 14 of the 22 cases passed while asserting nothing. This
-/// file has named the whole YAML 1.1 set as the intended one since the cases were written; a test
-/// that could not fail is what let the capitalised spellings go on being strings anyway.
+/// The whole boolean set, which is the YAML 1.2 core schema's six spellings.
+///
+/// The cases used to be YAML 1.1's 22, and this test could not fail: the assertion sat inside an
+/// `if let MarkedValue::Bool(..)`, so every spelling read as a string satisfied its case by never
+/// reaching the assertion. Fourteen of the 22 passed while asserting nothing. The assertion is now
+/// unconditional, and the 1.1-only spellings have moved to
+/// `a_scalar_outside_the_boolean_set_is_still_a_string`, where they are asserted to be strings.
 #[rstest::rstest]
 #[case::standard_lowercase_true("true", true)]
 #[case::standard_capitalized_true("True", true)]
 #[case::standard_uppercase_true("TRUE", true)]
-#[case::yaml_yes_lowercase("yes", true)]
-#[case::yaml_yes_capitalized("Yes", true)]
-#[case::yaml_yes_uppercase("YES", true)]
-#[case::yaml_on_lowercase("on", true)]
-#[case::yaml_on_capitalized("On", true)]
-#[case::yaml_on_uppercase("ON", true)]
-#[case::yaml_y_lowercase("y", true)]
-#[case::yaml_y_uppercase("Y", true)]
 #[case::standard_lowercase_false("false", false)]
 #[case::standard_capitalized_false("False", false)]
 #[case::standard_uppercase_false("FALSE", false)]
-#[case::yaml_no_lowercase("no", false)]
-#[case::yaml_no_capitalized("No", false)]
-#[case::yaml_no_uppercase("NO", false)]
-#[case::yaml_off_lowercase("off", false)]
-#[case::yaml_off_capitalized("Off", false)]
-#[case::yaml_off_uppercase("OFF", false)]
-#[case::yaml_n_lowercase("n", false)]
-#[case::yaml_n_uppercase("N", false)]
 fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Result<()> {
     let mut loader = Loader::new();
     let value = loader.load(format!("check: {arg}"))?;
@@ -536,6 +522,24 @@ fn comments_around_a_real_document_are_still_skipped() -> Result<()> {
 #[case::a_single_letter_outside_the_set("t")]
 #[case::a_word_that_starts_with_one("TRUE_VALUE")]
 #[case::a_word_that_ends_with_one("NOT_TRUE")]
+// The YAML 1.1-only spellings. These used to be booleans here, which is how `AttributeType: N`
+// became `false` and how `on:` in a GitHub Actions workflow became a key no mapping can hold.
+#[case::yaml_1_1_yes("yes")]
+#[case::yaml_1_1_yes_capitalized("Yes")]
+#[case::yaml_1_1_yes_uppercase("YES")]
+#[case::yaml_1_1_no("no")]
+#[case::yaml_1_1_no_capitalized("No")]
+#[case::yaml_1_1_no_uppercase("NO")]
+#[case::yaml_1_1_on("on")]
+#[case::yaml_1_1_on_capitalized("On")]
+#[case::yaml_1_1_on_uppercase("ON")]
+#[case::yaml_1_1_off("off")]
+#[case::yaml_1_1_off_capitalized("Off")]
+#[case::yaml_1_1_off_uppercase("OFF")]
+#[case::yaml_1_1_y("y")]
+#[case::yaml_1_1_y_uppercase("Y")]
+#[case::yaml_1_1_n("n")]
+#[case::yaml_1_1_n_uppercase("N")]
 fn a_scalar_outside_the_boolean_set_is_still_a_string(#[case] scalar: &str) -> Result<()> {
     let mut loader = Loader::new();
     let value = loader.load(format!("check: {scalar}"))?;
@@ -564,13 +568,9 @@ fn a_scalar_outside_the_boolean_set_is_still_a_string(#[case] scalar: &str) -> R
 #[case::lowercase("true", true)]
 #[case::capitalized("True", true)]
 #[case::uppercase("TRUE", true)]
-#[case::yaml_yes("yes", true)]
-#[case::yaml_on("On", true)]
-#[case::yaml_y("y", true)]
 #[case::lowercase_false("false", false)]
 #[case::capitalized_false("False", false)]
-#[case::yaml_no("NO", false)]
-#[case::yaml_off("off", false)]
+#[case::uppercase_false("FALSE", false)]
 fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
     #[case] scalar: &str,
     #[case] expected: bool,

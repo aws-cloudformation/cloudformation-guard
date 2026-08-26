@@ -229,29 +229,39 @@ impl Loader {
     }
 }
 
-/// The spellings a plain scalar is read as boolean, which is the set YAML 1.1 defines at
-/// <https://yaml.org/type/bool.html>:
-///
-/// ```text
-/// y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF
-/// ```
+/// The spellings a plain scalar is read as boolean: the YAML 1.2 core schema's set, which is the
+/// whole of `true | True | TRUE | false | False | FALSE`
+/// (<https://yaml.org/spec/1.2.2/#103-core-schema>, which resolves every other spelling to `str`).
 ///
 /// Three casings of each word and no others, so `tRuE` is a string. Matching case-insensitively
-/// instead would have been shorter and would have accepted spellings no schema makes boolean.
+/// would have been shorter and would have accepted spellings no schema makes boolean.
 ///
-/// `true`, `True`, `TRUE` and the three matching spellings of false are boolean under the YAML 1.2
-/// core schema as well, whose whole set is `true | True | TRUE | false | False | FALSE`
-/// (<https://yaml.org/spec/1.2.2/#103-core-schema>, which resolves everything else here to `str`).
-/// So those four were missing whichever version the loader meant. `yes`, `on` and the single
-/// letters are boolean only under 1.1, and the loader was already reading them that way, which is
-/// what settles the version question: the vocabulary was 1.1's with the capitalised spellings left
-/// out of it, not 1.2's with extras. Dropping `yes` and `on` to reach the 1.2 set instead would
-/// take a string a document writes today and start comparing it as a boolean, so it is a separate
-/// argument from this one.
+/// This used to be YAML 1.1's set of 22 (<https://yaml.org/type/bool.html>), which adds `y`, `Y`,
+/// `n`, `N`, `yes`, `no`, `on`, `off` and their casings. Three separate readers of the same document
+/// disagreed with that:
 ///
-/// This is the same defect `rules::parser::parse_bool` carries for the rules language, and it has
-/// the same consequences. The two sets need not be equal: that one parses a literal in cfn-guard's
-/// own grammar, this one resolves a scalar in someone else's document.
+///   - `rules::parser::parse_bool`, which reads a boolean literal in cfn-guard's own grammar,
+///     accepts exactly the six spellings above. So `Enabled == true` and a document writing
+///     `Enabled: yes` were being compared across two different vocabularies.
+///   - `serde_yaml`, which is the loader `guard test` and the public `run_checks` reach on the same
+///     bytes, is 1.2 core. A rule proved correct under `guard test` could fail under `validate`.
+///   - libyaml, whose parser this file wraps, does not resolve the single letters either; neither
+///     does PyYAML, the other widely used 1.1 implementation. The 1.1 *type page* lists them, but
+///     the implementations do not.
+///
+/// The concrete harm was not hypothetical. `AttributeType: N` is what the DynamoDB documentation
+/// shows for a numeric attribute, unquoted, and it resolved to `false`: a rule asserting
+/// `AttributeType IN ["S","N","B"]` failed, and the same value inside a filter selected nothing and
+/// skipped the rule at exit 0. Every GitHub Actions workflow in this repository was unreadable for
+/// the same reason -- `on:` resolved to a boolean, and a boolean is not a valid mapping key, so the
+/// whole file was refused.
+///
+/// The cost of the change is the other direction: a document that writes `Encrypted: yes` meaning
+/// true now yields the string "yes", and a clause comparing it to `true` reports the type mismatch
+/// instead of passing. That is the trade, and it is the right way round -- the tool now says it
+/// cannot decide, where it used to decide by a rule none of its other three readers shared. No
+/// `.guard` file in the rules registry or this repository writes a bare 1.1-only spelling as a
+/// literal, and no data fixture in either writes one as a value.
 fn parse_bool(val: &str) -> Option<bool> {
     if is_bool_true(val) {
         Some(true)
@@ -263,17 +273,11 @@ fn parse_bool(val: &str) -> Option<bool> {
 }
 
 fn is_bool_true(s: &str) -> bool {
-    matches!(
-        s,
-        "y" | "Y" | "yes" | "Yes" | "YES" | "true" | "True" | "TRUE" | "on" | "On" | "ON"
-    )
+    matches!(s, "true" | "True" | "TRUE")
 }
 
 fn is_bool_false(s: &str) -> bool {
-    matches!(
-        s,
-        "n" | "N" | "no" | "No" | "NO" | "false" | "False" | "FALSE" | "off" | "Off" | "OFF"
-    )
+    matches!(s, "false" | "False" | "FALSE")
 }
 
 fn handle_single_value_func_ref(val: String, loc: Location, fn_ref: &str) -> Option<MarkedValue> {
