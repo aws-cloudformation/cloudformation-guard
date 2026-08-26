@@ -422,6 +422,20 @@ impl PartialEq for PathAwareValue {
 ///
 /// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
 /// equivalence relation on the values it relates, and `Hash` agrees with it.
+///
+/// For the same reason the type has no `PartialOrd`, and must not be given one. Rust requires
+/// `a.partial_cmp(b) == Some(Ordering::Equal)` exactly when `a == b`, and no ordering can satisfy that
+/// against a match relation: a regex would have to order `Equal` with every string it matches and
+/// those strings order differently from each other. The impl that used to stand here compared
+/// `self_path().0`, the path string, and ignored the value, so it disagreed with `eq` in both
+/// directions -- every rule literal is built with `Path::root()` and so shares the path `""`, which
+/// made `partial_cmp` report `Equal` for any two literals in any rules file, `15` against `"abc"`
+/// included, while two equal values read from different properties ordered `Less` or `Greater`.
+/// Nothing consumed it, which is how it survived; `sort_by(|a, b| a.partial_cmp(b).unwrap())` is one
+/// line away and would have ordered by path.
+///
+/// Ordering values is `compare_lt` and its three siblings, which return `Result` and can refuse a
+/// pair they cannot order. That is the behaviour the language needs and a `PartialOrd` cannot express.
 impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
@@ -1074,12 +1088,6 @@ impl Serialize for PathAwareValue {
             }
             Err(e) => Err(serde::ser::Error::custom(e)),
         }
-    }
-}
-
-impl PartialOrd for PathAwareValue {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.self_path().0.partial_cmp(&other.self_path().0)
     }
 }
 
