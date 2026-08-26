@@ -97,8 +97,9 @@ impl<'report> GenericReporter<'report> {
                         // `main`'s catch-all and exited 255 -- `INTERNAL_FAILURE`, the code reserved for
                         // the tool breaking -- and abandoned every later case in the file, so one
                         // unreadable `input:` cost the verdicts of every good case behind it. The
-                        // structured reporter answered 1 on the same input, so the two disagreed by
-                        // output format.
+                        // structured reporter propagated the same conversion with `?` and reached the
+                        // same catch-all, so all four output formats exited 255 on these bytes: the
+                        // defect was in every one of them, not a disagreement between two of them.
                         let (by_result, eval_error, unchecked) =
                             match self.get_by_result(each, &mut diagnostics) {
                                 Ok(decided) => decided,

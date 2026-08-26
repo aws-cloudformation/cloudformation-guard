@@ -255,8 +255,9 @@ mod test_command_tests {
     /// repository reserves for the tool itself breaking. Everything about that was wrong. The mistake is
     /// in the test file, which is content, and the same loop already answers `INCORRECT_STATUS_ERROR` for
     /// a test file it cannot parse at all. Every later case in the file went with it -- here the first
-    /// case's verdict had already been decided and printed. And the structured reporter answered 1 on the
-    /// same bytes, so the two output formats disagreed about whether the tool had broken.
+    /// case's verdict had already been decided and printed. The structured reporter propagated the same
+    /// conversion with the same `?` into the same catch-all, so all four output formats exited 255 on
+    /// these bytes rather than two of them disagreeing.
     ///
     /// Five shapes of unreadable `input:` were measured reaching 255 through all four output formats:
     /// a merge key given a scalar, a merge key given a sequence holding a scalar, a quoted `"<<"` given a
