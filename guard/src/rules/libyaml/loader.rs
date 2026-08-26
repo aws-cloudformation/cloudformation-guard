@@ -26,13 +26,43 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// How many mappings and sequences may be nested inside one another.
 ///
 /// There has to be a bound, because `PathAwareValue::try_from_marked` -- which every loaded document
-/// is handed to -- recurses once per level and overflows the stack. Measured on this repository's
-/// release build: depth 5281 converts, depth 5375 aborts with SIGABRT and
-/// "thread 'main' has overflowed its stack" on stderr, no diagnostic from cfn-guard and an exit code
-/// outside the set the tool documents. `Loader::load` itself is iterative and survives depth 20000,
-/// and so does dropping the resulting `MarkedValue`, so the bound belongs where the deep value is
-/// *built* rather than where it is consumed -- refusing here means no deep `MarkedValue` is ever
-/// constructed for anything downstream to recurse over.
+/// is handed to -- recurses once per level and overflows the stack: SIGABRT and "thread 'main' has
+/// overflowed its stack" on stderr, no diagnostic from cfn-guard and an exit code outside the set the
+/// tool documents. Every number in this comment is rustc 1.77.2 on x86_64 Linux, and the profile is given
+/// for each, because the parser's half of this bound carried unlabeled release figures that turned out to
+/// be false unoptimized.
+///
+/// The durable measurement is the cost per level, not the ceiling. Bisecting `RLIMIT_STACK` and reading
+/// off where conversion turns into SIGABRT gives **1.49 KB per level optimized and 7.70 KB unoptimized**,
+/// linear across 512, 1024 and 2048 KB in both profiles. That scales to any stack:
+///
+/// ```text
+///                     8 MB (`main`)   2 MB (a Rust thread)
+/// optimized              ~5480               ~1360
+/// unoptimized            ~1050                ~255
+/// ```
+///
+/// The ceilings are given as approximate on purpose, because pinning one exactly is impractical rather
+/// than merely tedious: a probe near the 8 MB ceiling has to convert a 5000-level document, which costs
+/// 20 to 25 minutes for the reason in the next paragraph, so a bisection is hours. An earlier revision
+/// stated it as "depth 5281 converts, depth 5375 aborts". 5281 does convert -- measured, 1358 seconds --
+/// but so does 5375, in 1476, so the abort is not where that figure put it. Re-derive the per-level cost
+/// instead; each of its points takes seconds.
+///
+/// The entry that matters is the bottom right: **255 is still twice this bound**. So unlike the parser's
+/// bound, whose unoptimized ceiling of 67 sits *below* its 128, nothing here is refused by a stack before
+/// it is refused by the count, in either profile on either stack.
+///
+/// `Loader::load` itself is iterative, and survives depth 20000 in both profiles: it needs 1087 KB
+/// unoptimized, so it fits a 2 MB thread. Dropping the resulting `MarkedValue` is recursive drop glue
+/// and does not: load-plus-drop at 20000 needs **4721 KB unoptimized**, which a 2 MB libtest thread
+/// aborts on and `main`'s 8 MB survives. Optimized, both fit 2 MB. At this bound the drop costs about
+/// 23 KB, so none of that reaches the shipped path -- it is recorded because "survives depth 20000" is a
+/// claim about the absence of a failure, and that one is true of `load` unconditionally and of the drop
+/// only above 2 MB unoptimized.
+///
+/// So the bound belongs where the deep value is *built* rather than where it is consumed: refusing here
+/// means no deep `MarkedValue` is ever constructed for anything downstream to recurse over.
 ///
 /// The same recursion is also why depth is expensive well before it is fatal. Every node rebuilds its
 /// full path string from its parent's, so the bytes allocated grow with the square of the depth:
