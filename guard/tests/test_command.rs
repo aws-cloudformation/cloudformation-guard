@@ -8,6 +8,7 @@ mod test_command_tests {
     use rstest::rstest;
 
     use crate::assert_output_from_file_eq;
+    use cfn_guard::commands::CfnGuard;
     use cfn_guard::commands::{
         ALPHABETICAL, DIRECTORY, LAST_MODIFIED, OUTPUT_FORMAT, RULES_AND_TEST_FILE, RULES_FILE,
         TEST_DATA, VERBOSE,
@@ -15,6 +16,7 @@ mod test_command_tests {
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
     use cfn_guard::Error;
+    use clap::Parser;
 
     use crate::utils::{sanitize_junit_writer, Command, CommandTestRunner, StatusCode};
 
@@ -1135,6 +1137,96 @@ mod test_command_tests {
         assert_output_from_file_eq!(
             format!("resources/test-command/output-dir/{expected}").as_str(),
             writer
+        );
+    }
+
+    /// `test` requires `--rules-file` and `--test-data` together, and says so instead of panicking.
+    ///
+    /// The `RULES_AND_TEST_FILE` group carried `requires_all` but had never been given any members, and
+    /// a clap group with no members can never be present, so the requirement never fired. `execute`
+    /// then did `self.test_data.as_ref().unwrap()` and the process panicked at exit 101.
+    /// `arg_required_else_help` hid it, because it only covers `cfn-guard test` with no arguments at
+    /// all.
+    #[rstest]
+    #[case::only_a_rules_file(vec!["test", "-r", "some-rules.guard"])]
+    #[case::only_a_test_data_file(vec!["test", "-t", "some-tests.yaml"])]
+    fn test_requires_a_rules_file_and_a_test_data_file_together(#[case] args: Vec<&str>) {
+        let error =
+            CfnGuard::try_parse_from(args).expect_err("one of the pair on its own must not parse");
+
+        assert_eq!(StatusCode::USAGE_ERROR, error.exit_code());
+    }
+
+    /// `--dir` conflicts with `--rules-file` and `--test-data`, rather than silently winning.
+    ///
+    /// The same empty group is why. `execute` reads `self.directory` first, so
+    /// `test -d dir -r other.guard` ran the directory and never looked at `-r`: byte-identical output
+    /// to `test -d dir`, exit 0, no diagnostic. The caller asked for two things and got one, and
+    /// nothing said so -- while the doc comments on all three fields claimed the conflict existed and
+    /// `TestBuilder::try_build` enforced half of it for library callers.
+    #[rstest]
+    #[case::directory_and_both(vec!["test", "-d", "some-dir", "-r", "r.guard", "-t", "t.yaml"])]
+    #[case::directory_and_rules(vec!["test", "-d", "some-dir", "-r", "r.guard"])]
+    #[case::directory_and_test_data(vec!["test", "-d", "some-dir", "-t", "t.yaml"])]
+    fn a_directory_conflicts_with_a_rules_file_and_a_test_data_file(#[case] args: Vec<&str>) {
+        let error = CfnGuard::try_parse_from(args)
+            .expect_err("--dir beside --rules-file or --test-data must not parse");
+
+        assert_eq!(StatusCode::USAGE_ERROR, error.exit_code());
+    }
+
+    /// A directory handed to `--rules-file` is reported as a rules file that could not be read.
+    ///
+    /// It exited 255 with "I/O error when reading invalid input parameter": no path named, and "input
+    /// parameter" is `validate`'s `--input-params`, a flag `test` does not have. 255 is the code
+    /// `guard/README.md` gives to cfn-guard itself failing.
+    ///
+    /// `INCORRECT_STATUS_ERROR` is 1, which that table defines for `test` as "an expectation could not
+    /// be evaluated, or a rules or test file could not be read".
+    #[test]
+    fn a_directory_given_to_rules_file_is_reported_as_unreadable() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some("resources/test-command/data-dir/test.yaml"))
+            .rules(Some("resources/test-command/dir"))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INCORRECT_STATUS_ERROR, status_code);
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains("is not a rules file") && stderr.contains("--dir"),
+            "the message must name the path and point at --dir, got: {}",
+            stderr
+        );
+    }
+
+    /// A rules file that declares no rules reports every expectation it could not check.
+    ///
+    /// This was the third of three ways an expectation goes unchecked, and the only one that said
+    /// nothing: `parse_rules` returns `Ok(None)` for an empty, comment-only or whitespace-only file, and
+    /// the run ended before any expectation was looked at -- exit 0, no output. The suite asserted a
+    /// verdict, nothing verified it, and CI read success. The other two exit
+    /// `INCORRECT_STATUS_ERROR` and name the rule.
+    #[rstest]
+    #[case::an_empty_file("resources/validate/blank-rule.guard")]
+    #[case::a_comment_only_file("resources/validate/comments.guard")]
+    fn a_rules_file_declaring_no_rules_reports_its_unchecked_expectations(#[case] rules: &str) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some("resources/test-command/data-dir/test.yaml"))
+            .rules(Some(rules))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INCORRECT_STATUS_ERROR, status_code);
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains("declares no rules, so the expectation for"),
+            "every unchecked expectation must be named, got: {}",
+            stderr
         );
     }
 

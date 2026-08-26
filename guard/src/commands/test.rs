@@ -3,7 +3,7 @@ use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
 use crate::commands::reporters::test::{
-    unmatched_test_file_message, write_diagnostics, Diagnostics,
+    no_rules_declared_message, unmatched_test_file_message, write_diagnostics, Diagnostics,
 };
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
@@ -23,9 +23,10 @@ use walkdir::DirEntry;
 use validate::validate_path;
 
 use crate::commands::files::{
-    alphabetical, get_files_with_filter, last_modified, read_file_content, regular_ordering,
+    alphabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
+    regular_ordering,
 };
-use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_HELP};
+use crate::commands::validate::{file_name_of, OutputFormatType, OUTPUT_FORMAT_HELP};
 use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
     RULES_FILE, TEST_DATA,
@@ -51,8 +52,24 @@ const SUPPORTED_OUTPUT_FORMATS: [&str; 4] = [SINGLE_LINE_SUMMARY, "json", "yaml"
 
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
+// `.args([..])` is what makes this group enforce anything. Without it the group had no members, and
+// a clap `ArgGroup` with no members can never be "present", so neither its `requires_all` nor its
+// `conflicts_with` ever fired -- the `DIRECTORY_ONLY` group three lines below has always had its
+// `.args`, which is why only this one was inert. Two defects followed:
+//
+// - `test -r rules.guard` with no `--test-data` satisfied the parser and then panicked on
+//   `self.test_data.as_ref().unwrap()`. `arg_required_else_help` hid it, because it only covers the
+//   zero-argument invocation.
+// - `test -d dir -r rules.guard` was accepted and `--dir` won, silently: `execute` reads
+//   `self.directory` first. The doc comments on all three fields claimed the conflict existed.
+//
+// `.multiple(true)` is required and is not decoration: a clap group is single-use by default, so
+// naming both arguments as members without it would reject `-r x -t y` -- the one combination the
+// group exists to require.
 #[clap(
     group=clap::ArgGroup::new(RULES_AND_TEST_FILE)
+    .args([RULES_FILE.0, TEST_DATA.0])
+    .multiple(true)
     .requires_all([RULES_FILE.0, TEST_DATA.0])
     .conflicts_with(DIRECTORY_ONLY))
 ]
@@ -195,8 +212,20 @@ impl Executable for Test {
                 OutputFormatType::Sarif => unreachable!(),
             }
         } else {
-            let file = self.rules.as_ref().unwrap();
-            let data = self.test_data.as_ref().unwrap();
+            // Not `unwrap()`. The `RULES_AND_TEST_FILE` group requires the two together, so the CLI
+            // cannot reach here with either missing -- but `TestBuilder` (`guard/src/lib.rs:372`)
+            // does not require them, so the library can, and it panicked at exit 101 when it did.
+            // A panic is never the right answer to an argument list, and the caller that can still
+            // get here is a Rust caller who needs the reason rather than a backtrace.
+            let (file, data) = match (self.rules.as_ref(), self.test_data.as_ref()) {
+                (Some(file), Some(data)) => (file, data),
+                _ => {
+                    return Err(Error::IllegalArguments(String::from(
+                        "test requires both a rules file and a test data file: \
+                         pass --rules-file and --test-data together, or --dir to walk a directory",
+                    )))
+                }
+            };
 
             validate_path(file)?;
             validate_path(data)?;
@@ -219,10 +248,27 @@ impl Executable for Test {
             let path = PathBuf::from(file);
 
             let rule_file = File::open(&path)?;
+            // A directory opens successfully, so this is the check that catches it, and the error it
+            // raised was `ErrorKind::InvalidInput`. That rendered as "I/O error when reading invalid
+            // input parameter": it named no path, and "input parameter" is `validate`'s
+            // `--input-params`, a flag `test` does not have. It also exited 255, the code
+            // `guard/README.md` gives to cfn-guard itself failing.
+            //
+            // `TEST_ERROR_STATUS_CODE` instead, which that table defines for `test` as "an
+            // expectation could not be evaluated, or a rules or test file could not be read" -- a
+            // directory handed to `--rules-file` is a rules file that could not be read.
+            // `handle_plaintext_single_file` below already answers the sibling case, content that
+            // cannot be read, with the same code.
+            //
+            // 255 stays on a path that does not exist, which `validate_path` above rejects before
+            // this point and all three subcommands agree on.
             if !rule_file.metadata()?.is_file() {
-                return Err(Error::IoError(std::io::Error::from(
-                    std::io::ErrorKind::InvalidInput,
-                )));
+                writer.write_err(format!(
+                    "`{file}` is not a rules file. --rules-file takes one file; \
+                     use --dir to walk a directory of rules files."
+                ))?;
+
+                return Ok(TEST_ERROR_STATUS_CODE);
             }
 
             match self.output_format {
@@ -304,7 +350,17 @@ fn handle_plaintext_directory(
                         exit_code
                     };
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    let mut diagnostics = Diagnostics::new();
+                    if report_expectations_against_no_rules(
+                        path,
+                        &each_rule_file.get_test_files(),
+                        &mut diagnostics,
+                    ) {
+                        exit_code = TEST_ERROR_STATUS_CODE;
+                    }
+                    write_diagnostics(&diagnostics, writer)?;
+                }
             }
             writeln!(writer, "---")?;
         }
@@ -343,7 +399,20 @@ fn handle_plaintext_single_file(
 
                     reporter.report()
                 }
-                Ok(None) => Ok(SUCCESS_STATUS_CODE),
+                Ok(None) => {
+                    let mut diagnostics = Diagnostics::new();
+                    let dropped = report_expectations_against_no_rules(
+                        path,
+                        data_test_files,
+                        &mut diagnostics,
+                    );
+                    write_diagnostics(&diagnostics, writer)?;
+
+                    Ok(match dropped {
+                        true => TEST_ERROR_STATUS_CODE,
+                        false => SUCCESS_STATUS_CODE,
+                    })
+                }
             }
         }
     }
@@ -351,6 +420,70 @@ fn handle_plaintext_single_file(
 fn get_rule_content(path: &Path) -> Result<String> {
     let rule_file = File::open(path)?;
     read_file_content(rule_file)
+}
+
+/// Collects a message for every expectation in `data_test_files`, for a rules file that declares no
+/// rules, and answers whether there was one.
+///
+/// `parse_rules` returns `Ok(None)` for an empty, comment-only or whitespace-only rules file, and
+/// every `Ok(None)` arm in this module dropped the run on the floor: `test` had been handed explicit
+/// expectations and exited 0 without looking at any of them. The two other ways an expectation goes
+/// unchecked -- no such rule, and a parameterized rule -- already report and exit
+/// `TEST_ERROR_STATUS_CODE`; this one is being brought in line with them rather than given a new
+/// behaviour of its own.
+///
+/// A test file that will not parse is reported here too. With no rules there is no report for the
+/// reporters to put that error in, and staying quiet about it is the defect being fixed.
+///
+/// Returns false when the test files hold no expectations at all, which is not this defect: nothing
+/// was asked, so nothing was dropped, and the caller leaves the exit code alone.
+fn report_expectations_against_no_rules(
+    rules_file: &Path,
+    data_test_files: &[PathBuf],
+    diagnostics: &mut Diagnostics,
+) -> bool {
+    let name = file_name_of(rules_file);
+    let mut dropped = false;
+
+    for specs in iterate_over(data_test_files, |content, path| {
+        parse_test_specs(&content, path.as_path())
+    }) {
+        match specs {
+            Ok(specs) => {
+                for spec in specs {
+                    for expectation in spec.expectations.rules.keys() {
+                        diagnostics.insert(no_rules_declared_message(&name, expectation));
+                        dropped = true;
+                    }
+                }
+            }
+            Err(e) => {
+                diagnostics.insert(format!("Unable to process a test file: {e}"));
+                dropped = true;
+            }
+        }
+    }
+
+    dropped
+}
+
+/// Reads one test file, accepting YAML or JSON.
+///
+/// Lifted out of `GenericReporter::report`, which had the only copy, so that the empty-rules-file
+/// path above reads the expectations exactly as a run with rules would. Two spellings of "what counts
+/// as a test file" would let the two disagree about whether an expectation exists.
+pub(crate) fn parse_test_specs(content: &str, path: &Path) -> Result<Vec<TestSpec>> {
+    match serde_yaml::from_str::<Vec<TestSpec>>(content) {
+        Ok(spec) => Ok(spec),
+        Err(_) => match serde_json::from_str::<Vec<TestSpec>>(content) {
+            Ok(specs) => Ok(specs),
+            Err(e) => Err(Error::ParseError(format!(
+                "Unable to process data in file {}, Error {},",
+                path.display(),
+                e
+            ))),
+        },
+    }
 }
 
 pub(crate) fn handle_structured_single_report(
@@ -397,7 +530,15 @@ pub(crate) fn handle_structured_single_report(
                     diagnostics.append(&mut reporter.diagnostics);
                     test
                 }
-                Ok(None) => return Ok(exit_code),
+                Ok(None) => {
+                    if report_expectations_against_no_rules(path, data_test_files, &mut diagnostics)
+                    {
+                        exit_code = TEST_ERROR_STATUS_CODE;
+                    }
+                    write_diagnostics(&diagnostics, writer)?;
+
+                    return Ok(exit_code);
+                }
             }
         }
     };
@@ -478,7 +619,15 @@ fn handle_structured_directory_report(
                     diagnostics.append(&mut reporter.diagnostics);
                     test_results.push(test);
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    if report_expectations_against_no_rules(
+                        path,
+                        &each_rule_file.get_test_files(),
+                        &mut diagnostics,
+                    ) {
+                        exit_code = TEST_ERROR_STATUS_CODE;
+                    }
+                }
             }
         }
     }

@@ -91,6 +91,24 @@ pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -
     format!("No rule named {name} is in this file, so its expectation was not checked")
 }
 
+/// The third way an expectation goes unchecked: the rules file declares no rules at all.
+///
+/// Separate from [`unchecked_expectation_message`] because that one needs a `RulesFile` to tell a
+/// parameterized rule from a name the file does not have, and a file with no rules in it does not
+/// produce one -- `rules_file` returns `Ok(None)` for an empty, comment-only or whitespace-only file.
+/// So this case could not reach that function, and it was the one of the three that said nothing:
+/// `test -r empty.guard -t tests.yaml` exited **0** having checked no expectation at all, while the
+/// other two exit `TEST_ERROR_STATUS_CODE` and name the rule. A suite asserting `MAIN: PASS` against
+/// a rules file with no `MAIN` in it read as success.
+///
+/// Names the rules file by its final component only, not the path as given. The test-side path
+/// reducer normalises `.yaml`, `.yml` and `.json` and not `.guard`, so a full path here would make
+/// any expected-output fixture hold only for the checkout that produced it. `parse_tree` records the
+/// same constraint for the same reason.
+pub(crate) fn no_rules_declared_message(rules_file: &str, expectation: &str) -> String {
+    format!("{rules_file} declares no rules, so the expectation for {expectation} was not checked")
+}
+
 /// One message per test file that no rules file claimed.
 ///
 /// The mirror of the line the report already prints for a rules file with no test files. That one
