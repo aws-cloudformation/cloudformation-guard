@@ -824,3 +824,77 @@ fn an_integer_resolves_by_the_1_2_core_forms(
 
     Ok(())
 }
+
+/// Two integer literals the document spells differently stay different values.
+///
+/// An integer too wide for `i64` used to fall through to the float resolver, which accepted it, so
+/// `9223372036854775809` and `9223372036854775810` both became `9.223372036854776e18` and compared
+/// *equal*. A clause asserting they differ was reported non-compliant -- a wrong answer about
+/// identity, at the ordinary exit code, with nothing on either channel to notice it by.
+///
+/// The boundary cases are here because the fix is a range check and an off-by-one in it would either
+/// leave the defect in place or turn `i64::MAX` into text.
+#[rstest::rstest]
+#[case::i64_max("9223372036854775807", true)]
+#[case::i64_min("-9223372036854775808", true)]
+#[case::just_past_i64_max("9223372036854775808", false)]
+#[case::just_past_i64_min("-9223372036854775809", false)]
+#[case::far_past("99999999999999999999", false)]
+#[case::hex_too_wide("0xFFFFFFFFFFFFFFFFF", false)]
+fn an_integer_wider_than_i64_keeps_its_text(
+    #[case] scalar: &str,
+    #[case] fits: bool,
+) -> Result<()> {
+    let value = Loader::new().load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a single mapping loads as a map, got {:?}", other),
+    };
+    let (.., loaded) = map.first().expect("the key is present");
+
+    if fits {
+        assert!(
+            matches!(loaded, MarkedValue::Int(..)),
+            "{} loaded as {:?}, but it fits in an i64",
+            scalar,
+            loaded
+        );
+    } else {
+        assert!(
+            matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+            "{} loaded as {:?}; a float cannot tell it from its neighbour",
+            scalar,
+            loaded
+        );
+    }
+
+    Ok(())
+}
+
+/// The consequence the case above exists to prevent, asserted directly on two values one apart.
+#[test]
+fn two_integers_wider_than_i64_do_not_collapse_into_one() -> Result<()> {
+    let value =
+        Loader::new().load("a: 9223372036854775809\nb: 9223372036854775810\n".to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let a = map.get_index(0).expect("a is present").1;
+    let b = map.get_index(1).expect("b is present").1;
+
+    let (a, b) = match (a, b) {
+        (MarkedValue::String(a, ..), MarkedValue::String(b, ..)) => (a, b),
+        other => panic!("expected both to keep their text, got {:?}", other),
+    };
+
+    assert_ne!(
+        a, b,
+        "two integers one apart loaded as the same value, so a clause asserting they differ \
+         cannot be answered correctly"
+    );
+
+    Ok(())
+}

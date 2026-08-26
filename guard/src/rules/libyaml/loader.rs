@@ -300,7 +300,19 @@ fn resolve_int(val: &str) -> IntScalar {
 
     match i64::from_str_radix(&signed, radix) {
         Ok(i) => IntScalar::Resolved(i),
-        Err(_) => IntScalar::NotAnInteger,
+        // An integer literal too wide for `i64`. This used to fall through to the float resolver,
+        // which accepted it, so `9223372036854775809` became `Float(9.223372036854776e18)` -- and so
+        // did `9223372036854775810`, which is a different integer. The two then compared *equal*,
+        // and a clause asserting they differ was reported non-compliant. That is a wrong answer
+        // about identity, produced silently.
+        //
+        // The literal is kept instead. `MarkedValue::Int` is an `i64`, so there is no arm here that
+        // can hold the value: widening it reaches `PathAwareValue::Int` and from there every
+        // comparison operator, the serializers and SARIF, which is a change of a different size and
+        // shape than this one. `serde_yaml` holds `i64::MAX + 1` as an integer and refuses anything
+        // past `u64`; keeping the text agrees with neither, but it is the only option here that
+        // never reports two distinct integers as one.
+        Err(_) => IntScalar::Unresolvable,
     }
 }
 
