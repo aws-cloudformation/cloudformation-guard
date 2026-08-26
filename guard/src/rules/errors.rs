@@ -48,6 +48,17 @@ pub enum Error {
     /// file's name, can report it the same way it reports a file with no bytes in it.
     #[error("no YAML document was found in the data")]
     MissingDocument,
+    /// A document the loader read successfully and refuses to model, because it uses a construct
+    /// cfn-guard has no representation for.
+    ///
+    /// Distinct from `ParseError` because of what the caller does with each. `ParseError` is also
+    /// how libyaml's own failures arrive, and those carry the fixed string "error parsing file",
+    /// so `validate::build_data_file` replaces the message with the first hundred bytes of the file
+    /// to give the reader something to go on. That substitution is right for a message that says
+    /// nothing and wrong for one that names the construct and its position, so the two need to be
+    /// tellable apart.
+    #[error("{0}")]
+    UnsupportedDocument(String),
     #[error(transparent)]
     Errors(#[from] Errors),
     #[error("{0}")]

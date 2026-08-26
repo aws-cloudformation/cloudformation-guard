@@ -1032,7 +1032,14 @@ fn build_data_file(content: String, name: String, writer: &mut Writer) -> Result
         // above cannot answer this on the text alone, so the loader is what decides it.
         Err(Error::MissingDocument) => return Err(data_file_is_empty(&name)),
         Err(e) => {
-            if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
+            // These two say what is wrong and where. The byte dump below exists for the messages
+            // that do not -- libyaml's own failures all read "error parsing file" -- so attaching it
+            // to a message that already names the construct only buries it.
+            if matches!(
+                e,
+                Error::InternalError(InternalError::InvalidKeyType(..))
+                    | Error::UnsupportedDocument(..)
+            ) {
                 return Err(Error::ParseError(e.to_string()));
             }
 

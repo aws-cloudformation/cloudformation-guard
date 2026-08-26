@@ -18,7 +18,6 @@ const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
 #[derive(Debug, Default)]
 pub struct Loader {
     stack: Vec<MarkedValue>,
-    documents: Vec<MarkedValue>,
     last_container_index: Vec<usize>,
     func_support_index: Vec<(usize, (String, Location))>,
 }
@@ -30,23 +29,52 @@ impl Loader {
 
     pub(crate) fn load(&mut self, content: String) -> rules::Result<MarkedValue> {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
+        let mut document: Option<MarkedValue> = None;
 
         loop {
             let (event, location) = parser.next()?;
             {
                 match event {
-                    Event::StreamStart | Event::DocumentStart => {}
-                    // `DocumentEnd` below is the only arm that leaves the loop, so reaching the end
-                    // of the stream means no document was ever started -- a file of nothing but
-                    // comments is the ordinary way to get here. Treating it as a no-op left the
-                    // loop pulling events past the end of the stream, where libyaml answers with
+                    Event::StreamStart => {}
+                    // A second `DocumentStart` means the file holds a stream rather than a
+                    // document, and cfn-guard has one slot to put a document in: `DataFile` carries
+                    // a single `path_value`, and every reporter, the summary and the exit code are
+                    // written against one document per file.
+                    //
+                    // This used to return at the first `DocumentEnd`, which answered an n-document
+                    // stream with the first document and said nothing. Prefixing a template with a
+                    // compliant document and a `---` therefore suppressed every finding in the real
+                    // one at exit 0. Worse, returning there dropped the parser, so the bytes after
+                    // the first document were never handed to libyaml at all and a stream whose
+                    // later document was not YAML also passed.
+                    //
+                    // Refusing the file is the answer here rather than evaluating every document,
+                    // because evaluating all of them is a feature and not a bug fix: it needs
+                    // `DataFile` to hold a list, every reporter to name which document a finding
+                    // came from, and a rule for combining n verdicts into one exit code. Refusing
+                    // is contained in the loader and cannot report compliance for bytes it did not
+                    // read, which is the actual defect. Neither corpus contains a multi-document
+                    // file, so nothing that works today stops working.
+                    Event::DocumentStart => {
+                        if document.is_some() {
+                            return Err(Error::UnsupportedDocument(format!(
+                                "cfn-guard evaluates one document per file, and this file holds \
+                                 more than one: a second document starts at {location}. Split the \
+                                 documents into separate files."
+                            )));
+                        }
+                    }
+                    // Reaching the end of the stream with a document in hand is the ordinary exit.
+                    // With none, no document was ever started -- a file of nothing but comments is
+                    // the ordinary way to get here. Treating it as a no-op left the loop pulling
+                    // events past the end of the stream, where libyaml answers with
                     // `YAML_NO_EVENT`, and that used to abort the process in `convert_event`.
-                    Event::StreamEnd => return Err(Error::MissingDocument),
+                    Event::StreamEnd => return document.ok_or(Error::MissingDocument),
                     Event::DocumentEnd => {
-                        self.documents.push(self.stack.pop().unwrap());
+                        document = Some(self.stack.pop().unwrap());
                         self.stack.clear();
                         self.last_container_index.clear();
-                        return Ok(self.documents.pop().unwrap());
+                        self.func_support_index.clear();
                     }
                     Event::MappingStart(..) => self.handle_mapping_start(location),
                     Event::MappingEnd => self.handle_mapping_end()?,

@@ -594,3 +594,51 @@ fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
 
     Ok(())
 }
+
+/// A `---` stream held more than one document and the loader answered with the first one, in
+/// silence. `Loader::load` returned at the first `DocumentEnd`, so a template prefixed with a
+/// compliant document and a `---` had every finding in it suppressed at exit 0, and -- because
+/// returning there dropped the parser -- the bytes after that point were never handed to libyaml,
+/// so a stream whose later document was not YAML at all also passed.
+///
+/// The cases below are the two shapes that matter: content in the first document, and an *empty*
+/// first document, which is the worse one because the loader then evaluated nothing whatsoever.
+#[rstest::rstest]
+#[case::two_documents_with_content("a: 1\n---\nb: 2\n")]
+#[case::an_empty_first_document("---\n---\nb: 2\n")]
+#[case::three_documents("a: 1\n---\nb: 2\n---\nc: 3\n")]
+#[case::a_later_document_that_is_not_yaml("a: 1\n---\nb: [ this is : not valid yaml {{{\n")]
+fn a_stream_holding_more_than_one_document_is_refused(#[case] content: &str) {
+    let loaded = Loader::new().load(content.to_string());
+
+    assert!(
+        matches!(loaded, Err(Error::UnsupportedDocument(ref m)) if m.contains("one document per file")),
+        "loading {:?} gave {:?}, not the multiple-document error",
+        content,
+        loaded
+    );
+}
+
+/// The control for the case above, and the reason it cannot be written as "reject any `---`".
+/// A leading `---` is a directives-end marker opening the *first* document, not a separator, and
+/// comments before it do not start a document of their own. Every `*_tests.yml` in the rules
+/// registry has exactly this shape -- a `###` banner, then `---`, then one document -- so a fix
+/// that counted `---` lines instead of `DocumentStart` events would refuse the whole registry.
+#[rstest::rstest]
+#[case::a_bare_leading_marker("---\na: 1\n")]
+#[case::a_comment_then_a_marker("# just a comment\n---\na: 1\n")]
+#[case::a_banner_then_a_marker("###\n# TITLE tests\n###\n---\na: 1\n")]
+#[case::no_marker_at_all("a: 1\n")]
+#[case::a_marker_and_an_explicit_end("---\na: 1\n...\n")]
+fn one_document_with_a_marker_or_a_banner_still_loads(#[case] content: &str) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    assert!(
+        matches!(&value, MarkedValue::Map(m, ..) if m.len() == 1),
+        "loading {:?} gave {:?}, not the single mapping it holds",
+        content,
+        value
+    );
+
+    Ok(())
+}

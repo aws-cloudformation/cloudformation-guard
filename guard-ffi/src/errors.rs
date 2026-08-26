@@ -100,6 +100,11 @@ fn get_code(e: &FfiError) -> ErrorCode {
             // is -1, so the cost was not an abort: it was the cause being replaced by the panic raised
             // while reporting it.
             Error::InternalError(_) => 22,
+            // 25, not 23. The two codes after 22 belong to the invalid-input causes below,
+            // and they are named in `cfn_guard.h`, in `lib.rs`'s header comment and in
+            // `errors_tests.rs`, so moving them to keep this block contiguous would mean
+            // four edits to spare one gap. The gap is here instead.
+            Error::UnsupportedDocument(_) => 25,
         },
         // Deliberately their own codes rather than folded into `IllegalArguments`, which is a guard
         // error about the contents of a rules file: a caller looking at a bad pointer and a caller
