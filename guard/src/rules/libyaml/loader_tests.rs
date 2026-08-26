@@ -708,3 +708,53 @@ fn a_marker_names_the_one_based_position_of_its_scalar() -> Result<()> {
 fn a_location_with_no_position_stays_zero() {
     assert_eq!(Location { line: 0, col: 0 }, Location::default());
 }
+
+/// An empty node is null, and a quoted empty string is not.
+///
+/// The null set was `~` and `null` only, so the *empty* scalar -- the value of a key written with
+/// nothing after the colon, which both the YAML 1.1 and 1.2 schemas resolve to the null node -- fell
+/// through to `String("")`. The loader could not tell `k:` from `k: ""`, and `is_string` or
+/// `!= null` on a property that is actually absent-valued passed. Writing the same document with
+/// the null spelled inverted all three of `== ""`, `is_string` and `is_null`, which is what made it
+/// a defect rather than a choice: the two spellings of one value disagreed.
+///
+/// `serde_yaml`, which is the loader `guard test` and `run_checks` use on the same bytes, already
+/// answered null here. The quoted case is the control, and the reason emptiness alone is enough to
+/// decide: every quoted scalar is taken by the `style != Plain` arm before this one.
+#[rstest::rstest]
+#[case::nothing_after_the_colon("k:", true)]
+#[case::a_tilde("k: ~", true)]
+#[case::the_word("k: null", true)]
+#[case::the_word_uppercased("k: NULL", true)]
+#[case::a_double_quoted_empty_string("k: \"\"", false)]
+#[case::a_single_quoted_empty_string("k: ''", false)]
+fn an_empty_plain_scalar_is_null_and_a_quoted_one_is_not(
+    #[case] content: &str,
+    #[case] expected_null: bool,
+) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a single mapping loads as a map, got {:?}", other),
+    };
+    let (.., loaded) = map.first().expect("the key is present");
+
+    if expected_null {
+        assert!(
+            matches!(loaded, MarkedValue::Null(..)),
+            "{:?} loaded as {:?}, but YAML resolves it to the null node",
+            content,
+            loaded
+        );
+    } else {
+        assert!(
+            matches!(loaded, MarkedValue::String(s, ..) if s.is_empty()),
+            "{:?} loaded as {:?}, but a quoted empty scalar is the empty string",
+            content,
+            loaded
+        );
+    }
+
+    Ok(())
+}

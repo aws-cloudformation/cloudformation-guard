@@ -133,8 +133,16 @@ impl Loader {
                     Ok(f) if f.is_finite() => MarkedValue::Float(f, location),
                     _ => match parse_bool(&val) {
                         Some(b) => MarkedValue::Bool(b, location),
+                        // The empty scalar belongs in this set. It is the value of a key written
+                        // with nothing after the colon, and both the YAML 1.1 and 1.2 schemas
+                        // resolve it to the null node; leaving it out made the loader unable to
+                        // tell `k:` from `k: ""`, which YAML says are null and the empty string.
+                        //
+                        // Only a *plain* scalar reaches here -- the `style != Plain` arm above
+                        // takes every quoted one -- so `k: ""` is still the empty string, which is
+                        // the whole reason this can be decided on emptiness alone.
                         None => match val.to_lowercase().as_str() {
-                            "~" | "null" => MarkedValue::Null(location),
+                            "" | "~" | "null" => MarkedValue::Null(location),
                             _ => MarkedValue::String(val, location),
                         },
                     },

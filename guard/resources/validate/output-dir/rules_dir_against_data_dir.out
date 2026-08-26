@@ -280,7 +280,7 @@ Resource = MyBucket {
         RequiredPropertyError {
           PropertyPath = /Resources/MyBucket/Properties/BucketEncryption[L:14,C:24]
           MissingProperty = ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm
-          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/MyBucket/Properties/BucketEncryption[L:14,C:24], Type = String, Value = String((Path("/Resources/MyBucket/Properties/BucketEncryption", Location { line: 14, col: 24 }), ""))
+          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/MyBucket/Properties/BucketEncryption[L:14,C:24], Type = null, Value = Null(Path("/Resources/MyBucket/Properties/BucketEncryption", Location { line: 14, col: 24 }))
           Code:
                12.        IgnorePublicAcls: true
                13.        RestrictPublicBuckets: true
