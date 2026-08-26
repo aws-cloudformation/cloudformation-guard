@@ -171,11 +171,26 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// call_expr                 a function call, in a `let`, as a rule argument or as a right-hand side
 /// ```
 ///
-/// That set is chosen to be complete rather than to be a list of shapes someone thought to try: it is a
-/// feedback vertex set of this file's call graph, so every cycle in the graph passes through at least one
-/// of the six and no construct can nest without incrementing the counter. Removing the six leaves the
-/// graph acyclic; removing only the first three leaves one strongly-connected component of nineteen
-/// functions, which is what the six filter, key-filter and function-call rows above are spellings of.
+/// That set is chosen to be complete rather than to be a list of shapes someone thought to try: every
+/// construct that can contain another passes through one of the six, so nothing nests without incrementing
+/// the counter. That is a claim about these six call sites against the grammar, and it is checkable by
+/// reading them; what pins it from outside is that the paired test drives all six, one per construct. The
+/// last three are needed as well as the first three because the first bound covered blocks, lists and maps
+/// only, and a query filter, a key filter and a function call each still recursed with nothing counting
+/// the levels -- measured aborting at 1107, 2000 and 3000 respectively, which is what the six filter,
+/// key-filter and function-call rows above are spellings of.
+///
+/// Deliberately no count of the functions involved. This file is built from higher-order `nom` combinators,
+/// and whether a parser handed to `block(clause)` or to `when_block`'s second position belongs to the
+/// caller, to the callee, or to neither changes the size of every component in the call graph: four
+/// defensible models of this one file gave 8, 22, 23 and 25 for the component that survives removing the
+/// first three. Two earlier revisions of this sentence carried a count -- seventeen, then nineteen -- and
+/// neither reproduced when somebody else recomputed it, because the sentence never named a model. What is
+/// model-independent, and all the second correction really established, is the delta: `clause_tail_with_map`
+/// and `access_clause_or_block` joined the cyclic core when a clause's query started being parsed once
+/// rather than once per reading of it, and every model agrees on those two. Do not put a number back here
+/// without also saying how arguments to higher-order combinators are attributed.
+///
 /// Threading a depth argument instead would have changed the signature of every function on all of those
 /// paths -- `clause`, `access`, `cnf_clauses`, `disjunction_clauses`, `parse_value`, `let_value` and
 /// everything between -- and of the `pub(crate)` ones the tests call directly, to carry one integer.
