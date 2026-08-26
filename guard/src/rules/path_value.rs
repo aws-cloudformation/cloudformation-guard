@@ -268,8 +268,24 @@ impl Hash for PathAwareValue {
                 }
             }
 
+            // Hashed in sorted key order, not in iteration order. `eq` for a map is
+            // `IndexMap::eq` -- a length check plus a lookup per key -- so it does not care what
+            // order the entries are in, while `IndexMap`'s iteration order is insertion order. So
+            // two maps holding the same entries written in a different order were equal and hashed
+            // differently, which is the `Eq`/`Hash` contract violation `equal_values_hash_equally`
+            // exists to prevent, in the same `match` as the `Float` cast it was written for.
+            //
+            // Sorting rather than combining the per-entry hashes commutatively: a commutative fold
+            // has to reduce each entry to a value of its own first, and `Hash` is handed one `H`
+            // with no way to construct a second hasher of that type. Sorting costs an allocation
+            // per hash, on a path nothing hot uses.
             PathAwareValue::Map((_, map)) => {
-                for (key, value) in map.values.iter() {
+                let mut entries = map
+                    .values
+                    .iter()
+                    .collect::<Vec<(&String, &PathAwareValue)>>();
+                entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, value) in entries {
                     key.hash(state);
                     value.hash(state);
                 }

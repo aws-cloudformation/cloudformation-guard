@@ -698,6 +698,49 @@ fn equal_values_hash_equally() {
         hash_of(&flt(f64::NEG_INFINITY))
     );
     assert_ne!(hash_of(&flt(1.0e300)), hash_of(&flt(-1.0e300)));
+
+    // A map's entries in two different orders. `eq` for a map is order-independent because it is a
+    // lookup per key, so the hash has to be too -- and it was not, because `IndexMap` iterates in
+    // insertion order. The `Int`/`Float` pairs above all sit in the scalar arms, so none of them
+    // reached this one.
+    fn map_of(entries: &[(&str, i64)]) -> PathAwareValue {
+        let mut values = indexmap::IndexMap::new();
+        let mut keys = vec![];
+        for (key, value) in entries {
+            values.insert((*key).to_string(), int(*value));
+            keys.push(PathAwareValue::String((Path::root(), (*key).to_string())));
+        }
+        PathAwareValue::Map((Path::root(), MapValue { keys, values }))
+    }
+
+    let forward = map_of(&[("alpha", 1), ("beta", 2)]);
+    let reversed = map_of(&[("beta", 2), ("alpha", 1)]);
+    assert_eq!(
+        forward, reversed,
+        "precondition, a map's entry order does not affect equality"
+    );
+    assert_eq!(
+        hash_of(&forward),
+        hash_of(&reversed),
+        "equal maps hashed differently because the entries were written in a different order"
+    );
+
+    // The sort must not flatten a real difference: same keys, one value changed.
+    let changed = map_of(&[("alpha", 1), ("beta", 3)]);
+    assert_ne!(forward, changed);
+    assert_ne!(hash_of(&forward), hash_of(&changed));
+
+    // Nor may it confuse a key with a value: `{alpha: 1, beta: 2}` against the pair swapped onto the
+    // other key. Both hash the same four items, so hashing entries without their order would.
+    let swapped = map_of(&[("alpha", 2), ("beta", 1)]);
+    assert_ne!(forward, swapped);
+    assert_ne!(hash_of(&forward), hash_of(&swapped));
+
+    // A list, by contrast, is order-sensitive in `eq`, so it must stay order-sensitive in `hash`.
+    let ordered = PathAwareValue::List((Path::root(), vec![int(1), int(2)]));
+    let unordered = PathAwareValue::List((Path::root(), vec![int(2), int(1)]));
+    assert_ne!(ordered, unordered);
+    assert_ne!(hash_of(&ordered), hash_of(&unordered));
 }
 
 /// `eq` is symmetric, which `Eq` requires and range membership violated.
