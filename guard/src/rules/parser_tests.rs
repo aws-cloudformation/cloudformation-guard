@@ -6996,6 +6996,53 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
     Ok(())
 }
 
+/// A thread stack sized for the deepest rules file the bound admits, for the cases below that parse one.
+///
+/// libtest runs each test on a thread it spawns, which gets Rust's default 2 MB rather than the 8 MB the
+/// CLI's `main` has, and 2 MB is not enough in an unoptimized build. Measured on this tree by bisecting
+/// `RUST_MIN_STACK` to 64 KB, the most expensive shape -- 128 nested query filters -- needs **3648 KB**
+/// under `cargo test` against **927 KB** under `cargo test --release`, a factor of 3.9. So fifteen of the
+/// cases here aborted the whole test binary under the plain `cargo test` that CONTRIBUTING.md asks
+/// contributors to run and that `.github/workflows/pr.yml` runs on all three platforms.
+///
+/// That read as one fragile test rather than as the whole family, for two reasons worth recording. The
+/// message names a thread, and which one reaches the overflow first varies with scheduling, so separate
+/// runs blamed separate cases. And several overflow at once, so their writes interleave: over five runs
+/// the name in `thread '...' has overflowed its stack` came out spliced from four test names once and
+/// empty twice.
+///
+/// 16 MB is 4.5x the largest figure measured here and 17x the release one. It is deliberately far above
+/// both. These are one toolchain on one platform, per-frame cost is not a portable quantity -- these
+/// tests also run on macOS and Windows, neither of which is measured here -- and the cost of
+/// over-reserving a test thread's stack is a virtual mapping nothing ever writes to.
+const DEEP_PARSE_STACK: usize = 16 * 1024 * 1024;
+
+/// Runs a parse that nests near [`MAX_NESTING_DEPTH`] on a [`DEEP_PARSE_STACK`] thread, so that what the
+/// case asserts does not depend on the build profile or on libtest's default stack.
+///
+/// The bound itself is a count and is already profile-independent, which is what the `NESTING_DEPTH`
+/// comment is about; this only gives the recursion room to reach it. A panic inside -- which is what a
+/// failed assertion is -- is resumed on the caller, so a genuine failure still reports as this test
+/// failing with its own message rather than as a join error.
+///
+/// The new thread takes the calling test's name so that a panic inside it still prints
+/// `thread '<the test>' panicked at`. Without that it prints `thread '<unnamed>'`, which costs the reader
+/// the one field that says which case failed -- and this file's cases differ only by their names.
+fn on_a_stack_that_reaches_the_bound<T: Send + 'static>(
+    parse: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let mut builder = std::thread::Builder::new().stack_size(DEEP_PARSE_STACK);
+    if let Some(name) = std::thread::current().name() {
+        builder = builder.name(name.to_string());
+    }
+
+    builder
+        .spawn(parse)
+        .expect("a thread for a parse that nests to the bound")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
 /// A rules file nested deeper than the parser will read is refused, rather than taken as far as the
 /// stack allows.
 ///
@@ -7024,12 +7071,16 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 /// backtracking is being fixed separately, and on that fix 127 nested filters parses in 0.038 seconds.
 /// Until it merges, raising this case to `MAX_NESTING_DEPTH` does not fail the test, it hangs the suite.
 ///
-/// The accepted cases run on a libtest thread, which is where the headroom is smaller than
-/// `MAX_NESTING_DEPTH`'s own thresholds suggest -- those are all the CLI's `main` and its 8 MB stack,
-/// against 2 MB for a Rust thread. See the note on `NESTING_DEPTH`: with the bound raised, the shape
-/// that overflows a libtest thread first is the **query** filter, 290 ok and 291 aborting, ahead of the
-/// key filter at 315/317. So 128 is safe with about 2.3x to spare, and a future raise past ~290 breaks
-/// these cases by aborting the whole test binary rather than by failing.
+/// Every case here parses on a thread sized by [`on_a_stack_that_reaches_the_bound`] rather than on
+/// libtest's default 2 MB, because 2 MB does not reach the bound in an unoptimized build. See the note on
+/// `NESTING_DEPTH` for the measurements: with the bound raised, the shape that overflows a libtest thread
+/// first is the **query** filter, 290 ok and 291 aborting optimized, ahead of the key filter at 315/317 --
+/// but the same ladder unoptimized is 67 ok and 68 aborting, which is *below* 128. So "128 is safe with
+/// about 2.3x to spare" holds only in release; under plain `cargo test` fifteen of the cases below aborted
+/// the whole test binary before that thread was introduced.
+///
+/// A future raise still breaks these cases by aborting rather than by failing, and now the depth at which
+/// that happens is the explicit stack size rather than whatever libtest defaults to.
 #[rstest::rstest]
 #[case::block_one_inside_the_limit("blocks", MAX_NESTING_DEPTH - 1, true)]
 #[case::block_exactly_the_limit("blocks", MAX_NESTING_DEPTH, true)]
@@ -7060,44 +7111,48 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 #[case::function_call_one_past_the_limit("function_calls", MAX_NESTING_DEPTH + 1, false)]
 #[case::function_call_past_where_it_used_to_abort("function_calls", 3000, false)]
 fn a_rules_file_nested_past_the_limit_is_refused(
-    #[case] shape: &str,
+    #[case] shape: &'static str,
     #[case] depth: usize,
     #[case] accepted: bool,
 ) {
-    let rules = nested_rules_file(shape, depth);
+    on_a_stack_that_reaches_the_bound(move || {
+        let rules = nested_rules_file(shape, depth);
 
-    let parsed = rules_file(from_str2(&rules));
+        let parsed = rules_file(from_str2(&rules));
 
-    if accepted {
-        assert!(
-            parsed.is_ok(),
-            "{shape} nested {depth} levels was refused, but the limit admits up to \
-             {MAX_NESTING_DEPTH}: {:?}",
-            parsed.err().map(|e| e.to_string())
-        );
-    } else {
-        let error = parsed
-            .expect_err("a file past the limit has to be refused")
-            .to_string();
-        assert!(
-            error.contains("nested at most"),
-            "{} nested {} levels was rejected for the wrong reason: {}",
-            shape,
-            depth,
-            error
-        );
-    }
+        if accepted {
+            assert!(
+                parsed.is_ok(),
+                "{shape} nested {depth} levels was refused, but the limit admits up to \
+                 {MAX_NESTING_DEPTH}: {:?}",
+                parsed.err().map(|e| e.to_string())
+            );
+        } else {
+            let error = parsed
+                .expect_err("a file past the limit has to be refused")
+                .to_string();
+            assert!(
+                error.contains("nested at most"),
+                "{} nested {} levels was rejected for the wrong reason: {}",
+                shape,
+                depth,
+                error
+            );
+        }
+    });
 }
 
 /// The refusal says which limit was passed, where, and at what level, so an author can find the
 /// construct rather than bisecting the file. The position is the one the level was opened at.
 #[test]
 fn the_depth_refusal_names_the_limit_and_the_position() {
-    let rules = nested_rules_file("blocks", MAX_NESTING_DEPTH + 1);
+    let error = on_a_stack_that_reaches_the_bound(|| {
+        let rules = nested_rules_file("blocks", MAX_NESTING_DEPTH + 1);
 
-    let error = rules_file(from_str2(&rules))
-        .expect_err("a file one level past the limit is refused")
-        .to_string();
+        rules_file(from_str2(&rules))
+            .expect_err("a file one level past the limit is refused")
+            .to_string()
+    });
 
     for expected in [
         "nested at most 128 levels deep",
@@ -7122,36 +7177,38 @@ fn the_depth_refusal_names_the_limit_and_the_position() {
 /// failure, then the same legal parse again.
 #[test]
 fn a_refused_file_does_not_leave_the_depth_count_raised() -> Result<(), Error> {
-    let at_the_limit = nested_rules_file("blocks", MAX_NESTING_DEPTH);
+    on_a_stack_that_reaches_the_bound(|| {
+        let at_the_limit = nested_rules_file("blocks", MAX_NESTING_DEPTH);
 
-    assert!(rules_file(from_str2(&at_the_limit))?.is_some());
+        assert!(rules_file(from_str2(&at_the_limit))?.is_some());
 
-    for shape in [
-        "blocks",
-        "when_blocks",
-        "lists",
-        "maps",
-        "filters",
-        "key_filters",
-        "function_calls",
-    ] {
+        for shape in [
+            "blocks",
+            "when_blocks",
+            "lists",
+            "maps",
+            "filters",
+            "key_filters",
+            "function_calls",
+        ] {
+            assert!(
+                rules_file(from_str2(&nested_rules_file(shape, MAX_NESTING_DEPTH + 1))).is_err(),
+                "{} past the limit is refused",
+                shape
+            );
+        }
+
+        // A block opened inside an `alt` arm that then fails, so a guard is created and dropped on a
+        // backtracking path rather than on a returning one.
+        assert!(rules_file(from_str2("rule a {\n  Resources {\n    Type ==\n")).is_err());
+
         assert!(
-            rules_file(from_str2(&nested_rules_file(shape, MAX_NESTING_DEPTH + 1))).is_err(),
-            "{} past the limit is refused",
-            shape
+            rules_file(from_str2(&at_the_limit))?.is_some(),
+            "the same file that parsed before the failures has to parse after them"
         );
-    }
 
-    // A block opened inside an `alt` arm that then fails, so a guard is created and dropped on a
-    // backtracking path rather than on a returning one.
-    assert!(rules_file(from_str2("rule a {\n  Resources {\n    Type ==\n")).is_err());
-
-    assert!(
-        rules_file(from_str2(&at_the_limit))?.is_some(),
-        "the same file that parsed before the failures has to parse after them"
-    );
-
-    Ok(())
+        Ok(())
+    })
 }
 
 /// The control: the bound is on nesting, not on how much of the file is nested. Many shallow blocks are
@@ -7242,35 +7299,37 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
 /// neither the depth nor the construct, which is the half a test on `is_err()` alone would have missed.
 #[test]
 fn the_other_two_routes_to_a_function_call_are_bounded_and_say_so() {
-    let open = "to_upper(".repeat(200);
-    let close = ")".repeat(200);
+    on_a_stack_that_reaches_the_bound(|| {
+        let open = "to_upper(".repeat(200);
+        let close = ")".repeat(200);
 
-    for (route, rules) in [
-        (
-            "a let assignment",
-            format!(
-                "let y = Resources.*.Type\nlet x = {open}%y{close}\nrule a {{\n  Type exists\n}}\n"
+        for (route, rules) in [
+            (
+                "a let assignment",
+                format!(
+                    "let y = Resources.*.Type\nlet x = {open}%y{close}\nrule a {{\n  Type exists\n}}\n"
+                ),
             ),
-        ),
-        (
-            "a rule call argument",
-            format!("rule b(t) {{ Type == %t }}\nrule a {{\n  b({open}\"x\"{close})\n}}\n"),
-        ),
-    ] {
-        let error = rules_file(from_str2(&rules))
-            .expect_err("a call nested past the limit has to be refused")
-            .to_string();
+            (
+                "a rule call argument",
+                format!("rule b(t) {{ Type == %t }}\nrule a {{\n  b({open}\"x\"{close})\n}}\n"),
+            ),
+        ] {
+            let error = rules_file(from_str2(&rules))
+                .expect_err("a call nested past the limit has to be refused")
+                .to_string();
 
-        for expected in ["nested at most", "the function call opened at line"] {
-            assert!(
-                error.contains(expected),
-                "{} past the limit has to be refused with {:?}, got: {}",
-                route,
-                expected,
-                error
-            );
+            for expected in ["nested at most", "the function call opened at line"] {
+                assert!(
+                    error.contains(expected),
+                    "{} past the limit has to be refused with {:?}, got: {}",
+                    route,
+                    expected,
+                    error
+                );
+            }
         }
-    }
+    });
 }
 
 /// A block clause's body and a type block's body each carry a rule reference, in two spellings, and a

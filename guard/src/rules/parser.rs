@@ -219,10 +219,12 @@ thread_local! {
     /// binary. A fixed count admits the same files everywhere.
     ///
     /// What that buys is a consistent *count*, and it is worth being precise that the abort the count
-    /// exists to prevent is not thread-independent at all. Every threshold on [`MAX_NESTING_DEPTH`] is
+    /// exists to prevent is not thread-independent at all -- and not profile-independent either, which is
+    /// the part an earlier version of this comment left out. Every threshold on [`MAX_NESTING_DEPTH`] is
     /// the CLI's `main`, which gets 8 MB here; a Rust thread gets 2 MB by default, so libtest's ceiling
-    /// is roughly a quarter of it. Measured by raising this bound to 100_000 in a throwaway build and
-    /// laddering each shape on a libtest thread, three runs per rung:
+    /// is roughly a quarter of it. **Every number in this comment is an optimized build.** Measured by
+    /// raising this bound to 100_000 in a throwaway build and laddering each shape on a libtest thread,
+    /// three runs per rung:
     ///
     /// ```text
     /// query filter    290 ok, 291 aborts     <- binding, and the same shape that is nearest on `main`
@@ -250,10 +252,24 @@ thread_local! {
     /// parser never has.
     ///
     /// At 128 that leaves the tests about 2.3x of headroom (290/128) rather than the 8.7x the CLI figures
-    /// imply, which is still ample, and nothing can recurse past the bound anyway. It matters if anyone
-    /// raises [`MAX_NESTING_DEPTH`] past ~290, because the failure mode there is not a failing assertion:
-    /// the test binary aborts with "fatal runtime error: stack overflow", taking every other test in that
-    /// target with it and reporting nothing about which one did it.
+    /// imply -- **optimized**. Unoptimized it is not headroom at all. The same query-filter ladder against
+    /// a 2 MB stack on this tree gives **67 ok, 68 aborts**, three runs per rung, so a debug build tops out
+    /// at about half the bound instead of 2.3x above it: a level costs about 28 KB unoptimized against
+    /// about 7 KB optimized, and 128 filter levels need 3648 KB against 927 KB. That is why plain
+    /// `cargo test` -- the command `CONTRIBUTING.md` asks contributors to run, and the one
+    /// `.github/workflows/pr.yml` runs on all three platforms -- aborted on fifteen of the at-the-limit
+    /// cases while `cargo test --release` passed all of them. Those cases now run on a thread sized for the
+    /// bound (`on_a_stack_that_reaches_the_bound` in `parser_tests.rs`) rather than on libtest's default,
+    /// so what they assert no longer depends on the profile.
+    ///
+    /// None of that moves the bound, and it is worth saying why rather than leaving the release number to
+    /// carry the argument alone. 128 rests on the corpus -- the deepest real file is 6 levels -- and not on
+    /// stack headroom, and nothing can recurse past it in either profile. What the debug figure costs is
+    /// the *claim*: "safe with 2.3x to spare" cannot be stated unconditionally, and anyone raising
+    /// [`MAX_NESTING_DEPTH`] has to say which profile they are raising it for. Past ~290 optimized or ~67
+    /// unoptimized the failure mode is not a failing assertion: the test binary aborts with "fatal runtime
+    /// error: stack overflow", taking every other test in that target with it, and naming a thread that --
+    /// because several of them overflow at once -- can come out spliced from several test names, or empty.
     static NESTING_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
