@@ -82,7 +82,7 @@ fn a_null_pointer_is_reported_rather_than_panicked_on() {
 
 /// Invalid UTF-8 is reported as invalid UTF-8. It used to panic with the *null pointer* message: the
 /// real cause went to `log::error!`, which a C caller has no Rust logger to receive, so a caller
-/// debugging a mis-encoded template was told their pointer was null.
+/// debugging an incorrectly encoded template was told their pointer was null.
 #[test]
 fn invalid_utf8_is_reported_as_invalid_utf8_and_not_as_a_null_pointer() {
     // 0xff is not a valid UTF-8 lead byte in any position.
