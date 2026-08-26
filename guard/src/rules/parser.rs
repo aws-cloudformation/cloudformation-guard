@@ -193,6 +193,20 @@ thread_local! {
     /// that thread's stack size: `cargo test` parses on libtest's threads rather than on `main`, and a
     /// limit derived from the stack would then admit a different set of files under test than in the
     /// binary. A fixed count admits the same files everywhere.
+    ///
+    /// What that buys is a consistent *count*, and it is worth being precise that the abort the count
+    /// exists to prevent is not thread-independent at all. Every threshold on [`MAX_NESTING_DEPTH`] is
+    /// the CLI's `main`, which gets 8 MB here; a Rust thread gets 2 MB by default, so libtest's ceiling
+    /// is roughly a quarter of it. Measured by raising this bound to 100_000 in a throwaway build and
+    /// laddering the linear shapes on a libtest thread: a key filter overflows between 300 and 350, a
+    /// block between 420 and 450, a function call between 800 and 1200 -- against 1108 and 1603 for the
+    /// same shapes on `main`.
+    ///
+    /// At 128 that leaves the tests about 2.3x of headroom rather than the 8.7x the CLI figures imply,
+    /// which is still ample, and nothing can recurse past the bound anyway. It matters if anyone raises
+    /// [`MAX_NESTING_DEPTH`] past ~300, because the failure mode there is not a failing assertion: the
+    /// test binary aborts with "fatal runtime error: stack overflow", taking every other test in that
+    /// target with it and reporting nothing about which one did it.
     static NESTING_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

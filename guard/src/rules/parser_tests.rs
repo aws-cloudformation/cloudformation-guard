@@ -7019,6 +7019,17 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 /// 60 seconds while the same file at 129 levels is refused in 0.01, because the bound fires during the
 /// linear descent and never reaches the backtracking. So the accepted side is asserted at 9 levels,
 /// where it takes milliseconds, and the refused side at the boundary and beyond.
+///
+/// That exclusion is removable, but not on this branch and not by editing this case alone: the
+/// backtracking is being fixed separately, and on that fix 127 nested filters parses in 0.038 seconds.
+/// Until it merges, raising this case to `MAX_NESTING_DEPTH` does not fail the test, it hangs the suite.
+///
+/// The accepted cases run on a libtest thread, which is where the headroom is smaller than
+/// `MAX_NESTING_DEPTH`'s own thresholds suggest -- those are all the CLI's `main` and its 8 MB stack,
+/// against 2 MB for a Rust thread. See the note on `NESTING_DEPTH`: with the bound raised, the shape
+/// that overflows a libtest thread first is a key filter, between 300 and 350. So 128 is safe with
+/// about 2.3x to spare, and a future raise past ~300 breaks these cases by aborting the whole test
+/// binary rather than by failing.
 #[rstest::rstest]
 #[case::block_one_inside_the_limit("blocks", MAX_NESTING_DEPTH - 1, true)]
 #[case::block_exactly_the_limit("blocks", MAX_NESTING_DEPTH, true)]
