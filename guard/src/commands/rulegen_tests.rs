@@ -12,7 +12,7 @@ use pretty_assertions::assert_eq;
 /// deterministic; before this change the two runs could disagree.
 fn generate(template: &str) -> (String, i32) {
     let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).unwrap();
-    let (rule_map, omissions) = generate_rule_map(template, &mut writer);
+    let (rule_map, omissions) = generate_rule_map(template).unwrap();
     let status = print_rules(rule_map, omissions, &mut writer).unwrap();
 
     (writer.into_string().unwrap(), status)
@@ -21,7 +21,7 @@ fn generate(template: &str) -> (String, i32) {
 /// The warnings a generation over `template` writes to stderr.
 fn warnings_for(template: &str) -> String {
     let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).unwrap();
-    let (rule_map, omissions) = generate_rule_map(template, &mut writer);
+    let (rule_map, omissions) = generate_rule_map(template).unwrap();
     print_rules(rule_map, omissions, &mut writer).unwrap();
 
     writer.err_to_stripped().unwrap()
@@ -55,7 +55,7 @@ fn test_rulegen() {
     );
 
     let mut writer = Writer::default();
-    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
+    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer).unwrap();
 
     assert_eq!(1, generated_rules.len());
     assert!(generated_rules.contains_key("AWS::EC2::Volume"));
@@ -86,7 +86,7 @@ fn test_rulegen_no_properties() {
     );
 
     let mut writer = Writer::default();
-    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer);
+    let generated_rules = rulegen::parse_template_and_call_gen(&data, &mut writer).unwrap();
 
     assert_eq!(0, generated_rules.len());
 }
@@ -106,7 +106,7 @@ fn test_rulegen_resource_without_a_usable_type_is_skipped_rather_than_panicking(
     #[case] template: &str,
 ) {
     let mut writer = Writer::default();
-    let generated_rules = rulegen::parse_template_and_call_gen(template, &mut writer);
+    let generated_rules = rulegen::parse_template_and_call_gen(template, &mut writer).unwrap();
 
     assert_eq!(0, generated_rules.len());
     assert!(warnings_for(template).contains("a generated rule is keyed on the resource type"));
@@ -134,35 +134,37 @@ fn test_rulegen_skips_only_the_resource_without_a_type() {
     assert!(rules.contains("%aws_ec2_volume_resources.Properties.Size == 500"));
 }
 
-/// A null in a template loads as an empty string, so `== null` -- which is what this emitted -- is a
-/// string compared against a null, is not comparable, and fails against the very template it came
-/// from. Three templates under `guard/resources/validate` carry an empty `BucketEncryption:` key and
-/// round-tripped at exit 19 because of it.
+/// A null in a template loads as a null, so the clause has to say `null`.
+///
+/// This asserted `== ""`, and that was right against a loader which resolved an empty node to the
+/// empty string -- the same commit's other half was that `== null` compared a string against a null
+/// and could never pass. The loader now resolves an empty node to null, deliberately, so that `k:`
+/// and `k: ""` stop being indistinguishable, and the two readings crossed over: `"NULL"` against `""`
+/// is `not comparable null, String`. Three templates under `guard/resources/validate` carry an empty
+/// `BucketEncryption:` and this is the clause they need.
 #[test]
-fn test_rulegen_renders_a_null_property_as_the_empty_string() {
+fn test_rulegen_renders_a_null_property_as_null() {
     let (rules, status) =
         generate(r#"{"Resources": {"B": {"Type": "T", "Properties": {"E": null}}}}"#);
 
     assert_eq!(SUCCESS_STATUS_CODE, status);
     assert!(
-        rules.contains(r#"%t_resources.Properties.E == """#),
+        rules.contains(r#"%t_resources.Properties.E == null"#),
         "{}",
         rules
     );
-    assert!(!rules.contains("null"), "{}", rules);
 }
 
-/// The same conversion has to reach a null nested inside a property's value, because the loader maps
-/// it the same way at any depth: `Outer: {Inner: null}` satisfies `== {"Inner":""}` and not
-/// `== {"Inner":null}`.
+/// The same rendering has to reach a null nested inside a property's value, because the loader reads
+/// it the same way at any depth: `Outer: {Inner: null}` satisfies `== {"Inner":null}`.
 #[test]
-fn test_rulegen_renders_a_nested_null_as_the_empty_string() {
+fn test_rulegen_renders_a_nested_null_as_null() {
     let (rules, _) = generate(
         r#"{"Resources": {"B": {"Type": "T", "Properties": {"Outer": {"Inner": null}}}}}"#,
     );
 
     assert!(
-        rules.contains(r#"%t_resources.Properties.Outer == {"Inner":""}"#),
+        rules.contains(r#"%t_resources.Properties.Outer == {"Inner":null}"#),
         "{}",
         rules
     );

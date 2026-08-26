@@ -1,20 +1,25 @@
 use std::fs;
-use std::process;
 
 use crate::commands::Executable;
 use crate::commands::{ERROR_STATUS_CODE, SUCCESS_STATUS_CODE};
+use crate::rules::errors::Error;
+use crate::rules::path_value::{MapValue, PathAwareValue};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::Args;
-use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
+// The crate is edition 2018, where `TryFrom` is not in the prelude.
+use std::convert::TryFrom;
 use std::io::Write;
 use string_builder::Builder;
 
 /// Resource type -> property name -> the values the template holds for that property across every
 /// resource of that type, each already rendered as guard source.
 pub type RuleMap = HashMap<String, HashMap<String, HashSet<String>>>;
+
+/// The property values of one mapping in the template, as the evaluator will see them.
+type Fields = indexmap::IndexMap<String, PathAwareValue>;
 
 const ABOUT: &str = "Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)";
 const TEMPLATE_HELP: &str = "Provide path to a CloudFormation template file in JSON or YAML";
@@ -47,7 +52,26 @@ impl Executable for Rulegen {
     fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
         let template_contents = fs::read_to_string(&self.template)?;
 
-        let (rule_map, omissions) = generate_rule_map(&template_contents, writer);
+        let (rule_map, omissions) = match generate_rule_map(&template_contents) {
+            Ok(generated) => generated,
+            // A template cfn-guard cannot read is the caller's input rather than cfn-guard
+            // breaking, and it is the same class `validate` gives `ERROR_STATUS_CODE`. This used to
+            // be `process::exit(1)` inside the walk: an ad-hoc code that collides with
+            // `TEST_ERROR_STATUS_CODE`, is not one `rulegen` documents, and takes the process down
+            // from inside a library function, so an in-process caller could not survive a template
+            // it had not pre-validated.
+            //
+            // A template that does not *exist* keeps -1, through the `?` above. `File::open`
+            // returns `IoError`, which is the same line `validate` draws.
+            Err(e) => {
+                writer.write_err(format!(
+                    "Unable to read the template {}: {e}",
+                    self.template
+                ))?;
+
+                return Ok(ERROR_STATUS_CODE);
+            }
+        };
 
         // The status code is `print_rules`'s to decide. It used to be `SUCCESS_STATUS_CODE`
         // whatever happened, including when the generated text failed to re-parse and nothing at
@@ -64,11 +88,57 @@ impl Executable for Rulegen {
 /// through `generate_rule_map`, so nothing in the binary calls this. Same reason the argument-name
 /// constants in `commands/mod.rs` carry the attribute.
 #[allow(dead_code)]
-pub fn parse_template_and_call_gen(template_contents: &str, writer: &mut Writer) -> RuleMap {
-    let (rule_map, omissions) = generate_rule_map(template_contents, writer);
+pub fn parse_template_and_call_gen(
+    template_contents: &str,
+    writer: &mut Writer,
+) -> Result<RuleMap> {
+    let (rule_map, omissions) = generate_rule_map(template_contents)?;
     report(&omissions, writer);
 
-    rule_map
+    Ok(rule_map)
+}
+
+/// The template as the evaluator will see it, read through the loader the evaluator reads it with.
+///
+/// This is the whole of the fix for rulegen emitting literals the tool then declines to match. It
+/// used to be `serde_yaml::from_str` into `serde_json::Value`, a second reader with its own
+/// resolution rules, and every place the two readers disagreed produced a clause the source template
+/// fails. Measured over 36 one-property templates, one per YAML spelling, before this change:
+///
+/// | template writes | the loader reads | rulegen emitted | round-trip |
+/// |---|---|---|---|
+/// | `P:`, `P: null`, `P: ~` | null | `""` | fails |
+/// | `{Inner: null}`, `[a, null]` | null, nested | `""`, nested | fails |
+/// | `P: .nan`, `P: .inf` | the text `.nan` | `""` | fails |
+/// | `P: 1e-400` | the text `1e-400` | `0.0` | fails |
+/// | `P: 0b101` | the text `0b101` | `5` | fails |
+/// | `P: 9223372036854775809` | the text | a 19-digit int literal | does not parse |
+/// | `<<: {A: 1}` | the merge resolved | a key named `<<` | fails |
+/// | `!Ref`, `!GetAtt`, any `!Foo` | `{Fn::Foo: ...}` | -- | aborted, exit 1 |
+///
+/// Ten of those emitted a clause the template does not satisfy. Five aborted the process, which is
+/// every CloudFormation template using a short-form intrinsic -- `serde_yaml` will not deserialise a
+/// tagged node into `serde_json::Value` at all.
+///
+/// Reconciling the two readers by hand is not possible, and that is the reason to read once rather
+/// than a preference. `serde_yaml` maps `.nan` and an *empty* node to the same `Value::Null`, and the
+/// loader reads the first as the string `.nan` and the second as null -- so no rendering rule over
+/// `serde_json::Value` can be right for both, because the distinction is gone before rendering
+/// starts. Reading with the loader removes the class instead of tracking it: the value rendered is
+/// the value compared, so a new resolution rule in the loader cannot desynchronise them.
+///
+/// `PathAwareValue` rather than the loader's `MarkedValue`, because the conversion between them is
+/// where a mapping's duplicate keys collapse last-write-wins. A template writing `P` twice must
+/// generate a clause about the value the evaluator will see, which is the second one.
+fn load_template(template_contents: &str) -> Result<PathAwareValue> {
+    // Every loader failure is normalised to `ParseError` here. `read_from` passes
+    // `MissingDocument`, `UnsupportedDocument` and `InternalError(InvalidKeyType)` through
+    // unflattened so that a caller can word them, and `execute` words all of them the same way --
+    // it has one thing to say, which is that the template could not be read.
+    let marked = crate::rules::values::read_from(template_contents)
+        .map_err(|e| Error::ParseError(format!("{e}")))?;
+
+    PathAwareValue::try_from(marked)
 }
 
 /// The rule map, plus what the template holds that the generated rules will not describe.
@@ -77,40 +147,34 @@ pub fn parse_template_and_call_gen(template_contents: &str, writer: &mut Writer)
 /// one in the position its clause would have held. A rules file that is simply missing a property
 /// reads as though the template never carried one, and the person reading the file later is not the
 /// person who saw stderr.
-fn generate_rule_map(template_contents: &str, writer: &mut Writer) -> (RuleMap, Vec<Omission>) {
-    let cfn_template: HashMap<String, Value> = match serde_yaml::from_str(template_contents) {
-        Ok(s) => s,
-        Err(e) => {
-            writer
-                .write_err(format!("Parsing error handling template file, Error = {e}"))
-                .expect("failed to write to stderr");
-            process::exit(1);
-        }
-    };
+fn generate_rule_map(template_contents: &str) -> Result<(RuleMap, Vec<Omission>)> {
+    let template = load_template(template_contents)?;
 
-    let cfn_resources_clone = match cfn_template.get("Resources") {
-        Some(y) => y.clone(),
-        None => {
-            writer
-                .write_err(String::from("Template lacks a Resources section"))
-                .expect("failed to write to stderr");
-            process::exit(1);
-        }
-    };
+    let resources =
+        match fields_of(&template).and_then(|root| root.get("Resources")) {
+            Some(resources) => match fields_of(resources) {
+                Some(resources) => resources,
+                None => return Err(Error::ParseError(String::from(
+                    "Template Resources section has an invalid structure: it is not a mapping of \
+                     logical id to resource",
+                ))),
+            },
+            None => {
+                return Err(Error::ParseError(String::from(
+                    "Template lacks a Resources section",
+                )))
+            }
+        };
 
-    let cfn_resources: HashMap<String, Value> = match serde_json::from_value(cfn_resources_clone) {
-        Ok(y) => y,
-        Err(e) => {
-            writer
-                .write_err(format!(
-                    "Template Resources section has an invalid structure: {e}"
-                ))
-                .expect("failed to write to stderr");
-            process::exit(1);
-        }
-    };
+    Ok(gen_rules(resources))
+}
 
-    gen_rules(cfn_resources)
+/// The entries of `value` when it is a mapping, and `None` otherwise.
+fn fields_of(value: &PathAwareValue) -> Option<&Fields> {
+    match value {
+        PathAwareValue::Map((_, MapValue { values, .. })) => Some(values),
+        _ => None,
+    }
 }
 
 /// Something in the template the generated rules do not describe, and why not.
@@ -246,51 +310,101 @@ fn quote_guard_string(s: &str) -> Option<String> {
     Some(quoted)
 }
 
-/// A template value as guard source, or `None` when no guard literal denotes it.
+/// The reason no guard literal denotes a value holding a control character.
 ///
-/// Byte-for-byte `serde_json`'s compact form for every value that already had one, so a template
-/// that generated a working rule generates the same rule. The two departures are the two that were
-/// wrong:
+/// Named because `value_to_guard` reaches it from two arms -- a string value, and a key inside a
+/// mapping value -- and a test pins the sentence. The *property* name has its own sentence, in
+/// `print_rules`, because a name and a value are two different things to have to fix.
+const CONTROL_CHARACTER: &str =
+    "its value holds a line ending or another control character, and a guard string literal ends at \
+     the end of its line";
+
+/// A loaded template value as guard source, or the reason no guard literal denotes it.
 ///
-/// - a string is escaped rather than pasted in raw, and one that cannot be written is refused
-///   rather than corrupted;
-/// - a null becomes `""`, because `""` is what the data loader produces for a null in a template.
-///   `BucketEncryption:` with no value loads as an empty string, so the `== null` this used to emit
-///   compared a string against a null, was not comparable, and failed against the very template it
-///   was generated from. It holds at any depth: a null nested inside a property's value loads as an
-///   empty string too.
-fn value_to_guard(value: &Value) -> Option<String> {
+/// The value is the one the evaluator will compare against, so the only question here is which text
+/// the *rules* parser reads back as that same value. Each arm was measured by generating the clause
+/// and validating it against the template it came from; the spellings that need saying:
+///
+/// - a null is `null`. It used to be `""`, calibrated against a loader that resolved an empty node
+///   to the empty string, and the commit that made an empty node null inverted it -- `"NULL"` against
+///   `""` is `not comparable null, String`, so the clause could not pass at any depth.
+/// - a whole float carries its fractional part, so `2.0` is "2.0" and not Rust's "2". `1e20` matters
+///   more than `2.0` does: `f64::to_string` gives it as 21 digits with no point, which the rules
+///   parser rejects as an integer literal too wide for `i64`, and the whole generated file was then
+///   discarded. With the point it round-trips, up to `1e300`.
+/// - a non-finite float is refused. The loader cannot produce one from a document -- `.nan` and
+///   `.inf` stay strings and reach the arm above as text -- so this is unreachable through
+///   `rulegen`'s own entry point, and it is written as a refusal rather than as `unreachable!()`
+///   because that is a panic waiting for the day something widens what can arrive.
+/// - `Regex`, `Char` and the three ranges are only ever built by the rules parser, never by the data
+///   loader. They are enumerated rather than swept into a wildcard so that a variant added to
+///   `PathAwareValue` fails to compile here instead of silently becoming a refusal.
+///
+/// A string is escaped rather than pasted in raw, and one no literal can carry is refused rather
+/// than corrupted; see `quote_guard_string`.
+fn value_to_guard(value: &PathAwareValue) -> std::result::Result<String, String> {
     match value {
-        Value::Null => Some(String::from(r#""""#)),
-        Value::String(s) => quote_guard_string(s),
-        Value::Bool(_) | Value::Number(_) => Some(value.to_string()),
-        Value::Array(items) => {
+        PathAwareValue::Null(_) => Ok(String::from("null")),
+        PathAwareValue::String((_, s)) => {
+            quote_guard_string(s).ok_or_else(|| String::from(CONTROL_CHARACTER))
+        }
+        PathAwareValue::Bool((_, b)) => Ok(b.to_string()),
+        PathAwareValue::Int((_, i)) => Ok(i.to_string()),
+        PathAwareValue::Float((_, f)) => float_to_guard(*f),
+        PathAwareValue::List((_, items)) => {
             let rendered = items
                 .iter()
                 .map(value_to_guard)
-                .collect::<Option<Vec<String>>>()?;
+                .collect::<std::result::Result<Vec<String>, String>>()?;
 
-            Some(format!("[{}]", rendered.join(",")))
+            Ok(format!("[{}]", rendered.join(",")))
         }
-        Value::Object(fields) => {
-            let rendered = fields
+        PathAwareValue::Map((_, MapValue { values, .. })) => {
+            let rendered = values
                 .iter()
                 .map(|(name, field)| {
-                    Some(format!(
-                        "{}:{}",
-                        quote_guard_string(name)?,
-                        value_to_guard(field)?
-                    ))
-                })
-                .collect::<Option<Vec<String>>>()?;
+                    let name =
+                        quote_guard_string(name).ok_or_else(|| String::from(CONTROL_CHARACTER))?;
 
-            Some(format!("{{{}}}", rendered.join(",")))
+                    Ok(format!("{name}:{}", value_to_guard(field)?))
+                })
+                .collect::<std::result::Result<Vec<String>, String>>()?;
+
+            Ok(format!("{{{}}}", rendered.join(",")))
         }
+        PathAwareValue::Regex(..)
+        | PathAwareValue::Char(..)
+        | PathAwareValue::RangeInt(..)
+        | PathAwareValue::RangeChar(..)
+        | PathAwareValue::RangeFloat(..) => Err(String::from(
+            "its value is of a kind only a rules file can hold, so no template can produce it and \
+             no literal here denotes it",
+        )),
     }
 }
 
+/// A float as a guard float literal, keeping a fractional part on a whole number.
+///
+/// `f64::to_string` drops it -- `2.0` is "2" -- and the rules parser then reads an integer, which for
+/// anything past `i64` does not parse at all. The same rule is already applied where the loader
+/// renders a float used as a mapping key, for the same reason: a YAML-to-JSON conversion keeps the
+/// point.
+fn float_to_guard(f: f64) -> std::result::Result<String, String> {
+    if !f.is_finite() {
+        return Err(String::from(
+            "its value is a non-finite float, which no guard float literal denotes",
+        ));
+    }
+
+    Ok(if f.fract() == 0.0 {
+        format!("{f:.1}")
+    } else {
+        f.to_string()
+    })
+}
+
 #[allow(clippy::map_entry)]
-fn gen_rules(cfn_resources: HashMap<String, Value>) -> (RuleMap, Vec<Omission>) {
+fn gen_rules(cfn_resources: &Fields) -> (RuleMap, Vec<Omission>) {
     // Create hashmap of resource name, property name and property values
     // For example, the following template:
     //
@@ -339,8 +453,14 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> (RuleMap, Vec<Omission>) 
     let mut resources_with_property: HashMap<(String, String), usize> = HashMap::new();
 
     for (name, cfn_resource) in cfn_resources {
-        let props: Option<HashMap<String, Value>> =
-            serde_json::from_value(cfn_resource["Properties"].clone()).ok();
+        // A resource that is not a mapping has neither a `Type` nor `Properties`, so it falls into
+        // the same silent skip as one carrying only a `Type`.
+        let cfn_resource = match fields_of(cfn_resource) {
+            Some(fields) => fields,
+            None => continue,
+        };
+
+        let props = cfn_resource.get("Properties").and_then(fields_of);
 
         // Every generated rule is keyed on the resource type, and this used to be
         // `cfn_resource["Type"].as_str().unwrap()`, read inside the property loop. A resource
@@ -350,21 +470,35 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> (RuleMap, Vec<Omission>) 
         // `non-string-type-template.yaml` is one added property away from it.
         //
         // Skipping the resource is what the loop already does with one that has no `Properties`.
-        let resource_type = match (cfn_resource["Type"].as_str(), &props) {
+        let type_name = match cfn_resource.get("Type") {
+            Some(PathAwareValue::String((_, type_name))) => Some(type_name),
+            _ => None,
+        };
+
+        let resource_type = match (type_name, &props) {
             (Some(resource_type), _) => resource_type.to_string(),
             // No `Properties` to generate anything from, so a missing `Type` costs nothing here and
             // is not worth telling the user about.
             (None, None) => continue,
             (None, Some(_)) => {
                 omissions.push(Omission::Resource {
-                    name,
+                    name: name.clone(),
                     reason: match cfn_resource.get("Type") {
                         None => String::from(
                             "it has no Type, and a generated rule is keyed on the resource type",
                         ),
-                        Some(not_a_string) => format!(
-                            "its Type is {not_a_string} rather than a string, and a generated rule is keyed on the resource type"
-                        ),
+                        // Rendered through the same function the clauses use, so the sentence names
+                        // the `Type` the way a clause would have written it. A `Type` that cannot be
+                        // rendered at all -- one holding a line ending, say -- has nothing worth
+                        // quoting back, and the reason it is unusable does not depend on its text.
+                        Some(not_a_string) => match value_to_guard(not_a_string) {
+                            Ok(rendered) => format!(
+                                "its Type is {rendered} rather than a string, and a generated rule is keyed on the resource type"
+                            ),
+                            Err(_) => String::from(
+                                "its Type is not a string, and a generated rule is keyed on the resource type"
+                            ),
+                        },
                     },
                 });
                 continue;
@@ -389,15 +523,10 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> (RuleMap, Vec<Omission>) 
             // The value is rendered here, once, rather than at emission: the set below holds
             // guard source, and two resources of one type agree only if their values render the
             // same way.
-            let rendered = match value_to_guard(&prop_val) {
-                Some(rendered) => rendered,
-                None => {
-                    unwritable.insert(
-                        (resource_type.clone(), prop_name),
-                        String::from(
-                            "its value holds a line ending or another control character, and a guard string literal ends at the end of its line",
-                        ),
-                    );
+            let rendered = match value_to_guard(prop_val) {
+                Ok(rendered) => rendered,
+                Err(reason) => {
+                    unwritable.insert((resource_type.clone(), prop_name.clone()), reason);
                     continue;
                 }
             };
@@ -406,16 +535,16 @@ fn gen_rules(cfn_resources: HashMap<String, Value>) -> (RuleMap, Vec<Omission>) 
                 let value_set: HashSet<String> = vec![rendered].into_iter().collect();
 
                 let mut property_map = HashMap::new();
-                property_map.insert(prop_name, value_set);
+                property_map.insert(prop_name.clone(), value_set);
                 rule_map.insert(resource_type.clone(), property_map);
             } else {
                 let property_map = rule_map.get_mut(&resource_type).unwrap();
 
-                if !property_map.contains_key(&prop_name) {
+                if !property_map.contains_key(prop_name) {
                     let value_set: HashSet<String> = vec![rendered].into_iter().collect();
-                    property_map.insert(prop_name, value_set);
+                    property_map.insert(prop_name.clone(), value_set);
                 } else {
-                    let value_set = property_map.get_mut(&prop_name).unwrap();
+                    let value_set = property_map.get_mut(prop_name).unwrap();
                     value_set.insert(rendered);
                 }
             };
