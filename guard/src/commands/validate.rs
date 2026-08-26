@@ -1032,15 +1032,20 @@ fn build_data_file(content: String, name: String, writer: &mut Writer) -> Result
         // above cannot answer this on the text alone, so the loader is what decides it.
         Err(Error::MissingDocument) => return Err(data_file_is_empty(&name)),
         Err(e) => {
-            // These two say what is wrong and where. The byte dump below exists for the messages
-            // that do not -- libyaml's own failures all read "error parsing file" -- so attaching it
-            // to a message that already names the construct only buries it.
+            // These two say what is wrong and where, so they keep their own wording rather than
+            // getting the byte dump below. That dump exists for the messages that say nothing --
+            // libyaml's own failures all read "error parsing file" -- and attaching it to a message
+            // that already names the construct only buries it.
+            //
+            // The file name is prepended because neither message can know it, and without it a run
+            // over a directory reports a position in an unnamed file: `L:2,C:4` identifies nothing
+            // when there are N templates to choose from.
             if matches!(
                 e,
                 Error::InternalError(InternalError::InvalidKeyType(..))
                     | Error::UnsupportedDocument(..)
             ) {
-                return Err(Error::ParseError(e.to_string()));
+                return Err(Error::ParseError(format!("in data file {name}: {e}")));
             }
 
             let str_len: usize = cmp::min(content.len(), 100);

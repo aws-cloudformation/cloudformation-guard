@@ -1069,3 +1069,44 @@ fn a_wide_but_shallow_document_is_not_affected_by_the_depth_bound() -> Result<()
 
     Ok(())
 }
+
+/// A key that is not a string is refused with the key named, not with a bare position.
+///
+/// The refusal carried `val.location().to_string()` and nothing else, so a run over a directory of
+/// templates reported a position in an unnamed file -- `L:2,C:4` identifies neither which key nor
+/// which of N templates, and cannot be searched for either. The type and the value are named here;
+/// the file name is added by `validate::build_data_file`, which is the only place that knows it.
+///
+/// The value is named but deliberately not *used* to accept the key. `MarkedValue` holds the resolved
+/// value rather than the text the document wrote, so rendering an `Int` back gives "31" for a key
+/// written `0x1F`, a `Float` gives "1" for `1.0` and a `Bool` gives "true" for `True`. Turning those
+/// into key names would invent names the document does not contain.
+#[rstest::rstest]
+#[case::an_integer("80: http", "the integer 80")]
+#[case::a_float("1.5: x", "the float 1.5")]
+#[case::a_boolean("true: x", "the boolean true")]
+#[case::a_null("~: x", "null")]
+#[case::a_sequence("? [a, b]\n: x", "a sequence")]
+#[case::a_mapping("? {a: b}\n: x", "a mapping")]
+fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case] expected: &str) {
+    let loaded = Loader::new().load(content.to_string());
+
+    let message = match loaded {
+        Err(Error::InternalError(InvalidKeyType(message))) => message,
+        other => panic!("{:?} gave {:?}, not the invalid-key error", content, other),
+    };
+
+    assert!(
+        message.contains(expected),
+        "the refusal for {:?} was {:?}, which does not name the key as {:?}",
+        content,
+        message,
+        expected
+    );
+    assert!(
+        message.contains("Quote it"),
+        "the refusal for {:?} was {:?}, which does not say what to do about it",
+        content,
+        message
+    );
+}

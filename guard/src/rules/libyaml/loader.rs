@@ -265,9 +265,11 @@ impl Loader {
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
                 val => {
-                    return Err(Error::InternalError(InvalidKeyType(
-                        val.location().to_string(),
-                    )));
+                    return Err(Error::InternalError(InvalidKeyType(format!(
+                        "{}, where the key is {}. Quote it to make it a string",
+                        val.location(),
+                        describe_key(&val)
+                    ))));
                 }
             };
 
@@ -281,6 +283,36 @@ impl Loader {
         self.stack
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
+    }
+}
+
+/// Names the type of a key that is not a string, and its value where it has a short one.
+///
+/// The refusal used to carry the location and nothing else, which in a run over a directory of
+/// templates tells the reader neither which key nor -- since the location is all it has -- which of
+/// several thousand lines in which of N files. The location alone also cannot be searched for: a
+/// reader who sees `L:2,C:4` cannot grep for it.
+///
+/// The value is included for the scalars whose rendering is short and unambiguous. It is deliberately
+/// *not* used to accept the key: `MarkedValue` holds the resolved value and not the text the document
+/// wrote, so rendering an `Int` back gives "31" for a key written `0x1F`, a `Float` gives "1" for
+/// `1.0`, and a `Bool` gives "true" for `True`. Turning any of those into a key name would invent a
+/// name the document does not contain, which is the same shape of defect as the ones this file has
+/// been fixing. Accepting non-string keys properly means carrying the scalar's original text through
+/// the value model, which is a larger change than a diagnostic.
+fn describe_key(key: &MarkedValue) -> String {
+    match key {
+        MarkedValue::Null(..) => "null".to_string(),
+        MarkedValue::Bool(b, ..) => format!("the boolean {b}"),
+        MarkedValue::Int(i, ..) => format!("the integer {i}"),
+        MarkedValue::Float(f, ..) => format!("the float {f}"),
+        MarkedValue::Char(c, ..) => format!("the character {c}"),
+        MarkedValue::List(..) => "a sequence".to_string(),
+        MarkedValue::Map(..) => "a mapping".to_string(),
+        MarkedValue::BadValue(val, ..) => format!("an unreadable value, {val}"),
+        // Every remaining variant is produced by the rules parser rather than by this loader, so
+        // naming the variant is as specific as this can honestly be.
+        other => format!("a {other:?}"),
     }
 }
 
